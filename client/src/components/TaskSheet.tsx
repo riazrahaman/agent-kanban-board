@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Task } from '../types'
 import { appendLog } from '../api'
+import { normalizePriority } from '../priority'
 
 const PRIORITY_BADGE: Record<Task['priority'], string> = {
   high: 'bg-red-500/10 dark:bg-red-500/15 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30',
@@ -72,9 +73,9 @@ export default function TaskSheet({ task, onClose }: Props) {
               <div>
                 <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{task.title}</h2>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[11px] capitalize ${PRIORITY_BADGE[task.priority]}`}
-                  >
+                   <span
+                     className={`rounded-full border px-2.5 py-0.5 text-[11px] capitalize ${PRIORITY_BADGE[normalizePriority(task.priority)]}`}
+                    >
                     {task.priority}
                   </span>
                   <span className="rounded-full border border-zinc-200 dark:border-zinc-700 px-2 py-0.5 text-[11px] capitalize text-zinc-600 dark:text-zinc-400">

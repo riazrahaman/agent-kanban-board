@@ -1,4 +1,5 @@
 import type { Task } from '../types'
+import { normalizePriority } from '../priority'
 
 const PRIORITY_STYLES: Record<Task['priority'], { dot: string; label: string }> = {
   high: { dot: 'bg-red-600 dark:bg-red-500', label: 'High' },
@@ -12,7 +13,9 @@ type Props = {
 }
 
 export default function TaskCard({ task, onOpen }: Props) {
-  const priority = PRIORITY_STYLES[task.priority]
+  // Normalize triage priorities (P0-critical etc.) to a known style so an
+  // unmapped priority can never leave `style` undefined and throw.
+  const priority = PRIORITY_STYLES[normalizePriority(task.priority)]
   const isActive = task.status === 'in_progress' && !!task.assigned_agent
 
   return (

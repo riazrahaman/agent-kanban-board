@@ -4,6 +4,7 @@ import { getTasks, subscribeToEvents } from './api'
 import Board from './components/Board'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
+import ErrorBoundary from './components/ErrorBoundary'
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([])
@@ -93,26 +94,28 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex flex-1 overflow-hidden">
-        {loading && (
-          <div className="flex h-full flex-1 items-center justify-center text-sm text-zinc-500">
-            Loading tasks…
-          </div>
-        )}
-        {!loading && error && (
-          <div className="flex h-full flex-1 items-center justify-center text-sm text-red-600 dark:text-red-400">
-            {error}
-          </div>
-        )}
-        {!loading && !error && (
-          <>
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <Board tasks={tasks} onOpen={setOpenTaskId} />
+        <main className="flex flex-1 overflow-hidden">
+       <ErrorBoundary>
+          {loading && (
+            <div className="flex h-full flex-1 items-center justify-center text-sm text-zinc-500">
+             Loading tasks…
             </div>
-            <SignalRail tasks={tasks} onOpen={setOpenTaskId} />
-          </>
-        )}
-      </main>
+          )}
+          {!loading && error && (
+            <div className="flex h-full flex-1 items-center justify-center text-sm text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          )}
+          {!loading && !error && (
+            <>
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <Board tasks={tasks} onOpen={setOpenTaskId} />
+              </div>
+              <SignalRail tasks={tasks} onOpen={setOpenTaskId} />
+            </>
+          )}
+       </ErrorBoundary>
+        </main>
 
       <TaskSheet task={openTask} onClose={() => setOpenTaskId(null)} />
     </div>

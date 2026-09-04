@@ -51,18 +51,18 @@ export default function SignalRail({ tasks, onOpen }: Props) {
     [tasks],
   )
 
-  const doneToday = useMemo(
-    () =>
-      tasks.filter(
-        (t) => t.status === 'done' && t.agent_logs.some((l) => isToday(l.timestamp)),
-      ).length,
-    [tasks],
-  )
+   const doneToday = useMemo(
+     () =>
+       tasks.filter(
+         (t) => t.status === 'done' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
+       ).length,
+     [tasks],
+   )
 
-  const activities = useMemo<ActivityItem[]>(() => {
-    const items: ActivityItem[] = []
-    for (const task of tasks) {
-      for (const log of task.agent_logs) {
+   const activities = useMemo<ActivityItem[]>(() => {
+     const items: ActivityItem[] = []
+     for (const task of tasks) {
+       for (const log of Array.isArray(task.agent_logs) ? task.agent_logs : []) {
         items.push({
           taskId: task.id,
           taskTitle: task.title,
