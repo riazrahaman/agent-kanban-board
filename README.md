@@ -1,100 +1,165 @@
 # Agent Kanban Board
 
-A local-only Kanban "state dashboard" for a swarm of AI agents. Instead of
-humans dragging cards around, headless agents claim tasks, move them through
-`backlog → todo → in_progress → blocked/done`, and leave a running log of
-what they did — all via a small HTTP API. The board is a real-time window
-into what the swarm is doing, updated live over Server-Sent Events with no
-page refresh.
+A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
-Everything runs entirely on `localhost` — no cloud services, no external
-accounts, no network calls beyond your own machine. Task state is persisted
-to a plain JSON file at `server/tasks.json`.
+Drag-and-drop interactions are deliberately omitted: agents drive the board state, eliminating stray human clicks that could corrupt loop execution.
 
-## Project layout
+Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
+
+---
+
+## Project Layout
 
 ```
 .
-├── server/    Node/Express API — serves and mutates tasks.json, on :4000
-├── client/    Vite/React frontend — the visual Kanban board
-└── scripts/   test-agents.js — headless demo of the multi-agent workflow
+├── client/           Vite + React + Tailwind frontend styled to DESIGN.md
+├── server/           Node/Express API with atomic JSON & git-backed YAML storage
+├── scripts/          test-agents.js — headless multi-agent workflow demo
+├── .github/          CI workflow for automated testing and builds
+├── Makefile          Standard build, test, and security check targets
+└── LICENSE           MIT License
 ```
 
-## How to run it
+---
 
-1. Start the API server:
+## Quickstart
 
-   ```bash
-   cd server
-   npm install
-   npm start
-   ```
+### 1. Start the API Server
 
-   This serves the REST API (and SSE stream) on `http://localhost:4000`.
+```bash
+# From repository root
+npm start
+# or: cd server && npm install && npm start
+```
 
-2. In a separate terminal, start the frontend:
+The REST API and Server-Sent Events stream run on `http://localhost:4000`. By default, the server runs with zero configuration using the standalone atomic JSON store (`server/tasks.json`).
 
-   ```bash
-   cd client
-   npm install
-   npm run dev
-   ```
+### 2. Start the Frontend Client
 
-   Vite will print its own local URL (typically `http://localhost:5173`) —
-   open that in your browser to see the board.
+In a separate terminal:
 
-## How to run the multi-agent demo
+```bash
+cd client
+npm install
+npm run dev
+```
 
-With the server running (step 1 above), from the project root run:
+Open `http://localhost:5173` in your browser to view the board.
+
+---
+
+## State Machine & Role Ownership
+
+The board enforces a strict lifecycle state machine and role-based permissions:
+
+```
+BACKLOG ──► BUILDING ──► IN_REVIEW ──► IN_TEST ──► DONE
+               ▲              │           │
+               └── (rejection)┘           │
+               ▲                          │
+               └───────── (failure) ──────┘
+```
+
+- **`BLOCKED`** can be set from any active state (`BUILDING`, `IN_REVIEW`, `IN_TEST`). Resuming moves back to `BUILDING`.
+- **Illegal transitions** (e.g., jumping directly from `BACKLOG` to `DONE`) return `409 Conflict`.
+- **Role Ownership Rules**:
+  - **Builder**: May advance `BACKLOG → BUILDING` or `BUILDING → IN_REVIEW`. Cannot mark `DONE`.
+  - **Reviewer**: May approve `IN_REVIEW → IN_TEST` or return `IN_REVIEW → BUILDING`. Cannot mark `DONE`.
+  - **Tester**: May advance `IN_TEST → DONE` or return `IN_TEST → BUILDING`.
+  - Callers provide their role via request body (`{"role": "builder"}`) or header (`X-Agent-Role: builder`). Unauthorized role transitions return `403 Forbidden`.
+- **Claim Contention**: Once an agent claims a task (`POST /api/tasks/:id/claim`), a second agent cannot claim or hijack it (`409 Conflict`) until released.
+
+---
+
+## Storage Backends
+
+The board features pluggable persistence:
+
+1. **Standalone JSON Storage (Default)**:
+   - Persists all tasks in `server/tasks.json`.
+   - Writes are atomic: writes land in a temporary file and atomically rename into place (`rename`), preventing corruption from crashes mid-write.
+2. **Git-Backed YAML Storage**:
+   - Enabled via environment variables:
+     ```bash
+     KANBAN_STORAGE=git
+     KANBAN_STORAGE_DIR=/path/to/cards
+     ```
+   - Persists each task as an individual YAML card (`<ID>.yml`).
+   - Automatically commits git transitions on disk (`ops(<ID>): kanban <STATUS>`), eliminating state drift between the board and version control.
+
+---
+
+## Security & Authentication
+
+- **Authentication (A07)**:
+  - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment.
+  - When set, mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`.
+  - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring.
+- **CORS Lockdown (A05)**:
+  - CORS is restricted to loopback origins (`http://localhost:5173`, `http://127.0.0.1:5173`, etc.) by default. Wildcard `*` is prohibited.
+  - Custom origins can be specified via `KANBAN_ALLOWED_ORIGIN`. Untrusted origins receive no `Access-Control-Allow-Origin` header.
+- **Input Sanitization (A03)**:
+  - All untrusted input from agents (task titles, descriptions, and log messages) is escaped to prevent Stored XSS.
+
+---
+
+## Design System
+
+The visual interface is styled to the editorial-minimalist design system in `DESIGN.md`:
+- **Hairlines**: Depth is achieved solely through 1px hairlines (`border-line`); shadows and heavy gradients are banned.
+- **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps.
+- **Form + Colour**: Status is encoded in form as well as colour: left 3px severity stripe, text badge, status glyphs (`▲` for review), and active pulsing indicators.
+- **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
+
+---
+
+## Multi-Agent Headless Demo
+
+With the server running, run:
 
 ```bash
 node scripts/test-agents.js
 ```
 
-This simulates two agents working the board headlessly:
+This simulates two autonomous agents collaborating headlessly:
+1. **Agent-Alpha** claims a task, moves it to `BLOCKED`, and logs the blocker reason.
+2. **Agent-Beta** claims another task, transitions it through `BUILDING → IN_REVIEW → IN_TEST → DONE` using the proper role identities, and logs completion notes.
 
-- **Agent-Alpha** claims `task-1`, moves it to `blocked`, and logs why.
-- **Agent-Beta** claims `task-3`, moves it to `done`, and logs a completion
-  note.
+All mutations broadcast instantaneously to the open browser dashboard over SSE.
 
-The script prints the "before" and "after" state of both tasks (including
-their `agent_logs`) so you can see the effect directly in the terminal — no
-browser required. If you have the client open in a browser while the script
-runs, you'll see the cards move and the logs appear live via Server-Sent
-Events, with no page refresh needed.
+---
 
-## Raw curl equivalents
+## API Reference
 
-The demo script uses `task-1` and `task-3`. To poke at the API by hand
-without touching those, use `task-2` as a scratch task:
+| Method | Endpoint | Description | Auth / Role Gated |
+|---|---|---|---|
+| `GET` | `/api/tasks` | List all tasks | Public |
+| `POST` | `/api/tasks` | Create task (`id` and `title` required) | Auth required |
+| `GET` | `/api/tasks/:id` | Get single task details | Public |
+| `PATCH` | `/api/tasks/:id` | Update task status or fields | Auth + Role gated |
+| `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
+| `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
+| `GET` | `/api/events` | Server-Sent Events stream of task snapshots | Public |
 
-Claim a task for an agent:
+---
 
-```bash
-curl -X POST http://localhost:4000/api/tasks/task-2/claim \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_id":"Agent-Casey"}'
-```
-
-Move a task to a new status (or update any other field):
+## Development & Verification
 
 ```bash
-curl -X PATCH http://localhost:4000/api/tasks/task-2 \
-  -H 'Content-Type: application/json' \
-  -d '{"status":"todo"}'
+# Run test suite (Node.js test runner)
+make test
+# or: npm test
+
+# Build client production bundle
+make build
+# or: npm run build
+
+# Run security checks (no hardcoded secrets or absolute paths)
+make sec
 ```
 
-Append a log entry to a task:
+---
 
-```bash
-curl -X POST http://localhost:4000/api/tasks/task-2/logs \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_id":"Agent-Casey","message":"Investigating root cause."}'
-```
+## License
 
-Fetch the full task list or a single task (no write, just for reference):
-
-```bash
-curl http://localhost:4000/api/tasks
-curl http://localhost:4000/api/tasks/task-2
-```
+MIT License. See [LICENSE](LICENSE) for details.

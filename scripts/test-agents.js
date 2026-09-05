@@ -29,10 +29,20 @@ async function getTask(id) {
   return res.json();
 }
 
+const AUTH_TOKEN = process.env.KANBAN_AUTH_TOKEN || '';
+
+function getHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (AUTH_TOKEN) {
+    headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+  }
+  return headers;
+}
+
 async function claimTask(id, agentId) {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/claim`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ agent_id: agentId }),
   });
   if (!res.ok) {
@@ -44,7 +54,7 @@ async function claimTask(id, agentId) {
 async function patchTask(id, patch) {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify(patch),
   });
   if (!res.ok) {
@@ -56,7 +66,7 @@ async function patchTask(id, patch) {
 async function addLog(id, agentId, message) {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/logs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ agent_id: agentId, message }),
   });
   if (!res.ok) {
@@ -119,7 +129,7 @@ async function ensureTask(id, title) {
   if (res.status === 404) {
     await fetch(`${BASE_URL}/api/tasks`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getHeaders(),
       body: JSON.stringify({ id, title, status: 'BACKLOG' }),
     });
   }

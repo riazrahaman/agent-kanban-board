@@ -1,14 +1,14 @@
 import express from 'express';
-import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, getTasks } from './store.js';
 import tasksRouter from './routes/tasks.js';
+import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 
 export function createApp() {
   const app = express();
-  app.use(cors());
+  app.use(configureCors());
   app.use(express.json());
   app.use(createAuthMiddleware());
 
@@ -33,14 +33,23 @@ export function createApp() {
     });
   });
 
+  // Global error handler: omit internal stack traces (A05)
+  app.use((err, req, res, next) => {
+    console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  });
+
   return app;
 }
 
-export async function startServer(port = process.env.PORT || 4000) {
+export async function startServer(
+  port = process.env.PORT || 4000,
+  host = process.env.HOST || '127.0.0.1'
+) {
   await loadStore();
   const app = createApp();
   return new Promise((resolve) => {
-    const server = app.listen(port, () => {
+    const server = app.listen(port, host, () => {
       resolve(server);
     });
   });
@@ -53,7 +62,8 @@ const isDirectRun =
 
 if (isDirectRun) {
   const PORT = process.env.PORT || 4000;
-  startServer(PORT).then(() => {
-    console.log(`Agent Kanban server listening on http://localhost:${PORT}`);
+  const HOST = process.env.HOST || '127.0.0.1';
+  startServer(PORT, HOST).then(() => {
+    console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
   });
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import yaml from 'yaml';
+import { escapeHtml } from './utils/sanitize.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -190,7 +191,11 @@ export class GitYamlStorage {
   async saveTask(task) {
     await mkdir(this.dir, { recursive: true });
     const filename = `${task.id}.yml`;
-    const filePath = path.join(this.dir, filename);
+    const filePath = path.resolve(this.dir, filename);
+    const targetDir = path.resolve(this.dir);
+    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
+      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
+    }
 
     // Spec Sec 3.2 schema ordering
     const cardData = {
@@ -306,12 +311,25 @@ function updateInMemoryTask(updatedTask) {
   }
 }
 
+const TASK_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+export function isValidTaskId(id) {
+  return typeof id === 'string' && TASK_ID_RE.test(id);
+}
+
 /**
  * Creates a task (spec Sec 9.4.3)
  */
 export async function createTask(data) {
   if (!data.id || !data.title) {
     return { error: 'id and title are required', status: 400 };
+  }
+
+  if (!isValidTaskId(data.id)) {
+    return {
+      error: 'Invalid task id: must contain only alphanumeric characters, underscores, and hyphens',
+      status: 400,
+    };
   }
 
   const status = data.status ? normalizeStatus(data.status) : STATUSES.BACKLOG;
@@ -324,8 +342,8 @@ export async function createTask(data) {
 
   const newTask = {
     id: data.id,
-    title: data.title,
-    description: data.description || existing?.description || '',
+    title: escapeHtml(data.title),
+    description: escapeHtml(data.description || existing?.description || ''),
     status: status || existing?.status || STATUSES.BACKLOG,
     priority: data.priority || existing?.priority || 'medium',
     branch: data.branch || existing?.branch || `task/${data.id}`,
@@ -408,7 +426,11 @@ export async function patchTask(id, patch, { caller = {} } = {}) {
 
   for (const key of allowed) {
     if (key in patch) {
-      candidate[key] = patch[key];
+      if ((key === 'title' || key === 'description') && typeof patch[key] === 'string') {
+        candidate[key] = escapeHtml(patch[key]);
+      } else {
+        candidate[key] = patch[key];
+      }
     }
   }
 
@@ -486,8 +508,8 @@ export async function appendLog(id, agentId, message) {
   }
   candidate.agent_logs.push({
     timestamp: candidate.updated,
-    message,
-    agent_id: agentId,
+    message: escapeHtml(message),
+    agent_id: escapeHtml(agentId),
   });
 
   const nextTasks = tasks.map((t) => (t.id === id ? candidate : t));

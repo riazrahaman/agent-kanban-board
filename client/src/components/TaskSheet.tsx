@@ -4,9 +4,9 @@ import { appendLog } from '../api'
 import { normalizePriority } from '../priority'
 
 const PRIORITY_BADGE: Record<Task['priority'], string> = {
-  high: 'bg-red-500/10 dark:bg-red-500/15 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30',
-  medium: 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30',
-  low: 'bg-zinc-500/10 dark:bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-500/30',
+  high: 'bg-down-bg text-down border-line',
+  medium: 'bg-warn-bg text-warn border-line',
+  low: 'bg-muted-bg text-muted border-line',
 }
 
 type Props = {
@@ -17,13 +17,7 @@ type Props = {
 function formatTimestamp(ts: string): string {
   const date = new Date(ts)
   if (Number.isNaN(date.getTime())) return ts
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
+  return date.toISOString().replace('T', ' ').slice(0, 19) + 'Z'
 }
 
 export default function TaskSheet({ task, onClose }: Props) {
@@ -54,7 +48,7 @@ export default function TaskSheet({ task, onClose }: Props) {
     <>
       <div
         className={[
-          'fixed inset-0 z-40 bg-black/40 dark:bg-black/60 transition-opacity',
+          'fixed inset-0 z-40 bg-ink/30 dark:bg-black/70 transition-opacity',
           open ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
         ].join(' ')}
         onClick={onClose}
@@ -63,26 +57,31 @@ export default function TaskSheet({ task, onClose }: Props) {
       <aside
         className={[
           'fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col',
-          'border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl transition-transform duration-200',
+          'border-l border-line bg-surface transition-transform duration-200',
           open ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
       >
         {task && (
           <>
-            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 p-4">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{task.title}</h2>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                   <span
-                     className={`rounded-full border px-2.5 py-0.5 text-[11px] capitalize ${PRIORITY_BADGE[normalizePriority(task.priority)]}`}
-                    >
+            <div className="flex items-start justify-between gap-3 border-b border-line p-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="font-mono text-xs tabular-nums text-muted tracking-wider">
+                    {task.id}
+                  </span>
+                </div>
+                <h2 className="text-base font-semibold leading-snug text-ink">{task.title}</h2>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                  <span
+                    className={`border px-1.5 py-0.5 uppercase tracking-wider ${PRIORITY_BADGE[normalizePriority(task.priority)]}`}
+                  >
                     {task.priority}
                   </span>
-                  <span className="rounded-full border border-zinc-200 dark:border-zinc-700 px-2 py-0.5 text-[11px] capitalize text-zinc-600 dark:text-zinc-400">
-                    {task.status.replace('_', ' ')}
+                  <span className="border border-line bg-muted-bg px-1.5 py-0.5 uppercase tracking-wider text-ink">
+                    {task.status}
                   </span>
                   {task.assigned_agent && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-700 dark:text-zinc-300">
+                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted tabular-nums">
                       <span aria-hidden>👤</span>
                       {task.assigned_agent}
                     </span>
@@ -92,35 +91,42 @@ export default function TaskSheet({ task, onClose }: Props) {
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="rounded-md p-1 text-zinc-400 dark:text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+                className="p-1 font-mono text-xs text-muted hover:text-ink transition-colors"
               >
                 ✕
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Description
                 </h3>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+                <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink">
                   {task.description || 'No description provided.'}
                 </p>
               </section>
 
-              <section className="mt-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Metadata
-                </h3>
-                <pre className="mt-1 max-h-48 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60 p-2 text-xs text-zinc-600 dark:text-zinc-400">
-                  {JSON.stringify(task.metadata ?? {}, null, 2)}
-                </pre>
-              </section>
+              {task.metadata && Object.keys(task.metadata).length > 0 && (
+                <section>
+                  <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                    Metadata
+                  </h3>
+                  <pre className="mt-1.5 max-h-48 overflow-auto border border-line bg-muted-bg p-2.5 font-mono text-xs tabular-nums text-ink">
+                    {JSON.stringify(task.metadata, null, 2)}
+                  </pre>
+                </section>
+              )}
 
-              <section className="mt-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Agent Log
-                </h3>
+              <section>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                    Agent Log
+                  </h3>
+                  <span className="font-mono text-[10px] tabular-nums text-muted">
+                    {task.agent_logs.length} {task.agent_logs.length === 1 ? 'entry' : 'entries'}
+                  </span>
+                </div>
                 <div className="mt-2 space-y-2">
                   {[...task.agent_logs]
                     .sort(
@@ -129,21 +135,23 @@ export default function TaskSheet({ task, onClose }: Props) {
                     .map((log, i) => (
                       <div
                         key={`${log.timestamp}-${i}`}
-                        className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/40 p-2"
+                        className="border border-line bg-surface p-2.5"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="rounded-full bg-zinc-200 dark:bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-700 dark:text-zinc-300">
+                          <span className="border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink">
                             {log.agent_id}
                           </span>
-                          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                          <span className="font-mono text-[10px] tabular-nums text-muted">
                             {formatTimestamp(log.timestamp)}
                           </span>
                         </div>
-                        <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-300">{log.message}</p>
+                        <p className="mt-1.5 text-xs leading-relaxed text-ink whitespace-pre-wrap">
+                          {log.message}
+                        </p>
                       </div>
                     ))}
                   {task.agent_logs.length === 0 && (
-                    <p className="text-sm text-zinc-400 dark:text-zinc-600">No log entries yet.</p>
+                    <p className="font-mono text-xs text-muted py-2">No log entries yet.</p>
                   )}
                 </div>
               </section>
@@ -151,27 +159,27 @@ export default function TaskSheet({ task, onClose }: Props) {
 
             <form
               onSubmit={handleSubmit}
-              className="space-y-2 border-t border-zinc-200 dark:border-zinc-800 p-4"
+              className="space-y-2 border-t border-line p-4 bg-surface"
             >
               <input
                 type="text"
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
                 placeholder="Agent ID"
-                className="w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:border-zinc-400 dark:focus:border-zinc-600 focus:outline-none"
+                className="w-full border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
               />
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Add a log message..."
                 rows={3}
-                className="w-full resize-none rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:border-zinc-400 dark:focus:border-zinc-600 focus:outline-none"
+                className="w-full resize-none border border-line bg-bg px-2.5 py-1.5 text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
               />
-              {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+              {error && <p className="font-mono text-xs text-fail">{error}</p>}
               <button
                 type="submit"
                 disabled={submitting || !message.trim()}
-                className="w-full rounded-md bg-zinc-900 dark:bg-zinc-100 px-3 py-1.5 text-sm font-medium text-white dark:text-zinc-900 transition-colors hover:bg-zinc-800 dark:hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full bg-ink text-bg px-3 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-opacity hover:opacity-85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {submitting ? 'Submitting…' : 'Add log entry'}
               </button>

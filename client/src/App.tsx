@@ -62,47 +62,44 @@ export default function App() {
   )
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-600 dark:bg-emerald-500" />
-          <h1 className="text-sm font-semibold tracking-wide text-zinc-900 dark:text-zinc-100">
-            Agent Kanban Board
-          </h1>
+    <div className="flex h-screen flex-col bg-bg text-ink">
+      <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          <span className="h-2 w-2 rounded-full bg-live animate-pulse" />
+          <div className="flex items-baseline gap-2">
+            <h1 className="font-serif text-lg font-normal tracking-tight text-ink">
+              Agent Kanban Board
+            </h1>
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+              loop ops
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-zinc-500">{tasks.length} tasks</span>
+          <span className="font-mono text-xs tabular-nums text-muted px-2 py-0.5 border border-line bg-muted-bg">
+            {tasks.length} tasks
+          </span>
           <button
             type="button"
             onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-            className="flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
             aria-label="Toggle theme"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           >
-            {theme === 'dark' ? (
-              <>
-                <span aria-hidden>☀️</span>
-                <span>Light</span>
-              </>
-            ) : (
-              <>
-                <span aria-hidden>🌙</span>
-                <span>Dark</span>
-              </>
-            )}
+            {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
         </div>
       </header>
 
-        <main className="flex flex-1 overflow-hidden">
-       <ErrorBoundary>
+      <main className="flex flex-1 overflow-hidden">
+        <ErrorBoundary>
           {loading && (
-            <div className="flex h-full flex-1 items-center justify-center text-sm text-zinc-500">
-             Loading tasks…
+            <div className="flex h-full flex-1 items-center justify-center font-mono text-xs text-muted">
+              Loading tasks…
             </div>
           )}
           {!loading && error && (
-            <div className="flex h-full flex-1 items-center justify-center text-sm text-red-600 dark:text-red-400">
+            <div className="flex h-full flex-1 items-center justify-center font-mono text-xs text-fail">
               {error}
             </div>
           )}
@@ -114,8 +111,8 @@ export default function App() {
               <SignalRail tasks={tasks} onOpen={setOpenTaskId} />
             </>
           )}
-       </ErrorBoundary>
-        </main>
+        </ErrorBoundary>
+      </main>
 
       <TaskSheet task={openTask} onClose={() => setOpenTaskId(null)} />
     </div>

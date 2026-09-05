@@ -11,6 +11,7 @@ router.post('/', async (req, res) => {
   const body = req.body ?? {};
   const result = await store.createTask(body);
   if (result.error) {
+    console.warn(`[kanban rejection] POST /api/tasks: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(201).json(result.task);
@@ -28,6 +29,9 @@ router.patch('/:id', async (req, res) => {
     caller: req.caller || {},
   });
   if (result.error) {
+    console.warn(
+      `[kanban rejection] PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`
+    );
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);
@@ -41,6 +45,9 @@ router.post('/:id/claim', async (req, res) => {
 
   const result = await store.claimTask(req.params.id, agentId);
   if (result.error) {
+    console.warn(
+      `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
+    );
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);

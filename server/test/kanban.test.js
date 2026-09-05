@@ -508,4 +508,174 @@ describe('Agent Kanban Board API & Core Services (PI-03)', () => {
       assert.equal(loaded[0].status, 'BUILDING');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // KB-06: CORS Restrictions
+  // --------------------------------------------------------------------------
+  describe('KB-06: Strict CORS Configuration', () => {
+    it('allows loopback origins and returns Access-Control-Allow-Origin', async () => {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'GET',
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+    });
+
+    it('rejects untrusted origins by omitting Access-Control-Allow-Origin header', async () => {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'GET',
+        headers: { Origin: 'http://evil-attacker.example.com' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('access-control-allow-origin'), null);
+    });
+
+    it('honours KANBAN_ALLOWED_ORIGIN environment variable override', async () => {
+      process.env.KANBAN_ALLOWED_ORIGIN = 'https://portal.myfirm.com';
+      const customApp = createApp();
+      const { server: customServer, baseUrl: customUrl } = await startTestServer(customApp);
+
+      try {
+        const allowedRes = await fetch(`${customUrl}/api/tasks`, {
+          method: 'GET',
+          headers: { Origin: 'https://portal.myfirm.com' },
+        });
+        assert.equal(allowedRes.status, 200);
+        assert.equal(
+          allowedRes.headers.get('access-control-allow-origin'),
+          'https://portal.myfirm.com'
+        );
+
+        const disallowedRes = await fetch(`${customUrl}/api/tasks`, {
+          method: 'GET',
+          headers: { Origin: 'http://localhost:5173' },
+        });
+        assert.equal(disallowedRes.headers.get('access-control-allow-origin'), null);
+      } finally {
+        delete process.env.KANBAN_ALLOWED_ORIGIN;
+        await new Promise((resolve) => customServer.close(resolve));
+      }
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // KB-07: Untrusted Input Sanitization (Stored XSS Prevention)
+  // --------------------------------------------------------------------------
+  describe('KB-07: Untrusted Input Sanitization (OWASP A03 Stored XSS)', () => {
+    it('escapes HTML tags in task title and description on creation', async () => {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'task-xss-1',
+          title: 'Malicious <script>alert("xss")</script> Title',
+          description: '<img src=x onerror="fetch(\'/steal\')" /> details',
+        }),
+      });
+      assert.equal(res.status, 201);
+      const data = await res.json();
+      assert.equal(
+        data.title,
+        'Malicious &lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt; Title'
+      );
+      assert.equal(
+        data.description,
+        '&lt;img src=x onerror=&quot;fetch(&#039;/steal&#039;)&quot; /&gt; details'
+      );
+    });
+
+    it('escapes HTML tags in task patch updates', async () => {
+      const res = await fetch(`${baseUrl}/api/tasks/task-xss-1`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Patched <svg onload=alert(1)>',
+        }),
+      });
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.title, 'Patched &lt;svg onload=alert(1)&gt;');
+    });
+
+    it('escapes HTML in agent log messages and agent_id (A03)', async () => {
+      const res = await fetch(`${baseUrl}/api/tasks/task-xss-1/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: '<b onmouseover=alert(1)>AttackerAgent</b>',
+          message: '<script>document.cookie="stolen"</script> Build completed',
+        }),
+      });
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      const log = data.agent_logs[data.agent_logs.length - 1];
+      assert.equal(
+        log.agent_id,
+        '&lt;b onmouseover=alert(1)&gt;AttackerAgent&lt;/b&gt;'
+      );
+      assert.equal(
+        log.message,
+        '&lt;script&gt;document.cookie=&quot;stolen&quot;&lt;/script&gt; Build completed'
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // SEC-INFRA: Injection & Security Hardening Tests
+  // --------------------------------------------------------------------------
+  describe('SEC-INFRA: OWASP Hardening (A03 Path Traversal, A05 Misconfig, A09 Logging)', () => {
+    it('refuses path traversal characters in task id on creation (A03)', async () => {
+      const traversalIds = [
+        '../evil-task',
+        '../../etc/passwd',
+        'foo/bar',
+        'foo\\bar',
+        'task space',
+        'task$id',
+      ];
+
+      for (const badId of traversalIds) {
+        const res = await fetch(`${baseUrl}/api/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: badId, title: 'Traversal Attempt' }),
+        });
+        assert.equal(
+          res.status,
+          400,
+          `Expected 400 for bad id "${badId}", got ${res.status}`
+        );
+        const data = await res.json();
+        assert.match(data.error, /Invalid task id/i);
+      }
+    });
+
+    it('GitYamlStorage rejects saving a task with path traversal (A03)', async () => {
+      const gitStorage = new store.GitYamlStorage(tmpDir);
+      await assert.rejects(
+        async () => {
+          await gitStorage.saveTask({
+            id: '../../outside-target',
+            title: 'Path Traversal',
+            status: 'BACKLOG',
+          });
+        },
+        /Path traversal attempt detected/
+      );
+    });
+
+    it('allows valid alphanumeric task ids with hyphens and underscores', async () => {
+      const validIds = ['SEC-INFRA', 'task_123', 'P1-04', 'KB-01'];
+      for (const goodId of validIds) {
+        const res = await fetch(`${baseUrl}/api/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: goodId, title: `Valid ${goodId}` }),
+        });
+        assert.equal(res.status, 201);
+        assert.equal((await res.json()).id, goodId);
+      }
+    });
+  });
 });

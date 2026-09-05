@@ -78,73 +78,69 @@ export default function SignalRail({ tasks, onOpen }: Props) {
   }, [tasks])
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900">
+    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface/40">
       {/* Rollup Stats */}
-      <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <div className="border-b border-line p-4">
+        <h2 className="mb-3 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
           Signal Overview
         </h2>
         <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-lg border border-zinc-200 bg-white p-2.5 text-center dark:border-zinc-800 dark:bg-zinc-800/60">
-            <div className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="border border-line bg-surface p-2.5 text-center">
+            <div className="font-mono text-xl font-medium tabular-nums text-ink">
               {active}
             </div>
-            <div className="text-[11px] font-medium text-zinc-500">Active</div>
+            <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">Active</div>
           </div>
 
           <div
             className={[
-              'rounded-lg border p-2.5 text-center',
+              'border p-2.5 text-center',
               blocked > 0
-                ? 'border-red-200 bg-red-50/50 dark:border-red-500/30 dark:bg-red-500/10'
-                : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-800/60',
+                ? 'border-fail bg-fail-bg'
+                : 'border-line bg-surface',
             ].join(' ')}
           >
             <div
               className={[
-                'text-xl font-semibold',
-                blocked > 0
-                  ? 'text-red-600 dark:text-red-400'
-                  : 'text-zinc-900 dark:text-zinc-100',
+                'font-mono text-xl font-medium tabular-nums',
+                blocked > 0 ? 'text-fail' : 'text-ink',
               ].join(' ')}
             >
               {blocked}
             </div>
             <div
               className={[
-                'text-[11px] font-medium',
-                blocked > 0
-                  ? 'text-red-600 dark:text-red-400'
-                  : 'text-zinc-500',
+                'mt-0.5 font-mono text-[10px] uppercase tracking-wider',
+                blocked > 0 ? 'text-fail' : 'text-muted',
               ].join(' ')}
             >
               Blocked
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-2.5 text-center dark:border-zinc-800 dark:bg-zinc-800/60">
-            <div className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="border border-line bg-surface p-2.5 text-center">
+            <div className="font-mono text-xl font-medium tabular-nums text-ink">
               {doneToday}
             </div>
-            <div className="text-[11px] font-medium text-zinc-500">Done today</div>
+            <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">Done today</div>
           </div>
         </div>
       </div>
 
       {/* Activity Feed */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-4 pt-3 pb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <div className="flex items-center justify-between border-b border-line px-4 py-2.5 bg-surface/50">
+          <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
             Activity
           </h2>
-          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          <span className="font-mono text-[10px] tabular-nums text-muted">
             {activities.length} recent
           </span>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-1">
+        <div className="flex-1 overflow-y-auto divide-y divide-line/40">
           {activities.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-400 dark:text-zinc-600">
+            <div className="py-8 text-center font-mono text-xs text-muted">
               No recent activity
             </div>
           ) : (
@@ -153,16 +149,16 @@ export default function SignalRail({ tasks, onOpen }: Props) {
                 key={`${item.taskId}-${item.timestamp}-${idx}`}
                 onClick={() => onOpen(item.taskId)}
                 type="button"
-                className="group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted-bg/50 transition-colors"
                 title={`${item.taskTitle}: ${item.message}`}
               >
-                <span className="shrink-0 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 max-w-[70px] truncate">
+                <span className="shrink-0 border border-line bg-muted-bg px-1 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink max-w-[70px] truncate">
                   {item.agentId}
                 </span>
-                <span className="flex-1 truncate text-xs text-zinc-600 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-200">
+                <span className="flex-1 truncate text-xs text-ink/90 group-hover:text-ink">
                   {item.message}
                 </span>
-                <span className="shrink-0 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
                   {formatRelative(item.timestamp)}
                 </span>
               </button>

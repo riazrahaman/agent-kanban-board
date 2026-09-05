@@ -36,6 +36,9 @@ export function createAuthMiddleware() {
     }
 
     if (!providedToken || providedToken !== requiredToken) {
+      console.warn(
+        `[kanban auth failure] 401 on ${req.method} ${req.originalUrl} (agent: ${agentId || 'anonymous'})`
+      );
       return res.status(401).json({
         error: 'Unauthorized: valid token required for mutating operations',
       });
