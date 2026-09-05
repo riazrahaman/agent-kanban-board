@@ -9,16 +9,12 @@ router.get('/', (req, res) => {
 
 router.post('/', async (req, res) => {
   const body = req.body ?? {};
-  if (!body.id || !body.title) {
-    return res.status(400).json({ error: 'id and title are required' });
+  const result = await store.createTask(body);
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
   }
-  if (body.status && !store.isValidStatus(body.status)) {
-    return res.status(400).json({ error: 'Invalid status' });
-  }
-  const created = await store.createTask(body);
-  res.status(201).json(created);
+  res.status(201).json(result.task);
 });
-
 
 router.get('/:id', (req, res) => {
   const task = store.getTask(req.params.id);
@@ -27,40 +23,60 @@ router.get('/:id', (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const task = store.getTask(req.params.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-
   const patch = req.body ?? {};
-  if ('status' in patch && !store.isValidStatus(patch.status)) {
-    return res.status(400).json({ error: 'Invalid status' });
+  const result = await store.patchTask(req.params.id, patch, {
+    caller: req.caller || {},
+  });
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
   }
-
-  const updated = await store.patchTask(req.params.id, patch);
-  res.json(updated);
+  res.status(200).json(result.task);
 });
 
 router.post('/:id/claim', async (req, res) => {
-  const task = store.getTask(req.params.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  if (!agentId) {
+    return res.status(400).json({ error: 'agent_id is required' });
+  }
 
-  const { agent_id } = req.body ?? {};
-  if (!agent_id) return res.status(400).json({ error: 'agent_id is required' });
-
-  const updated = await store.claimTask(req.params.id, agent_id);
-  res.json(updated);
+  const result = await store.claimTask(req.params.id, agentId);
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
 });
 
 router.post('/:id/logs', async (req, res) => {
-  const task = store.getTask(req.params.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-
-  const { agent_id, message } = req.body ?? {};
-  if (!agent_id || !message) {
+  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  const message = req.body?.message;
+  if (!agentId || !message) {
     return res.status(400).json({ error: 'agent_id and message are required' });
   }
 
-  const updated = await store.appendLog(req.params.id, agent_id, message);
-  res.json(updated);
+  const result = await store.appendLog(req.params.id, agentId, message);
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
+});
+
+router.get('/:id/issues', (req, res) => {
+  const task = store.getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  res.json({ issues: task.issues || [] });
+});
+
+router.post('/:id/issues', async (req, res) => {
+  const { issue_id } = req.body ?? {};
+  if (!issue_id) {
+    return res.status(400).json({ error: 'issue_id is required' });
+  }
+
+  const result = await store.addIssue(req.params.id, issue_id);
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result);
 });
 
 export default router;

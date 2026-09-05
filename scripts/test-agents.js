@@ -93,8 +93,16 @@ async function runAgentBeta() {
   await claimTask('task-3', 'Agent-Beta');
   await sleep(300);
 
-  console.log('[Agent-Beta] Moving task-3 to "done"...');
-  await patchTask('task-3', { status: 'done' });
+  console.log('[Agent-Beta] Submitting task-3 for review...');
+  await patchTask('task-3', { status: 'IN_REVIEW', role: 'builder' });
+  await sleep(300);
+
+  console.log('[Agent-Beta] Moving task-3 to test verification...');
+  await patchTask('task-3', { status: 'IN_TEST', role: 'reviewer' });
+  await sleep(300);
+
+  console.log('[Agent-Beta] Test verification passed, moving task-3 to DONE...');
+  await patchTask('task-3', { status: 'DONE', role: 'tester' });
   await sleep(300);
 
   console.log('[Agent-Beta] Logging completion note on task-3...');
@@ -106,8 +114,22 @@ async function runAgentBeta() {
   await sleep(300);
 }
 
+async function ensureTask(id, title) {
+  const res = await fetch(`${BASE_URL}/api/tasks/${id}`);
+  if (res.status === 404) {
+    await fetch(`${BASE_URL}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title, status: 'BACKLOG' }),
+    });
+  }
+}
+
 async function main() {
   console.log(`Connecting to Agent Kanban Board API at ${BASE_URL} ...`);
+
+  await ensureTask('task-1', 'Implement auth middleware');
+  await ensureTask('task-3', 'Rate limiter service');
 
   const beforeTask1 = await getTask('task-1');
   const beforeTask3 = await getTask('task-3');
