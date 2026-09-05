@@ -2,11 +2,12 @@ import type { Task, TaskStatus } from '../types'
 import Column from './Column'
 
 const COLUMNS: { status: TaskStatus; title: string }[] = [
-  { status: 'backlog', title: 'Backlog' },
-  { status: 'todo', title: 'To Do' },
-  { status: 'in_progress', title: 'In Progress' },
-  { status: 'blocked', title: 'Blocked' },
-  { status: 'done', title: 'Done' },
+  { status: 'BACKLOG', title: 'Backlog' },
+  { status: 'BUILDING', title: 'Building' },
+  { status: 'IN_REVIEW', title: 'In Review' },
+  { status: 'IN_TEST', title: 'In Test' },
+  { status: 'BLOCKED', title: 'Blocked' },
+  { status: 'DONE', title: 'Done' },
 ]
 
 type Props = {
@@ -14,17 +15,29 @@ type Props = {
   onOpen: (id: string) => void
 }
 
+function normalizeStatus(status: string): TaskStatus {
+  const s = status?.toUpperCase() ?? 'BACKLOG'
+  if (s === 'TODO') return 'BACKLOG'
+  if (s === 'IN_PROGRESS') return 'BUILDING'
+  return s as TaskStatus
+}
+
 export default function Board({ tasks, onOpen }: Props) {
-  const grouped: Record<TaskStatus, Task[]> = {
-    backlog: [],
-    todo: [],
-    in_progress: [],
-    blocked: [],
-    done: [],
+  const grouped: Record<string, Task[]> = {
+    BACKLOG: [],
+    BUILDING: [],
+    IN_REVIEW: [],
+    IN_TEST: [],
+    BLOCKED: [],
+    DONE: [],
   }
 
   for (const task of tasks) {
-    grouped[task.status]?.push(task)
+    const norm = normalizeStatus(task.status)
+    if (!grouped[norm]) {
+      grouped[norm] = []
+    }
+    grouped[norm].push(task)
   }
 
   return (
@@ -34,7 +47,7 @@ export default function Board({ tasks, onOpen }: Props) {
           key={col.status}
           status={col.status}
           title={col.title}
-          tasks={grouped[col.status]}
+          tasks={grouped[col.status] || []}
           onOpen={onOpen}
         />
       ))}

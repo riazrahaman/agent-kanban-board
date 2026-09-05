@@ -1,0 +1,11 @@
+{
+  "name": "agent-kanban-board",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm --prefix server test",
+    "start": "npm --prefix server start",
+    "build": "npm --prefix client run build"
+  }
+}
