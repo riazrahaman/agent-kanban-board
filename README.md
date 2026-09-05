@@ -5,8 +5,7 @@ humans dragging cards around, headless agents claim tasks, move them through
 `backlog → todo → in_progress → blocked/done`, and leave a running log of
 what they did — all via a small HTTP API. The board is a real-time window
 into what the swarm is doing, updated live over Server-Sent Events with no
-page refresh. See [`../Agent_Orchestrator_Prompt.md`](../Agent_Orchestrator_Prompt.md)
-for the full spec this project implements.
+page refresh.
 
 Everything runs entirely on `localhost` — no cloud services, no external
 accounts, no network calls beyond your own machine. Task state is persisted
