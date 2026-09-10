@@ -36,6 +36,7 @@ Role identity is passed via `X-Agent-Role` header or request body:
 - **Reviewer**: may transition to `IN_TEST` (PASS) or `BUILDING` (CHANGES_REQUESTED). Transitioning to `DONE` is refused with `403 Forbidden`.
 - **Tester**: may transition to `DONE` (PASS) or `BUILDING` (FAIL).
 - **Runner / System / Human**: controls `BLOCKED` (which is automated from `depends_on` per spec Sec 3.2) and administrative operations.
+- A missing role is refused for status changes; it is never treated as `human`.
 
 ### 3. Claim Contention (KB-03)
 
@@ -43,7 +44,7 @@ Role identity is passed via `X-Agent-Role` header or request body:
 
 ### 4. API Authentication (KB-04 / OWASP A07)
 
-When `KANBAN_AUTH_TOKEN` is configured in the environment, all mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require a valid `Authorization: Bearer <token>` or `X-API-Token: <token>`. Unauthenticated or invalid requests receive `401 Unauthorized`. Read routes remain open for monitoring.
+All mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `KANBAN_AUTH_TOKEN` and a valid `Authorization: Bearer <token>` or `X-API-Token: <token>`. Unauthenticated or invalid requests receive `401 Unauthorized`; if the token is not configured, mutations fail closed with `503`. Read routes remain open for monitoring.
 
 ### 5. Atomic Persistence (KB-05)
 
@@ -52,8 +53,12 @@ All file writes use `writeAtomic`: content is written to a unique temporary file
 ### 6. Pluggable Storage (KB-09)
 
 Configured via `KANBAN_STORAGE_BACKEND`:
-- **`json` (default)**: Maintains single-file JSON storage (`KANBAN_DATA_FILE` or `server/tasks.json`) for standalone runs.
+- **`json`**: Maintains single-file JSON storage (`KANBAN_DATA_FILE` or `server/tasks.json`) for standalone runs when explicitly selected.
 - **`git`**: Writes individual YAML task cards to `KANBAN_GIT_DIR` or `ops/kanban/<ID>.yml` matching spec Sec 3.2 schema. When inside a git repository, each state transition creates an atomic git commit: `ops(<ID>): kanban <STATUS>`.
+
+This desk checkout selects `git` by default and resolves its sibling desk cards
+at `../../agent-based-investment/ops/kanban`; a reusable clone selects `json`
+explicitly or supplies its own `KANBAN_GIT_DIR`.
 
 ## Consequences
 

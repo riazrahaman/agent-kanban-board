@@ -1,28 +1,29 @@
 /**
  * Authentication middleware for Agent Kanban API (spec Sec 6.3 A07, KB-04).
  *
- * Protects mutating endpoints (POST, PATCH, PUT, DELETE) when KANBAN_AUTH_TOKEN
- * is configured in the environment. Also extracts caller identity (agent_id, role)
- * from headers (X-Agent-Id, X-Agent-Role) or request body.
+ * Protects every mutating endpoint with the configured shared token. A missing
+ * token is a configuration failure, not permission to run an open write API.
  */
 
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // Extract caller identity
     const agentId = req.headers['x-agent-id'] || req.body?.agent_id || null;
-    const role = (req.headers['x-agent-role'] || req.body?.role || 'human').toLowerCase();
+    const rawRole = req.headers['x-agent-role'] || req.body?.role || null;
+    const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
     req.caller = { agent_id: agentId, role };
 
-    const requiredToken = process.env.KANBAN_AUTH_TOKEN || process.env.API_TOKEN;
-    if (!requiredToken) {
-      // In unauthenticated standalone mode, allow mutations
-      return next();
-    }
-
-    // Only mutating requests require authentication (A07)
     const isMutation = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method);
     if (!isMutation) {
       return next();
+    }
+
+    const requiredToken = process.env.KANBAN_AUTH_TOKEN;
+    if (!requiredToken) {
+      console.error('[kanban auth] KANBAN_AUTH_TOKEN is not configured; refusing mutation');
+      return res.status(503).json({
+        error: 'Mutating API is unavailable until KANBAN_AUTH_TOKEN is configured',
+      });
     }
 
     const authHeader = req.headers['authorization'];

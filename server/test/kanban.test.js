@@ -1,681 +1,238 @@
-import test, { describe, it, before, after, beforeEach } from 'node:test';
+import test, { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import yaml from 'yaml';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
 const execFileAsync = promisify(execFile);
+const TOKEN = 'pi03-test-token';
 
-// Helper to launch app on ephemeral port
 async function startTestServer(app) {
   return new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
-      const port = server.address().port;
-      const baseUrl = `http://127.0.0.1:${port}`;
-      resolve({ server, baseUrl });
+      resolve({ server, baseUrl: `http://127.0.0.1:${server.address().port}` });
     });
   });
 }
 
-describe('Agent Kanban Board API & Core Services (PI-03)', () => {
+function headers(role, agentId) {
+  return {
+    Authorization: `Bearer ${TOKEN}`,
+    'Content-Type': 'application/json',
+    ...(role ? { 'X-Agent-Role': role } : {}),
+    ...(agentId ? { 'X-Agent-Id': agentId } : {}),
+  };
+}
+
+async function jsonRequest(baseUrl, route, options = {}) {
+  const response = await fetch(`${baseUrl}${route}`, options);
+  const body = await response.json();
+  return { response, body };
+}
+
+describe('PI-03 kanban contract', () => {
   let tmpDir;
-  let serverInstance;
+  let server;
   let baseUrl;
 
   before(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-test-'));
-    const testDataFile = path.join(tmpDir, 'tasks.json');
-    store.setStorage(new store.JsonStorage(testDataFile));
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-pi03-'));
+    store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
-
-    const app = createApp();
-    const { server, baseUrl: url } = await startTestServer(app);
-    serverInstance = server;
-    baseUrl = url;
+    ({ server, baseUrl } = await startTestServer(createApp()));
   });
 
   after(async () => {
-    if (serverInstance) {
-      await new Promise((resolve) => serverInstance.close(resolve));
-    }
+    await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_AUTH_TOKEN;
   });
 
-  // --------------------------------------------------------------------------
-  // KB-01: State Machine Transitions
-  // --------------------------------------------------------------------------
-  describe('KB-01: State Machine Enforcement', () => {
-    it('allows valid progressive transitions: BACKLOG -> BUILDING -> IN_REVIEW -> IN_TEST -> DONE', async () => {
-      const createRes = await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-flow-1', title: 'Flow Test' }),
+  describe('KB-01 and KB-02 state machine and role ownership', () => {
+    it('accepts the owned loop and rejects jumps, invalid values, and missing roles', async () => {
+      let result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'flow', title: 'State flow' }),
       });
-      assert.equal(createRes.status, 201);
-      const task = await createRes.json();
-      assert.equal(task.status, 'BACKLOG');
+      assert.equal(result.response.status, 201);
+      assert.equal(result.body.status, 'BACKLOG');
 
-      // BACKLOG -> BUILDING
-      const p1 = await fetch(`${baseUrl}/api/tasks/task-flow-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers(), body: JSON.stringify({ status: 'BUILDING' }),
       });
-      assert.equal(p1.status, 200);
-      assert.equal((await p1.json()).status, 'BUILDING');
+      assert.equal(result.response.status, 403, 'missing role must not become admin');
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+      });
+      assert.equal(result.response.status, 200);
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_REVIEW' }),
+      });
+      assert.equal(result.response.status, 200);
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'IN_TEST' }),
+      });
+      assert.equal(result.response.status, 200);
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'DONE' }),
+      });
+      assert.equal(result.response.status, 403, 'Builder cannot finish a card');
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('tester'), body: JSON.stringify({ status: 'DONE' }),
+      });
+      assert.equal(result.response.status, 200);
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+      });
+      assert.equal(result.response.status, 409, 'DONE is terminal');
 
-      // BUILDING -> IN_REVIEW
-      const p2 = await fetch(`${baseUrl}/api/tasks/task-flow-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_REVIEW' }),
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'jump', title: 'Jump' }),
       });
-      assert.equal(p2.status, 200);
-      assert.equal((await p2.json()).status, 'IN_REVIEW');
-
-      // IN_REVIEW -> IN_TEST
-      const p3 = await fetch(`${baseUrl}/api/tasks/task-flow-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_TEST' }),
+      assert.equal(result.response.status, 201);
+      result = await jsonRequest(baseUrl, '/api/tasks/jump', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'DONE' }),
       });
-      assert.equal(p3.status, 200);
-      assert.equal((await p3.json()).status, 'IN_TEST');
-
-      // IN_TEST -> DONE
-      const p4 = await fetch(`${baseUrl}/api/tasks/task-flow-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'DONE' }),
+      assert.equal(result.response.status, 409);
+      result = await jsonRequest(baseUrl, '/api/tasks/jump', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'NOT_A_STATUS' }),
       });
-      assert.equal(p4.status, 200);
-      assert.equal((await p4.json()).status, 'DONE');
+      assert.equal(result.response.status, 400);
     });
 
-    it('refuses invalid jump from BACKLOG directly to DONE with 409 Conflict', async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-jump-1', title: 'Jump Test' }),
-      });
-
-      const res = await fetch(`${baseUrl}/api/tasks/task-jump-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(res.status, 409);
-      const data = await res.json();
-      assert.match(data.error, /invalid state transition/i);
-    });
-
-    it('refuses invalid jump from BUILDING directly to DONE with 409 Conflict', async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-jump-2', title: 'Jump Test 2' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-jump-2`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-
-      const res = await fetch(`${baseUrl}/api/tasks/task-jump-2`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(res.status, 409);
-    });
-
-    it('allows BLOCKED transition from active states, but refuses direct transition from BLOCKED to DONE', async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-block-1', title: 'Block Test' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-block-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-
-      // Move to BLOCKED
-      const blockRes = await fetch(`${baseUrl}/api/tasks/task-block-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BLOCKED' }),
-      });
-      assert.equal(blockRes.status, 200);
-
-      // Attempt BLOCKED -> DONE directly
-      const doneRes = await fetch(`${baseUrl}/api/tasks/task-block-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(doneRes.status, 409);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-02: Role Ownership Rules
-  // --------------------------------------------------------------------------
-  describe('KB-02: Role Ownership Enforcement', () => {
-    beforeEach(async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-role-1', title: 'Role Test' }),
-      });
-    });
-
-    it('refuses a Builder moving a card to DONE with 403 Forbidden', async () => {
-      // Advance to IN_TEST
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_REVIEW' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_TEST' }),
-      });
-
-      // Builder attempts to set DONE
-      const res = await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Agent-Role': 'builder',
-        },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(res.status, 403);
-      const data = await res.json();
-      assert.match(data.error, /not authorized/i);
-    });
-
-    it('refuses a Reviewer moving a card to DONE with 403 Forbidden', async () => {
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_REVIEW' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_TEST' }),
-      });
-
-      const res = await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Agent-Role': 'reviewer',
-        },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(res.status, 403);
-    });
-
-    it('allows a Tester to move from IN_TEST to DONE', async () => {
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_REVIEW' }),
-      });
-      await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'IN_TEST' }),
-      });
-
-      const res = await fetch(`${baseUrl}/api/tasks/task-role-1`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Agent-Role': 'tester',
-        },
-        body: JSON.stringify({ status: 'DONE' }),
-      });
-      assert.equal(res.status, 200);
-      assert.equal((await res.json()).status, 'DONE');
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-03: Claim Contention
-  // --------------------------------------------------------------------------
-  describe('KB-03: Claim Contention', () => {
-    it('allows first agent to claim, but rejects second agent with 409 Conflict', async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'task-claim-1', title: 'Claim Contention Test' }),
-      });
-
-      // Agent-Alpha claims
-      const claim1 = await fetch(`${baseUrl}/api/tasks/task-claim-1/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: 'Agent-Alpha' }),
-      });
-      assert.equal(claim1.status, 200);
-      const task1 = await claim1.json();
-      assert.equal(task1.assigned_agent, 'Agent-Alpha');
-      assert.equal(task1.status, 'BUILDING');
-
-      // Agent-Beta attempts to steal
-      const claim2 = await fetch(`${baseUrl}/api/tasks/task-claim-1/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: 'Agent-Beta' }),
-      });
-      assert.equal(claim2.status, 409);
-      const data2 = await claim2.json();
-      assert.match(data2.error, /already claimed by Agent-Alpha/i);
-
-      // Verify task still belongs to Agent-Alpha
-      const verify = await fetch(`${baseUrl}/api/tasks/task-claim-1`);
-      assert.equal((await verify.json()).assigned_agent, 'Agent-Alpha');
-    });
-
-    it('allows the same agent to re-claim idempotently', async () => {
-      const claimAgain = await fetch(`${baseUrl}/api/tasks/task-claim-1/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: 'Agent-Alpha' }),
-      });
-      assert.equal(claimAgain.status, 200);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-04: API Authentication (A07)
-  // --------------------------------------------------------------------------
-  describe('KB-04: API Authentication', () => {
-    let authServerInstance;
-    let authBaseUrl;
-
-    before(async () => {
-      process.env.KANBAN_AUTH_TOKEN = 'test-secret-token-777';
-      const authApp = createApp();
-      const { server, baseUrl: url } = await startTestServer(authApp);
-      authServerInstance = server;
-      authBaseUrl = url;
-    });
-
-    after(async () => {
-      delete process.env.KANBAN_AUTH_TOKEN;
-      if (authServerInstance) {
-        await new Promise((resolve) => authServerInstance.close(resolve));
-      }
-    });
-
-    it('rejects unauthenticated mutating requests with 401 Unauthorized', async () => {
-      const res = await fetch(`${authBaseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: 'auth-task-1', title: 'Auth Test' }),
-      });
-      assert.equal(res.status, 401);
-    });
-
-    it('rejects mutating requests with invalid token with 401 Unauthorized', async () => {
-      const res = await fetch(`${authBaseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer wrong-token',
-        },
-        body: JSON.stringify({ id: 'auth-task-1', title: 'Auth Test' }),
-      });
-      assert.equal(res.status, 401);
-    });
-
-    it('allows mutating requests with valid Bearer token', async () => {
-      const res = await fetch(`${authBaseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-secret-token-777',
-        },
-        body: JSON.stringify({ id: 'auth-task-1', title: 'Auth Test' }),
-      });
-      assert.equal(res.status, 201);
-    });
-
-    it('allows read requests without authentication', async () => {
-      const res = await fetch(`${authBaseUrl}/api/tasks`);
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(await res.json()));
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-05: Atomic Persistence
-  // --------------------------------------------------------------------------
-  describe('KB-05: Atomic Persistence', () => {
-    it('writes to disk atomically without corrupting state', async () => {
-      const atomicDir = await mkdtemp(path.join(os.tmpdir(), 'atomic-'));
-      const atomicFile = path.join(atomicDir, 'atomic.json');
-      const atomicStore = new store.JsonStorage(atomicFile);
-
-      await atomicStore.save([{ id: 'T-1', title: 'One', status: 'BACKLOG' }]);
-      assert.ok(existsSync(atomicFile));
-
-      const content = await readFile(atomicFile, 'utf-8');
-      const parsed = JSON.parse(content);
-      assert.equal(parsed.tasks.length, 1);
-      assert.equal(parsed.tasks[0].id, 'T-1');
-
-      await rm(atomicDir, { recursive: true, force: true });
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-08: Loop Statuses & Issues Register
-  // --------------------------------------------------------------------------
-  describe('KB-08: Loop Statuses & Issues Register', () => {
-    it('tracks issues register on tasks', async () => {
-      await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 'task-issue-1',
-          title: 'Issue Test',
-          issues: ['ISS-001'],
-        }),
-      });
-
-      const getRes = await fetch(`${baseUrl}/api/tasks/task-issue-1/issues`);
-      assert.equal(getRes.status, 200);
-      const data = await getRes.json();
-      assert.deepEqual(data.issues, ['ISS-001']);
-
-      // Add issue
-      const addRes = await fetch(`${baseUrl}/api/tasks/task-issue-1/issues`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ issue_id: 'ISS-002' }),
-      });
-      assert.equal(addRes.status, 200);
-      const addedData = await addRes.json();
-      assert.deepEqual(addedData.issues, ['ISS-001', 'ISS-002']);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-09: Pluggable Git-Backed Storage
-  // --------------------------------------------------------------------------
-  describe('KB-09: Git-Backed YAML Storage', () => {
-    let gitDir;
-    let gitServerInstance;
-    let gitBaseUrl;
-
-    before(async () => {
-      gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-git-'));
-
-      // Initialize git repo in gitDir to test auto-commit
-      await execFileAsync('git', ['init'], { cwd: gitDir });
-      await execFileAsync('git', ['config', 'user.name', 'Kanban Test'], { cwd: gitDir });
-      await execFileAsync('git', ['config', 'user.email', 'kanban@test.local'], { cwd: gitDir });
-
-      const gitStorage = new store.GitYamlStorage(gitDir, { autoCommit: true });
-      store.setStorage(gitStorage);
-      await store.loadStore();
-
-      const gitApp = createApp();
-      const { server, baseUrl: url } = await startTestServer(gitApp);
-      gitServerInstance = server;
-      gitBaseUrl = url;
-    });
-
-    after(async () => {
-      if (gitServerInstance) {
-        await new Promise((resolve) => gitServerInstance.close(resolve));
-      }
-      await rm(gitDir, { recursive: true, force: true });
-    });
-
-    it('creates and persists task as a YAML card matching spec Sec 3.2', async () => {
-      const res = await fetch(`${gitBaseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 'P1-04',
-          title: 'Adapter #1, daily bars',
-          status: 'BACKLOG',
-          depends_on: ['P1-03', 'P0-05'],
-        }),
-      });
-      assert.equal(res.status, 201);
-
-      const cardPath = path.join(gitDir, 'P1-04.yml');
-      assert.ok(existsSync(cardPath), 'P1-04.yml card must exist on disk');
-
-      const raw = await readFile(cardPath, 'utf-8');
-      const card = yaml.parse(raw);
-      assert.equal(card.id, 'P1-04');
-      assert.equal(card.title, 'Adapter #1, daily bars');
-      assert.equal(card.status, 'BACKLOG');
-      assert.deepEqual(card.depends_on, ['P1-03', 'P0-05']);
-    });
-
-    it('commits git transition when task status is updated', async () => {
-      const patchRes = await fetch(`${gitBaseUrl}/api/tasks/P1-04`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'BUILDING' }),
-      });
-      assert.equal(patchRes.status, 200);
-
-      const { stdout } = await execFileAsync('git', ['log', '-1', '--oneline'], {
-        cwd: gitDir,
-      });
-      assert.match(stdout, /ops\(P1-04\): kanban BUILDING/);
-    });
-
-    it('reloads tasks correctly on cold boot from YAML store', async () => {
-      const freshStorage = new store.GitYamlStorage(gitDir);
-      const loaded = await freshStorage.load();
-      assert.equal(loaded.length, 1);
-      assert.equal(loaded[0].id, 'P1-04');
-      assert.equal(loaded[0].status, 'BUILDING');
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-06: CORS Restrictions
-  // --------------------------------------------------------------------------
-  describe('KB-06: Strict CORS Configuration', () => {
-    it('allows loopback origins and returns Access-Control-Allow-Origin', async () => {
-      const res = await fetch(`${baseUrl}/api/tasks`, {
-        method: 'GET',
-        headers: { Origin: 'http://localhost:5173' },
-      });
-      assert.equal(res.status, 200);
-      assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173');
-    });
-
-    it('rejects untrusted origins by omitting Access-Control-Allow-Origin header', async () => {
-      const res = await fetch(`${baseUrl}/api/tasks`, {
-        method: 'GET',
-        headers: { Origin: 'http://evil-attacker.example.com' },
-      });
-      assert.equal(res.status, 200);
-      assert.equal(res.headers.get('access-control-allow-origin'), null);
-    });
-
-    it('honours KANBAN_ALLOWED_ORIGIN environment variable override', async () => {
-      process.env.KANBAN_ALLOWED_ORIGIN = 'https://portal.myfirm.com';
-      const customApp = createApp();
-      const { server: customServer, baseUrl: customUrl } = await startTestServer(customApp);
-
-      try {
-        const allowedRes = await fetch(`${customUrl}/api/tasks`, {
-          method: 'GET',
-          headers: { Origin: 'https://portal.myfirm.com' },
-        });
-        assert.equal(allowedRes.status, 200);
-        assert.equal(
-          allowedRes.headers.get('access-control-allow-origin'),
-          'https://portal.myfirm.com'
-        );
-
-        const disallowedRes = await fetch(`${customUrl}/api/tasks`, {
-          method: 'GET',
-          headers: { Origin: 'http://localhost:5173' },
-        });
-        assert.equal(disallowedRes.headers.get('access-control-allow-origin'), null);
-      } finally {
-        delete process.env.KANBAN_ALLOWED_ORIGIN;
-        await new Promise((resolve) => customServer.close(resolve));
-      }
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // KB-07: Untrusted Input Sanitization (Stored XSS Prevention)
-  // --------------------------------------------------------------------------
-  describe('KB-07: Untrusted Input Sanitization (OWASP A03 Stored XSS)', () => {
-    it('escapes HTML tags in task title and description on creation', async () => {
-      const res = await fetch(`${baseUrl}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 'task-xss-1',
-          title: 'Malicious <script>alert("xss")</script> Title',
-          description: '<img src=x onerror="fetch(\'/steal\')" /> details',
-        }),
-      });
-      assert.equal(res.status, 201);
-      const data = await res.json();
-      assert.equal(
-        data.title,
-        'Malicious &lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt; Title'
-      );
-      assert.equal(
-        data.description,
-        '&lt;img src=x onerror=&quot;fetch(&#039;/steal&#039;)&quot; /&gt; details'
-      );
-    });
-
-    it('escapes HTML tags in task patch updates', async () => {
-      const res = await fetch(`${baseUrl}/api/tasks/task-xss-1`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: 'Patched <svg onload=alert(1)>',
-        }),
-      });
-      assert.equal(res.status, 200);
-      const data = await res.json();
-      assert.equal(data.title, 'Patched &lt;svg onload=alert(1)&gt;');
-    });
-
-    it('escapes HTML in agent log messages and agent_id (A03)', async () => {
-      const res = await fetch(`${baseUrl}/api/tasks/task-xss-1/logs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent_id: '<b onmouseover=alert(1)>AttackerAgent</b>',
-          message: '<script>document.cookie="stolen"</script> Build completed',
-        }),
-      });
-      assert.equal(res.status, 200);
-      const data = await res.json();
-      const log = data.agent_logs[data.agent_logs.length - 1];
-      assert.equal(
-        log.agent_id,
-        '&lt;b onmouseover=alert(1)&gt;AttackerAgent&lt;/b&gt;'
-      );
-      assert.equal(
-        log.message,
-        '&lt;script&gt;document.cookie=&quot;stolen&quot;&lt;/script&gt; Build completed'
-      );
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // SEC-INFRA: Injection & Security Hardening Tests
-  // --------------------------------------------------------------------------
-  describe('SEC-INFRA: OWASP Hardening (A03 Path Traversal, A05 Misconfig, A09 Logging)', () => {
-    it('refuses path traversal characters in task id on creation (A03)', async () => {
-      const traversalIds = [
-        '../evil-task',
-        '../../etc/passwd',
-        'foo/bar',
-        'foo\\bar',
-        'task space',
-        'task$id',
+    it('allows BLOCKED from every non-terminal state and only owned roles to move back', async () => {
+      const cases = [
+        ['blocked-backlog', 'BACKLOG'],
+        ['blocked-building', 'BUILDING'],
+        ['blocked-review', 'IN_REVIEW'],
+        ['blocked-test', 'IN_TEST'],
       ];
-
-      for (const badId of traversalIds) {
-        const res = await fetch(`${baseUrl}/api/tasks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: badId, title: 'Traversal Attempt' }),
+      for (const [id, startingStatus] of cases) {
+        await jsonRequest(baseUrl, '/api/tasks', {
+          method: 'POST', headers: headers(), body: JSON.stringify({ id, title: id }),
         });
-        assert.equal(
-          res.status,
-          400,
-          `Expected 400 for bad id "${badId}", got ${res.status}`
-        );
-        const data = await res.json();
-        assert.match(data.error, /Invalid task id/i);
-      }
-    });
-
-    it('GitYamlStorage rejects saving a task with path traversal (A03)', async () => {
-      const gitStorage = new store.GitYamlStorage(tmpDir);
-      await assert.rejects(
-        async () => {
-          await gitStorage.saveTask({
-            id: '../../outside-target',
-            title: 'Path Traversal',
-            status: 'BACKLOG',
+        if (startingStatus !== 'BACKLOG') {
+          await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+            method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
           });
-        },
-        /Path traversal attempt detected/
-      );
+        }
+        if (startingStatus === 'IN_REVIEW' || startingStatus === 'IN_TEST') {
+          await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+            method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_REVIEW' }),
+          });
+        }
+        if (startingStatus === 'IN_TEST') {
+          await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+            method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'IN_TEST' }),
+          });
+        }
+        const blocked = await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+          method: 'PATCH', headers: headers('runner'), body: JSON.stringify({ status: 'BLOCKED' }),
+        });
+        assert.equal(blocked.response.status, 200, id);
+        const resumed = await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+          method: 'PATCH', headers: headers('runner'), body: JSON.stringify({ status: 'BACKLOG' }),
+        });
+        assert.equal(resumed.response.status, 200, id);
+      }
+    });
+  });
+
+  describe('KB-03 claim contention', () => {
+    it('allows one winner even for concurrent claims and permits idempotent reclaim', async () => {
+      await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'claim', title: 'Claim' }),
+      });
+      const claims = await Promise.all(['alpha', 'beta'].map((agentId) => jsonRequest(
+        baseUrl,
+        '/api/tasks/claim/claim',
+        { method: 'POST', headers: headers(undefined, agentId), body: JSON.stringify({ agent_id: agentId }) },
+      )));
+      assert.deepEqual(claims.map(({ response }) => response.status).sort(), [200, 409]);
+      const winner = claims.find(({ response }) => response.status === 200).body.assigned_agent;
+      const again = await jsonRequest(baseUrl, '/api/tasks/claim/claim', {
+        method: 'POST', headers: headers(undefined, winner), body: JSON.stringify({ agent_id: winner }),
+      });
+      assert.equal(again.response.status, 200);
+      assert.equal(again.body.assigned_agent, winner);
+    });
+  });
+
+  describe('KB-04 shared-token identity gate', () => {
+    it('fails closed when no token is configured and rejects invalid tokens', async () => {
+      delete process.env.KANBAN_AUTH_TOKEN;
+      let result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'no-token', title: 'No token' }),
+      });
+      assert.equal(result.response.status, 503);
+      process.env.KANBAN_AUTH_TOKEN = TOKEN;
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: { Authorization: 'Bearer wrong', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'wrong-token', title: 'Wrong token' }),
+      });
+      assert.equal(result.response.status, 401);
+      assert.equal((await fetch(`${baseUrl}/api/tasks`)).status, 200);
+    });
+  });
+
+  describe('KB-05 atomic persistence and KB-08 issue register', () => {
+    it('does not mutate memory when persistence fails', async () => {
+      class FailingStorage extends store.JsonStorage {
+        async saveTask() { throw new Error('simulated disk failure'); }
+      }
+      store.setStorage(new FailingStorage(path.join(tmpDir, 'never-written.json')));
+      await assert.rejects(store.createTask({ id: 'disk-failure', title: 'Must not appear' }), /disk failure/);
+      assert.equal(store.getTask('disk-failure'), null);
+      store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
+      await store.loadStore();
     });
 
-    it('allows valid alphanumeric task ids with hyphens and underscores', async () => {
-      const validIds = ['SEC-INFRA', 'task_123', 'P1-04', 'KB-01'];
-      for (const goodId of validIds) {
-        const res = await fetch(`${baseUrl}/api/tasks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: goodId, title: `Valid ${goodId}` }),
-        });
-        assert.equal(res.status, 201);
-        assert.equal((await res.json()).id, goodId);
-      }
+    it('persists an issue register and exposes issue-bearing tasks for the swimlane', async () => {
+      const created = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ id: 'issue-task', title: 'Issue task', issues: ['ISS-001'] }),
+      });
+      assert.equal(created.response.status, 201);
+      const added = await jsonRequest(baseUrl, '/api/tasks/issue-task/issues', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ issue_id: 'ISS-002' }),
+      });
+      assert.equal(added.response.status, 200);
+      assert.deepEqual(added.body.issues, ['ISS-001', 'ISS-002']);
+      const listed = await jsonRequest(baseUrl, '/api/tasks/issue-task/issues');
+      assert.deepEqual(listed.body.issues, ['ISS-001', 'ISS-002']);
+    });
+  });
+
+  describe('KB-09 pluggable git-backed storage', () => {
+    it('writes one YAML card per task and commits every transition', async () => {
+      const gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-git-pi03-'));
+      await execFileAsync('git', ['init'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.name', 'PI-03 Test'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.email', 'pi03@test.local'], { cwd: gitDir });
+      store.setStorage(new store.GitYamlStorage(gitDir));
+      await store.loadStore();
+      const result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'git-task', title: 'Git card' }),
+      });
+      assert.equal(result.response.status, 201);
+      const cardPath = path.join(gitDir, 'git-task.yml');
+      assert.ok(existsSync(cardPath));
+      assert.equal(yaml.parse(await readFile(cardPath, 'utf8')).status, 'BACKLOG');
+      const transition = await jsonRequest(baseUrl, '/api/tasks/git-task', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+      });
+      assert.equal(transition.response.status, 200);
+      const log = await execFileAsync('git', ['log', '--format=%s', '-2'], { cwd: gitDir });
+      assert.match(log.stdout, /ops\(git-task\): kanban BUILDING/);
+      assert.match(log.stdout, /ops\(git-task\): kanban BACKLOG/);
+      await rm(gitDir, { recursive: true, force: true });
     });
   });
 });

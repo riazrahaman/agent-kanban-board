@@ -29,10 +29,10 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 ```bash
 # From repository root
 npm start
-# or: cd server && npm install && npm start
+# or: cd server && npm install && KANBAN_AUTH_TOKEN=change-me npm start
 ```
 
-The REST API and Server-Sent Events stream run on `http://localhost:4000`. By default, the server runs with zero configuration using the standalone atomic JSON store (`server/tasks.json`).
+The REST API and Server-Sent Events stream run on `http://localhost:4000`. Mutating requests require `KANBAN_AUTH_TOKEN`; reads remain open. This desk-oriented checkout selects the git-backed YAML store by default and writes cards to `../ops/kanban`. A stranger can run the standalone backend with `KANBAN_STORAGE_BACKEND=json KANBAN_DATA_FILE=server/tasks.json`.
 
 ### 2. Start the Frontend Client
 
@@ -66,7 +66,7 @@ BACKLOG ──► BUILDING ──► IN_REVIEW ──► IN_TEST ──► DONE
   - **Builder**: May advance `BACKLOG → BUILDING` or `BUILDING → IN_REVIEW`. Cannot mark `DONE`.
   - **Reviewer**: May approve `IN_REVIEW → IN_TEST` or return `IN_REVIEW → BUILDING`. Cannot mark `DONE`.
   - **Tester**: May advance `IN_TEST → DONE` or return `IN_TEST → BUILDING`.
-  - Callers provide their role via request body (`{"role": "builder"}`) or header (`X-Agent-Role: builder`). Unauthorized role transitions return `403 Forbidden`.
+  - Callers provide their role via request body (`{"role": "builder"}`) or header (`X-Agent-Role: builder`); a missing role cannot pass a status transition. Unauthorized role transitions return `403 Forbidden`.
 - **Claim Contention**: Once an agent claims a task (`POST /api/tasks/:id/claim`), a second agent cannot claim or hijack it (`409 Conflict`) until released.
 
 ---
@@ -75,14 +75,14 @@ BACKLOG ──► BUILDING ──► IN_REVIEW ──► IN_TEST ──► DONE
 
 The board features pluggable persistence:
 
-1. **Standalone JSON Storage (Default)**:
+1. **Standalone JSON Storage**:
    - Persists all tasks in `server/tasks.json`.
    - Writes are atomic: writes land in a temporary file and atomically rename into place (`rename`), preventing corruption from crashes mid-write.
 2. **Git-Backed YAML Storage**:
-   - Enabled via environment variables:
+   - Enabled explicitly via environment variables:
      ```bash
-     KANBAN_STORAGE=git
-     KANBAN_STORAGE_DIR=/path/to/cards
+     KANBAN_STORAGE_BACKEND=json
+     KANBAN_DATA_FILE=server/tasks.json
      ```
    - Persists each task as an individual YAML card (`<ID>.yml`).
    - Automatically commits git transitions on disk (`ops(<ID>): kanban <STATUS>`), eliminating state drift between the board and version control.
@@ -92,8 +92,8 @@ The board features pluggable persistence:
 ## Security & Authentication
 
 - **Authentication (A07)**:
-  - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment.
-  - When set, mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`.
+  - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment; there is no default or fallback token.
+  - Mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`. If the token is not configured, mutations fail closed with `503`.
   - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring.
 - **CORS Lockdown (A05)**:
   - CORS is restricted to loopback origins (`http://localhost:5173`, `http://127.0.0.1:5173`, etc.) by default. Wildcard `*` is prohibited.

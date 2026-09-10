@@ -8,6 +8,7 @@ const COLUMNS: { status: TaskStatus; title: string }[] = [
   { status: 'IN_TEST', title: 'In Test' },
   { status: 'BLOCKED', title: 'Blocked' },
   { status: 'DONE', title: 'Done' },
+  { status: 'ISSUES', title: 'Issues' },
 ]
 
 type Props = {
@@ -30,6 +31,7 @@ export default function Board({ tasks, onOpen }: Props) {
     IN_TEST: [],
     BLOCKED: [],
     DONE: [],
+    ISSUES: [],
   }
 
   for (const task of tasks) {
@@ -38,6 +40,9 @@ export default function Board({ tasks, onOpen }: Props) {
       grouped[norm] = []
     }
     grouped[norm].push(task)
+    if (task.issues && task.issues.length > 0) {
+      grouped.ISSUES.push(task)
+    }
   }
 
   return (
