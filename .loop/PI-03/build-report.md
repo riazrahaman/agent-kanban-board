@@ -61,8 +61,9 @@ workflow label after token authentication.
 
 The default Git path is intentionally desk-specific (`../../agent-based-investment/ops/kanban`)
 when no `KANBAN_GIT_DIR` is supplied; a stranger clone should select the JSON
-backend explicitly or configure its own Git directory. The final commit is
-`ae9a105552567b5c3859e055d7dcb4b7433007af`.
+backend explicitly or configure its own Git directory. The implementation
+commit is `ae9a105552567b5c3859e055d7dcb4b7433007af`; this report was
+committed in `16df26b77f40544593c89300ec94cc07987056db`.
 
 Validation personally run: `npm test` (7 passing suites), `npm run build`,
 `node --check` on the changed server modules, and `git diff --check`.
