@@ -5,6 +5,16 @@
  * token is a configuration failure, not permission to run an open write API.
  */
 
+export const VALID_ROLES = new Set([
+  'builder',
+  'reviewer',
+  'tester',
+  'runner',
+  'system',
+  'human',
+  'admin',
+]);
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // Extract caller identity
@@ -42,6 +52,15 @@ export function createAuthMiddleware() {
       );
       return res.status(401).json({
         error: 'Unauthorized: valid token required for mutating operations',
+      });
+    }
+
+    if (!role || !VALID_ROLES.has(role)) {
+      console.warn(
+        `[kanban auth failure] 403 on ${req.method} ${req.originalUrl} (role: ${role || 'missing'})`
+      );
+      return res.status(403).json({
+        error: 'A valid agent role is required for mutating operations',
       });
     }
 

@@ -21,7 +21,7 @@ async function startTestServer(app) {
   });
 }
 
-function headers(role, agentId) {
+function headers(role = 'builder', agentId) {
   return {
     Authorization: `Bearer ${TOKEN}`,
     'Content-Type': 'application/json',
@@ -60,6 +60,19 @@ describe('PI-03 kanban contract', () => {
   });
 
   describe('KB-01 and KB-02 state machine and role ownership', () => {
+    it('rejects duplicate task ids without replacing the original card', async () => {
+      let result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: taskBody('duplicate', 'Original'),
+      });
+      assert.equal(result.response.status, 201);
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: taskBody('duplicate', 'Replacement'),
+      });
+      assert.equal(result.response.status, 409);
+      const original = await jsonRequest(baseUrl, '/api/tasks/duplicate');
+      assert.equal(original.body.title, 'Original');
+    });
+
     it('refuses missing or blank status and round instead of fabricating workflow values', async () => {
       let result = await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST', headers: headers(),
@@ -86,7 +99,7 @@ describe('PI-03 kanban contract', () => {
       assert.equal(result.body.status, 'BACKLOG');
 
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers(), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers(null), body: JSON.stringify({ status: 'BUILDING' }),
       });
       assert.equal(result.response.status, 403, 'missing role must not become admin');
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
@@ -193,6 +206,27 @@ describe('PI-03 kanban contract', () => {
   });
 
   describe('KB-04 shared-token identity gate', () => {
+    it('rejects an unknown role on create, claim, and log mutations', async () => {
+      let result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers('unknown'), body: taskBody('role-gate', 'Role gate'),
+      });
+      assert.equal(result.response.status, 403);
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: taskBody('role-gate', 'Role gate'),
+      });
+      assert.equal(result.response.status, 201);
+      result = await jsonRequest(baseUrl, '/api/tasks/role-gate/claim', {
+        method: 'POST', headers: headers('unknown'),
+        body: JSON.stringify({ agent_id: 'unknown-agent' }),
+      });
+      assert.equal(result.response.status, 403);
+      result = await jsonRequest(baseUrl, '/api/tasks/role-gate/logs', {
+        method: 'POST', headers: headers('unknown'),
+        body: JSON.stringify({ agent_id: 'unknown-agent', message: 'x' }),
+      });
+      assert.equal(result.response.status, 403);
+    });
+
     it('fails closed when no token is configured and rejects invalid tokens', async () => {
       delete process.env.KANBAN_AUTH_TOKEN;
       let result = await jsonRequest(baseUrl, '/api/tasks', {
@@ -298,6 +332,28 @@ describe('PI-03 kanban contract', () => {
       assert.equal(store.getTask('commit-failure'), null);
       await assert.rejects(execFileAsync('git', ['log', '-1'], { cwd: gitDir }));
       await rm(gitDir, { recursive: true, force: true });
+    });
+
+    it('returns a controlled error when git add fails and keeps the server alive', async () => {
+      const gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-git-route-failure-pi03-'));
+      await execFileAsync('git', ['init'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.name', 'PI-03 Test'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.email', 'pi03@test.local'], { cwd: gitDir });
+      await rm(path.join(gitDir, '.git', 'index'), { force: true });
+      await mkdir(path.join(gitDir, '.git', 'index'));
+      store.setStorage(new store.GitYamlStorage(gitDir));
+      await store.loadStore();
+      const failed = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(), body: taskBody('route-failure', 'Route failure'),
+      });
+      assert.equal(failed.response.status, 500);
+      assert.match(failed.body.error, /Internal Server Error/);
+      assert.equal(store.getTask('route-failure'), null);
+      const liveness = await fetch(`${baseUrl}/api/tasks`);
+      assert.equal(liveness.status, 200);
+      await rm(gitDir, { recursive: true, force: true });
+      store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
+      await store.loadStore();
     });
   });
 });

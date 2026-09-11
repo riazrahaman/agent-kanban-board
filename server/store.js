@@ -343,6 +343,10 @@ export async function createTask(data) {
     };
     }
 
+    if (getTask(data.id)) {
+      return { error: `Task ${data.id} already exists`, status: 409 };
+    }
+
   const status = normalizeStatus(data.status);
     if (!status) {
       return { error: `Invalid status: ${data.status}`, status: 400 };
