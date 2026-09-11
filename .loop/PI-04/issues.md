@@ -1,7 +1,7 @@
 ID        opened_round  severity  status  fixed_in  reviewed_in  verified_in
-ISS-PI04-01  round 1       major     REVIEWED  b957039  b957039     —
-ISS-PI04-02  round 1       minor     REVIEWED  b957039  b957039     —
-ISS-PI04-03  T1            major     REVIEWED  15dd137  15dd137      —
+ISS-PI04-01  round 1       major     CLOSED    b957039  b957039     T2
+ISS-PI04-02  round 1       minor     CLOSED    b957039  b957039     T2
+ISS-PI04-03  T1            major     CLOSED    15dd137  15dd137     T2
 
 # ISS-PI04-01 (major, review)
 TaskCard.tsx:14-18 KB-11 refactor dropped the null-guard on task.status. task.status.toUpperCase() now throws on a
