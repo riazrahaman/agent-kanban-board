@@ -52,7 +52,7 @@ export function isValidStatus(status) {
  * DONE -> terminal
  */
 export const VALID_TRANSITIONS = {
-  [STATUSES.BACKLOG]: [STATUSES.BUILDING],
+  [STATUSES.BACKLOG]: [STATUSES.BUILDING, STATUSES.BLOCKED],
   [STATUSES.BUILDING]: [STATUSES.IN_REVIEW, STATUSES.BLOCKED],
   [STATUSES.IN_REVIEW]: [STATUSES.IN_TEST, STATUSES.BUILDING, STATUSES.BLOCKED],
   [STATUSES.IN_TEST]: [STATUSES.DONE, STATUSES.BUILDING, STATUSES.BLOCKED],
@@ -72,8 +72,8 @@ export function canTransition(fromStatus, toStatus) {
 /**
  * Role ownership rules (spec Sec 1, Sec 3.2, Sec 9.4.3 KB-02):
  * - builder: may set BUILDING, IN_REVIEW
- * - reviewer: may set IN_TEST, BUILDING, IN_REVIEW
- * - tester: may set DONE, BUILDING, IN_TEST
+ * - reviewer: may set IN_TEST or return to BUILDING
+ * - tester: may set DONE or return to BUILDING
  * - runner / system / human: may set/clear BLOCKED and administer transitions
  */
 export function canRoleTransition(role, fromStatus, toStatus) {
@@ -82,7 +82,7 @@ export function canRoleTransition(role, fromStatus, toStatus) {
   if (!from || !to) return false;
   if (from === to) return true;
 
-  const r = (role || 'human').toLowerCase();
+  const r = typeof role === 'string' ? role.toLowerCase() : null;
   if (['runner', 'system', 'human', 'admin'].includes(r)) {
     return true;
   }
@@ -97,11 +97,11 @@ export function canRoleTransition(role, fromStatus, toStatus) {
   }
 
   if (r === 'reviewer') {
-    return [STATUSES.IN_TEST, STATUSES.BUILDING, STATUSES.IN_REVIEW].includes(to);
+    return [STATUSES.IN_TEST, STATUSES.BUILDING].includes(to);
   }
 
   if (r === 'tester') {
-    return [STATUSES.DONE, STATUSES.BUILDING, STATUSES.IN_TEST].includes(to);
+    return [STATUSES.DONE, STATUSES.BUILDING].includes(to);
   }
 
   return false;
@@ -190,6 +190,9 @@ export class GitYamlStorage {
 
   async saveTask(task) {
     await mkdir(this.dir, { recursive: true });
+    if (!Number.isInteger(task.round) || task.round < 1) {
+      throw new Error('Git-backed task persistence requires a positive integer round');
+    }
     const filename = `${task.id}.yml`;
     const filePath = path.resolve(this.dir, filename);
     const targetDir = path.resolve(this.dir);
@@ -204,7 +207,7 @@ export class GitYamlStorage {
       status: task.status,
       branch: task.branch || `task/${task.id}`,
       depends_on: task.depends_on || [],
-      round: task.round ?? 1,
+      round: task.round,
       issues: task.issues || [],
       assigned_agent: task.assigned_agent ?? null,
       updated: task.updated || new Date().toISOString(),
@@ -234,7 +237,7 @@ export class GitYamlStorage {
       const commitMsg = `ops(${task.id}): kanban ${task.status}`;
       await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.dir });
     } catch (err) {
-      // Ignored if not a git worktree or nothing to commit
+      throw new Error(`Git-backed persistence commit failed: ${err.message}`, { cause: err });
     }
   }
 }
@@ -246,15 +249,22 @@ export class GitYamlStorage {
 let storage = null;
 let tasks = [];
 let listeners = [];
+let mutationQueue = Promise.resolve();
+
+function withMutationLock(operation) {
+  const run = mutationQueue.then(operation, operation);
+  mutationQueue = run.catch(() => undefined);
+  return run;
+}
 
 export function getStorage() {
   if (!storage) {
-    const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
+    const backend = process.env.KANBAN_STORAGE_BACKEND || 'git';
     if (backend === 'git') {
       const gitDir =
         process.env.KANBAN_GIT_DIR ||
         process.env.KANBAN_DATA_DIR ||
-        path.join(__dirname, '../ops/kanban');
+        path.resolve(__dirname, '../../agent-based-investment/ops/kanban');
       const autoCommit = process.env.KANBAN_GIT_COMMIT !== 'false';
       storage = new GitYamlStorage(gitDir, { autoCommit });
     } else {
@@ -321,21 +331,29 @@ export function isValidTaskId(id) {
  * Creates a task (spec Sec 9.4.3)
  */
 export async function createTask(data) {
-  if (!data.id || !data.title) {
+  return withMutationLock(async () => {
+    if (!data.id || !data.title) {
     return { error: 'id and title are required', status: 400 };
-  }
+    }
 
-  if (!isValidTaskId(data.id)) {
+    if (!isValidTaskId(data.id)) {
     return {
       error: 'Invalid task id: must contain only alphanumeric characters, underscores, and hyphens',
       status: 400,
     };
-  }
+    }
 
-  const status = data.status ? normalizeStatus(data.status) : STATUSES.BACKLOG;
-  if (data.status && !status) {
-    return { error: `Invalid status: ${data.status}`, status: 400 };
-  }
+    if (getTask(data.id)) {
+      return { error: `Task ${data.id} already exists`, status: 409 };
+    }
+
+  const status = normalizeStatus(data.status);
+    if (!status) {
+      return { error: `Invalid status: ${data.status}`, status: 400 };
+    }
+    if (!Number.isInteger(data.round) || data.round < 1) {
+      return { error: 'round must be a positive integer', status: 400 };
+    }
 
   const existing = getTask(data.id);
   const now = new Date().toISOString();
@@ -344,15 +362,13 @@ export async function createTask(data) {
     id: data.id,
     title: escapeHtml(data.title),
     description: escapeHtml(data.description || existing?.description || ''),
-    status: status || existing?.status || STATUSES.BACKLOG,
+    status,
     priority: data.priority || existing?.priority || 'medium',
     branch: data.branch || existing?.branch || `task/${data.id}`,
     depends_on: Array.isArray(data.depends_on)
       ? data.depends_on
       : existing?.depends_on || [],
-    round: Number.isInteger(data.round)
-      ? data.round
-      : existing?.round || 1,
+    round: data.round,
     issues: Array.isArray(data.issues)
       ? data.issues
       : existing?.issues || [],
@@ -374,18 +390,20 @@ export async function createTask(data) {
   await getStorage().saveTask(newTask, nextTasks);
   updateInMemoryTask(newTask);
   notify();
-  return { task: newTask, status: 201 };
+    return { task: newTask, status: 201 };
+  });
 }
 
 /**
  * Patches a task with state machine (KB-01) and role ownership (KB-02) checks.
  */
 export async function patchTask(id, patch, { caller = {} } = {}) {
-  const task = getTask(id);
-  if (!task) return { error: 'Task not found', status: 404 };
+  return withMutationLock(async () => {
+    const task = getTask(id);
+    if (!task) return { error: 'Task not found', status: 404 };
 
-  const candidate = structuredClone(task);
-  const role = caller.role || patch.role || 'human';
+    const candidate = structuredClone(task);
+    const role = caller.role || patch.role || null;
 
   if ('status' in patch) {
     const nextStatus = normalizeStatus(patch.status);
@@ -416,7 +434,6 @@ export async function patchTask(id, patch, { caller = {} } = {}) {
     'title',
     'description',
     'priority',
-    'assigned_agent',
     'branch',
     'depends_on',
     'round',
@@ -442,15 +459,17 @@ export async function patchTask(id, patch, { caller = {} } = {}) {
   await getStorage().saveTask(candidate, nextTasks);
   updateInMemoryTask(candidate);
   notify();
-  return { task: candidate, status: 200 };
+    return { task: candidate, status: 200 };
+  });
 }
 
 /**
  * Claims a task with contention protection (KB-03).
  */
 export async function claimTask(id, agentId) {
-  const task = getTask(id);
-  if (!task) return { error: 'Task not found', status: 404 };
+  return withMutationLock(async () => {
+    const task = getTask(id);
+    if (!task) return { error: 'Task not found', status: 404 };
 
   if (!agentId || typeof agentId !== 'string') {
     return { error: 'agent_id is required', status: 400 };
@@ -487,15 +506,17 @@ export async function claimTask(id, agentId) {
   await getStorage().saveTask(candidate, nextTasks);
   updateInMemoryTask(candidate);
   notify();
-  return { task: candidate, status: 200 };
+    return { task: candidate, status: 200 };
+  });
 }
 
 /**
  * Appends log to task.
  */
 export async function appendLog(id, agentId, message) {
-  const task = getTask(id);
-  if (!task) return { error: 'Task not found', status: 404 };
+  return withMutationLock(async () => {
+    const task = getTask(id);
+    if (!task) return { error: 'Task not found', status: 404 };
 
   if (!agentId || !message) {
     return { error: 'agent_id and message are required', status: 400 };
@@ -517,15 +538,17 @@ export async function appendLog(id, agentId, message) {
   await getStorage().saveTask(candidate, nextTasks);
   updateInMemoryTask(candidate);
   notify();
-  return { task: candidate, status: 200 };
+    return { task: candidate, status: 200 };
+  });
 }
 
 /**
  * Appends issue to task (KB-08).
  */
 export async function addIssue(id, issueId) {
-  const task = getTask(id);
-  if (!task) return { error: 'Task not found', status: 404 };
+  return withMutationLock(async () => {
+    const task = getTask(id);
+    if (!task) return { error: 'Task not found', status: 404 };
 
   if (!issueId || typeof issueId !== 'string') {
     return { error: 'issue_id is required', status: 400 };
@@ -545,5 +568,6 @@ export async function addIssue(id, issueId) {
   await getStorage().saveTask(candidate, nextTasks);
   updateInMemoryTask(candidate);
   notify();
-  return { issues: candidate.issues, status: 200 };
+    return { issues: candidate.issues, status: 200 };
+  });
 }

@@ -5,6 +5,7 @@ export type TaskStatus =
   | 'IN_TEST'
   | 'BLOCKED'
   | 'DONE'
+  | 'ISSUES'
   | 'backlog'
   | 'todo'
   | 'in_progress'
