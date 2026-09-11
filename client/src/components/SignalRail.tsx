@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { Task } from '../types'
-import { normalizeStatus } from '../status.js'
+import { computeSignalStats } from '../lib/signalStats'
 
 type Props = {
   tasks: Task[]
@@ -13,17 +13,6 @@ type ActivityItem = {
   agentId: string
   message: string
   timestamp: string
-}
-
-function isToday(ts: string): boolean {
-  const d = new Date(ts)
-  if (Number.isNaN(d.getTime())) return false
-  const now = new Date()
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  )
 }
 
 function formatRelative(ts: string): string {
@@ -42,23 +31,7 @@ function formatRelative(ts: string): string {
 }
 
 export default function SignalRail({ tasks, onOpen }: Props) {
-  const active = useMemo(
-    () => tasks.filter((t) => normalizeStatus(t.status) === 'BUILDING' && !!t.assigned_agent).length,
-    [tasks],
-  )
-
-  const blocked = useMemo(
-    () => tasks.filter((t) => normalizeStatus(t.status) === 'BLOCKED').length,
-    [tasks],
-  )
-
-   const doneToday = useMemo(
-     () =>
-       tasks.filter(
-         (t) => normalizeStatus(t.status) === 'DONE' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
-       ).length,
-     [tasks],
-   )
+  const { active, blocked, doneToday } = useMemo(() => computeSignalStats(tasks), [tasks])
 
    const activities = useMemo<ActivityItem[]>(() => {
      const items: ActivityItem[] = []
