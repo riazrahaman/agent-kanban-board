@@ -29,10 +29,10 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 ```bash
 # From repository root
 npm start
-# or: cd server && npm install && KANBAN_AUTH_TOKEN=change-me npm start
+# or: cd server && npm install && npm start
 ```
 
-The REST API and Server-Sent Events stream run on `http://localhost:4000`. Mutating requests require `KANBAN_AUTH_TOKEN`; reads remain open. This desk-oriented checkout selects the git-backed YAML store by default and writes cards to `../ops/kanban`. A stranger can run the standalone backend with `KANBAN_STORAGE_BACKEND=json KANBAN_DATA_FILE=server/tasks.json`.
+The REST API and Server-Sent Events stream run on `http://localhost:4000`. The default JSON store is local to this clone, so the server starts with no configuration. Read-only monitoring works immediately; configure `KANBAN_AUTH_TOKEN` before sending mutations. The optional git-backed YAML store is selected explicitly with `KANBAN_STORAGE_BACKEND=git` and `KANBAN_GIT_DIR=/path/to/cards`.
 
 ### 2. Start the Frontend Client
 
@@ -96,8 +96,8 @@ The board features pluggable persistence:
   - Mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`. If the token is not configured, mutations fail closed with `503`.
   - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring.
 - **CORS Lockdown (A05)**:
-  - CORS is restricted to loopback origins (`http://localhost:5173`, `http://127.0.0.1:5173`, etc.) by default. Wildcard `*` is prohibited.
-  - Custom origins can be specified via `KANBAN_ALLOWED_ORIGIN`. Untrusted origins receive no `Access-Control-Allow-Origin` header.
+  - CORS is restricted to `http://localhost:5173` by default. Set one explicit `KANBAN_ALLOWED_ORIGIN` to use another client origin; wildcard `*` is prohibited.
+  - Untrusted origins receive no `Access-Control-Allow-Origin` header.
 - **Input Sanitization (A03)**:
   - All untrusted input from agents (task titles, descriptions, and log messages) is escaped to prevent Stored XSS.
 

@@ -65,7 +65,7 @@ export default function App() {
     <div className="flex h-screen flex-col bg-bg text-ink">
       <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <span className="h-2 w-2 rounded-full bg-live animate-pulse" />
+          <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
           <div className="flex items-baseline gap-2">
             <h1 className="font-serif text-lg font-normal tracking-tight text-ink">
               Agent Kanban Board
@@ -76,7 +76,7 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-xs tabular-nums text-muted px-2 py-0.5 border border-line bg-muted-bg">
+          <span className="font-mono text-xs tabular-nums text-ink px-2 py-0.5 border border-line bg-muted-bg">
             {tasks.length} tasks
           </span>
           <button

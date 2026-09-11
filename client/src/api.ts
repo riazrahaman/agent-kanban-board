@@ -1,6 +1,6 @@
 import type { Task } from './types'
 
-const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4100/api')
+const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api')
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {

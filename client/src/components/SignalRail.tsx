@@ -25,6 +25,13 @@ function isToday(ts: string): boolean {
   )
 }
 
+function normalizedStatus(status: string): string {
+  const value = status?.toUpperCase() ?? 'BACKLOG'
+  if (value === 'IN_PROGRESS') return 'BUILDING'
+  if (value === 'TODO') return 'BACKLOG'
+  return value
+}
+
 function formatRelative(ts: string): string {
   const date = new Date(ts)
   const time = date.getTime()
@@ -42,19 +49,19 @@ function formatRelative(ts: string): string {
 
 export default function SignalRail({ tasks, onOpen }: Props) {
   const active = useMemo(
-    () => tasks.filter((t) => t.status === 'in_progress' && !!t.assigned_agent).length,
+    () => tasks.filter((t) => normalizedStatus(t.status) === 'BUILDING' && !!t.assigned_agent).length,
     [tasks],
   )
 
   const blocked = useMemo(
-    () => tasks.filter((t) => t.status === 'blocked').length,
+    () => tasks.filter((t) => normalizedStatus(t.status) === 'BLOCKED').length,
     [tasks],
   )
 
    const doneToday = useMemo(
      () =>
        tasks.filter(
-         (t) => t.status === 'done' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
+         (t) => normalizedStatus(t.status) === 'DONE' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
        ).length,
      [tasks],
    )
@@ -111,7 +118,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
             <div
               className={[
                 'mt-0.5 font-mono text-[10px] uppercase tracking-wider',
-                blocked > 0 ? 'text-fail' : 'text-muted',
+                blocked > 0 ? 'text-fail' : 'text-ink',
               ].join(' ')}
             >
               Blocked
@@ -133,7 +140,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
           <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
             Activity
           </h2>
-          <span className="font-mono text-[10px] tabular-nums text-muted">
+          <span className="font-mono text-[10px] tabular-nums text-ink">
             {activities.length} recent
           </span>
         </div>

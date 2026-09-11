@@ -3,24 +3,18 @@ import cors from 'cors';
 /**
  * Configures CORS with strict origin restrictions (spec Sec 6.3 A05, KB-06).
  *
- * Defaults to loopback / local origins only (never wildcard '*').
- * Can be overridden with comma-separated origins via KANBAN_ALLOWED_ORIGIN.
+ * Defaults to the local Vite client origin (never wildcard '*').
+ * The configured value is a single origin; additional origins must be
+ * deliberately configured by the operator.
  */
 export function configureCors() {
-  const configured = process.env.KANBAN_ALLOWED_ORIGIN || process.env.ALLOWED_ORIGIN;
+  const allowedOrigin = (
+    process.env.KANBAN_ALLOWED_ORIGIN || 'http://localhost:5173'
+  ).trim();
 
-  const defaultOrigins = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:4000',
-    'http://127.0.0.1:4000',
-  ];
-
-  const allowedOrigins = configured
-    ? configured.split(',').map((o) => o.trim()).filter(Boolean)
-    : defaultOrigins;
+  if (!allowedOrigin || allowedOrigin === '*') {
+    throw new Error('KANBAN_ALLOWED_ORIGIN must be one explicit origin');
+  }
 
   return cors({
     origin: (origin, callback) => {
@@ -29,7 +23,7 @@ export function configureCors() {
         return callback(null, true);
       }
 
-      if (allowedOrigins.includes(origin)) {
+      if (origin === allowedOrigin) {
         return callback(null, true);
       }
 
