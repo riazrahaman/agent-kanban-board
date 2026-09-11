@@ -9,16 +9,19 @@ const STATUS_STYLES: Record<string, string> = {
   BUILDING: 'border-l-live bg-live-bg text-live',
   BLOCKED: 'border-l-block bg-block-bg text-block',
   BACKLOG: 'border-l-line bg-muted-bg text-muted',
+  UNKNOWN: 'border-l-line bg-muted-bg text-muted',
 }
 
 export default function StatusBadge({ status }: Props) {
-  const normalized = status?.toUpperCase() || 'BACKLOG'
+  const normalized = typeof status === 'string' && status.trim()
+    ? status.toUpperCase()
+    : 'UNKNOWN'
   const isRunning = normalized === 'BUILDING' || normalized === 'IN_TEST'
   const marker = normalized === 'IN_REVIEW' ? '▲ ' : isRunning ? '• ' : ''
 
   return (
     <span
-      className={`inline-flex items-center border-l-[3px] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] ${STATUS_STYLES[normalized] ?? STATUS_STYLES.BACKLOG}`}
+      className={`inline-flex items-center border-l-[3px] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] ${STATUS_STYLES[normalized] ?? STATUS_STYLES.UNKNOWN}`}
       aria-label={`Status: ${normalized}`}
     >
       {marker}{normalized}
