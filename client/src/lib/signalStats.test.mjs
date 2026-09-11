@@ -1,15 +1,34 @@
+// Plain-JS (.mjs) test runner for signalStats.ts. Node's native TypeScript
+// execution only exists on Node 22.6+ (behind a flag until 23.6+); this
+// project's CI matrix (.github/workflows/ci.yml) also tests Node 20.x, which
+// cannot run .ts files at all (ERR_UNKNOWN_FILE_EXTENSION). esbuild (already
+// a client devDependency via Vite) bundles the TS source into plain ESM at
+// test time, so this file runs unmodified on every Node version CI covers.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-
-import { computeSignalStats } from './signalStats.ts'
-import type { Task } from '../types.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-function task(overrides: Partial<Task>): Task {
+const result = await build({
+  entryPoints: [join(__dirname, 'signalStats.ts')],
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'node',
+  target: 'node20',
+})
+const tmpDir = await mkdtemp(join(tmpdir(), 'signalStats-test-'))
+const tmpFile = join(tmpDir, 'signalStats.bundle.mjs')
+await writeFile(tmpFile, result.outputFiles[0].text)
+const { computeSignalStats } = await import(pathToFileURL(tmpFile).href)
+await rm(tmpDir, { recursive: true, force: true })
+
+function task(overrides) {
   return {
     id: 'x',
     title: 't',
@@ -25,7 +44,7 @@ function task(overrides: Partial<Task>): Task {
 
 test('BUILDING/IN_REVIEW/IN_TEST count as active regardless of assigned_agent', () => {
   const now = new Date('2026-09-11T12:00:00Z')
-  const tasks: Task[] = [
+  const tasks = [
     task({ id: 'a', status: 'BUILDING', assigned_agent: 'codex-builder' }),
     task({ id: 'b', status: 'BUILDING', assigned_agent: null }),
     task({ id: 'c', status: 'IN_REVIEW' }),
@@ -38,7 +57,7 @@ test('BUILDING/IN_REVIEW/IN_TEST count as active regardless of assigned_agent', 
 
 test('BLOCKED is counted exactly, case-sensitively', () => {
   const now = new Date('2026-09-11T12:00:00Z')
-  const tasks: Task[] = [
+  const tasks = [
     task({ id: 'a', status: 'BLOCKED' }),
     task({ id: 'b', status: 'BLOCKED' }),
     task({ id: 'c', status: 'BUILDING' }),
@@ -50,7 +69,7 @@ test('BLOCKED is counted exactly, case-sensitively', () => {
 
 test('doneToday requires DONE status AND a log entry timestamped today', () => {
   const now = new Date('2026-09-11T12:00:00Z')
-  const tasks: Task[] = [
+  const tasks = [
     task({
       id: 'today',
       status: 'DONE',
@@ -75,9 +94,9 @@ test('doneToday requires DONE status AND a log entry timestamped today', () => {
   assert.equal(computeSignalStats(tasks, now).doneToday, 1)
 })
 
-test('regression: the reported bug (all tiles stuck at 0) is fixed against live server/tasks.json', () => {
-  const raw = readFileSync(join(__dirname, '../../../server/tasks.json'), 'utf-8')
-  const data = JSON.parse(raw) as { tasks: Task[] }
+test('regression: the reported bug (all tiles stuck at 0) is fixed against live server/tasks.json', async () => {
+  const raw = await readFile(join(__dirname, '../../../server/tasks.json'), 'utf-8')
+  const data = JSON.parse(raw)
   // "Now" pinned to when this bug was reported, well after every v3-0N log.
   const now = new Date('2026-09-11T16:20:00+04:00')
   const stats = computeSignalStats(data.tasks, now)
