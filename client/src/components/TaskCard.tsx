@@ -1,5 +1,6 @@
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
+import { statusStyle } from '../status.js'
 
 type Props = {
   task: Task
@@ -7,6 +8,8 @@ type Props = {
 }
 
 export default function TaskCard({ task, onOpen }: Props) {
+  const stripe = statusStyle(task.status).stripe
+
   return (
     <div
       data-id={task.id}
@@ -15,10 +18,7 @@ export default function TaskCard({ task, onOpen }: Props) {
         'group cursor-pointer border border-line bg-surface p-3 transition-colors',
         'hover:bg-muted-bg/50',
         'border-l-[3px]',
-        task.status.toUpperCase() === 'DONE' ? 'border-l-pass' :
-          task.status.toUpperCase() === 'BLOCKED' ? 'border-l-block' :
-            task.status.toUpperCase() === 'IN_REVIEW' ? 'border-l-warn' :
-              task.status.toUpperCase() === 'BACKLOG' ? 'border-l-line' : 'border-l-live',
+        stripe,
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
