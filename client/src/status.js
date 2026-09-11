@@ -8,9 +8,14 @@ const STATUS_STYLES = {
   UNKNOWN: { stripe: 'border-l-line', badge: 'bg-muted-bg text-muted' },
 }
 
+const KNOWN_STATUSES = new Set(Object.keys(STATUS_STYLES).filter((status) => status !== 'UNKNOWN'))
+
 export function normalizeStatus(status) {
   if (typeof status !== 'string' || !status.trim()) return 'UNKNOWN'
-  return status.toUpperCase()
+  const normalized = status.toUpperCase()
+  if (normalized === 'TODO') return 'BACKLOG'
+  if (normalized === 'IN_PROGRESS') return 'BUILDING'
+  return KNOWN_STATUSES.has(normalized) ? normalized : 'UNKNOWN'
 }
 
 export function statusStyle(status) {

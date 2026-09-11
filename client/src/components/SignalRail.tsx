@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { Task } from '../types'
+import { normalizeStatus } from '../status.js'
 
 type Props = {
   tasks: Task[]
@@ -25,13 +26,6 @@ function isToday(ts: string): boolean {
   )
 }
 
-function normalizedStatus(status: string): string {
-  const value = status?.toUpperCase() ?? 'BACKLOG'
-  if (value === 'IN_PROGRESS') return 'BUILDING'
-  if (value === 'TODO') return 'BACKLOG'
-  return value
-}
-
 function formatRelative(ts: string): string {
   const date = new Date(ts)
   const time = date.getTime()
@@ -49,19 +43,19 @@ function formatRelative(ts: string): string {
 
 export default function SignalRail({ tasks, onOpen }: Props) {
   const active = useMemo(
-    () => tasks.filter((t) => normalizedStatus(t.status) === 'BUILDING' && !!t.assigned_agent).length,
+    () => tasks.filter((t) => normalizeStatus(t.status) === 'BUILDING' && !!t.assigned_agent).length,
     [tasks],
   )
 
   const blocked = useMemo(
-    () => tasks.filter((t) => normalizedStatus(t.status) === 'BLOCKED').length,
+    () => tasks.filter((t) => normalizeStatus(t.status) === 'BLOCKED').length,
     [tasks],
   )
 
    const doneToday = useMemo(
      () =>
        tasks.filter(
-         (t) => normalizedStatus(t.status) === 'DONE' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
+         (t) => normalizeStatus(t.status) === 'DONE' && Array.isArray(t.agent_logs) && t.agent_logs.some((l) => isToday(l.timestamp)),
        ).length,
      [tasks],
    )
