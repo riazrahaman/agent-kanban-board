@@ -259,7 +259,8 @@ function withMutationLock(operation) {
 
 export function getStorage() {
   if (!storage) {
-    const backend = process.env.KANBAN_STORAGE_BACKEND || 'git';
+    // A clone must boot safely without the desk repo or any configuration.
+    const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
     if (backend === 'git') {
       const gitDir =
         process.env.KANBAN_GIT_DIR ||

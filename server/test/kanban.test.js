@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import yaml from 'yaml';
 import { createApp } from '../server.js';
@@ -12,6 +13,7 @@ import * as store from '../store.js';
 
 const execFileAsync = promisify(execFile);
 const TOKEN = 'pi03-test-token';
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 async function startTestServer(app) {
   return new Promise((resolve) => {
@@ -355,5 +357,117 @@ describe('PI-03 kanban contract', () => {
       store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
       await store.loadStore();
     });
+  });
+});
+
+describe('PI-04 public board hardening', () => {
+  let server;
+  let baseUrl;
+
+  before(async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    delete process.env.KANBAN_ALLOWED_ORIGIN;
+    ({ server, baseUrl } = await startTestServer(createApp()));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    delete process.env.KANBAN_ALLOWED_ORIGIN;
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+  });
+
+  it('allows only the configured CORS origin, never a broad loopback allowlist', async () => {
+    let response = await fetch(`${baseUrl}/api/tasks`, {
+      headers: { Origin: 'http://localhost:5173' },
+    });
+    assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+
+    response = await fetch(`${baseUrl}/api/tasks`, {
+      headers: { Origin: 'http://127.0.0.1:5173' },
+    });
+    assert.equal(response.headers.get('access-control-allow-origin'), null);
+
+    process.env.KANBAN_ALLOWED_ORIGIN = 'https://board.example.test';
+    const configured = await startTestServer(createApp());
+    try {
+      response = await fetch(`${configured.baseUrl}/api/tasks`, {
+        headers: { Origin: 'https://board.example.test' },
+      });
+      assert.equal(response.headers.get('access-control-allow-origin'), 'https://board.example.test');
+      response = await fetch(`${configured.baseUrl}/api/tasks`, {
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      assert.equal(response.headers.get('access-control-allow-origin'), null);
+    } finally {
+      await new Promise((resolve) => configured.server.close(resolve));
+      delete process.env.KANBAN_ALLOWED_ORIGIN;
+    }
+  });
+
+  it('stores agent-authored logs as inert text and the client renders them as JSX text', async () => {
+    const created = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST',
+      headers: headers(),
+      body: taskBody('xss-log', 'XSS log target'),
+    });
+    assert.equal(created.response.status, 201);
+
+    const logged = await jsonRequest(baseUrl, '/api/tasks/xss-log/logs', {
+      method: 'POST',
+      headers: headers(undefined, '<agent>'),
+      body: JSON.stringify({
+        agent_id: '<agent>',
+        message: '<script>alert("owned")</script><img src=x onerror=alert(1)>',
+      }),
+    });
+    assert.equal(logged.response.status, 200);
+    const log = logged.body.agent_logs.at(-1);
+    assert.equal(log.agent_id, '&lt;agent&gt;');
+    assert.equal(
+      log.message,
+      '&lt;script&gt;alert(&quot;owned&quot;)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;',
+    );
+
+    const taskSheet = await readFile(path.join(REPO_ROOT, 'client/src/components/TaskSheet.tsx'), 'utf8');
+    assert.match(taskSheet, /\{log\.message\}/);
+    assert.doesNotMatch(taskSheet, /dangerouslySetInnerHTML/);
+  });
+
+  it('keeps the public clone standalone and free of drag-and-drop dependencies', async () => {
+    const clientPackage = JSON.parse(
+      await readFile(path.join(REPO_ROOT, 'client/package.json'), 'utf8'),
+    );
+    assert.equal(clientPackage.dependencies?.sortablejs, undefined);
+    assert.equal(clientPackage.devDependencies?.sortablejs, undefined);
+    const lockfile = await readFile(path.join(REPO_ROOT, 'client/package-lock.json'), 'utf8');
+    assert.doesNotMatch(lockfile, /sortablejs/i);
+
+    const sourceFiles = await Promise.all(
+      ['App.tsx', 'Board.tsx', 'Column.tsx', 'TaskCard.tsx', 'TaskSheet.tsx', 'SignalRail.tsx']
+        .map((file) => readFile(path.join(REPO_ROOT, 'client/src', file === 'App.tsx' ? file : `components/${file}`), 'utf8')),
+    );
+    assert.ok(sourceFiles.every((source) => !/sortablejs|onDrag|onDrop|draggable/i.test(source)));
+
+    const defaultBackend = process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    store.setStorage(null);
+    assert.ok(store.getStorage() instanceof store.JsonStorage);
+    if (defaultBackend === undefined) delete process.env.KANBAN_STORAGE_BACKEND;
+    else process.env.KANBAN_STORAGE_BACKEND = defaultBackend;
+  });
+
+  it('keeps client source on the DESIGN.md visual contract', async () => {
+    const sourceFiles = await Promise.all(
+      ['App.tsx', 'Board.tsx', 'Column.tsx', 'TaskCard.tsx', 'TaskSheet.tsx', 'SignalRail.tsx']
+        .map((file) => readFile(path.join(REPO_ROOT, 'client/src', file === 'App.tsx' ? file : `components/${file}`), 'utf8')),
+    );
+    const source = sourceFiles.join('\n');
+    assert.doesNotMatch(source, /rounded-full|shadow-|\bInter\b|\bRoboto\b|👤/i);
+    assert.match(source, /tabular-nums/);
+    assert.match(source, /StatusBadge/);
+    assert.match(await readFile(path.join(REPO_ROOT, 'client/src/index.css'), 'utf8'), /--bg:\s*#fbfbfa/);
+    for (const file of ['README.md', 'LICENSE', 'client/package-lock.json', 'server/package-lock.json', '.github/workflows/ci.yml']) {
+      assert.ok(existsSync(path.join(REPO_ROOT, file)), `${file} must be present`);
+    }
   });
 });
