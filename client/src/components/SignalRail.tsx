@@ -85,7 +85,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
             <div
               className={[
                 'mt-0.5 font-mono text-[10px] uppercase tracking-wider',
-                blocked > 0 ? 'text-fail' : 'text-muted',
+                blocked > 0 ? 'text-fail' : 'text-ink',
               ].join(' ')}
             >
               Blocked
@@ -107,7 +107,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
           <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
             Activity
           </h2>
-          <span className="font-mono text-[10px] tabular-nums text-muted">
+          <span className="font-mono text-[10px] tabular-nums text-ink">
             {activities.length} recent
           </span>
         </div>

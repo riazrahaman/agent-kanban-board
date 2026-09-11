@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Task } from '../types'
 import { appendLog } from '../api'
 import { normalizePriority } from '../priority'
+import StatusBadge from './StatusBadge'
 
 const PRIORITY_BADGE: Record<Task['priority'], string> = {
   high: 'bg-down-bg text-down border-line',
@@ -48,7 +49,7 @@ export default function TaskSheet({ task, onClose }: Props) {
     <>
       <div
         className={[
-          'fixed inset-0 z-40 bg-ink/30 dark:bg-black/70 transition-opacity',
+          'fixed inset-0 z-40 bg-ink/30 dark:bg-ink/70 transition-opacity',
           open ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
         ].join(' ')}
         onClick={onClose}
@@ -66,7 +67,7 @@ export default function TaskSheet({ task, onClose }: Props) {
             <div className="flex items-start justify-between gap-3 border-b border-line p-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="font-mono text-xs tabular-nums text-muted tracking-wider">
+                  <span className="font-mono text-xs tabular-nums text-ink tracking-wider">
                     {task.id}
                   </span>
                 </div>
@@ -77,12 +78,9 @@ export default function TaskSheet({ task, onClose }: Props) {
                   >
                     {task.priority}
                   </span>
-                  <span className="border border-line bg-muted-bg px-1.5 py-0.5 uppercase tracking-wider text-ink">
-                    {task.status}
-                  </span>
+                  <StatusBadge status={task.status} />
                   {task.assigned_agent && (
-                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted tabular-nums">
-                      <span aria-hidden>👤</span>
+                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums">
                       {task.assigned_agent}
                     </span>
                   )}
@@ -141,7 +139,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                           <span className="border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink">
                             {log.agent_id}
                           </span>
-                          <span className="font-mono text-[10px] tabular-nums text-muted">
+                          <span className="font-mono text-[10px] tabular-nums text-ink">
                             {formatTimestamp(log.timestamp)}
                           </span>
                         </div>

@@ -1,66 +1,14 @@
 import type { Task } from '../types'
+import StatusBadge from './StatusBadge'
+import { statusStyle } from '../status.js'
 
 type Props = {
   task: Task
   onOpen: (id: string) => void
 }
 
-type StatusStyle = {
-  stripe: string
-  pillBg: string
-  pillText: string
-  glyph?: string
-  pulsingDot?: boolean
-}
-
-function getStatusStyle(status: string): StatusStyle {
-  const s = status?.toUpperCase() ?? 'BACKLOG'
-  switch (s) {
-    case 'DONE':
-      return {
-        stripe: 'border-l-pass',
-        pillBg: 'bg-pass-bg',
-        pillText: 'text-pass',
-      }
-    case 'IN_TEST':
-      return {
-        stripe: 'border-l-live',
-        pillBg: 'bg-live-bg',
-        pillText: 'text-live',
-        pulsingDot: true,
-      }
-    case 'IN_REVIEW':
-      return {
-        stripe: 'border-l-warn',
-        pillBg: 'bg-warn-bg',
-        pillText: 'text-warn',
-        glyph: '▲',
-      }
-    case 'BUILDING':
-      return {
-        stripe: 'border-l-live',
-        pillBg: 'bg-live-bg',
-        pillText: 'text-live',
-        pulsingDot: true,
-      }
-    case 'BLOCKED':
-      return {
-        stripe: 'border-l-block',
-        pillBg: 'bg-block-bg',
-        pillText: 'text-block',
-      }
-    case 'BACKLOG':
-    default:
-      return {
-        stripe: 'border-l-line',
-        pillBg: 'bg-muted-bg',
-        pillText: 'text-muted',
-      }
-  }
-}
-
 export default function TaskCard({ task, onOpen }: Props) {
-  const statusStyle = getStatusStyle(task.status)
+  const stripe = statusStyle(task.status).stripe
 
   return (
     <div
@@ -70,27 +18,15 @@ export default function TaskCard({ task, onOpen }: Props) {
         'group cursor-pointer border border-line bg-surface p-3 transition-colors',
         'hover:bg-muted-bg/50',
         'border-l-[3px]',
-        statusStyle.stripe,
+        stripe,
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="font-mono text-xs tabular-nums text-muted tracking-wider">
+          <span className="font-mono text-xs tabular-nums text-ink tracking-wider">
           {task.id}
         </span>
         <div className="flex items-center gap-1.5">
-          <span
-            className={[
-              'inline-flex items-center gap-1 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em]',
-              statusStyle.pillBg,
-              statusStyle.pillText,
-            ].join(' ')}
-          >
-            {statusStyle.glyph && <span>{statusStyle.glyph}</span>}
-            {statusStyle.pulsingDot && (
-              <span className="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-current opacity-75" />
-            )}
-            {task.status}
-          </span>
+          <StatusBadge status={task.status} />
         </div>
       </div>
 
@@ -100,8 +36,7 @@ export default function TaskCard({ task, onOpen }: Props) {
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
         {task.assigned_agent ? (
-          <span className="inline-flex items-center gap-1 font-mono text-muted tabular-nums">
-            <span aria-hidden>👤</span>
+          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums">
             {task.assigned_agent}
           </span>
         ) : (

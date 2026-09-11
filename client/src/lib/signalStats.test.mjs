@@ -6,7 +6,7 @@
 // test time, so this file runs unmodified on every Node version CI covers.
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -94,17 +94,32 @@ test('doneToday requires DONE status AND a log entry timestamped today', () => {
   assert.equal(computeSignalStats(tasks, now).doneToday, 1)
 })
 
-test('regression: the reported bug (all tiles stuck at 0) is fixed against live server/tasks.json', async () => {
-  const raw = await readFile(join(__dirname, '../../../server/tasks.json'), 'utf-8')
-  const data = JSON.parse(raw)
-  // "Now" pinned to when this bug was reported, well after every v3-0N log.
+test('regression: the reported bug (all tiles stuck at 0) is fixed against realistic multi-task data', () => {
+  // Fixed fixture rather than reading the live server/tasks.json: that file
+  // is mutable local/dev state (it's whatever the board's own runtime last
+  // wrote), so a test asserting exact counts against it is coupled to
+  // whoever last ran the server rather than to this function's behavior.
   const now = new Date('2026-09-11T16:20:00+04:00')
-  const stats = computeSignalStats(data.tasks, now)
+  const tasks = [
+    task({
+      id: 'done-today-1',
+      status: 'DONE',
+      agent_logs: [{ timestamp: '2026-09-11T02:57:00Z', agent_id: 'x', message: 'm' }],
+    }),
+    task({
+      id: 'done-today-2',
+      status: 'DONE',
+      agent_logs: [{ timestamp: '2026-09-11T09:00:00Z', agent_id: 'y', message: 'm' }],
+    }),
+    task({ id: 'done-old', status: 'DONE', agent_logs: [] }),
+    task({ id: 'backlog', status: 'BACKLOG' }),
+  ]
+  const stats = computeSignalStats(tasks, now)
 
-  // All 9 tasks are DONE; none are BUILDING/IN_REVIEW/IN_TEST/BLOCKED right now.
+  // None of these fixture tasks are BUILDING/IN_REVIEW/IN_TEST/BLOCKED.
   assert.equal(stats.active, 0)
   assert.equal(stats.blocked, 0)
   // Before the fix this was always 0 regardless of data; it must now be > 0
-  // since several tasks were completed on the same day this test is pinned to.
+  // since two tasks were completed on the same day this test is pinned to.
   assert.ok(stats.doneToday > 0, `expected doneToday > 0, got ${stats.doneToday}`)
 })
