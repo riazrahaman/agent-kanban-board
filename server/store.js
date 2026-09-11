@@ -190,6 +190,9 @@ export class GitYamlStorage {
 
   async saveTask(task) {
     await mkdir(this.dir, { recursive: true });
+    if (!Number.isInteger(task.round) || task.round < 1) {
+      throw new Error('Git-backed task persistence requires a positive integer round');
+    }
     const filename = `${task.id}.yml`;
     const filePath = path.resolve(this.dir, filename);
     const targetDir = path.resolve(this.dir);
@@ -204,7 +207,7 @@ export class GitYamlStorage {
       status: task.status,
       branch: task.branch || `task/${task.id}`,
       depends_on: task.depends_on || [],
-      round: task.round ?? 1,
+      round: task.round,
       issues: task.issues || [],
       assigned_agent: task.assigned_agent ?? null,
       updated: task.updated || new Date().toISOString(),
@@ -340,9 +343,12 @@ export async function createTask(data) {
     };
     }
 
-  const status = data.status ? normalizeStatus(data.status) : STATUSES.BACKLOG;
-    if (data.status && !status) {
-    return { error: `Invalid status: ${data.status}`, status: 400 };
+  const status = normalizeStatus(data.status);
+    if (!status) {
+      return { error: `Invalid status: ${data.status}`, status: 400 };
+    }
+    if (!Number.isInteger(data.round) || data.round < 1) {
+      return { error: 'round must be a positive integer', status: 400 };
     }
 
   const existing = getTask(data.id);
@@ -352,15 +358,13 @@ export async function createTask(data) {
     id: data.id,
     title: escapeHtml(data.title),
     description: escapeHtml(data.description || existing?.description || ''),
-    status: status || existing?.status || STATUSES.BACKLOG,
+    status,
     priority: data.priority || existing?.priority || 'medium',
     branch: data.branch || existing?.branch || `task/${data.id}`,
     depends_on: Array.isArray(data.depends_on)
       ? data.depends_on
       : existing?.depends_on || [],
-    round: Number.isInteger(data.round)
-      ? data.round
-      : existing?.round || 1,
+    round: data.round,
     issues: Array.isArray(data.issues)
       ? data.issues
       : existing?.issues || [],
@@ -426,7 +430,6 @@ export async function patchTask(id, patch, { caller = {} } = {}) {
     'title',
     'description',
     'priority',
-    'assigned_agent',
     'branch',
     'depends_on',
     'round',

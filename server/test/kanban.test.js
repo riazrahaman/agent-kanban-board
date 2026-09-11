@@ -2,7 +2,7 @@ import test, { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -28,6 +28,10 @@ function headers(role, agentId) {
     ...(role ? { 'X-Agent-Role': role } : {}),
     ...(agentId ? { 'X-Agent-Id': agentId } : {}),
   };
+}
+
+function taskBody(id, title, extra = {}) {
+  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -56,9 +60,27 @@ describe('PI-03 kanban contract', () => {
   });
 
   describe('KB-01 and KB-02 state machine and role ownership', () => {
+    it('refuses missing or blank status and round instead of fabricating workflow values', async () => {
+      let result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ id: 'missing-status', title: 'Missing status', round: 1 }),
+      });
+      assert.equal(result.response.status, 400);
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ id: 'blank-status', title: 'Blank status', status: ' ', round: 1 }),
+      });
+      assert.equal(result.response.status, 400);
+      result = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ id: 'missing-round', title: 'Missing round', status: 'BACKLOG' }),
+      });
+      assert.equal(result.response.status, 400);
+    });
+
     it('accepts the owned loop and rejects jumps, invalid values, and missing roles', async () => {
       let result = await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'flow', title: 'State flow' }),
+        method: 'POST', headers: headers(), body: taskBody('flow', 'State flow'),
       });
       assert.equal(result.response.status, 201);
       assert.equal(result.body.status, 'BACKLOG');
@@ -93,7 +115,7 @@ describe('PI-03 kanban contract', () => {
       assert.equal(result.response.status, 409, 'DONE is terminal');
 
       result = await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'jump', title: 'Jump' }),
+        method: 'POST', headers: headers(), body: taskBody('jump', 'Jump'),
       });
       assert.equal(result.response.status, 201);
       result = await jsonRequest(baseUrl, '/api/tasks/jump', {
@@ -115,7 +137,7 @@ describe('PI-03 kanban contract', () => {
       ];
       for (const [id, startingStatus] of cases) {
         await jsonRequest(baseUrl, '/api/tasks', {
-          method: 'POST', headers: headers(), body: JSON.stringify({ id, title: id }),
+          method: 'POST', headers: headers(), body: taskBody(id, id),
         });
         if (startingStatus !== 'BACKLOG') {
           await jsonRequest(baseUrl, `/api/tasks/${id}`, {
@@ -147,7 +169,7 @@ describe('PI-03 kanban contract', () => {
   describe('KB-03 claim contention', () => {
     it('allows one winner even for concurrent claims and permits idempotent reclaim', async () => {
       await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'claim', title: 'Claim' }),
+        method: 'POST', headers: headers(), body: taskBody('claim', 'Claim'),
       });
       const claims = await Promise.all(['alpha', 'beta'].map((agentId) => jsonRequest(
         baseUrl,
@@ -161,6 +183,12 @@ describe('PI-03 kanban contract', () => {
       });
       assert.equal(again.response.status, 200);
       assert.equal(again.body.assigned_agent, winner);
+
+      const bypass = await jsonRequest(baseUrl, '/api/tasks/claim', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ assigned_agent: 'thief' }),
+      });
+      assert.equal(bypass.response.status, 200);
+      assert.equal(bypass.body.assigned_agent, winner, 'PATCH cannot overwrite claim ownership');
     });
   });
 
@@ -188,7 +216,10 @@ describe('PI-03 kanban contract', () => {
         async saveTask() { throw new Error('simulated disk failure'); }
       }
       store.setStorage(new FailingStorage(path.join(tmpDir, 'never-written.json')));
-      await assert.rejects(store.createTask({ id: 'disk-failure', title: 'Must not appear' }), /disk failure/);
+      await assert.rejects(
+        store.createTask({ id: 'disk-failure', title: 'Must not appear', status: 'BACKLOG', round: 1 }),
+        /disk failure/,
+      );
       assert.equal(store.getTask('disk-failure'), null);
       store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
       await store.loadStore();
@@ -197,7 +228,7 @@ describe('PI-03 kanban contract', () => {
     it('persists an issue register and exposes issue-bearing tasks for the swimlane', async () => {
       const created = await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST', headers: headers(),
-        body: JSON.stringify({ id: 'issue-task', title: 'Issue task', issues: ['ISS-001'] }),
+        body: taskBody('issue-task', 'Issue task', { issues: ['ISS-001'] }),
       });
       assert.equal(created.response.status, 201);
       const added = await jsonRequest(baseUrl, '/api/tasks/issue-task/issues', {
@@ -205,8 +236,17 @@ describe('PI-03 kanban contract', () => {
       });
       assert.equal(added.response.status, 200);
       assert.deepEqual(added.body.issues, ['ISS-001', 'ISS-002']);
+      const duplicate = await jsonRequest(baseUrl, '/api/tasks/issue-task/issues', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ issue_id: 'ISS-002' }),
+      });
+      assert.deepEqual(duplicate.body.issues, ['ISS-001', 'ISS-002']);
       const listed = await jsonRequest(baseUrl, '/api/tasks/issue-task/issues');
       assert.deepEqual(listed.body.issues, ['ISS-001', 'ISS-002']);
+
+      const malformedRole = await jsonRequest(baseUrl, '/api/tasks/issue-task', {
+        method: 'PATCH', headers: headers('not-a-role'), body: JSON.stringify({ status: 'BUILDING' }),
+      });
+      assert.equal(malformedRole.response.status, 403);
     });
   });
 
@@ -219,7 +259,7 @@ describe('PI-03 kanban contract', () => {
       store.setStorage(new store.GitYamlStorage(gitDir));
       await store.loadStore();
       const result = await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: JSON.stringify({ id: 'git-task', title: 'Git card' }),
+        method: 'POST', headers: headers(), body: taskBody('git-task', 'Git card'),
       });
       assert.equal(result.response.status, 201);
       const cardPath = path.join(gitDir, 'git-task.yml');
@@ -232,6 +272,31 @@ describe('PI-03 kanban contract', () => {
       const log = await execFileAsync('git', ['log', '--format=%s', '-2'], { cwd: gitDir });
       assert.match(log.stdout, /ops\(git-task\): kanban BUILDING/);
       assert.match(log.stdout, /ops\(git-task\): kanban BACKLOG/);
+      await rm(gitDir, { recursive: true, force: true });
+    });
+
+    it('surfaces a commit failure and leaves the in-memory task unchanged', async () => {
+      const gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-git-failure-pi03-'));
+      const hooksDir = path.join(gitDir, 'hooks');
+      await execFileAsync('git', ['init'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.name', 'PI-03 Test'], { cwd: gitDir });
+      await execFileAsync('git', ['config', 'user.email', 'pi03@test.local'], { cwd: gitDir });
+      await mkdir(hooksDir, { recursive: true });
+      await writeFile(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 1\n', 'utf8');
+      await chmod(path.join(hooksDir, 'pre-commit'), 0o755);
+      await execFileAsync('git', ['config', 'core.hooksPath', hooksDir], { cwd: gitDir });
+      await assert.rejects(
+        new store.GitYamlStorage(gitDir).saveTask({ id: 'bad-round', title: 'Bad round', status: 'BACKLOG' }),
+        /requires a positive integer round/,
+      );
+      store.setStorage(new store.GitYamlStorage(gitDir));
+      await store.loadStore();
+      await assert.rejects(
+        store.createTask({ id: 'commit-failure', title: 'Commit failure', status: 'BACKLOG', round: 1 }),
+        /Git-backed persistence commit failed/,
+      );
+      assert.equal(store.getTask('commit-failure'), null);
+      await assert.rejects(execFileAsync('git', ['log', '-1'], { cwd: gitDir }));
       await rm(gitDir, { recursive: true, force: true });
     });
   });
