@@ -4,17 +4,7 @@ import { ACTIVE_STATUSES, CANONICAL_STATUSES } from './status.ts'
 export type SignalStats = {
   active: number
   blocked: number
-  doneToday: number
-}
-
-export function isToday(ts: string, now: Date = new Date()): boolean {
-  const d = new Date(ts)
-  if (Number.isNaN(d.getTime())) return false
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  )
+  done: number
 }
 
 /**
@@ -23,20 +13,20 @@ export function isToday(ts: string, now: Date = new Date()): boolean {
  * 'done') that stopped matching real data once the board standardized on the
  * uppercase canonical vocabulary (ADR-001) — the tiles were permanently stuck
  * at 0 regardless of actual board state. This uses the canonical statuses.
+ *
+ * `done` is the total count of tasks in the DONE state. It used to be a
+ * rolling "done today" window keyed on agent_log/updated local-calendar day,
+ * which silently dropped tasks that were finalized without agent_logs or that
+ * crossed a day boundary — so a board with 12 completed tasks could read 1.
  */
-export function computeSignalStats(tasks: Task[], now: Date = new Date()): SignalStats {
+export function computeSignalStats(tasks: Task[], _now: Date = new Date()): SignalStats {
   const active = tasks.filter((t) =>
-    (ACTIVE_STATUSES as readonly string[]).includes(t.status),
-  ).length
+     (ACTIVE_STATUSES as readonly string[]).includes(t.status),
+    ).length
 
   const blocked = tasks.filter((t) => t.status === CANONICAL_STATUSES.BLOCKED).length
 
-  const doneToday = tasks.filter(
-    (t) =>
-      t.status === CANONICAL_STATUSES.DONE &&
-      Array.isArray(t.agent_logs) &&
-      t.agent_logs.some((l) => isToday(l.timestamp, now)),
-  ).length
+  const done = tasks.filter((t) => t.status === CANONICAL_STATUSES.DONE).length
 
-  return { active, blocked, doneToday }
+  return { active, blocked, done }
 }

@@ -31,7 +31,7 @@ function formatRelative(ts: string): string {
 }
 
 export default function SignalRail({ tasks, onOpen }: Props) {
-  const { active, blocked, doneToday } = useMemo(() => computeSignalStats(tasks), [tasks])
+  const { active, blocked, done } = useMemo(() => computeSignalStats(tasks), [tasks])
 
    const activities = useMemo<ActivityItem[]>(() => {
      const items: ActivityItem[] = []
@@ -92,12 +92,12 @@ export default function SignalRail({ tasks, onOpen }: Props) {
             </div>
           </div>
 
-          <div className="border border-line bg-surface p-2.5 text-center">
-            <div className="font-mono text-xl font-medium tabular-nums text-ink">
-              {doneToday}
+            <div className="border border-line bg-surface p-2.5 text-center">
+              <div className="font-mono text-xl font-medium tabular-nums text-ink">
+                {done}
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">Done</div>
             </div>
-            <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">Done today</div>
-          </div>
         </div>
       </div>
 
