@@ -31,19 +31,22 @@ async function getTask(id) {
 
 const AUTH_TOKEN = process.env.KANBAN_AUTH_TOKEN || '';
 
-function getHeaders() {
+function getHeaders(role = 'builder') {
   const headers = { 'Content-Type': 'application/json' };
   if (AUTH_TOKEN) {
     headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
   }
+  if (role) {
+    headers['X-Agent-Role'] = role;
+  }
   return headers;
 }
 
-async function claimTask(id, agentId) {
+async function claimTask(id, agentId, role = 'builder') {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/claim`, {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ agent_id: agentId }),
+    headers: getHeaders(role),
+    body: JSON.stringify({ agent_id: agentId, role }),
   });
   if (!res.ok) {
     throw new Error(`POST /api/tasks/${id}/claim failed: ${res.status} ${res.statusText}`);
@@ -52,9 +55,10 @@ async function claimTask(id, agentId) {
 }
 
 async function patchTask(id, patch) {
+  const role = patch.role || 'builder';
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
     method: 'PATCH',
-    headers: getHeaders(),
+    headers: getHeaders(role),
     body: JSON.stringify(patch),
   });
   if (!res.ok) {
@@ -63,11 +67,11 @@ async function patchTask(id, patch) {
   return res.json();
 }
 
-async function addLog(id, agentId, message) {
+async function addLog(id, agentId, message, role = 'builder') {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/logs`, {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ agent_id: agentId, message }),
+    headers: getHeaders(role),
+    body: JSON.stringify({ agent_id: agentId, message, role }),
   });
   if (!res.ok) {
     throw new Error(`POST /api/tasks/${id}/logs failed: ${res.status} ${res.statusText}`);
@@ -86,14 +90,15 @@ async function runAgentAlpha() {
   await sleep(300);
 
   console.log('[Agent-Alpha] Moving task-1 to "blocked"...');
-  await patchTask('task-1', { status: 'blocked' });
+  await patchTask('task-1', { status: 'blocked', role: 'runner' });
   await sleep(300);
 
   console.log('[Agent-Alpha] Logging blocker reason on task-1...');
   await addLog(
     'task-1',
     'Agent-Alpha',
-    'Blocked: waiting on design review sign-off.'
+    'Blocked: waiting on design review sign-off.',
+    'runner'
   );
   await sleep(300);
 }
@@ -119,7 +124,8 @@ async function runAgentBeta() {
   await addLog(
     'task-3',
     'Agent-Beta',
-    'Rate limiter implemented and tests passing.'
+    'Rate limiter implemented and tests passing.',
+    'tester'
   );
   await sleep(300);
 }
@@ -129,8 +135,8 @@ async function ensureTask(id, title) {
   if (res.status === 404) {
     await fetch(`${BASE_URL}/api/tasks`, {
       method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify({ id, title, status: 'BACKLOG' }),
+      headers: getHeaders('runner'),
+      body: JSON.stringify({ id, title, status: 'BACKLOG', round: 1, role: 'runner' }),
     });
   }
 }
