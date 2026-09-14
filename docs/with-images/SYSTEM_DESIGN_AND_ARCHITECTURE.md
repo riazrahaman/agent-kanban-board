@@ -64,6 +64,11 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 
 ## 3. Layered System Architecture
 
+![Layered System Architecture](../images/01-layered-system-architecture.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
+
 ```mermaid
 flowchart TD
     subgraph Layer1 ["1. Client & Actor Layer"]
@@ -129,6 +134,7 @@ flowchart TD
     Listeners --> SSE_Route
     SSE_Route -->|"Live Snapshot Push"| WebUI
 ```
+</details>
 
 ---
 
@@ -137,6 +143,11 @@ flowchart TD
 ### 4.1 State Machine Transition Graph with RBAC
 
 The loop lifecycle is strictly deterministic (ADR-001). Arbitrary state transitions are rejected with `409 Conflict`. Role violations are rejected with `403 Forbidden`.
+
+![State Machine Transition Graph with RBAC](../images/02-state-machine-rbac-graph.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
 
 ```mermaid
 flowchart LR
@@ -187,6 +198,7 @@ flowchart LR
     class BLK blocked;
     class DN done;
 ```
+</details>
 
 #### Transition Table
 
@@ -212,6 +224,11 @@ flowchart LR
 ### 5.1 Claim Contention Sequence Diagram
 
 In a multi-agent swarm, multiple agents may race to claim the same backlog item simultaneously. The diagram below illustrates how the process-local lock and claim validator handle contention deterministically:
+
+![Claim Contention Sequence Diagram](../images/03-claim-contention-sequence.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
 
 ```mermaid
 sequenceDiagram
@@ -245,6 +262,7 @@ sequenceDiagram
     Queue->>Queue: Contention check: assigned_agent !== "Agent-Beta"!
     Queue-->>AgentB: HTTP 409 Conflict ("Task task-42 is already claimed by Agent-Alpha")
 ```
+</details>
 
 ### 5.2 Process-Local Mutation Serialization (ADR-003)
 
@@ -270,6 +288,11 @@ function withMutationLock(operation) {
 
 To guarantee zero corruption on unexpected process terminations (power loss, `SIGKILL`), files are never overwritten in-place. The following flowchart explains the atomic update sequence:
 
+![Atomic File Protocol (writeAtomic) Flowchart](../images/04-atomic-persistence-flowchart.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
+
 ```mermaid
 flowchart TD
     Start["Initiate Task Write"] --> Mkdir["mkdir(parentDir, recursive: true)"]
@@ -284,8 +307,14 @@ flowchart TD
     UpdateMemory --> NotifySSE["Trigger onChange(listeners) -> SSE Broadcast"]
     NotifySSE --> Finish["Return HTTP 200 / 201 Success"]
 ```
+</details>
 
 ### 6.2 Pluggable Storage Backends: Git vs JSON
+
+![Pluggable Storage Backends Resolution Flowchart](../images/05-pluggable-storage-backends.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
 
 ```mermaid
 flowchart TD
@@ -325,6 +354,7 @@ flowchart TD
     JSON_Mode --> JSON_Mode_Details
     Git_Mode --> Git_Mode_Details
 ```
+</details>
 
 ---
 
@@ -342,6 +372,11 @@ flowchart TD
 ---
 
 ## 8. Real-Time Push & UI Synchronization Flow
+
+![Real-Time Push & UI Synchronization Flow](../images/06-realtime-push-sequence.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
 
 ```mermaid
 sequenceDiagram
@@ -369,3 +404,4 @@ sequenceDiagram
     API-->>Agent: HTTP 200 { id: "task-1", status: "BUILDING", ... }
     Browser->>Browser: React re-renders Board & SignalRail instantly
 ```
+</details>
