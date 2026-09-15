@@ -23,6 +23,26 @@ function resolveProjectFromReq(req) {
   return undefined;
 }
 
+/**
+ * §2.6: resolve the expected-version guard for a mutation. A body
+ * `expected_version` takes precedence; otherwise an `If-Match` header
+ * (Etag-style bare int) is used. Returns `{ expected_version }` so the store
+ * runs the CAS check; returns `null` when no guard was supplied.
+ */
+function resolveExpectedVersion(req) {
+  const fromBody = req.body?.expected_version;
+  if (fromBody !== undefined && fromBody !== null && fromBody !== '') {
+    return { expected_version: fromBody };
+   }
+  const header = req.headers['if-match'];
+  if (header !== undefined && header !== null && header !== '') {
+    // Express may surface the header as an array on repeated names; coerce.
+    const value = Array.isArray(header) ? header[0] : header;
+   return { expected_version: value };
+   }
+  return null;
+}
+
 // --- Collection ---------------------------------------------------------
 
 router.get('/', asyncHandler(async (req, res) => {
@@ -67,17 +87,33 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.patch('/:id', asyncHandler(async (req, res) => {
-  const patch = req.body ?? {};
+  const patch = { ...(req.body ?? {}) };
+  const guard = resolveExpectedVersion(req);
+  if (guard) patch.expected_version = guard.expected_version;
   const result = await store.patchTask(req.params.id, patch, {
-    caller: req.caller || {},
-    project: resolveProjectFromReq(req),
-   });
+      caller: req.caller || {},
+      project: resolveProjectFromReq(req),
+      });
   if (result.error) {
+        // §2.6: a version-conflict 409 carries the current vs. supplied version
+        // so the client can re-fetch and re-apply; surface its details verbatim.
+    if (result.status === 409 && result.details) {
+     console.warn(
+      `[kanban version-conflict] PATCH /api/tasks/${req.params.id}: 409 ` +
+       `expected=${result.details.expected} provided=${result.details.provided}`
+       );
+      return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+       });
+       }
     console.warn(
-       `[kanban rejection] PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`
-     );
+        `[kanban rejection] PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`
+       );
     return res.status(result.status).json({ error: result.error });
-   }
+      }
   res.status(200).json(result.task);
 }));
 
@@ -85,15 +121,29 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
   const agentId = req.body?.agent_id || req.caller?.agent_id;
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
-   }
+      }
 
-  const result = await store.claimTask(req.params.id, agentId, resolveProjectFromReq(req));
+  const guard = resolveExpectedVersion(req);
+  const result = await store.claimTask(
+        req.params.id, agentId, resolveProjectFromReq(req), guard || {},
+       );
   if (result.error) {
+        // §2.6: distinguish a version-conflict 409 from contention 409. A stale
+        // claim ("Version mismatch") carries the current version for retry; a
+        // contention 409 ("… already claimed by …") carries no version.
+    if (result.status === 409 && result.details) {
+     return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+        });
+    }
     console.warn(
-       `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
-     );
+        `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
+       );
     return res.status(result.status).json({ error: result.error });
-   }
+      }
   res.status(200).json(result.task);
 }));
 
@@ -102,12 +152,23 @@ router.post('/:id/logs', asyncHandler(async (req, res) => {
   const message = req.body?.message;
   if (!agentId || !message) {
     return res.status(400).json({ error: 'agent_id and message are required' });
-   }
+       }
 
-  const result = await store.appendLog(req.params.id, agentId, message, resolveProjectFromReq(req));
+  const guard = resolveExpectedVersion(req);
+  const result = await store.appendLog(
+        req.params.id, agentId, message, resolveProjectFromReq(req), guard || {},
+        );
   if (result.error) {
+    if (result.status === 409 && result.details) {
+     return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+         });
+     }
     return res.status(result.status).json({ error: result.error });
-   }
+       }
   res.status(200).json(result.task);
 }));
 
@@ -121,12 +182,23 @@ router.post('/:id/issues', asyncHandler(async (req, res) => {
   const { issue_id } = req.body ?? {};
   if (!issue_id) {
     return res.status(400).json({ error: 'issue_id is required' });
-   }
+       }
 
-  const result = await store.addIssue(req.params.id, issue_id, resolveProjectFromReq(req));
+  const guard = resolveExpectedVersion(req);
+  const result = await store.addIssue(
+        req.params.id, issue_id, resolveProjectFromReq(req), guard || {},
+        );
   if (result.error) {
+    if (result.status === 409 && result.details) {
+     return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+         });
+     }
     return res.status(result.status).json({ error: result.error });
-   }
+       }
   res.status(200).json(result);
 }));
 

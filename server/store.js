@@ -208,7 +208,13 @@ export class JsonStorage {
       }
       const raw = await readFile(this.filePath, 'utf-8');
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed.tasks) ? parsed.tasks : [];
+       // §2.6: legacy JSON records predate the CAS version field; backfill to 1
+       // so the first patch bumps a well-defined baseline.
+      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      for (const t of list) {
+        if (!Number.isInteger(t.version)) t.version = 1;
+        }
+      return list;
     } catch (err) {
       console.warn(`[kanban JsonStorage] load error: ${err.message} — starting empty`);
       return [];
@@ -233,7 +239,12 @@ export class JsonStorage {
     try {
       if (!existsSync(this.archiveFile)) return [];
       const parsed = JSON.parse(await readFile(this.archiveFile, 'utf-8'));
-      return Array.isArray(parsed.tasks) ? parsed.tasks : [];
+       // §2.6: backfill version 1 on legacy archived JSON records.
+      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      for (const t of list) {
+        if (!Number.isInteger(t.version)) t.version = 1;
+         }
+      return list;
     } catch (err) {
       console.warn(`[kanban JsonStorage] loadArchive error: ${err.message} — starting empty`);
       return [];
@@ -362,7 +373,9 @@ export class GitYamlStorage {
       priority: task.priority || 'medium',
       agent_logs: task.agent_logs || [],
       metadata: task.metadata || {},
-    };
+       // §2.6: persist the CAS version; default to 1 for legacy cards.
+      version: task.version ?? 1,
+      };
     if (task.archived_at) cardData.archived_at = task.archived_at;
     return cardData;
   }
@@ -627,8 +640,11 @@ export async function loadStore() {
     if (!t.created_at) t.created_at = t.updated || nowIso;
     if (t.status === STATUSES.DONE && !t.completed_at) {
       t.completed_at = t.updated || t.created_at || nowIso;
-    }
-  }
+     }
+     // §2.6: legacy records that predate versioning start at version 1 so the
+    // CAS guard is total and a first patch bumps to 2.
+    if (!Number.isInteger(t.version)) t.version = 1;
+   }
 
   rebuildIndex(loaded);
 
@@ -716,6 +732,47 @@ export function getProjectSummaries() {
 }
 
 // ---------------------------------------------------------------------------
+// Optimistic concurrency (§2.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Centralizes the version bump so every committed mutation advances the
+ * task's monotonically-increasing `version` by exactly one. A task missing a
+ * (or carrying a non-integer) version is treated as version 1, which keeps the
+ * CAS total on legacy records that have not yet been backfilled.
+ */
+export function nextVersionFor(task) {
+  const current = task && Number.isInteger(task.version) ? task.version : 1;
+  return current + 1;
+}
+
+/**
+ * Evaluates an optional expected-version guard supplied via a body
+ * `expected_version` field or an `If-Match` header (Etag-style bare int).
+ * Returns a 409 version-conflict payload when the supplied version differs
+ * from the task's current version, or `null` when no guard was supplied so
+ * callers that omit a version keep working unchanged.
+ *
+ * The conflict error reads "Version mismatch" so it is distinguishable from
+ * the claim-contention 409 ("… already claimed by …"): a version conflict is a
+ * *stale read* while a contention conflict is *lost a race the caller knew
+ * about*. Both carry a details object with the current vs. supplied version.
+ */
+function versionConflict(task, rawExpected) {
+  if (rawExpected === undefined || rawExpected === null || rawExpected === '') return null;
+  const current = Number.isInteger(task.version) ? task.version : 1;
+  const provided = Number(rawExpected);
+  if (Number.isNaN(provided) || provided !== current) {
+    return {
+      error: 'Version mismatch',
+      status: 409,
+      details: { expected: current, provided: Number.isNaN(provided) ? rawExpected : provided },
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Creations & mutations (project-scoped)
 // ---------------------------------------------------------------------------
 
@@ -782,10 +839,12 @@ export async function createTask(data = {}, projectArg) {
       created_at: now,
       completed_at: status === STATUSES.DONE ? now : undefined,
       updated: now,
-    };
+      // §2.6: every task starts at version 1; committed mutations bump it.
+      version: 1,
+     };
     // workspace_id is an input alias only and must never be persisted.
     delete newTask.workspace_id;
-    // Omit undefined fields from the persisted/returned record.
+     // Omit undefined fields from the persisted/returned record.
     if (newTask.completed_at === undefined) delete newTask.completed_at;
 
     // KB-05: mutate in memory only after the partition write lands.
@@ -808,7 +867,15 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 
     if (patch && typeof patch === 'object' && 'project' in patch) {
       return { error: 'project is not mutable', status: 400 };
-    }
+      }
+
+      // §2.6: enforce the expected-version guard BEFORE building the candidate
+      // so a stale read rejects without touching storage. The route injects the
+      // If-Match header as `patch.expected_version`; a body-supplied field is
+      // equivalent. A "Version mismatch" 409 is distinct from a claim-contention
+      // 409 ("… already claimed by …").
+    const conflict = versionConflict(task, patch.expected_version);
+    if (conflict) return conflict;
 
     const candidate = structuredClone(task);
     const role = caller.role || patch.role || null;
@@ -864,47 +931,60 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     }
 
     candidate.updated = new Date().toISOString();
+      // §2.6: a committed patch advances version by exactly one.
+    candidate.version = nextVersionFor(task);
+      // expected_version is a request-time guard only; never persist it.
+    delete candidate.expected_version;
 
     const storage = getStorage(candidate.project);
     await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
     notify();
     return { task: candidate, status: 200 };
-  });
+    });
 }
 
 /**
  * Claims a task with contention protection (KB-03).
+ * `options.expected_version` (or the `If-Match` header the route injects)
+ * adds a §2.6 CAS guard: a stale claim is rejected with a "Version mismatch"
+ * 409, distinct from the "… already claimed by …" contention 409.
  */
-export async function claimTask(id, agentId, project) {
+export async function claimTask(id, agentId, project, { expected_version: expectedVersion } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
 
     if (!agentId || typeof agentId !== 'string') {
       return { error: 'agent_id is required', status: 400 };
-    }
+      }
 
-    // KB-03: Claim contention — held task returns 409 unless caller is holder
+       // §2.6: enforce the version guard before building the candidate.
+    const conflict = versionConflict(task, expectedVersion);
+    if (conflict) return conflict;
+
+     // KB-03: Claim contention — held task returns 409 unless caller is holder
     if (task.assigned_agent && task.assigned_agent !== agentId) {
       return {
         error: `Task ${id} is already claimed by ${task.assigned_agent}`,
         status: 409,
-      };
-    }
+       };
+     }
 
     const candidate = structuredClone(task);
     candidate.assigned_agent = agentId;
 
-    // Moving from BACKLOG to BUILDING on claim
+     // Moving from BACKLOG to BUILDING on claim
     if (candidate.status === STATUSES.BACKLOG) {
       candidate.status = STATUSES.BUILDING;
-    }
+     }
 
     candidate.updated = new Date().toISOString();
+       // §2.6: a committed claim advances version by exactly one.
+    candidate.version = nextVersionFor(task);
     if (!Array.isArray(candidate.agent_logs)) {
       candidate.agent_logs = [];
-    }
+     }
     candidate.agent_logs.push({
       timestamp: candidate.updated,
       message: `${agentId} claimed this task.`,
@@ -919,22 +999,29 @@ export async function claimTask(id, agentId, project) {
 }
 
 /**
- * Appends log to task.
+ * Appends log to task. `options.expected_version` (or the `If-Match` header
+ * the route injects) adds a §2.6 CAS guard and bumps version on the write.
  */
-export async function appendLog(id, agentId, message, project) {
+export async function appendLog(id, agentId, message, project, { expected_version: expectedVersion } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
 
     if (!agentId || !message) {
       return { error: 'agent_id and message are required', status: 400 };
-    }
+       }
+
+        // §2.6: enforce the version guard before building the candidate.
+    const conflict = versionConflict(task, expectedVersion);
+    if (conflict) return conflict;
 
     const candidate = structuredClone(task);
     candidate.updated = new Date().toISOString();
+        // §2.6: a committed log append advances version by exactly one.
+    candidate.version = nextVersionFor(task);
     if (!Array.isArray(candidate.agent_logs)) {
       candidate.agent_logs = [];
-    }
+      }
     candidate.agent_logs.push({
       timestamp: candidate.updated,
       message: escapeHtml(message),
@@ -949,31 +1036,38 @@ export async function appendLog(id, agentId, message, project) {
 }
 
 /**
- * Appends issue to task (KB-08).
+ * Appends issue to task (KB-08). `options.expected_version` (or the `If-Match`
+ * header the route injects) adds a §2.6 CAS guard and bumps version on the write.
  */
-export async function addIssue(id, issueId, project) {
+export async function addIssue(id, issueId, project, { expected_version: expectedVersion } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
 
     if (!issueId || typeof issueId !== 'string') {
       return { error: 'issue_id is required', status: 400 };
-    }
+       }
+
+        // §2.6: enforce the version guard before building the candidate.
+    const conflict = versionConflict(task, expectedVersion);
+    if (conflict) return conflict;
 
     const candidate = structuredClone(task);
     if (!Array.isArray(candidate.issues)) {
       candidate.issues = [];
-    }
+      }
     if (!candidate.issues.includes(issueId)) {
       candidate.issues.push(issueId);
-    }
+      }
     candidate.updated = new Date().toISOString();
+        // §2.6: a committed issue append advances version by exactly one.
+    candidate.version = nextVersionFor(task);
 
     await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
     notify();
     return { issues: candidate.issues, status: 200 };
-  });
+     });
 }
 
 // ---------------------------------------------------------------------------

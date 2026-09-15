@@ -24,7 +24,7 @@ export type AgentLog = {
 export type Task = {
   id: string
   project: string
-  workspace_id?: string       // input alias only; not persisted
+  workspace_id?: string        // input alias only; not persisted
   title: string
   description: string
   status: TaskStatus
@@ -40,6 +40,8 @@ export type Task = {
   archived_at?: string
   updated?: string
   metadata: Record<string, unknown>
+  version: number              // §2.6: monotonically increasing CAS guard, starts at 1
+  expected_version?: number    // input guard only; supplied to mutations, never persisted
 }
 
 export type ProjectSummary = {
