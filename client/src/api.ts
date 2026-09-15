@@ -1,4 +1,4 @@
-import type { Task } from './types'
+import type { Task, ProjectSummary } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api')
 
@@ -10,18 +10,26 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export async function getTasks(): Promise<Task[]> {
-  const res = await fetch(`${API_BASE}/tasks`)
+function withProject(base: string, project?: string): string {
+  return project ? `${base}?project=${encodeURIComponent(project)}` : base
+}
+
+export async function getTasks(project?: string): Promise<Task[]> {
+  const res = await fetch(withProject(`${API_BASE}/tasks`, project))
   return handleResponse<Task[]>(res)
 }
 
-export async function getTask(id: string): Promise<Task> {
-  const res = await fetch(`${API_BASE}/tasks/${id}`)
+export async function getTask(id: string, project?: string): Promise<Task> {
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}`, project))
   return handleResponse<Task>(res)
 }
 
-export async function patchTask(id: string, patch: Partial<Task>): Promise<Task> {
-  const res = await fetch(`${API_BASE}/tasks/${id}`, {
+export async function patchTask(
+  id: string,
+  patch: Partial<Task>,
+  project?: string
+): Promise<Task> {
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}`, project), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -29,8 +37,12 @@ export async function patchTask(id: string, patch: Partial<Task>): Promise<Task>
   return handleResponse<Task>(res)
 }
 
-export async function claimTask(id: string, agentId: string): Promise<Task> {
-  const res = await fetch(`${API_BASE}/tasks/${id}/claim`, {
+export async function claimTask(
+  id: string,
+  agentId: string,
+  project?: string
+): Promise<Task> {
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}/claim`, project), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId }),
@@ -38,13 +50,36 @@ export async function claimTask(id: string, agentId: string): Promise<Task> {
   return handleResponse<Task>(res)
 }
 
-export async function appendLog(id: string, agentId: string, message: string): Promise<Task> {
-  const res = await fetch(`${API_BASE}/tasks/${id}/logs`, {
+export async function appendLog(
+  id: string,
+  agentId: string,
+  message: string,
+  project?: string
+): Promise<Task> {
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}/logs`, project), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agent_id: agentId, message }),
   })
   return handleResponse<Task>(res)
+}
+
+/**
+ * §2.1 — portfolio of projects with live/done/archived counts.
+ * GET /projects
+ */
+export async function getProjects(): Promise<ProjectSummary[]> {
+  const res = await fetch(`${API_BASE}/projects`)
+  return handleResponse<ProjectSummary[]>(res)
+}
+
+/**
+ * §2.8 — archived (DONE, aged-out) tasks. Open GET.
+ * GET /tasks/archive[?project=]
+ */
+export async function getArchivedTasks(project?: string): Promise<Task[]> {
+  const res = await fetch(withProject(`${API_BASE}/tasks/archive`, project))
+  return handleResponse<Task[]>(res)
 }
 
 /**
@@ -72,7 +107,7 @@ export function subscribeToEvents(onTasks: (tasks: Task[]) => void): () => void 
   }
 
   return () => {
-    source.removeEventListener('tasks', handler as EventListener)
+    source.removeEventListener('tasks', handler)
     source.close()
   }
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, getTasks } from './store.js';
 import tasksRouter from './routes/tasks.js';
+import projectsRouter from './routes/projects.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 
@@ -13,6 +14,7 @@ export function createApp() {
   app.use(createAuthMiddleware());
 
   app.use('/api/tasks', tasksRouter);
+  app.use('/api/projects', projectsRouter);
 
   app.get('/api/events', (req, res) => {
     res.set({
