@@ -108,6 +108,51 @@ export function canRoleTransition(role, fromStatus, toStatus) {
 }
 
 // ============================================================================
+// Injectable clock (§2.4) — all lease math goes through nowFn() so tests can
+// force expiry deterministically. Pass undefined to restore the wall clock.
+// ============================================================================
+let nowFn = () => Date.now();
+
+export function setNowFn(fn) {
+  nowFn = typeof fn === 'function' ? fn : () => Date.now();
+}
+
+// ============================================================================
+// Lease / reaper / auto-promote config (§2.4 / §2.5) — read at call time so a
+// test suite can override per-suite via env. (Minor deviation from the plan's
+// "cache at load": call-time reads are correct for env-toggle tests.)
+// ============================================================================
+function getClaimTtlMs() {
+  const raw = process.env.KANBAN_CLAIM_TTL_MS;
+  if (raw === undefined || raw === '') return 300000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 300000;
+}
+
+function getReapIntervalMs() {
+  const raw = process.env.KANBAN_REAP_INTERVAL_MS;
+  if (raw === undefined || raw === '') return 30000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 30000;
+}
+
+export function isReaperEnabled() {
+  const raw = process.env.KANBAN_REAP_ENABLED;
+  if (raw === undefined || raw === '') return true;
+  return raw !== 'false' && raw !== '0';
+}
+
+function isAutoPromoteEnabled() {
+  const raw = process.env.KANBAN_AUTO_PROMOTE;
+  if (raw === undefined || raw === '') return true;
+  return raw !== 'false' && raw !== '0';
+}
+
+function isoFromMs(ms) {
+  return new Date(ms).toISOString();
+}
+
+// ============================================================================
 // Atomic File Operations (KB-05)
 // ============================================================================
 
@@ -190,6 +235,20 @@ function compositeKey(project, id) {
 // Pluggable Storage Backends (KB-09) — partitioned per project (§2.1/§2.8)
 // ============================================================================
 
+/**
+ * Backfills the lease fields (§2.4) + CAS version (§2.6) on records loaded from
+ * a JSON sink that predates them: `claim_expires_at` -> null, `reclaim_count` ->
+ * 0, `version` -> 1. Additive so legacy data is total without a migration step.
+ */
+function backfillLeaseFields(list) {
+  for (const t of list) {
+    if (!Number.isInteger(t.version)) t.version = 1;
+    if (t.claim_expires_at === undefined) t.claim_expires_at = null;
+    if (t.reclaim_count === undefined) t.reclaim_count = 0;
+  }
+  return list;
+}
+
 export class JsonStorage {
   constructor(filePath, options = {}) {
     this.filePath = filePath;
@@ -211,9 +270,7 @@ export class JsonStorage {
        // §2.6: legacy JSON records predate the CAS version field; backfill to 1
        // so the first patch bumps a well-defined baseline.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      for (const t of list) {
-        if (!Number.isInteger(t.version)) t.version = 1;
-        }
+      backfillLeaseFields(list);
       return list;
     } catch (err) {
       console.warn(`[kanban JsonStorage] load error: ${err.message} — starting empty`);
@@ -241,9 +298,7 @@ export class JsonStorage {
       const parsed = JSON.parse(await readFile(this.archiveFile, 'utf-8'));
        // §2.6: backfill version 1 on legacy archived JSON records.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      for (const t of list) {
-        if (!Number.isInteger(t.version)) t.version = 1;
-         }
+      backfillLeaseFields(list);
       return list;
     } catch (err) {
       console.warn(`[kanban JsonStorage] loadArchive error: ${err.message} — starting empty`);
@@ -293,8 +348,9 @@ export class GitYamlStorage {
           const raw = await readFile(path.join(this.dir, file), 'utf-8');
           const parsed = yaml.parse(raw);
           if (parsed && parsed.id) {
+            backfillLeaseFields([parsed]);
             tasks.push(parsed);
-          }
+           }
         } catch (err) {
           console.warn(`[kanban GitYamlStorage] error reading ${file}: ${err.message}`);
         }
@@ -319,17 +375,20 @@ export class GitYamlStorage {
         try {
           const raw = await readFile(path.join(archDir, file), 'utf-8');
           const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) tasks.push(parsed);
-        } catch (err) {
+          if (parsed && parsed.id) {
+            backfillLeaseFields([parsed]);
+            tasks.push(parsed);
+            }
+         } catch (err) {
           console.warn(`[kanban GitYamlStorage] archive read ${file}: ${err.message}`);
-        }
-      }
+         }
+       }
       return tasks;
-    } catch (err) {
+     } catch (err) {
       console.warn(`[kanban GitYamlStorage] loadArchive error: ${err.message}`);
       return [];
-    }
-  }
+     }
+   }
 
   async saveTask(task) {
     await mkdir(this.dir, { recursive: true });
@@ -373,9 +432,13 @@ export class GitYamlStorage {
       priority: task.priority || 'medium',
       agent_logs: task.agent_logs || [],
       metadata: task.metadata || {},
-       // §2.6: persist the CAS version; default to 1 for legacy cards.
+        // §2.6: persist the CAS version; default to 1 for legacy cards.
       version: task.version ?? 1,
-      };
+       // §2.4: persist lease + reclaim observability so a git card round-trips
+      // them; default to null/0 for legacy cards.
+      claim_expires_at: task.claim_expires_at ?? null,
+      reclaim_count: task.reclaim_count ?? 0,
+       };
     if (task.archived_at) cardData.archived_at = task.archived_at;
     return cardData;
   }
@@ -573,9 +636,19 @@ function updateInMemoryTask(updatedTask) {
   const idx = tasks.findIndex((t) => t.id === updatedTask.id && t.project === updatedTask.project);
   if (idx >= 0) {
     tasks[idx] = updatedTask;
-  } else {
+   } else {
     tasks.push(updatedTask);
-  }
+   }
+}
+
+/**
+ * Test-only helper: install/replace a task's in-memory copy in place (no
+ * persistence, no version bump, no notify). Used by tests to seed synthetic
+ * states that are otherwise unreachable through the claim path (e.g. a held but
+ * dependency-unmet task, which no legal claim can produce).
+ */
+export function setTaskInMemory(task) {
+  updateInMemoryTask(task);
 }
 
 function removeFromMemory(project, id) {
@@ -642,9 +715,12 @@ export async function loadStore() {
       t.completed_at = t.updated || t.created_at || nowIso;
      }
      // §2.6: legacy records that predate versioning start at version 1 so the
-    // CAS guard is total and a first patch bumps to 2.
-    if (!Number.isInteger(t.version)) t.version = 1;
-   }
+     // CAS guard is total and a first patch bumps to 2.
+     if (!Number.isInteger(t.version)) t.version = 1;
+     // §2.4: backfill lease fields so the reaper math is total on legacy data.
+     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
+     if (t.reclaim_count === undefined) t.reclaim_count = 0;
+     }
 
   rebuildIndex(loaded);
 
@@ -879,12 +955,15 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 
     const candidate = structuredClone(task);
     const role = caller.role || patch.role || null;
-
+       // §2.5: detect a *transition into DONE* so we can fire the completion hook
+       // after this write commits. The pre-write status is the live task's status
+       // (updateInMemoryTask has not run yet, so `task` still carries the old one).
+    const wasStatus = task.status;
     if ('status' in patch) {
       const nextStatus = normalizeStatus(patch.status);
       if (!nextStatus) {
         return { error: `Invalid status: ${patch.status}`, status: 400 };
-      }
+       }
 
       // KB-01: State machine transition check
       if (!canTransition(candidate.status, nextStatus)) {
@@ -940,15 +1019,229 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
     notify();
+
+    // §2.5 optional event-driven auto-promote: on a *transition into DONE*,
+    // unlock any BLOCKED dependents whose last remaining dependency just
+    // completed. Runs inside the same lock (so it is serialized with the other
+    // writers), AFTER the main write has fully committed, and is best-effort —
+    // an unlock/persistence failure is swallowed here so it can never reject or
+    // roll back the completed write (the main write above is authoritative).
+    // Toggleable via KANBAN_AUTO_PROMOTE. This is a documented system override
+    // (like the reaper): BLOCKED -> BACKLOG is legal in canTransition but the
+    // external patchTask allowlist cannot clear ownership/lease, hence the
+    // dedicated unlockTask inner.
+    const enteredDone = candidate.status === STATUSES.DONE && wasStatus !== STATUSES.DONE;
+    if (enteredDone && isAutoPromoteEnabled()) {
+      try {
+        await maybeUnlockDependentsInner(candidate.id, Date.now());
+       } catch (err) {
+        console.error('[kanban] auto-promote unlock failed:', err && err.message);
+      }
+    }
+    if (enteredDone) runCompletionHooks(candidate.id);
+
     return { task: candidate, status: 200 };
-    });
+     });
+}
+
+// ---------------------------------------------------------------------------
+// §2.4/§2.5/§2.7 — claim lease, dependency gate, fair queue
+// ---------------------------------------------------------------------------
+
+// Roles that may renew *any* task's lease (they administer the board), beyond
+// the holder. builder/reviewer/tester are holders when they own the task.
+const PRIVILEGED_ROLE_SET = new Set(['runner', 'system', 'human', 'admin']);
+
+function isPrivilegedRole(role) {
+  return typeof role === 'string' && PRIVILEGED_ROLE_SET.has(role.toLowerCase());
 }
 
 /**
- * Claims a task with contention protection (KB-03).
- * `options.expected_version` (or the `If-Match` header the route injects)
- * adds a §2.6 CAS guard: a stale claim is rejected with a "Version mismatch"
- * 409, distinct from the "… already claimed by …" contention 409.
+ * §2.5 dependency gate. A dep is *satisfied* iff it resolves to a live task that
+ * is DONE. A dangling dep id fails closed (treated as unresolved). Empty
+ * `depends_on` ⇒ { ok: true }.
+ */
+export function dependencyGate(task) {
+  const deps = Array.isArray(task.depends_on) ? task.depends_on : [];
+  if (deps.length === 0) return { ok: true, unresolved: [] };
+  const unresolved = [];
+  for (const dep of deps) {
+    const depTask = getTask(dep, task.project);
+    if (!depTask || depTask.status !== STATUSES.DONE) unresolved.push(dep);
+  }
+  return { ok: unresolved.length === 0, unresolved };
+}
+
+/**
+ * §2.7 priority rank for the fair claim queue: high < medium < low (ascending).
+ * Unknown / absent priority defaults to medium (matching create-time default).
+ */
+export function priorityRank(priority) {
+  if (priority === 'high' || priority === 'HIGH') return 0;
+  if (priority === 'low' || priority === 'LOW') return 2;
+  return 1;
+}
+
+/**
+ * §2.4/§2.5/§2.7 shared claim core. Assumes the caller already holds the
+ * mutation lock. Performs (in order):
+ *   1. contention — a held task (assigned_agent !== agentId) is rejected with a
+ *      plain 409 ("… already claimed by …"). This runs FIRST, so a held task
+ *      returns the contention 409 even when its deps are also unsatisfied.
+ *   2. dependency gate — a reason-tagged 409 (`reason: 'dependency_unsatisfied'`
+ *      + `unresolved_dependencies[]`) distinct from contention.
+ *   3. the write: set assigned_agent + claim_expires_at (now + TTL), lift
+ *      BACKLOG → BUILDING, seed reclaim_count, push the claim log, persist.
+ *
+ * Pass `{ renew: true }` for a lease renewal: skip contention when the caller is
+ * privileged (they may renew any lease), skip the dependency gate (the lease was
+ * earned at a satisfied gate), do not move status, and push no log (no spam).
+ */
+async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) {
+  const role = caller?.role || null;
+  const isPriv = isPrivilegedRole(role);
+
+  // (1) contention — first, so held tasks win the ordering over the dep gate.
+  if (!(renew && isPriv)) {
+    if (task.assigned_agent && task.assigned_agent !== agentId) {
+      return {
+        error: `Task ${task.id} is already claimed by ${task.assigned_agent}`,
+        status: 409,
+      };
+    }
+  }
+
+  // (2) dependency gate — only on a fresh claim.
+  if (!renew) {
+    const gate = dependencyGate(task);
+    if (!gate.ok) {
+      return {
+        error: 'Task has unsatisfied dependencies',
+        status: 409,
+        reason: 'dependency_unsatisfied',
+        unresolved_dependencies: gate.unresolved,
+      };
+    }
+  }
+
+  // (3) write the claim / renewal.
+  const candidate = structuredClone(task);
+  // A fresh claim assigns ownership; a renewal (renew=true) only extends the
+  // lease and MUST NEVER reassign — a privileged heartbeat must not take the
+  // task's owner from the real holder. So `assigned_agent` is set only on claim.
+  if (!renew) candidate.assigned_agent = agentId;
+  candidate.claim_expires_at = isoFromMs(nowMs + getClaimTtlMs());
+  if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
+  if (!renew && candidate.status === STATUSES.BACKLOG) {
+    candidate.status = STATUSES.BUILDING;
+  }
+  candidate.updated = isoFromMs(nowMs);
+  candidate.version = nextVersionFor(task);
+  if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
+  if (!renew) {
+    candidate.agent_logs.push({
+      timestamp: candidate.updated,
+      message: `${agentId} claimed this task.`,
+      agent_id: agentId,
+    });
+  }
+
+  // KB-05: persist first, then mutate memory, then notify.
+  await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+  updateInMemoryTask(candidate);
+  notify();
+  return { task: candidate, status: 200 };
+}
+
+// ---------------------------------------------------------------------------
+// §2.5 optional event-driven auto-promote (BLOCKED -> BACKLOG)
+// ---------------------------------------------------------------------------
+
+let completionHooks = [];
+
+/** Register a listener fired when a task reaches DONE. Returns an unsubscribe. */
+export function onTaskCompleted(fn) {
+  if (typeof fn !== 'function') throw new Error('onTaskCompleted listener must be a function');
+  completionHooks.push(fn);
+  return () => {
+    completionHooks = completionHooks.filter((f) => f !== fn);
+  };
+}
+
+// Best-effort: a listener error must NEVER poison the completing write.
+function runCompletionHooks(id) {
+  for (const h of [...completionHooks]) {
+    try {
+      const r = h(id);
+      if (r && typeof r.catch === 'function') {
+        r.catch((err) => console.error('[kanban] completion hook rejected:', err && err.message));
+      }
+    } catch (err) {
+      console.error('[kanban] completion hook error:', err && err.message);
+    }
+  }
+}
+
+/**
+ * §2.5 unlockTask inner — a documented system override (like the reaper):
+ * BLOCKED → BACKLOG is a *legal* canTransition, but we use a dedicated function
+ * so we can also clear ownership + lease, which patchTask's allowlist forbids.
+ */
+async function unlockTaskInner(task, nowMs, completedRef) {
+  const candidate = structuredClone(task);
+  candidate.status = STATUSES.BACKLOG;
+  candidate.assigned_agent = null;
+  candidate.claim_expires_at = null;
+  candidate.updated = isoFromMs(nowMs);
+  candidate.version = nextVersionFor(task);
+  if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
+  candidate.agent_logs.push({
+    timestamp: candidate.updated,
+    message: `unblocked — all dependencies complete (${completedRef} DONE).`,
+    agent_id: 'system',
+    reason: 'unblocked',
+  });
+  await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+  updateInMemoryTask(candidate);
+  notify();
+  return { task: candidate, status: 200 };
+}
+
+// Inner (no lock — caller already holds it via patchTask, or via the wrapper).
+async function maybeUnlockDependentsInner(completedRef, nowMs) {
+  const unblocked = [];
+  for (const t of tasks.slice()) {
+    if (t.status !== STATUSES.BLOCKED) continue;
+    const deps = Array.isArray(t.depends_on) ? t.depends_on : [];
+    if (!deps.includes(completedRef)) continue;
+    // Only unlock when *every* dep is now DONE (the last-dep-completes case).
+    if (!dependencyGate(t).ok) continue;
+    const r = await unlockTaskInner(t, nowMs, completedRef);
+    if (!r.error) unblocked.push(t.id);
+  }
+  if (unblocked.length) notify();
+  return { unblocked };
+}
+
+/**
+ * §2.5 maybeUnlockDependents — lock-wrapped, idempotent. Finds BLOCKED tasks
+ * whose `completedRef` is a dependency and whose deps are now all DONE, and
+ * unblocks them (clears owner + lease). Re-running finds no matching BLOCKED
+ * task, so it is safe to call repeatedly.
+ */
+export async function maybeUnlockDependents(completedRef, { now } = {}) {
+  return withMutationLock(async () => {
+    const nowMs = typeof now === 'number' ? now : nowFn();
+    return maybeUnlockDependentsInner(completedRef, nowMs);
+  });
+}
+
+/**
+ * Claims a task with contention protection (KB-03) + dependency gating (§2.5)
+ * + lease (§2.4). `options.expected_version` (or the `If-Match` header the
+ * route injects) adds a §2.6 CAS guard: a stale claim is rejected with a
+ * "Version mismatch" 409, distinct from the "… already claimed by …" contention
+ * 409 and the `dependency_unsatisfied` 409.
  */
 export async function claimTask(id, agentId, project, { expected_version: expectedVersion } = {}) {
   return withMutationLock(async () => {
@@ -963,40 +1256,195 @@ export async function claimTask(id, agentId, project, { expected_version: expect
     const conflict = versionConflict(task, expectedVersion);
     if (conflict) return conflict;
 
-     // KB-03: Claim contention — held task returns 409 unless caller is holder
-    if (task.assigned_agent && task.assigned_agent !== agentId) {
-      return {
-        error: `Task ${id} is already claimed by ${task.assigned_agent}`,
-        status: 409,
-       };
-     }
-
-    const candidate = structuredClone(task);
-    candidate.assigned_agent = agentId;
-
-     // Moving from BACKLOG to BUILDING on claim
-    if (candidate.status === STATUSES.BACKLOG) {
-      candidate.status = STATUSES.BUILDING;
-     }
-
-    candidate.updated = new Date().toISOString();
-       // §2.6: a committed claim advances version by exactly one.
-    candidate.version = nextVersionFor(task);
-    if (!Array.isArray(candidate.agent_logs)) {
-      candidate.agent_logs = [];
-     }
-    candidate.agent_logs.push({
-      timestamp: candidate.updated,
-      message: `${agentId} claimed this task.`,
-      agent_id: agentId,
-    });
-
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-    updateInMemoryTask(candidate);
-    notify();
-    return { task: candidate, status: 200 };
-  });
+       // Contention + dep gate + write via the shared core.
+    return applyClaim(task, agentId, {}, nowFn());
+   });
 }
+
+/**
+ * §2.4 renewLease — extend the lease on a held task. Runs in the mutation lock.
+ * The HOLDER (builder/reviewer/tester that owns the task) or a PRIVILEGED role
+ * (runner/system/human/admin) may renew; a non-privileged non-holder gets a
+ * `not_lease_holder` 409. An unclaimed task yields a `not_claimed` 409.
+ */
+export async function renewLease(id, agentId, { caller = {}, project: projectArg } = {}) {
+  return withMutationLock(async () => {
+    const task = getTask(id, projectArg);
+    if (!task) return { error: 'Task not found', status: 404 };
+
+       // A task with no active claim cannot have its lease renewed.
+    if (!task.assigned_agent) {
+      return { error: 'Task is not claimed', status: 409, reason: 'not_claimed' };
+     }
+
+       // A non-privileged caller must be the current holder.
+    if (!isPrivilegedRole(caller.role) && task.assigned_agent !== agentId) {
+      return { error: 'Caller is not the lease holder', status: 409, reason: 'not_lease_holder' };
+     }
+
+       // Shared core in renew mode: extends the lease, no status move, no log.
+       return applyClaim(task, agentId, caller, nowFn(), { renew: true });
+       });
+       }
+
+       // ---------------------------------------------------------------------------
+       // §2.4 stale-task reaper
+       // ---------------------------------------------------------------------------
+
+       /**
+       * reclaimTask inner — a DOCUMENTED SYSTEM OVERRIDE (like the §2.5 unlock). It
+       * forces an active claim (BUILDING / IN_REVIEW / IN_TEST) back to BACKLOG, which
+       * is NOT a legal agent transition per canTransition (those states have no
+       * → BACKLOG edge). The reaper is ownerless and exempt from the agent state
+       * machine; this is the single sanctioned place that exemption exists. Clears
+       * owner + lease, bumps reclaim_count, and logs the reclaim. Persist-first →
+       * in-memory → notify (KB-05 fail-closed): a storage failure leaves the active
+       * claim untouched.
+       *
+       * UNLOCKED: the caller must already hold the mutation lock. This is required
+       * because reapExpiredClaims (a single locked sweep) calls it per-task; a
+       * promise-queue lock cannot safely re-enter itself, so the reclaim body is
+       * kept out of withMutationLock and the public reclaimTask wrapper supplies the
+       * one lock.
+       */
+       async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
+       if (!task.assigned_agent) {
+        // Not currently held — nothing to reclaim. Idempotent.
+         return { task, status: 200, reclaimed: false };
+         }
+       const fromAgent = task.assigned_agent;
+       const candidate = structuredClone(task);
+       candidate.status = STATUSES.BACKLOG;
+       candidate.assigned_agent = null;
+       candidate.claim_expires_at = null;
+       candidate.reclaim_count = (Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0) + 1;
+       candidate.updated = isoFromMs(nowMs);
+       candidate.version = nextVersionFor(task);
+       if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
+       candidate.agent_logs.push({
+        timestamp: candidate.updated,
+         message: reason === 'lease_expired'
+          ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
+          : `Task reclaimed to BACKLOG by system (${reason}).`,
+         agent_id: 'system',
+         reason: 'lease_expired',
+         reclaimed_from: fromAgent,
+         });
+
+         // KB-05: persist first, then mutate memory, then notify.
+        await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+        updateInMemoryTask(candidate);
+        notify();
+        return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
+        }
+
+        /**
+        * reclaimTask(id, { reason, now }) — public, lock-wrapped reclaim. Delegates
+        * to the unlocked inner so a caller that is already inside the lock
+        * (reapExpiredClaims) does not deadlock on the promise-queue lock.
+        */
+       export async function reclaimTask(id, { reason = 'lease_expired', now } = {}) {
+       return withMutationLock(async () => {
+        const task = getTask(id);
+        if (!task) return { error: 'Task not found', status: 404 };
+        const nowMs = typeof now === 'number' ? now : nowFn();
+        return reclaimTaskInner(task, { reason, nowMs });
+         });
+       }
+
+       /**
+       * reapExpiredClaims — sweep active claims whose lease has expired and reclaim
+       * them. Runs in the mutation lock so it is serialized with every other writer
+       * (a heartbeat that lands first commits before the sweep sees a fresh expiry).
+       * `now` is injectable so tests can force expiry. Returns the reclaimed ids.
+       * Calls the UNLOCKED reclaimTaskInner directly (it already holds the lock).
+       */
+       export async function reapExpiredClaims({ now } = {}) {
+       return withMutationLock(async () => {
+       const nowMs = typeof now === 'number' ? now : nowFn();
+       const candidates = tasks.filter((t) => {
+        const active = t.status === STATUSES.BUILDING
+        || t.status === STATUSES.IN_REVIEW
+        || t.status === STATUSES.IN_TEST;
+       if (!active) return false;
+       if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
+         return false;
+         }
+       const expiresMs = Date.parse(t.claim_expires_at);
+        if (Number.isNaN(expiresMs)) return false;
+        return expiresMs <= nowMs;
+         });
+       let reclaimed = 0;
+       const ids = [];
+       for (const t of candidates) {
+         const r = await reclaimTaskInner(getTask(t.id), { reason: 'lease_expired', nowMs });
+         if (r && r.reclaimed) {
+           reclaimed += 1;
+           ids.push(t.id);
+            }
+           }
+           if (reclaimed > 0) notify();
+           return { reclaimed: ids, now: nowMs };
+           });
+       }
+
+       /**
+       * §2.7 nextClaim — atomically select the highest-priority, unclaimed,
+       * dependency-satisfied BACKLOG task and claim it for `agentId`, all inside one
+       * mutation-lock critical section. Priority order: high < medium < low, tie-broke
+       * by creation order (array index, FIFO), then by id for total determinism.
+       *
+       * Only BACKLOG + unclaimed + gate-passing tasks are candidates, so the winner
+       * never hits a dependency 409. Two concurrent calls get distinct winners (the
+       * first claims it → the second sees it held and skips it). No 409 storm.
+       *
+       * Returns `{ task, status: 200 }` on a claim, or `{ unavailable: true,
+       * status: 204 }` when nothing is claimable (a cheap poll target for agents).
+       */
+       export async function nextClaim({ agentId, role, project, now } = {}) {
+       return withMutationLock(async () => {
+       if (!agentId || typeof agentId !== 'string') {
+         return { error: 'agent_id is required', status: 400 };
+        }
+        // §2.7: project scoping is a no-op today (accepted, ignored — §2.1 lands it
+        // separately). `role` is validation-only for now (validated by the route
+        // against VALID_ROLES) and recorded on the claim but does not filter.
+       void project;
+       void role;
+
+        const candidates = tasks.filter((t) => {
+         if (t.assigned_agent !== null) return false;
+         if (t.status !== STATUSES.BACKLOG) return false;
+         if (!dependencyGate(t).ok) return false;
+         return true;
+         });
+       if (candidates.length === 0) {
+         return { unavailable: true, status: 204 };
+         }
+
+          // Order by [priorityRank, arrayIndex, id]; arrayIndex is FIFO creation
+         // order because the tasks array is append-ordered and reclaim/unlock
+         // mutate in place (preserving index).
+       const indexed = candidates.map((t, i) => [t, i]);
+       indexed.sort((a, b) => {
+         const ra = priorityRank(a[0].priority);
+         const rb = priorityRank(b[0].priority);
+         if (ra !== rb) return ra - rb;
+         if (a[1] !== b[1]) return a[1] - b[1];
+         return String(a[0].id).localeCompare(String(b[0].id));
+         });
+
+          const nowMs = typeof now === 'number' ? now : nowFn();
+          const winner = indexed[0][0];
+
+          // Re-gate at the instant of claim as defense-in-depth (the lock already
+         // serializes, but this keeps the shared core total).
+       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs);
+        if (r.error) return r;
+        return { task: r.task, status: 200 };
+        });
+       }
+
 
 /**
  * Appends log to task. `options.expected_version` (or the `If-Match` header
@@ -1191,3 +1639,38 @@ export async function runArchiveSweep() {
 
 // Re-export for convenience / tests
 export { defaultProjectName as getDefaultProject };
+
+// ---------------------------------------------------------------------------
+// §2.4 reaper timer — started ONLY in startServer (never in createApp, so the
+// HTTP-contract tests never spawn a timer). The timer is unref()'d so an idle
+// process can still exit, and startReaper/stopReaper let a caller control it.
+// ---------------------------------------------------------------------------
+let reapTimer = null;
+
+export function startReaper() {
+  if (reapTimer) return reapTimer;
+  reapTimer = setInterval(() => {
+     // Fire-and-forget; the lock serializes it with the other writers. Swallow
+     // so a sweep throw can never kill the interval or the process.
+    reapExpiredClaims().catch((err) => {
+      console.error('[kanban reaper] sweep failed:', err && err.message);
+     });
+   }, getReapIntervalMs());
+      // An unref'd timer must not keep a (possibly test-driven) process alive.
+    reapTimer.unref();
+    console.log(`[kanban reaper] started (interval=${getReapIntervalMs()}ms)`);
+    return reapTimer;
+   }
+
+export function stopReaper() {
+  if (reapTimer) {
+    clearInterval(reapTimer);
+    reapTimer = null;
+    return true;
+   }
+  return false;
+}
+
+export function isReaperRunning() {
+  return reapTimer !== null;
+}

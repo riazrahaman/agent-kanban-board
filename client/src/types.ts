@@ -40,8 +40,10 @@ export type Task = {
   archived_at?: string
   updated?: string
   metadata: Record<string, unknown>
-  version: number              // §2.6: monotonically increasing CAS guard, starts at 1
-  expected_version?: number    // input guard only; supplied to mutations, never persisted
+  version: number               // §2.6: monotonically increasing CAS guard, starts at 1
+  expected_version?: number     // input guard only; supplied to mutations, never persisted
+  claim_expires_at?: string | null  // §2.4: ISO-8601 lease deadline; null/absent = unclaimed
+  reclaim_count?: number        // §2.4: reaper reclaim count, seeds 0
 }
 
 export type ProjectSummary = {

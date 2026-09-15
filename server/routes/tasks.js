@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as store from '../store.js';
+import { VALID_ROLES } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -78,6 +79,64 @@ router.post('/archive/sweep', asyncHandler(async (req, res) => {
   res.json({ moved, projects: store.getProjectSummaries() });
 }));
 
+// --- §2.7 fair claim queue (MUST be declared before /:id so Express treats
+//     `next-claim` as a static segment, not an :id match) ------------------
+
+/**
+ * §2.7 POST /api/tasks/next-claim — atomically select + claim the highest-
+ * priority, unclaimed, dependency-satisfied BACKLOG task for the caller.
+ * Query: ?role= (validated against VALID_ROLES, 403 on bad), ?project=
+ * (accepted, no-op today), ?agent_id= (falls back to the caller's agent_id).
+ * Returns 200 + the claimed task, or 204 when nothing is claimable.
+ */
+router.post('/next-claim', asyncHandler(async (req, res) => {
+  const agentId =
+    req.query?.agent_id ||
+    req.body?.agent_id ||
+    req.caller?.agent_id;
+  if (!agentId) {
+    return res.status(400).json({ error: 'agent_id is required' });
+    }
+
+  // §2.7: the supplied role (query or caller) is validated against VALID_ROLES so
+  // the endpoint cannot be used to smuggle a bad role. 403 on a bad role.
+  const rawRole = req.query?.role ?? req.caller?.role;
+  if (rawRole !== undefined && rawRole !== null && rawRole !== '') {
+    const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
+    if (!role || !VALID_ROLES.has(role)) {
+      console.warn(`[kanban next-claim] 403 invalid role: ${rawRole}`);
+      return res.status(403).json({
+        error: `A valid agent role is required for next-claim (got '${rawRole}')`,
+       });
+    }
+   }
+
+   // §2.7: project scoping is a no-op today (accepted, ignored — §2.1 lands it).
+    const project = resolveProjectFromReq(req);
+    const result = await store.nextClaim({
+      agentId,
+      role: rawRole ? String(rawRole).toLowerCase() : undefined,
+      project,
+     });
+
+     if (result.unavailable) {
+        return res.status(204).end();
+    }
+     if (result.error) {
+      console.warn(
+        `[kanban next-claim] ${result.status} ${result.error} ${result.reason || ''}`
+        );
+      return res.status(result.status).json({
+        error: result.error,
+        ...(result.reason ? { reason: result.reason } : {}),
+        ...(result.unresolved_dependencies
+           ? { unresolved_dependencies: result.unresolved_dependencies }
+           : {}),
+       });
+     }
+     return res.status(200).json(result.task);
+     }));
+
 // --- Single task --------------------------------------------------------
 
 router.get('/:id', asyncHandler(async (req, res) => {
@@ -137,15 +196,67 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
         details: result.details,
         currentVersion: result.details.expected,
         status: 409,
-        });
+         });
+     }
+       // §2.5: a dependency-conflict 409 carries a `reason` +
+       // `unresolved_dependencies` so callers can branch on "blocked on deps"
+       // (distinct from a contention 409, which carries no reason).
+    if (result.status === 409 && result.reason) {
+     return res.status(409).json({
+        error: result.error,
+        reason: result.reason,
+           ...(result.unresolved_dependencies
+              ? { unresolved_dependencies: result.unresolved_dependencies }
+              : {}),
+         status: 409,
+          });
     }
     console.warn(
-        `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
-       );
+          `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
+           );
     return res.status(result.status).json({ error: result.error });
       }
   res.status(200).json(result.task);
 }));
+
+// --- §2.4 lease heartbeat ------------------------------------------------
+
+/**
+ * §2.4 POST /api/tasks/:id/heartbeat — renew the lease on a held task. The
+ * HOLDER (the builder/reviewer/tester that owns it) or a PRIVILEGED role
+ * (runner/system/human/admin) may renew; a non-privileged non-holder gets a
+ * `not_lease_holder` 409, an unclaimed task a `not_claimed` 409, a missing task
+ * a 404. Runs in the mutation lock. No log entry by default (no spam).
+ */
+router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
+  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  if (!agentId) {
+    return res.status(400).json({ error: 'agent_id is required' });
+      }
+
+   const result = await store.renewLease(req.params.id, agentId, {
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+    });
+
+     if (result.error) {
+        // Distinguish the lease 409s with a reason tag.
+      if (result.status === 409) {
+        console.warn(
+          `[kanban heartbeat] 409 ${result.reason || ''} on ${req.params.id}`
+          );
+        return res.status(409).json({
+          error: result.error,
+          ...(result.reason ? { reason: result.reason } : {}),
+         });
+       }
+      console.warn(
+        `[kanban rejection] POST /api/tasks/${req.params.id}/heartbeat: ${result.status} ${result.error}`
+        );
+      return res.status(result.status).json({ error: result.error });
+      }
+     return res.status(200).json(result.task);
+      }));
 
 router.post('/:id/logs', asyncHandler(async (req, res) => {
   const agentId = req.body?.agent_id || req.caller?.agent_id;

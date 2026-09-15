@@ -142,8 +142,75 @@ export async function appendLog(
     method: 'POST',
     headers: versionGuardHeaders(opts),
     body: JSON.stringify({ agent_id: agentId, message, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
-  })
+   })
   return handleVersionedResponse<Task>(res)
+}
+
+/**
+ * §2.4 — renew the lease on a held task. The holder (or a privileged role)
+ * extends `claim_expires_at` by the server's `KANBAN_CLAIM_TTL_MS`. A 409 with a
+ * `reason` (`not_lease_holder` / `not_claimed`) signals a non-holder or an
+ * unclaimed task; callers surface it and stop reusing the lease.
+ */
+export async function heartbeatTask(
+  id: string,
+  agentId: string,
+  opts: MutationOptions = {},
+): Promise<Task> {
+  const project = opts.project
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}/heartbeat`, project), {
+    method: 'POST',
+    headers: versionGuardHeaders(opts),
+    body: JSON.stringify({ agent_id: agentId }),
+   })
+  if (!res.ok) {
+    let body: any = null
+    try {
+      body = await res.json()
+     } catch {
+      body = null
+     }
+     // A lease 409 carries a `reason` so callers can tell "not the holder" from
+     // "not claimed" apart from a contention 409.
+    const detail = body ? ` (${body.reason || body.error || res.statusText})` : ` (${res.statusText})`
+    throw new Error(`heartbeat failed (${res.status})${detail}`)
+   }
+  return handleResponse<Task>(res)
+}
+
+/**
+ * §2.7 — atomically claim the highest-priority, unclaimed, dependency-satisfied
+ * BACKLOG task. Returns the claimed `Task`, or `null` when nothing is claimable
+ * (204). A `reason`-tagged 409 (e.g. `dependency_unsatisfied`) is surfaced as an
+ * Error so the caller can branch on it; a contention 409 is also an Error.
+ */
+export async function nextClaim(
+  agentId: string,
+  opts: { role?: string; project?: string } = {},
+): Promise<Task | null> {
+  const params = new URLSearchParams()
+  params.set('agent_id', agentId)
+  if (opts.role) params.set('role', opts.role)
+   if (opts.project) params.set('project', opts.project)
+   const res = await fetch(`${API_BASE}/tasks/next-claim?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, ...(opts.role ? { role: opts.role } : {}) }),
+    })
+   if (res.status === 204) {
+    return null
+   }
+  if (!res.ok) {
+    let body: any = null
+    try {
+      body = await res.json()
+     } catch {
+      body = null
+     }
+     const detail = body ? ` (${body.reason || body.error || res.statusText})` : ` (${res.statusText})`
+    throw new Error(`next-claim failed (${res.status})${detail}`)
+   }
+  return handleResponse<Task>(res)
 }
 
 /**
