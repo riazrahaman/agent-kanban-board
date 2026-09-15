@@ -149,8 +149,6 @@ export function defaultProjectName() {
   return isValidProjectId(p) ? p : 'default';
 }
 
-export const DEFAULT_PROJECT = 'default';
-
 /**
  * Coerces an input to a canonical project name. Invalid / empty input falls
  * back to the default project so lookups are total.
@@ -1030,45 +1028,67 @@ export async function runArchiveSweep() {
       const storage = getStorage(project);
       const isGit = storage instanceof GitYamlStorage;
 
-      for (const t of eligible) {
+      // No eligible tasks -> nothing to move, and (per the KB-05 fail-closed
+      // invariant) no reason to touch any archive sink file on this pass.
+      if (eligible.length === 0) return;
+
+      // (a) Build the new archive entries + the surviving live partition WITHOUT
+      // touching memory, so a persistence failure below leaves memory unchanged
+      // (symmetric with the single-task path at store.js:399-400, KB-05).
+      const newArchived = eligible.map((t) => {
         const archived = structuredClone(t);
         archived.archived_at = nowIso;
-        removeFromMemory(project, t.id);
-         (archive[project] || (archive[project] = [])).push(archived);
-        moved += 1;
-        touchedProjects.add(project);
-       }
+        return archived;
+      });
+      const eligibleIds = new Set(eligible.map((t) => t.id));
 
+      // (b) Persist FIRST: the live partition minus the moved rows, and the
+      // merged archive sink. Only when persistence fully succeeds do we mutate
+      // memory, so a throw fails closed and the task survives in the live set.
       if (isGit) {
-        for (const t of eligible) {
-          await storage.saveArchiveTask(structuredClone(t));
-         }
-       } else {
-        // Always rewrite the archive sink for a project we touched; the live
-        // partition rewrite only matters when the project had a live file.
-        const survivors = tasks.filter((t) => t.project === project);
-        if (liveList && liveList.length > 0) {
-          await storage.save(survivors);
-         }
-        if (archive[project] && archive[project].length > 0) {
-          await storage.saveArchive(archive[project]);
-         }
-       }
-     };
+        // saveArchiveTask git-rms the live card and writes + commits the
+        // archive card; the archive sink has no separate file for git.
+        for (const archived of newArchived) {
+          await storage.saveArchiveTask(archived);
+        }
+      } else {
+        // Live partition rewrite: the project had live rows, so the dropped
+        // ones must be reflected on disk. (Archive-only projects hit the
+        // early return above and never reach this branch.)
+        const survivors = (liveList || []).filter((t) => !eligibleIds.has(t.id));
+        await storage.save(survivors);
+        // Archive sink rewrite is gated on a real move (FIX 3): no churn when
+        // this project moved nothing, and we merge onto any existing rows.
+        const merged = [...(archive[project] || []), ...newArchived];
+        await storage.saveArchive(merged);
+      }
+
+      // (c) Only after every persistence call succeeded: drop the moved rows
+      // from the in-memory live set/index and append them to the live archive.
+      for (const t of eligible) {
+        removeFromMemory(project, t.id);
+      }
+      const list = archive[project] || (archive[project] = []);
+      for (const archived of newArchived) {
+        list.push(archived);
+      }
+      moved += eligible.length;
+      touchedProjects.add(project);
+      };
 
     // Run for every project that currently has live tasks.
     for (const [project, liveList] of byProject) {
       await runFor(project, liveList);
      }
 
-    // A project whose only record is an archive list also needs its sink
-    // (re)written so the archive file reflects freshly-moved rows.
+    // A project whose only record is an archive list is re-processed here, but
+    // the early return in runFor makes it a no-op unless it actually has
+    // eligible rows to move (so no archive sink churn when nothing moved).
     for (const project of Object.keys(archive)) {
       if (!byProject.has(project)) {
-        const hadLive = byProject.get(project);
-        await runFor(project, hadLive || []);
-       }
-     }
+        await runFor(project, []);
+      }
+    }
 
     if (moved > 0) notify();
     return moved;

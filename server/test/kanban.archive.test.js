@@ -298,7 +298,58 @@ describe('§2.8 archiving & storage hygiene', () => {
      };
     await Promise.all([store.runArchiveSweep(), reader()]);
     assert.equal(bad, 0, 'no reader observed a half-moved task');
-     });
+      });
+
+  // KB-05 fail-closed regression: the archive sweep must persist BEFORE it
+  // mutates memory, so a failing archive write leaves the task in the LIVE set
+  // (it is neither dropped from live nor half-written to archive).
+  it('19b. failing archive write fails closed: task survives in the live set', async () => {
+    await freshJsonStore('failclosed');
+    process.env.KANBAN_ARCHIVE_AFTER_DAYS = '7';
+    await jsonRequest(baseUrl, '/api/tasks?project=box', {
+      method: 'POST', headers: headers(), body: taskBody('fail-done', 'Fail closed card'),
+       });
+    await driveToDone(baseUrl, 'fail-done', 'box');
+    await backdateTask('fail-done', 31, 'box');
+    assert.ok(store.getTask('fail-done', 'box'), 'task is live before the sweep');
+
+     // Bind a storage backend whose archive sink write throws on the very first
+     // move, simulating a disk/git failure partway through persistence.
+    store.setStorage(null, 'box');
+    const throwing = new (store.JsonStorage.prototype.constructor)(
+      process.env.KANBAN_DATA_FILE,
+      { project: 'box', isDefault: false }
+    );
+    throwing.archiveFile = path.join(tmpDir, 'tasks', 'archive', 'box.json');
+     // Override the constructor's archiveFile path the same way getStorage would,
+     // but only the archive write fails — the live partition rewrite succeeds.
+    const realSave = store.JsonStorage.prototype.save.bind(throwing);
+    throwing.save = async (tasks) => realSave(tasks);
+    throwing.saveArchive = async () => {
+      throw new Error('simulated archive disk failure');
+      };
+    store.setStorage(throwing, 'box');
+
+     // The sweep must surface the failure; withMutationLock swallows it on the
+     // queue, so assert via the returned promise instead.
+    const thrown = await store.runArchiveSweep().catch((e) => e);
+    assert.ok(
+      thrown instanceof Error && /archive disk failure/.test(thrown.message),
+      'the failing archive write is surfaced'
+    );
+
+     // Memory-after-persistence: the task must still be LIVE (fail-closed), not
+     // silently lost from both the live set and the archive.
+    assert.ok(
+      store.getTask('fail-done', 'box'),
+      'task survives in the live set after a failed archive write'
+    );
+    assert.equal(
+      store.getArchivedTasks('box').some((x) => x.id === 'fail-done'),
+      false,
+      'a failed move never lands the task in the archive set'
+    );
+      });
 });
 
 describe('§2.8 git archive layout + commit', () => {
