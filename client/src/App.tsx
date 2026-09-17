@@ -7,6 +7,7 @@ import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
+import { readStoredToken, writeStoredToken } from './lib/authToken'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
@@ -45,6 +46,16 @@ export default function App() {
       typeof window === 'undefined' ? '' : localStorage.getItem('kanban.agentId') ?? ''
     const [agentId, setAgentId] = useState<string>(initialAgent)
     const [agentDraft, setAgentDraft] = useState<string>(initialAgent)
+
+     // The server rejects every mutation without a token, so the operator supplies
+    // one here. Deliberately not a build-time env var: Vite inlines those into the
+    // published bundle, which would ship the shared write secret to every visitor.
+    const [tokenDraft, setTokenDraft] = useState<string>(() => readStoredToken())
+    const [tokenSaved, setTokenSaved] = useState<boolean>(() => readStoredToken() !== '')
+    const commitToken = () => {
+      writeStoredToken(tokenDraft)
+      setTokenSaved(tokenDraft.trim() !== '')
+       }
     const commitAgent = () => {
       const next = agentDraft.trim()
       if (next === agentId) return
@@ -196,6 +207,29 @@ export default function App() {
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
              className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
            />
+            <input
+             type="password"
+             value={tokenDraft}
+             onChange={(e) => setTokenDraft(e.target.value)}
+             onBlur={commitToken}
+             onKeyDown={(e) => {
+               if (e.key === 'Enter') commitToken()
+               }}
+             placeholder="api token"
+             aria-label="API token for mutating requests"
+             title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
+             autoComplete="off"
+             spellCheck={false}
+             className="w-28 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
+           />
+           {!tokenSaved && (
+             <span
+              className="font-mono text-[10px] uppercase tracking-wider text-muted"
+              title="Reads work without a token; claim, heartbeat and log writes will return 401."
+             >
+              read-only
+             </span>
+            )}
            {agentDraft.trim() !== agentId && (
              <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
               unbound · press enter

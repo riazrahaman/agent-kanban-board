@@ -1,4 +1,5 @@
 import type { Task, ProjectSummary, MetricsResponse } from './types'
+import { authHeaders, readStoredToken } from './lib/authToken'
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api')
 
@@ -49,15 +50,17 @@ function withProject(base: string, project?: string): string {
 }
 
 /**
- * Builds the version-guard request payload: an `If-Match` header (Etag-style bare
- * int) when a `version` is supplied, and an `expected_version` body field when
- * `expected_version` is supplied — the route accepts either.
+ * Headers for EVERY mutating request. Single choke point on purpose: the server
+ * rejects a mutation without both a token (401) and a valid role (403), so a new
+ * mutation that built its own headers would silently fail auth. Carries the
+ * §2.6 version guard too — an `If-Match` (Etag-style bare int) when a `version`
+ * is supplied; routes also accept an `expected_version` body field.
  */
-function versionGuardHeaders(opts: MutationOptions): Record<string, string> {
+function mutationHeaders(opts: MutationOptions = {}): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const v = opts.version ?? opts.expected_version
   if (v !== undefined) headers['If-Match'] = String(v)
-  return headers
+  return { ...headers, ...authHeaders(readStoredToken()) }
 }
 
 /**
@@ -111,7 +114,7 @@ export async function patchTask(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}`, project), {
     method: 'PATCH',
-    headers: versionGuardHeaders(opts),
+    headers: mutationHeaders(opts),
     body: JSON.stringify({ ...patch, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
   })
   return handleVersionedResponse<Task>(res)
@@ -125,7 +128,7 @@ export async function claimTask(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/claim`, project), {
     method: 'POST',
-    headers: versionGuardHeaders(opts),
+    headers: mutationHeaders(opts),
     body: JSON.stringify({ agent_id: agentId, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
   })
   return handleVersionedResponse<Task>(res)
@@ -140,7 +143,7 @@ export async function appendLog(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/logs`, project), {
     method: 'POST',
-    headers: versionGuardHeaders(opts),
+    headers: mutationHeaders(opts),
     body: JSON.stringify({ agent_id: agentId, message, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
    })
   return handleVersionedResponse<Task>(res)
@@ -160,7 +163,7 @@ export async function heartbeatTask(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/heartbeat`, project), {
     method: 'POST',
-    headers: versionGuardHeaders(opts),
+    headers: mutationHeaders(opts),
     body: JSON.stringify({ agent_id: agentId }),
    })
   if (!res.ok) {
@@ -188,13 +191,15 @@ export async function nextClaim(
   agentId: string,
   opts: { role?: string; project?: string } = {},
 ): Promise<Task | null> {
+  // agent_id and role travel in the body, not the query: the route falls back to
+  // req.body / req.caller for both, and putting identifiers in a URL only serves
+  // to copy them into every access log.
   const params = new URLSearchParams()
-  params.set('agent_id', agentId)
-  if (opts.role) params.set('role', opts.role)
-   if (opts.project) params.set('project', opts.project)
-   const res = await fetch(`${API_BASE}/tasks/next-claim?${params.toString()}`, {
+  if (opts.project) params.set('project', opts.project)
+  const query = params.toString()
+  const res = await fetch(`${API_BASE}/tasks/next-claim${query ? `?${query}` : ''}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mutationHeaders(),
     body: JSON.stringify({ agent_id: agentId, ...(opts.role ? { role: opts.role } : {}) }),
     })
    if (res.status === 204) {
