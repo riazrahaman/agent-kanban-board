@@ -5,9 +5,9 @@
 **Working branch:** `feat/client-coordinator-phase`
 **Roadmap:** `docs/MULTI_PROJECT_ENHANCEMENT_RECOMMENDATIONS.md`
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
-**Remaining:** browser verification of the UI (see §9), the `stash@{0}` decision (§5), and
-the merge to `main` (§4.6) — the last two are the owner's calls, not blockers to clear.
-**Last verified:** server 122/122, client 19/19, `tsc` + `vite build` green.
+**Remaining:** the `stash@{0}` decision (§5) and the merge to `main` (§4.6) — both the
+owner's calls, not blockers to clear. UI verified in a browser; see §9.
+**Last verified:** server 123/123, client 19/19, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
 > This document is a resume point. Read §4 "Next steps" first, then §7 (contracts you
@@ -205,7 +205,7 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
 cd /Users/riazrahaman/Documents/agend-grid/agent-kanban-board
 # server
 cd server && node --check store.js && node --test
-# expected: 122 pass, 0 fail
+# expected: 123 pass, 0 fail
 
 cd ../client
 # client tests
@@ -343,12 +343,28 @@ Each has a regression test that was verified to fail without its fix.
 
 ## 9. Known gaps
 
-- **The UI has not been exercised in a browser.** The Claude-in-Chrome extension was not
-  connected during this session. Three UI changes therefore rest on `tsc`, the pure-logic
-  unit tests and the verified server endpoints, but not on observed behaviour: the
-  agent-id bind-on-blur/Enter change, the project switcher, and the portfolio table.
-  Worth a manual pass before the merge. The server side of each was verified end-to-end
-  against a running server with `curl`.
+- **The UI has been exercised in a real browser** (Chrome, against a live server with
+  two seeded projects). Verified by observation, not inference:
+  - Typing a 9-character agent id with the text confirmed in the field issued **zero**
+    `next-claim` requests and claimed nothing, with the `unbound · press enter` hint
+    shown; pressing Enter then bound it and the coordinator began polling. This is the
+    defect that previously fired nine auto-claims under partial ids.
+  - The coordinator's error surfaced in the header, which the old mutable-ref hook could
+    not do — it had no way to tell React to re-render.
+  - The switcher scoped the board (6 tasks → 3, other project absent), and the selection
+    plus agent id survived a reload via `localStorage`.
+  - Six project switches left the server's established connection count unchanged, so the
+    per-change SSE re-subscribe does not leak real `EventSource` connections.
+  - The portfolio matched the API exactly and **auto-refreshed a change made in the
+    project that was *not* on screen** — the case the previous `tasks.length` key could
+    never have caught. Clicking a project opened its board.
+  - Killing the server mid-session showed `Failed to fetch`; after restarting, switching
+    project cleared it and loaded — previously that error was permanent.
+- **The browser client sends no auth token**, so `next-claim` and every other mutation
+  from the UI returns 401 against a server with `KANBAN_AUTH_TOKEN` set. This predates
+  this work (mutations have required a token since KB-04/A07) and is not a regression,
+  but it does mean auto-claim cannot function from the browser as shipped. Wiring a token
+  into the client is unresolved and out of scope for this pass.
 - **§2.3 isolates writes, not reads.** With `KANBAN_PROJECT_TOKENS` configured every GET
   stays open, including unscoped `GET /api/metrics`, which aggregates active-agent names
   and cycle times across all projects in one response. This matches the pre-existing
