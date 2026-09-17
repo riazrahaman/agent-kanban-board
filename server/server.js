@@ -70,18 +70,25 @@ export function createApp() {
       }
 
       req.on('close', () => {
-       closed = true;
-       unsubscribe();
-        });
+        closed = true;
+        unsubscribe();
+      });
     });
 
-   // Global error handler: omit internal stack traces (A05)
-  app.use((err, req, res, next) => {
-     console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
-     res.status(500).json({ error: 'Internal Server Error' });
-     });
+  const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client/dist');
+  app.use(express.static(clientDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
 
-   return app;
+  // Global error handler: omit internal stack traces (A05)
+  app.use((err, req, res, next) => {
+    console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  });
+
+  return app;
 }
 
 /**
