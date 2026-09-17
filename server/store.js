@@ -886,6 +886,20 @@ export function notify(opts = {}) {
    dispatchDiffEvents(opts);
 }
 
+/**
+ * Live listener counts. Exists so a leak is testable: the SSE handler
+ * subscribes per connection and unsubscribes on `req.on('close')`, and the
+ * §2.10 project switcher re-subscribes on every project change — so
+ * open/close has to balance or a long session accumulates dead sockets.
+ */
+export function listenerCounts() {
+  return {
+    snapshot: listeners.length,
+    diff: diffListeners.length,
+    audit: auditListeners.length,
+  };
+}
+
 export function onChange(listener) {
   listeners.push(listener);
   return () => {

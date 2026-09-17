@@ -1,5 +1,5 @@
 import { referencedProjects } from './projectScope.js';
-import { defaultProjectName } from '../store.js';
+import { defaultProjectName, isValidProjectId } from '../store.js';
 
 /**
  * §2.3 — per-project rate limiting for mutating requests.
@@ -19,6 +19,22 @@ const buckets = new Map(); // project -> { count, windowStartMs }
 
 export function resetRateLimits() {
   buckets.clear();
+}
+
+/** Number of projects currently holding a bucket. Exists to test the bound. */
+export function trackedProjectCount() {
+  return buckets.size;
+}
+
+/**
+ * Drops windows that have already elapsed. Without this the map only ever grew:
+ * entries were reset in place, never removed, so every distinct project name
+ * ever seen stayed for the process lifetime.
+ */
+function pruneExpired(now, span) {
+  for (const [project, bucket] of buckets) {
+    if (now - bucket.windowStartMs >= span) buckets.delete(project);
+  }
 }
 
 function limitPerWindow() {
@@ -45,8 +61,15 @@ export function createRateLimitMiddleware() {
 
     const span = windowMs();
     const now = Date.now();
-    const referenced = referencedProjects(req);
+    // Only real project ids get a bucket. referencedProjects returns raw
+    // caller-supplied strings, and this middleware runs before the router's
+    // projectScopeGuard would reject a malformed one — so without this filter a
+    // caller sending a fresh random ?project= each time grew the map without
+    // bound. An invalid scope is charged to the default bucket instead, and the
+    // guard rejects the request a moment later anyway.
+    const referenced = referencedProjects(req).filter((p) => isValidProjectId(p));
     const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
+    pruneExpired(now, span);
 
     // Charge every project the request references, for the same reason auth
     // authorizes all of them: the body can outrank the query when the store

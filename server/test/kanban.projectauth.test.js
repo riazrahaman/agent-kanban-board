@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import { parseProjectTokens } from '../middleware/auth.js';
-import { resetRateLimits } from '../middleware/rateLimit.js';
+import { resetRateLimits, trackedProjectCount } from '../middleware/rateLimit.js';
 import * as store from '../store.js';
 
 const ALPHA_TOKEN = 'tok-alpha';
@@ -249,5 +249,93 @@ describe('§2.3 per-project auth + rate limiting', () => {
         });
       assert.equal(r.response.status, 201, 'unset means disabled, so existing deploys are unaffected');
       }
+    });
+  it('14. a composite `project:id` in the URL path cannot smuggle a write', async () => {
+    // store.resolveProjectScope lets a `project:` prefix OVERRIDE ?project=, so
+    // PATCH /api/tasks/beta:victim?project=alpha resolves to beta. Authorizing
+    // only the query let an alpha token rewrite a beta task on every
+    // task-scoped route — claim, heartbeat, patch, logs and issues alike.
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({
+      alpha: ALPHA_TOKEN, beta: BETA_TOKEN,
+      });
+    const created = await jsonRequest(baseUrl, '/api/tasks?project=beta', {
+      method: 'POST', headers: headers(BETA_TOKEN),
+      body: JSON.stringify({ id: 'victim', title: 'Original', status: 'BACKLOG', round: 1 }),
+      });
+    assert.equal(created.response.status, 201);
+
+    for (const variant of ['beta:victim', 'beta%3Avictim']) {
+      const r = await jsonRequest(baseUrl, `/api/tasks/${variant}?project=alpha`, {
+        method: 'PATCH', headers: headers(ALPHA_TOKEN),
+        body: JSON.stringify({ title: 'PWNED' }),
+        });
+      assert.equal(r.response.status, 403, `composite id rejected: ${variant}`);
+      }
+    // The encoded form matters on its own: req.path is still percent-encoded,
+    // so a check that looks for ':' before decoding misses %3A entirely.
+    assert.equal(
+      store.getTask('victim', 'beta').title, 'Original',
+      'the beta task was never modified by an alpha token',
+      );
+
+    const claim = await jsonRequest(baseUrl, '/api/tasks/beta%3Avictim/claim', {
+      method: 'POST', headers: headers(ALPHA_TOKEN),
+      body: JSON.stringify({ agent_id: 'intruder' }),
+      });
+    assert.equal(claim.response.status, 403, 'the claim route is covered too');
+    assert.equal(store.getTask('victim', 'beta').assigned_agent, null);
+    });
+
+  it("15. a composite id still works for the project's own token", async () => {
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({
+      alpha: ALPHA_TOKEN, beta: BETA_TOKEN,
+      });
+    const r = await jsonRequest(baseUrl, '/api/tasks/beta:victim', {
+      method: 'PATCH', headers: headers(BETA_TOKEN),
+      body: JSON.stringify({ title: 'Legitimate' }),
+      });
+    assert.equal(r.response.status, 200, 'composite ids are a supported feature, not blocked');
+    assert.equal(store.getTask('victim', 'beta').title, 'Legitimate');
+    });
+
+  it('16. rate limiting charges the project named by a composite id', async () => {
+    process.env.KANBAN_AUTH_TOKEN = 'rl-token';
+    process.env.KANBAN_RATE_LIMIT_PER_MIN = '2';
+    resetRateLimits();
+    await jsonRequest(baseUrl, '/api/tasks?project=rlc', {
+      method: 'POST', headers: headers('rl-token'),
+      body: JSON.stringify({ id: 'c-1', title: 'C', status: 'BACKLOG', round: 1 }),
+      });
+
+    // Without the path channel these would be charged to `default`, letting a
+    // flood against one project evade that project's budget entirely.
+    for (let i = 0; i < 2; i += 1) {
+      await jsonRequest(baseUrl, '/api/tasks/rlc:c-1', {
+        method: 'PATCH', headers: headers('rl-token'),
+        body: JSON.stringify({ title: `t${i}` }),
+        });
+      }
+    const blocked = await jsonRequest(baseUrl, '/api/tasks/rlc:c-1', {
+      method: 'PATCH', headers: headers('rl-token'),
+      body: JSON.stringify({ title: 'over' }),
+      });
+    assert.equal(blocked.response.status, 429);
+    assert.match(blocked.body.error, /project 'rlc'/, 'charged to rlc, not default');
+    });
+
+  it('17. the rate-limit bucket map does not grow on invalid project names', async () => {
+    process.env.KANBAN_AUTH_TOKEN = 'rl-token';
+    process.env.KANBAN_RATE_LIMIT_PER_MIN = '100';
+    resetRateLimits();
+    for (let i = 0; i < 20; i += 1) {
+      await jsonRequest(baseUrl, `/api/tasks?project=not%20valid%20${i}`, {
+        method: 'POST', headers: headers('rl-token'),
+        body: JSON.stringify({ id: `bad-${i}`, title: 'Bad', status: 'BACKLOG', round: 1 }),
+        });
+      }
+    assert.ok(
+      trackedProjectCount() <= 1,
+      `an unvalidated caller-supplied name must not become a permanent bucket, got ${trackedProjectCount()}`,
+      );
     });
 });

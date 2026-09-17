@@ -51,6 +51,34 @@ export function referencedProjects(req) {
   for (const c of candidates) {
     if (typeof c === 'string' && c !== '') out.add(c);
   }
+
+  // A composite `project:id` in the URL path is the fourth channel, and the
+  // sneakiest: `store.resolveProjectScope` lets that prefix OVERRIDE ?project=,
+  // so `PATCH /api/tasks/beta:victim?project=alpha` resolves to beta. Ignoring
+  // it let an alpha token rewrite a beta task on every task-scoped route, and
+  // let a flood at `/api/tasks/beta:t/claim` be charged to the wrong budget.
+  // This mirrors resolveProjectScope's rule exactly: a `:`-prefixed segment
+  // counts only when the prefix is a valid project id and something follows it.
+  for (const segment of String(req.path || '').split('/')) {
+    if (segment === '') continue;
+    // Decode BEFORE looking for the separator: req.path is still percent-
+    // encoded, so `beta%3Avictim` contains no literal ':' and a pre-decode
+    // check would wave the encoded form of the very same attack straight
+    // through. Express hands the route the decoded id, so decoding is what
+    // the store will actually see.
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // A malformed escape cannot be a valid composite id; fall back to raw.
+    }
+    if (!decoded.includes(':')) continue;
+    const idx = decoded.indexOf(':');
+    if (idx <= 0 || decoded.length <= idx + 1) continue;
+    const prefix = decoded.slice(0, idx);
+    if (store.isValidProjectId(prefix)) out.add(prefix);
+  }
+
   return [...out];
 }
 

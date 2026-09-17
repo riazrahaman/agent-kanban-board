@@ -359,7 +359,57 @@ describe('§2.2 scoped + diff SSE', () => {
       }
     });
 
-  it('6. onAudit unsubscribe detaches cleanly', async () => {
+  it('6. re-subscribing does not leak listeners', async () => {
+    // The §2.10 project switcher re-subscribes on every project change, turning
+    // a mount-once subscription into one that churns. If req.on('close') did
+    // not unsubscribe, a long session would accumulate dead sockets and every
+    // mutation would fan out writes to them.
+    // Earlier tests' sockets unsubscribe on the server's 'close' event, which
+    // lands after their abort returns — so wait for the count to settle before
+    // taking a baseline, or this measures their teardown instead of ours.
+    const settleTo = async (predicate) => {
+      for (let wait = 0; wait < 100; wait += 1) {
+        if (predicate(store.listenerCounts())) return true;
+        await new Promise((r) => setTimeout(r, 20));
+        }
+      return false;
+      };
+    let prev = store.listenerCounts();
+    for (let stable = 0; stable < 10; stable += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+      const now = store.listenerCounts();
+      if (now.snapshot === prev.snapshot && now.diff === prev.diff) break;
+      prev = now;
+      }
+    const base = store.listenerCounts();
+
+    for (let i = 0; i < 3; i += 1) {
+      const snap = await openStream(baseUrl, `/api/events?project=churn${i}`);
+      const diff = await openStream(baseUrl, `/api/events?project=churn${i}&mode=diff`);
+      try {
+        await settleTo((c) => c.snapshot === base.snapshot + 1 && c.diff === base.diff + 1);
+        const during = store.listenerCounts();
+        assert.equal(during.snapshot, base.snapshot + 1, `one snapshot listener on pass ${i}`);
+        assert.equal(during.diff, base.diff + 1, `one diff listener on pass ${i}`);
+        } finally {
+        // Always close, even on a failed assertion: a leaked socket keeps the
+        // test runner's event loop alive and hangs the whole file.
+        await snap.close();
+        await diff.close();
+        }
+
+      const returned = await settleTo(
+        (c) => c.snapshot === base.snapshot && c.diff === base.diff,
+        );
+      assert.ok(
+        returned,
+        `listeners returned to baseline after pass ${i}; ` +
+        `got ${JSON.stringify(store.listenerCounts())}, expected ${JSON.stringify(base)}`,
+        );
+      }
+    });
+
+  it('7. onAudit unsubscribe detaches cleanly', async () => {
     const seen = [];
     const off = store.onAudit((entry) => seen.push(entry));
     await jsonRequest(baseUrl, '/api/tasks?project=auditproj', {
