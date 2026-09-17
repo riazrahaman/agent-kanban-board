@@ -140,7 +140,6 @@ export function createAuthMiddleware() {
           }
         }
       }
-      req.authorizedProjects = isAdmin ? '*' : scopes;
     } else if (!tokensMatch(providedToken, requiredToken)) {
       return unauthorized();
     }

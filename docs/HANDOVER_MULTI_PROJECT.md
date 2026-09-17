@@ -349,5 +349,12 @@ Each has a regression test that was verified to fail without its fix.
   agent-id bind-on-blur/Enter change, the project switcher, and the portfolio table.
   Worth a manual pass before the merge. The server side of each was verified end-to-end
   against a running server with `curl`.
+- **§2.3 isolates writes, not reads.** With `KANBAN_PROJECT_TOKENS` configured every GET
+  stays open, including unscoped `GET /api/metrics`, which aggregates active-agent names
+  and cycle times across all projects in one response. This matches the pre-existing
+  posture (`GET /api/tasks` and `GET /api/projects` were always open) and §2.3's goal is
+  mutation isolation — but an operator who configures per-project tokens may reasonably
+  expect reads to be isolated too. Gating reads is a deliberate follow-up, not an
+  oversight to patch silently.
 - **`stash@{0}` is still undecided** — see §5. Untouched this session.
 - **`main` is untouched.** The `--no-ff` merge in §4.6 has not been run.

@@ -133,6 +133,19 @@ describe('§2.3 per-project auth + rate limiting', () => {
     assert.equal(store.getTask('alias-1', 'beta'), null);
     });
 
+  it('4b. the ?workspace= query alias is covered too', async () => {
+    // The fifth naming channel. Same resolution as ?project=, but it is the one
+    // input without its own test in a feature that was bypassable once already.
+    enableProjectTokens();
+    const r = await jsonRequest(baseUrl, '/api/tasks?workspace=beta', {
+      method: 'POST', headers: headers(ALPHA_TOKEN),
+      body: JSON.stringify({ id: 'ws-1', title: 'Workspace', status: 'BACKLOG', round: 1 }),
+      });
+    assert.equal(r.response.status, 403);
+    assert.match(r.body.error, /project 'beta'/);
+    assert.equal(store.getTask('ws-1', 'beta'), null, 'nothing landed in beta');
+    });
+
   it('5. the X-Kanban-Project header is covered too', async () => {
     enableProjectTokens();
     const r = await jsonRequest(baseUrl, '/api/tasks', {
