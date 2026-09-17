@@ -1,17 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Task } from './types'
-import { getTasks, subscribeToEvents } from './api'
+import type { ProjectSummary, Task } from './types'
+import { getProjects, getTasks, subscribeToEvents } from './api'
 import Board from './components/Board'
+import Portfolio from './components/Portfolio'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
+
+/** Sentinel for "every project" in the switcher; '' is not a valid project id. */
+const ALL_PROJECTS = ''
 
 export default function App() {
    const [tasks, setTasks] = useState<Task[]>([])
     const [openTaskId, setOpenTaskId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+
+     // §2.10: which board is shown, and whether we are on the portfolio view.
+    const [project, setProject] = useState<string>(() => {
+      if (typeof window === 'undefined') return ALL_PROJECTS
+      return localStorage.getItem('kanban.project') ?? ALL_PROJECTS
+       })
+    const [view, setView] = useState<'board' | 'portfolio'>('board')
+    const [projects, setProjects] = useState<ProjectSummary[]>([])
+
+    const selectProject = (next: string) => {
+      setProject(next)
+      setOpenTaskId(null) // a task sheet from the old scope would be orphaned
+      if (typeof window !== 'undefined') {
+        if (next) localStorage.setItem('kanban.project', next)
+        else localStorage.removeItem('kanban.project')
+         }
+       }
 
      // Phase 2.2: an operator can bind this browser to an agent id so the board
     // actively heartbeats + auto-claims on its behalf. Empty = monitor-only.
@@ -36,7 +57,13 @@ export default function App() {
 
      // Drive lease heartbeats + auto-claim for the bound agent off the live
     // task stream. Pure decisions live in lib/claimCoordinator.ts.
-    const coordinator = useClaimCoordinator({ agentId: agentId || null, tasks })
+    // Scoped to the visible board: an agent bound while viewing one project
+    // should claim from that project, not from the whole portfolio.
+    const coordinator = useClaimCoordinator({
+      agentId: agentId || null,
+      tasks,
+      projects: project ? [project] : undefined,
+       })
 
     const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
@@ -58,10 +85,15 @@ export default function App() {
     localStorage.setItem('theme', theme)
      }, [theme])
 
+     // Re-runs on project change: the fetch AND the SSE subscription are both
+    // scoped server-side (§2.2), so a scoped board never receives another
+    // project's tasks in the first place.
     useEffect(() => {
     let cancelled = false
+    const scope = project || undefined
+    setLoading(true)
 
-    getTasks()
+    getTasks(scope)
        .then((data) => {
         if (!cancelled) setTasks(data)
         })
@@ -74,13 +106,27 @@ export default function App() {
 
     const unsubscribe = subscribeToEvents((nextTasks) => {
       setTasks(nextTasks)
-      })
+      }, { project: scope })
 
     return () => {
       cancelled = true
       unsubscribe()
       }
-     }, [])
+     }, [project])
+
+     // The switcher needs every project, so this stays unscoped. Refreshed off
+    // the live task stream rather than a timer.
+    useEffect(() => {
+    let cancelled = false
+    getProjects()
+      .then((data) => {
+        if (!cancelled) setProjects(data)
+        })
+      .catch(() => {/* the switcher degrades to the current scope */})
+    return () => {
+      cancelled = true
+      }
+     }, [tasks.length])
 
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
@@ -102,6 +148,32 @@ export default function App() {
            </div>
          </div>
          <div className="flex items-center gap-3">
+            <select
+             value={project}
+             onChange={(e) => selectProject(e.target.value)}
+             aria-label="Filter the board to one project"
+             title="Scope the board, the live stream and auto-claim to one project"
+             className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+            >
+              <option value={ALL_PROJECTS}>all projects</option>
+              {projects.map((p) => (
+                <option key={p.project} value={p.project}>
+                  {p.project} ({p.live_count})
+                </option>
+              ))}
+              {project && !projects.some((p) => p.project === project) && (
+                <option value={project}>{project}</option>
+              )}
+            </select>
+            <button
+             type="button"
+             onClick={() => setView((v) => (v === 'board' ? 'portfolio' : 'board'))}
+             className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
+             aria-pressed={view === 'portfolio'}
+             title={view === 'board' ? 'Show the cross-project portfolio' : 'Back to the board'}
+            >
+              {view === 'board' ? 'Portfolio' : 'Board'}
+            </button>
             <input
              type="text"
              value={agentDraft}
@@ -143,17 +215,26 @@ export default function App() {
 
        <main className="flex flex-1 overflow-hidden">
          <ErrorBoundary>
-           {loading && (
+           {view === 'portfolio' && (
+             <Portfolio
+               refreshKey={tasks.length}
+               onSelectProject={(next) => {
+                 selectProject(next)
+                 setView('board')
+                 }}
+             />
+           )}
+           {view === 'board' && loading && (
              <div className="flex h-full flex-1 items-center justify-center font-mono text-xs text-muted">
               Loading tasks…
              </div>
            )}
-           {!loading && error && (
+           {view === 'board' && !loading && error && (
              <div className="flex h-full flex-1 items-center justify-center font-mono text-xs text-fail">
                {error}
              </div>
            )}
-           {!loading && !error && (
+           {view === 'board' && !loading && !error && (
              <>
                <div className="min-w-0 flex-1 overflow-hidden">
                  <Board tasks={tasks} onOpen={setOpenTaskId} />

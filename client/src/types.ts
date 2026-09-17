@@ -54,3 +54,40 @@ export type ProjectSummary = {
   archived_count: number
   updated?: string
 }
+
+/** §2.9 — per-project (or aggregate) observability figures. */
+export type CycleTimeSummary = {
+  count: number
+  mean_ms: number | null
+  median_ms: number | null
+  p90_ms: number | null
+  min_ms: number | null
+  max_ms: number | null
+}
+
+export type ProjectMetrics = {
+  /** null on the portfolio aggregate row. */
+  project: string | null
+  task_count: number
+  live_count: number
+  archived_count: number
+  /** DONE on the live board — agrees with ProjectSummary.done_count. */
+  done_count: number
+  /** All work ever finished, archived rows included. */
+  completed_count: number
+  by_status: Record<string, number>
+  cycle_time: CycleTimeSummary
+  reclaim_count: number
+  reclaimed_task_count: number
+  active_agents: string[]
+  active_agent_count: number
+  /** `conflicts` is counted since `since` — it has no durable source. */
+  claim_contention: { conflicts: number; since: string }
+}
+
+export type MetricsResponse = {
+  generated_at: string
+  scope: string | null
+  projects: ProjectMetrics[]
+  aggregate: ProjectMetrics & { project_count: number }
+}

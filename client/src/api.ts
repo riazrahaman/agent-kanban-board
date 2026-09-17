@@ -1,4 +1,4 @@
-import type { Task, ProjectSummary } from './types'
+import type { Task, ProjectSummary, MetricsResponse } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api')
 
@@ -223,6 +223,15 @@ export async function getProjects(): Promise<ProjectSummary[]> {
 }
 
 /**
+ * §2.9 — per-project + aggregate observability. Open GET.
+ * GET /metrics[?project=]
+ */
+export async function getMetrics(project?: string): Promise<MetricsResponse> {
+  const res = await fetch(withProject(`${API_BASE}/metrics`, project))
+  return handleResponse<MetricsResponse>(res)
+}
+
+/**
  * §2.8 — archived (DONE, aged-out) tasks. Open GET.
  * GET /tasks/archive[?project=]
  */
@@ -236,8 +245,11 @@ export async function getArchivedTasks(project?: string): Promise<Task[]> {
  * the server broadcasts the full task array. Returns an unsubscribe function
  * that closes the underlying EventSource.
  */
-export function subscribeToEvents(onTasks: (tasks: Task[]) => void): () => void {
-  const source = new EventSource(`${API_BASE}/events`)
+export function subscribeToEvents(
+  onTasks: (tasks: Task[]) => void,
+  { project }: { project?: string } = {},
+): () => void {
+  const source = new EventSource(withProject(`${API_BASE}/events`, project))
 
   const handler = (evt: MessageEvent<string>) => {
     try {
