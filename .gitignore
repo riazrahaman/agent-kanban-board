@@ -6,3 +6,6 @@ dist/
 tasks.json
 .env
 .env.*
+
+# Local agent tooling config, not part of the project
+opencode.json

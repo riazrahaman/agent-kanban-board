@@ -5,8 +5,8 @@
 **Working branch:** `feat/client-coordinator-phase`
 **Roadmap:** `docs/MULTI_PROJECT_ENHANCEMENT_RECOMMENDATIONS.md`
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
-**Remaining:** the `stash@{0}` decision (§5) and the merge to `main` (§4.6) — both the
-owner's calls, not blockers to clear. UI verified in a browser; see §9.
+**Merged:** `main` is at the `--no-ff` merge `91c8df0` and pushed to `origin`.
+**Remaining:** nothing blocking. UI verified in a browser; known gaps in §9.
 **Last verified:** server 123/123, client 26/26, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
@@ -180,7 +180,7 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
 
 ---
 
-## 5. Old project + stash (do not delete the stash)
+## 5. Old project + the resolved stash
 
 - **Old project** `budgeting_app_project/agent-kanban-board` (branch `feat/2.2-2.9`,
   commit `d20cd31`) was the earlier home of this work but is **superseded** by this tree.
@@ -188,14 +188,31 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
   the client coordinator was truly new and it has now been rebuilt + committed here
   (`8a6f2f1`). **The old project is safe to remove once main has been merged** — do not
   delete it yet; confirm the merge first.
-- **`git stash@{0}` on `feat/client-coordinator-phase`** holds a pre-existing WIP that is
-  **NOT mine**: a `getProjectSummaries` camelCase field rename
-  (`task_count`→`totalTasks`, `live_count`→`activeTasks`, `done_count`→`completedTasks`)
-  plus a rewritten `kanban.projects.test.js` that points integration tests at a hardcoded
-  port `:3000` without starting its own server (this is what broke 2 server tests). It is
-  **inconsistent** with the client's snake_case `ProjectSummary` type. Decide intent
-  before touching it: reconcile the field names across server + client, or drop it. Do NOT
-  `stash drop` it until that decision is recorded.
+- **`stash@{0}` is RESOLVED — rejected, and the stash entry dropped.** It held a
+  pre-existing WIP (not written during this work) that renamed `getProjectSummaries`
+  fields to camelCase — `task_count`→`totalTasks`, `live_count`→`activeTasks`,
+  `done_count`→`completedTasks` — dropped `archived_count` entirely, and rewrote
+  `kanban.projects.test.js` to point integration tests at a hardcoded `:3000` without
+  starting a server (the cause of the 2 broken tests).
+
+  Rejected for three reasons: it would have been the only camelCase in an API that is
+  snake_case throughout (`created_at`, `assigned_agent`, `claim_expires_at`,
+  `reclaim_count`, `by_status`, `cycle_time`, …); it breaks the client's `ProjectSummary`
+  type and `Portfolio.tsx`, which reads `archived_count`; and the test rewrite was
+  broken. The richer counts it was reaching for already shipped in §2.9: `/api/metrics`
+  distinguishes `done_count` (live board) from `completed_count` (archived included) and
+  carries a full `by_status` histogram.
+
+  **Nothing was lost.** The stash commit is preserved as an annotated tag before the
+  entry was dropped:
+
+  ```sh
+  git stash apply wip/rejected-camelcase-project-summaries   # recover it
+  git show wip/rejected-camelcase-project-summaries          # read the rationale
+  ```
+
+  The tag is local-only; `git push origin wip/rejected-camelcase-project-summaries`
+  if it should survive this machine.
 
 ---
 
@@ -387,5 +404,6 @@ Each has a regression test that was verified to fail without its fix.
   mutation isolation — but an operator who configures per-project tokens may reasonably
   expect reads to be isolated too. Gating reads is a deliberate follow-up, not an
   oversight to patch silently.
-- **`stash@{0}` is still undecided** — see §5. Untouched this session.
+- **`stash@{0}` is resolved** — rejected and dropped, preserved as the tag
+  `wip/rejected-camelcase-project-summaries`. See §5.
 - **`main` is untouched.** The `--no-ff` merge in §4.6 has not been run.
