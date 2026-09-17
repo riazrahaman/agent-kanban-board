@@ -105,6 +105,29 @@ export function selectTasksToHeartbeat(
 }
 
 /**
+ * The heartbeat requests to issue this tick: each is the task id plus **its own**
+ * project.
+ *
+ * Task ids are unique only within a project, so a heartbeat that omits the scope
+ * resolves against `default` and 404s for every task living anywhere else. The
+ * scope must therefore come from the task, never from whichever project the
+ * operator happens to be viewing — gating it on the UI filter meant that with the
+ * board unscoped (the default view) no lease in a named project was ever renewed,
+ * so every one of them silently lapsed and was reclaimed by the reaper.
+ */
+export function heartbeatTargets(
+  tasks: Task[],
+  agentId: string,
+  nowMs: number,
+  config: CoordinatorConfig = {}
+): Array<{ id: string; project: string }> {
+  return selectTasksToHeartbeat(tasks, agentId, nowMs, config).map((t) => ({
+    id: t.id,
+    project: t.project,
+  }))
+}
+
+/**
  * Whether this agent is currently holding any task (i.e. NOT idle). Used to
  * decide whether to go ask for the next claim.
  */

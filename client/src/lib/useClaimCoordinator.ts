@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { heartbeatTask, nextClaim } from '../api'
 import {
+  heartbeatTargets,
   isLostLeaseError,
   observedLeaseWindowMs,
-  selectTasksToHeartbeat,
   shouldAutoClaim,
 } from './claimCoordinator'
 
@@ -72,7 +72,7 @@ export function useClaimCoordinator({
 
      async function runOnce() {
        const who = agentRef.current
-        if (!who) return
+        if (!who || stop) return
         const proj = projectsRef.current?.length ? projectsRef.current[0] : undefined
         const nowMs = Date.now()
         leaseMsRef.current = observedLeaseWindowMs(
@@ -80,13 +80,22 @@ export function useClaimCoordinator({
           )
 
               // 1. Heartbeat every task this agent is actively holding.
-        const toBeat = selectTasksToHeartbeat(tasksRef.current, who, nowMs, {
+        const toBeat = heartbeatTargets(tasksRef.current, who, nowMs, {
           leaseMs: leaseMsRef.current,
             })
         let beat = 0
         for (const task of toBeat) {
+          // A cancelled coordinator must stop MUTATING immediately, not merely
+          // stop rescheduling: `stop` was previously only consulted before
+          // setResult, so a discarded run kept issuing writes. React StrictMode
+          // mounts every effect twice in development, so the throwaway mount was
+          // claiming real tasks alongside the live one.
+          if (stop) return
           try {
-            await heartbeatTask(task.id, who, proj ? { project: task.project } : {})
+            // Always the task's OWN project: gating this on the UI filter meant an
+            // unscoped board sent no scope at all, so every heartbeat for a task
+            // outside `default` 404'd and the lease lapsed.
+            await heartbeatTask(task.id, who, { project: task.project })
             beat += 1
                  } catch (err) {
                   // A "not a lease holder" / "not claimed" hint means this lease
@@ -105,7 +114,7 @@ export function useClaimCoordinator({
               // 2. If we are now idle, pull the next eligible task.
         let claimedId: string | null = null
         let claimError: string | null = null
-        if (shouldAutoClaim(tasksRef.current, who, Date.now())) {
+        if (!stop && shouldAutoClaim(tasksRef.current, who, Date.now())) {
           try {
             const claimed = await nextClaim(who, proj ? { project: proj, role: 'builder' } : { role: 'builder' })
             if (claimed) claimedId = claimed.id

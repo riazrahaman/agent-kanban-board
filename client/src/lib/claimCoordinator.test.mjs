@@ -170,3 +170,37 @@ test('observedLeaseWindowMs keeps the high-water mark and ignores other agents',
   assert.equal(coord.observedLeaseWindowMs([], 'agentA', now, estimate), estimate)
   assert.equal(coord.observedLeaseWindowMs([], 'agentA', now, undefined), undefined)
 })
+
+test('heartbeatTargets carries each task OWN project, not the viewed one', () => {
+  // Task ids are unique only within a project, so a heartbeat without a scope
+  // resolves against `default` and 404s. Deriving the scope from the UI filter
+  // meant an unscoped board (the default view) sent no project at all, so every
+  // lease outside `default` silently lapsed and was reclaimed by the reaper.
+  const now = Date.now()
+  const nearExpiry = new Date(now + 10000).toISOString()
+  const tasks = [
+    heldTask({ id: 'a-1', project: 'atlas', claim_expires_at: nearExpiry }),
+    heldTask({ id: 'o-1', project: 'orion', claim_expires_at: nearExpiry }),
+    heldTask({ id: 'x-1', project: 'atlas', assigned_agent: 'someone-else', claim_expires_at: nearExpiry }),
+  ]
+  const targets = pm_sort(coord.heartbeatTargets(tasks, 'agentA', now, { leaseMs: 60000 }))
+  assert.deepEqual(targets, [
+    { id: 'a-1', project: 'atlas' },
+    { id: 'o-1', project: 'orion' },
+  ], 'one target per held task, each scoped to the project that task lives in')
+
+  assert.ok(
+    targets.every((t) => typeof t.project === 'string' && t.project.length > 0),
+    'a target must never be emitted without a project',
+  )
+})
+
+test('heartbeatTargets emits nothing when no lease is due', () => {
+  const now = Date.now()
+  const fresh = heldTask({ id: 'a-1', project: 'atlas', claim_expires_at: new Date(now + 60000).toISOString() })
+  assert.deepEqual(coord.heartbeatTargets([fresh], 'agentA', now, { leaseMs: 60000 }), [])
+})
+
+function pm_sort(rows) {
+  return [...rows].sort((a, b) => a.id.localeCompare(b.id))
+}
