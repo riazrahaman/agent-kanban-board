@@ -292,7 +292,74 @@ describe('§2.2 scoped + diff SSE', () => {
       }
     });
 
-  it('5. onAudit unsubscribe detaches cleanly', async () => {
+  it('5. unblocking dependents emits exactly one event per dependent', async () => {
+    // maybeUnlockDependentsInner ends with a bare notify() after unlockTaskInner
+    // has already fired a semantic 'unblocked' per task. Before unchanged rows
+    // were suppressed, that trailing notify re-broadcast an 'updated' for every
+    // task in the store; it must now be silent, leaving one event per dependent.
+    await jsonRequest(baseUrl, '/api/tasks?project=depproj', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ id: 'dep-root', title: 'Root', status: 'BACKLOG', round: 1 }),
+      });
+    for (const id of ['dep-x', 'dep-y']) {
+      const r = await jsonRequest(baseUrl, '/api/tasks?project=depproj', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          id, title: id, status: 'BLOCKED', round: 1, depends_on: ['dep-root'],
+          }),
+        });
+      assert.equal(r.response.status, 201, `created ${id}`);
+      }
+    // An unrelated card that must stay silent throughout.
+    await jsonRequest(baseUrl, '/api/tasks?project=depproj', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ id: 'dep-bystander', title: 'Bystander', status: 'BACKLOG', round: 1 }),
+      });
+
+    const stream = await openStream(baseUrl, '/api/events?project=depproj&mode=diff');
+    try {
+      await settle();
+      const steps = [
+        { role: 'builder', status: 'BUILDING' },
+        { role: 'builder', status: 'IN_REVIEW' },
+        { role: 'reviewer', status: 'IN_TEST' },
+        { role: 'tester', status: 'DONE' },
+        ];
+      for (const { role, status } of steps) {
+        const r = await jsonRequest(baseUrl, '/api/tasks/dep-root?project=depproj', {
+          method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
+          });
+        assert.equal(r.response.status, 200, `dep-root -> ${status}`);
+        }
+
+      await stream.waitFor((e) => e.event === 'task.unblocked', { min: 2 });
+      await settle();
+
+      const unblocked = stream.events.filter((e) => e.event === 'task.unblocked');
+      assert.deepEqual(
+        unblocked.map((e) => e.data.task.id).sort(), ['dep-x', 'dep-y'],
+        'exactly one unblocked event per dependent, never two',
+        );
+      assert.ok(
+        unblocked.every((e) => e.data.actor === 'system'),
+        'the unblock is attributed to system',
+        );
+      assert.equal(
+        stream.events.filter((e) => e.data.task?.id === 'dep-bystander').length, 0,
+        'an untouched task produced no event at all',
+        );
+      // dep-root legitimately emits one 'updated' per real status transition.
+      const rootEvents = stream.events.filter((e) => e.data.task?.id === 'dep-root');
+      assert.equal(
+        rootEvents.length, steps.length,
+        `dep-root emits one event per transition, got ${rootEvents.map((e) => e.event).join(', ')}`,
+        );
+      } finally {
+      await stream.close();
+      }
+    });
+
+  it('6. onAudit unsubscribe detaches cleanly', async () => {
     const seen = [];
     const off = store.onAudit((entry) => seen.push(entry));
     await jsonRequest(baseUrl, '/api/tasks?project=auditproj', {
