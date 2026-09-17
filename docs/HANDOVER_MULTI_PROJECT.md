@@ -7,7 +7,7 @@
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
 **Remaining:** the `stash@{0}` decision (§5) and the merge to `main` (§4.6) — both the
 owner's calls, not blockers to clear. UI verified in a browser; see §9.
-**Last verified:** server 123/123, client 19/19, `tsc` + `vite build` green.
+**Last verified:** server 123/123, client 26/26, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
 > This document is a resume point. Read §4 "Next steps" first, then §7 (contracts you
@@ -209,7 +209,7 @@ cd server && node --check store.js && node --test
 
 cd ../client
 # client tests
-node --test 'src/**/*.test.mjs'      # expected: 19 pass, 0 fail
+node --test 'src/**/*.test.mjs'      # expected: 26 pass, 0 fail
 # build
 npm run build                        # expected: tsc clean, vite build ok
 
@@ -360,11 +360,26 @@ Each has a regression test that was verified to fail without its fix.
     never have caught. Clicking a project opened its board.
   - Killing the server mid-session showed `Failed to fetch`; after restarting, switching
     project cleared it and loaded — previously that error was permanent.
-- **The browser client sends no auth token**, so `next-claim` and every other mutation
-  from the UI returns 401 against a server with `KANBAN_AUTH_TOKEN` set. This predates
-  this work (mutations have required a token since KB-04/A07) and is not a regression,
-  but it does mean auto-claim cannot function from the browser as shipped. Wiring a token
-  into the client is unresolved and out of scope for this pass.
+- **Browser mutations now authenticate** (`41b32d2`). The operator supplies a token in a
+  masked header field; it is held in localStorage and sent as an `Authorization` header,
+  never in a URL and never in the bundle (confirmed by grepping the built assets). It is
+  deliberately not a `VITE_` env var, which Vite would inline into the published JS. Two
+  causes had to be fixed together: no request carried a token (401), and none carried
+  `X-Agent-Role` either (403) — only `nextClaim` happened to pass a role, in its body.
+- **Lease renewal was broken end-to-end until `dbdd29a`.** Heartbeats derived their
+  project scope from the UI *filter* rather than from the task, so an unscoped board —
+  the default view — sent no scope, the id resolved against `default`, and every
+  heartbeat 404'd for a task in a named project. Nothing renewed; the reaper reclaimed
+  every task once per TTL, forever. This was invisible to the whole test suite and only
+  surfaced by watching a real browser against a live server.
+- **React StrictMode double-claims in development.** `stop` now gates the mutating calls,
+  but an in-flight request cannot be aborted, so a discarded run may still complete one
+  call. Production (single mount) claims exactly one task — verified against a built
+  bundle. If this ever needs to be airtight, the fix is an `AbortController` per tick.
+- **CORS allows exactly one origin** (`KANBAN_ALLOWED_ORIGIN`, default
+  `http://localhost:5173`). Serving the client anywhere else — including a `vite preview`
+  on 5174 — fails every request with an opaque "Failed to fetch" in the UI. Worth
+  checking first when the board loads empty.
 - **§2.3 isolates writes, not reads.** With `KANBAN_PROJECT_TOKENS` configured every GET
   stays open, including unscoped `GET /api/metrics`, which aggregates active-agent names
   and cycle times across all projects in one response. This matches the pre-existing
