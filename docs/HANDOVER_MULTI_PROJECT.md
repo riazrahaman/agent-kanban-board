@@ -389,10 +389,19 @@ Each has a regression test that was verified to fail without its fix.
   heartbeat 404'd for a task in a named project. Nothing renewed; the reaper reclaimed
   every task once per TTL, forever. This was invisible to the whole test suite and only
   surfaced by watching a real browser against a live server.
-- **React StrictMode double-claims in development.** `stop` now gates the mutating calls,
-  but an in-flight request cannot be aborted, so a discarded run may still complete one
-  call. Production (single mount) claims exactly one task — verified against a built
-  bundle. If this ever needs to be airtight, the fix is an `AbortController` per tick.
+- **Coordinator teardown races: fixed.** `agentId` is no longer an effect dependency, so
+  the claim loop is created once and lives for the component's life; `runOnce` reads
+  `agentRef`, which every render keeps current. Previously each rebind tore the loop down
+  and built a new one, and the teardown could not cancel a `nextClaim` already in flight —
+  so rebinding could let the *old* agent's claim land on a board no longer watching it,
+  leaving that task held until the reaper took it back a full TTL later. It also called
+  `loop()` immediately on every rebind, so rapid rebinding meant a claim storm. This was
+  a production path, not only a StrictMode artifact; StrictMode's double-mount just made
+  it reproducible. Verified against a production build: five rebinds ~360ms apart produced
+  claims only on tick boundaries (110s and 11s apart), never one per rebind.
+  A genuine unmount mid-claim can still orphan one claim — the request is already on the
+  wire — but the page is going away in that case. An `AbortController` per tick would
+  narrow it further without closing it, since the server may already have committed.
 - **CORS allows exactly one origin** (`KANBAN_ALLOWED_ORIGIN`, default
   `http://localhost:5173`). Serving the client anywhere else — including a `vite preview`
   on 5174 — fails every request with an opaque "Failed to fetch" in the UI. Worth

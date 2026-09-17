@@ -142,7 +142,18 @@ export function useClaimCoordinator({
         stop = true
         if (timer) clearTimeout(timer)
           }
-       }, [agentId, intervalMs])
+        // `agentId` is deliberately NOT a dependency. runOnce reads agentRef,
+        // which every render keeps current, so the loop does not need rebuilding
+        // when the binding changes — and rebuilding it was harmful: the teardown
+        // cannot cancel a nextClaim already in flight, so rebinding from
+        // 'builder-1' to 'builder-2' could let the old agent's claim land on a
+        // board that is no longer watching it. Nothing would then heartbeat that
+        // task and it sat claimed until the reaper took it back a full TTL later.
+        // One stable loop for the component's life; the next tick simply reads
+        // the new binding. Cost is up to one interval before a fresh binding
+        // acts, which for a 5s tick is not worth a teardown race.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+       }, [intervalMs])
 
   return result
 }
