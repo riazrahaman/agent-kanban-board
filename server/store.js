@@ -739,22 +739,148 @@ export async function loadStore() {
   notify();
 }
 
-export function notify() {
-  const snapshot = tasks;
-  for (const listener of listeners) {
+// §2.2 diff-event layer: on each notify(), compute created/updated/removed vs the
+// previous snapshot, then dispatch {kind, task, prev?, project} events to
+// diffListeners. Backward-compat: full-snapshot `onChange` listeners still see
+// every mutation, unmodified.
+let diffListeners = [];
+let prevTaskMap = new Map(); // `${project}/${id}` -> Task (previous snapshot)
+let diffListenersInitialized = false;
+
+/**
+ * §2.2 — register a diff listener. Receives `{ kind, task, prev?, project }` on
+ * every mutation where something changed. `kind` is one of
+ * 'created' | 'updated' | 'removed' | 'archived'. Returns unsubscribe.
+ */
+export function onDiff(listener) {
+  diffListeners.push(listener);
+  return () => {
+    diffListeners = diffListeners.filter((l) => l !== listener);
+   };
+}
+
+/**
+ * §2.9 — structured audit-log entry for every committed mutation. Shape:
+ *   { ts, kind, project, task, prev?, actor, reason? }
+ * `kind` mirrors the diff layer. `actor` is the mutating agent (system for
+ * reaper/unlock/archive). `reason` carries a short human-readable cause (e.g.
+ * 'lease_expired', 'unblocked', 'archived'...). This is the substrate for
+ * §2.9 metrics + audit; today it's just a console line.
+ */
+const auditListeners = [];
+export function onAudit(fn) {
+  if (typeof fn !== 'function') throw new Error('onAudit listener must be a function');
+  auditListeners.push(fn);
+  return () => {
+    auditListeners = auditListeners.filter((f) => f !== fn);
+   };
+}
+
+function emitAudit(entry) {
+  for (const fn of [...auditListeners]) {
     try {
-      listener(snapshot);
+      fn(entry);
     } catch (err) {
-      console.error('[kanban] listener error:', err);
+      console.error('[kanban audit] listener error:', err);
     }
   }
+  // Default: console line. Best-effort, must not throw.
+  try {
+    console.log(
+      `[kanban audit] ${entry.ts} ${entry.kind} ${entry.project}/${entry.task ? entry.task.id : 'n/a'} ` +
+        `actor=${entry.actor || 'anon'}${entry.reason ? ' reason=' + entry.reason : ''}`
+     );
+  } catch {/* ignore */}
+}
+
+// Dispatch structured diff events computed from the previous vs current task
+// map. `opts.semantic` is a Map of `${project}/${id}` -> { kind, reason, actor }
+// used to override the inferred kind for a specific mutated task (e.g. a claim
+// surfaces as 'claimed' not 'updated'). One event per changed task, never two.
+function dispatchDiffEvents({ actor = 'user', reason = null, semantic = null } = {}) {
+  if (!diffListenersInitialized) {
+    prevTaskMap = new Map(tasks.map((t) => [
+      compositeKey(t.project, t.id), t,
+      ]));
+    diffListenersInitialized = true;
+    return;
+    }
+  const now = new Map(tasks.map((t) => [
+    compositeKey(t.project, t.id), t,
+    ]));
+  const tsMs = Date.now();
+
+  const fire = (key, kind, task, prev, evActor, evReason) => {
+    const event = {
+      kind, task, prev: prev || null, project: task?.project,
+      actor: evActor || actor, reason: evReason ?? reason, ts: tsMs,
+      };
+    for (const l of [...diffListeners]) {
+      try { l(event); } catch (err) {
+        console.error('[kanban diff] listener error:', err);
+        }
+      }
+    emitAudit({
+      ts: new Date(tsMs).toISOString(), kind,
+      project: task?.project, task, prev: prev || null,
+      actor: evActor || actor, reason: evReason ?? reason,
+      });
+   };
+
+    // Removed: present previously, gone now.
+   for (const [key, prevTask] of prevTaskMap) {
+    if (!now.has(key)) {
+      fire(key, 'removed', prevTask, prevTask, actor, reason);
+      }
+    }
+    // Created + updated: present now.
+   for (const [key, task] of now) {
+    const prevTask = prevTaskMap.get(key) || null;
+     // A supplied semantic override wins for this exact task.
+    const sev = semantic && semantic.get(key);
+    if (sev) {
+      fire(key, sev.kind, task, prevTask, sev.actor, sev.reason);
+      continue;
+     }
+     let kind;
+    if (!prevTask) kind = 'created';
+    else if (prevTask.status === 'DONE' && task.status === 'DONE' &&
+           (task.archived_at || task.status_changed_at)) {
+      kind = 'archived';
+       } else {
+      kind = 'updated';
+      }
+    fire(key, kind, task, prevTask, actor, reason);
+   }
+  prevTaskMap = now;
+}
+
+/**
+ * §2.2/§2.9 — notify snapshot listeners (unchanged shape, backward-compat) and
+ * layer the structured diff + audit. Optional semantic metadata:
+ *   actor  — who caused this mutation ('builder-x', 'system', ...)
+ *   reason — short human cause ('lease_expired', 'unblocked', 'archived')
+ *   semantic — Map`${project}/${id}` -> { kind, actor, reason } to override the
+ *              inferred kind for a specific mutated task (claim -> 'claimed',
+ *              reclaim -> 'reclaimed', unlock -> 'unblocked').
+ */
+export function notify(opts = {}) {
+  const snapshot = tasks;
+   for (const listener of listeners) {
+    try {
+      listener(snapshot);
+      } catch (err) {
+       console.error('[kanban] listener error:', err);
+       }
+     }
+   dispatchDiffEvents(opts);
 }
 
 export function onChange(listener) {
   listeners.push(listener);
   return () => {
     listeners = listeners.filter((l) => l !== listener);
-  };
+   };
 }
 
 export function getTasks(project) {
@@ -1149,7 +1275,15 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   // KB-05: persist first, then mutate memory, then notify.
   await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
   updateInMemoryTask(candidate);
-  notify();
+   // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
+  notify({
+    actor: renew ? (caller?.agentId || agentId || 'system') : agentId,
+    reason: renew ? 'lease_renewed' : 'claimed',
+    semantic: new Map([[
+      compositeKey(candidate.project, candidate.id),
+      { kind: renew ? 'renewed' : 'claimed', actor: renew ? (caller?.agentId || 'system') : agentId, reason: renew ? 'lease_renewed' : 'claimed' },
+      ]]),
+   });
   return { task: candidate, status: 200 };
 }
 
@@ -1203,7 +1337,15 @@ async function unlockTaskInner(task, nowMs, completedRef) {
   });
   await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
   updateInMemoryTask(candidate);
-  notify();
+    // §2.2/§2.9: unblocked event + audit for the auto-promote override.
+  notify({
+    actor: 'system',
+    reason: 'unblocked',
+    semantic: new Map([[
+      compositeKey(candidate.project, candidate.id),
+      { kind: 'unblocked', actor: 'system', reason: 'unblocked' },
+       ]]),
+     });
   return { task: candidate, status: 200 };
 }
 
@@ -1214,12 +1356,15 @@ async function maybeUnlockDependentsInner(completedRef, nowMs) {
     if (t.status !== STATUSES.BLOCKED) continue;
     const deps = Array.isArray(t.depends_on) ? t.depends_on : [];
     if (!deps.includes(completedRef)) continue;
-    // Only unlock when *every* dep is now DONE (the last-dep-completes case).
+      // Only unlock when *every* dep is now DONE (the last-dep-completes case).
     if (!dependencyGate(t).ok) continue;
     const r = await unlockTaskInner(t, nowMs, completedRef);
     if (!r.error) unblocked.push(t.id);
-  }
-  if (unblocked.length) notify();
+    }
+  // Each unlock fired its own semantic event inside unlockTaskInner; this
+     // extra snapshot notify is a no-op re-broadcast so downstream listeners
+     // see the whole set in one tick.
+  notify({ actor: 'system', reason: 'unblocked_batch' });
   return { unblocked };
 }
 
@@ -1332,11 +1477,19 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
          });
 
          // KB-05: persist first, then mutate memory, then notify.
-        await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-        updateInMemoryTask(candidate);
-        notify();
-        return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
-        }
+         await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+         updateInMemoryTask(candidate);
+         // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
+         notify({
+         actor: 'system',
+         reason: reason,
+         semantic: new Map([[
+           compositeKey(candidate.project, candidate.id),
+           { kind: 'reclaimed', actor: 'system', reason, prevTask: task },
+           ]]),
+           });
+         return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
+         }
 
         /**
         * reclaimTask(id, { reason, now }) — public, lock-wrapped reclaim. Delegates
