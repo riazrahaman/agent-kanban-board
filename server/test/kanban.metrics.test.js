@@ -195,7 +195,17 @@ describe('§2.9 cross-project metrics', () => {
       assert.equal(m.live_count, 0, 'no longer live');
       assert.equal(m.task_count, 1, 'still one task in total');
       assert.equal(m.cycle_time.count, 1, 'the completion still contributes a sample');
-      assert.equal(m.done_count, 1, 'archived DONE work is still done work');
+      assert.equal(m.completed_count, 1, 'archived DONE work is still completed work');
+      assert.equal(
+        m.done_count, 0,
+        'done_count is the LIVE board, so it agrees with GET /api/projects after a sweep',
+        );
+      const summaries = (await jsonRequest(baseUrl, '/api/projects')).body;
+      const summary = summaries.find((s) => s.project === 'march');
+      assert.equal(
+        summary.done_count, m.done_count,
+        '/api/projects and /api/metrics must not disagree about the same project',
+        );
       } finally {
       delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
       }
@@ -269,5 +279,51 @@ describe('§2.9 cross-project metrics', () => {
     const m = find(body, 'mcontend');
     assert.equal(m.claim_contention.conflicts, 2, 'both losing claims were counted');
     assert.ok(m.claim_contention.since, 'reported as a since-boot window, not a durable total');
+    });
+  it('10. an assignment with no lease is never counted as an active agent', async () => {
+    // createTask passes a body `assigned_agent` straight through and never sets
+    // claim_expires_at, and the reaper skips records whose expiry is null — so
+    // treating "no usable lease" as active reported a phantom agent forever,
+    // with nothing in the system able to clear it.
+    const r = await jsonRequest(baseUrl, '/api/tasks?project=mghost', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        id: 'ghost-1', title: 'Ghost', status: 'BACKLOG', round: 1, assigned_agent: 'phantom',
+        }),
+      });
+    assert.equal(r.response.status, 201);
+    assert.ok(
+      !store.getTask('ghost-1', 'mghost').claim_expires_at,
+      'no lease was issued alongside the assignment',
+      );
+
+    const m = find((await jsonRequest(baseUrl, '/api/metrics?project=mghost')).body, 'mghost');
+    assert.deepEqual(m.active_agents, [], 'an assignment without a lease is not an agent at work');
+    assert.equal(m.active_agent_count, 0);
+    });
+
+  it('11. a lapsed, unreaped lease is not counted as claim contention', async () => {
+    // Otherwise the endpoint contradicts itself: "two agents raced for this"
+    // while simultaneously reporting that nobody holds it. With the reaper
+    // disabled, a polling agent would inflate the counter without bound.
+    store.resetClaimContention();
+    await createTask(baseUrl, 'mstale', 's-1');
+    await jsonRequest(baseUrl, '/api/tasks/s-1/claim?project=mstale', {
+      method: 'POST', headers: headers('builder', 'crashed'),
+      body: JSON.stringify({ agent_id: 'crashed' }),
+      });
+    const t = store.getTask('s-1', 'mstale');
+    t.claim_expires_at = new Date(Date.now() - 1000).toISOString();
+    await store.getStorage('mstale').saveTask(t, store.getProjectBucket('mstale'));
+
+    const r = await jsonRequest(baseUrl, '/api/tasks/s-1/claim?project=mstale', {
+      method: 'POST', headers: headers('builder', 'newcomer'),
+      body: JSON.stringify({ agent_id: 'newcomer' }),
+      });
+    assert.equal(r.response.status, 409, 'the stale holder still blocks the claim');
+
+    const m = find((await jsonRequest(baseUrl, '/api/metrics?project=mstale')).body, 'mstale');
+    assert.equal(m.claim_contention.conflicts, 0, 'a crashed agent is not a race');
+    assert.deepEqual(m.active_agents, [], 'and it is consistent with active_agents');
     });
 });

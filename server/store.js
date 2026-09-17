@@ -996,6 +996,7 @@ function emptyMetrics(project) {
     live_count: 0,
     archived_count: 0,
     done_count: 0,
+    completed_count: 0,
     by_status: Object.fromEntries(VALID_STATUS_LIST.map((s) => [s, 0])),
     cycle_time: summarizeDurations([]),
     reclaim_count: 0,
@@ -1039,7 +1040,15 @@ export function getMetrics(project) {
     if (Object.prototype.hasOwnProperty.call(m.by_status, task.status)) {
       m.by_status[task.status] += 1;
     }
-    if (task.status === STATUSES.DONE) m.done_count += 1;
+    // Two different questions, so two fields rather than one ambiguous one:
+    // `done_count` is DONE on the live board and matches getProjectSummaries,
+    // while `completed_count` is all work ever finished, archived included.
+    // Reporting only the latter under the name `done_count` made /api/projects
+    // and /api/metrics disagree about the same project the moment a sweep ran.
+    if (task.status === STATUSES.DONE) {
+      m.completed_count += 1;
+      if (!archived) m.done_count += 1;
+    }
 
     const reclaims = Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0;
     m.reclaim_count += reclaims;
@@ -1054,11 +1063,16 @@ export function getMetrics(project) {
       }
     }
 
-    // "Active" means holding a lease that has not lapsed — a stale assignment
-    // on an expired lease is not an agent doing work.
+    // "Active" means holding a lease that has not lapsed. An assignment with no
+    // usable lease at all does NOT count: `createTask` passes a request body's
+    // `assigned_agent` through without ever setting `claim_expires_at`, and the
+    // reaper skips records whose expiry is null — so such an agent would
+    // otherwise be reported as working on it forever, with nothing able to
+    // clear it. Legacy records backfilled to `claim_expires_at: null` are the
+    // same case.
     if (!archived && task.assigned_agent) {
       const expiry = task.claim_expires_at ? Date.parse(task.claim_expires_at) : NaN;
-      if (Number.isNaN(expiry) || expiry > nowMs) m._agents.add(task.assigned_agent);
+      if (!Number.isNaN(expiry) && expiry > nowMs) m._agents.add(task.assigned_agent);
     }
   };
 
@@ -1096,6 +1110,7 @@ export function getMetrics(project) {
     live_count: sum('live_count'),
     archived_count: sum('archived_count'),
     done_count: sum('done_count'),
+    completed_count: sum('completed_count'),
     by_status: Object.fromEntries(
       VALID_STATUS_LIST.map((s) => [s, projects.reduce((acc, m) => acc + m.by_status[s], 0)]),
       ),
@@ -1410,7 +1425,14 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   // (1) contention — first, so held tasks win the ordering over the dep gate.
   if (!(renew && isPriv)) {
     if (task.assigned_agent && task.assigned_agent !== agentId) {
-      recordClaimContention(task.project);
+      // Only a live lease means two agents genuinely raced. A lapsed-but-
+      // unreaped assignment (or one that never had a lease) is a crashed agent,
+      // not contention — and with the reaper disabled a polling agent retrying
+      // against it would inflate the metric without bound.
+      const holderExpiry = task.claim_expires_at ? Date.parse(task.claim_expires_at) : NaN;
+      if (!Number.isNaN(holderExpiry) && holderExpiry > nowMs) {
+        recordClaimContention(task.project);
+      }
       return {
         error: `Task ${task.id} is already claimed by ${task.assigned_agent}`,
         status: 409,
