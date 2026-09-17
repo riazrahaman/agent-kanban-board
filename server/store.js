@@ -944,6 +944,176 @@ export function getProjectSummaries() {
 }
 
 // ---------------------------------------------------------------------------
+// §2.9 — cross-project observability
+// ---------------------------------------------------------------------------
+
+/**
+ * Claim-contention counters, per project. This is the one metric with no
+ * durable source: a rejected claim is not a committed mutation, so it leaves no
+ * trace on any task and emits no audit entry. It is therefore reported as an
+ * explicitly since-boot figure (`claim_contention.since`) rather than being
+ * presented alongside the durable counts as if it survived a restart.
+ */
+let contentionCounts = new Map();
+let contentionSince = new Date().toISOString();
+
+function recordClaimContention(project) {
+  const key = project || defaultProjectName();
+  contentionCounts.set(key, (contentionCounts.get(key) || 0) + 1);
+}
+
+export function resetClaimContention() {
+  contentionCounts = new Map();
+  contentionSince = new Date().toISOString();
+}
+
+function percentile(sorted, p) {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+  return sorted[Math.max(0, idx)];
+}
+
+function summarizeDurations(values) {
+  if (values.length === 0) {
+    return { count: 0, mean_ms: null, median_ms: null, p90_ms: null, min_ms: null, max_ms: null };
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const total = sorted.reduce((acc, v) => acc + v, 0);
+  return {
+    count: sorted.length,
+    mean_ms: Math.round(total / sorted.length),
+    median_ms: percentile(sorted, 50),
+    p90_ms: percentile(sorted, 90),
+    min_ms: sorted[0],
+    max_ms: sorted[sorted.length - 1],
+  };
+}
+
+function emptyMetrics(project) {
+  return {
+    project,
+    task_count: 0,
+    live_count: 0,
+    archived_count: 0,
+    done_count: 0,
+    by_status: Object.fromEntries(VALID_STATUS_LIST.map((s) => [s, 0])),
+    cycle_time: summarizeDurations([]),
+    reclaim_count: 0,
+    reclaimed_task_count: 0,
+    active_agents: [],
+    active_agent_count: 0,
+    claim_contention: { conflicts: 0, since: contentionSince },
+  };
+}
+
+/**
+ * §2.9 metrics for one project, or every project plus an aggregate.
+ *
+ * Everything except claim contention is computed from persisted task fields
+ * (`created_at` / `completed_at` / `reclaim_count` / `assigned_agent`) rather
+ * than from accumulated in-process counters, so the numbers survive a restart
+ * and can never drift from the tasks they describe.
+ *
+ * Archived tasks are included. They are exactly the completed work, so
+ * excluding them would make cycle time silently improve as history is swept.
+ */
+export function getMetrics(project) {
+  const scope =
+    project === undefined || project === null || project === '' ? null : project;
+  if (scope !== null && !isValidProjectId(scope)) return null;
+
+  const byProject = new Map();
+  const ensure = (p) => {
+    if (!byProject.has(p)) byProject.set(p, { ...emptyMetrics(p), _cycles: [], _agents: new Set() });
+    return byProject.get(p);
+  };
+
+  const nowMs = Date.now();
+  const ingest = (task, archived) => {
+    if (scope !== null && task.project !== scope) return;
+    const m = ensure(task.project);
+    m.task_count += 1;
+    if (archived) m.archived_count += 1;
+    else m.live_count += 1;
+
+    if (Object.prototype.hasOwnProperty.call(m.by_status, task.status)) {
+      m.by_status[task.status] += 1;
+    }
+    if (task.status === STATUSES.DONE) m.done_count += 1;
+
+    const reclaims = Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0;
+    m.reclaim_count += reclaims;
+    if (reclaims > 0) m.reclaimed_task_count += 1;
+
+    // Cycle time: only meaningful for work that actually finished.
+    if (task.completed_at && task.created_at) {
+      const start = Date.parse(task.created_at);
+      const end = Date.parse(task.completed_at);
+      if (!Number.isNaN(start) && !Number.isNaN(end) && end >= start) {
+        m._cycles.push(end - start);
+      }
+    }
+
+    // "Active" means holding a lease that has not lapsed — a stale assignment
+    // on an expired lease is not an agent doing work.
+    if (!archived && task.assigned_agent) {
+      const expiry = task.claim_expires_at ? Date.parse(task.claim_expires_at) : NaN;
+      if (Number.isNaN(expiry) || expiry > nowMs) m._agents.add(task.assigned_agent);
+    }
+  };
+
+  for (const t of tasks) ingest(t, false);
+  for (const [p, list] of Object.entries(archive)) {
+    for (const t of list) ingest({ ...t, project: t.project || p }, true);
+  }
+
+  // A valid but empty scope still reports zeroes rather than nothing.
+  if (scope !== null) ensure(scope);
+
+  const projects = [...byProject.values()]
+    .map((m) => {
+      const { _cycles, _agents, ...rest } = m;
+      return {
+        ...rest,
+        cycle_time: summarizeDurations(_cycles),
+        active_agents: [..._agents].sort(),
+        active_agent_count: _agents.size,
+        claim_contention: {
+          conflicts: contentionCounts.get(m.project) || 0,
+          since: contentionSince,
+        },
+      };
+    })
+    .sort((a, b) => a.project.localeCompare(b.project));
+
+  const allCycles = [...byProject.values()].flatMap((m) => m._cycles);
+  const allAgents = new Set([...byProject.values()].flatMap((m) => [...m._agents]));
+  const sum = (key) => projects.reduce((acc, m) => acc + m[key], 0);
+  const aggregate = {
+    project: null,
+    project_count: projects.length,
+    task_count: sum('task_count'),
+    live_count: sum('live_count'),
+    archived_count: sum('archived_count'),
+    done_count: sum('done_count'),
+    by_status: Object.fromEntries(
+      VALID_STATUS_LIST.map((s) => [s, projects.reduce((acc, m) => acc + m.by_status[s], 0)]),
+      ),
+    cycle_time: summarizeDurations(allCycles),
+    reclaim_count: sum('reclaim_count'),
+    reclaimed_task_count: sum('reclaimed_task_count'),
+    active_agents: [...allAgents].sort(),
+    active_agent_count: allAgents.size,
+    claim_contention: {
+      conflicts: projects.reduce((acc, m) => acc + m.claim_contention.conflicts, 0),
+      since: contentionSince,
+    },
+  };
+
+  return { generated_at: new Date().toISOString(), scope, projects, aggregate };
+}
+
+// ---------------------------------------------------------------------------
 // Optimistic concurrency (§2.6)
 // ---------------------------------------------------------------------------
 
@@ -1240,6 +1410,7 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   // (1) contention — first, so held tasks win the ordering over the dep gate.
   if (!(renew && isPriv)) {
     if (task.assigned_agent && task.assigned_agent !== agentId) {
+      recordClaimContention(task.project);
       return {
         error: `Task ${task.id} is already claimed by ${task.assigned_agent}`,
         status: 409,

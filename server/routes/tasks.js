@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as store from '../store.js';
 import { VALID_ROLES } from '../middleware/auth.js';
+import { projectScopeGuard } from '../middleware/projectScope.js';
 
 const router = Router();
 
@@ -44,23 +45,9 @@ function resolveExpectedVersion(req) {
   return null;
 }
 
-/**
- * A supplied-but-invalid project scope is a client error, not an invitation to
- * widen. `resolveProjectFromReq` returns undefined for a bad value, and
- * `store.getTasks(undefined)` means *every* project — so without this guard
- * `GET /api/tasks?project=my%20proj` hands a caller that believes it is scoped
- * to one project the entire portfolio, and POST silently writes to `default`.
- * The store already returns [] for a bad id; this stops the route defeating it.
- */
-router.use((req, res, next) => {
-  const raw =
-    req.query?.project ??
-    req.query?.workspace ??
-    req.headers['x-kanban-project'];
-  if (raw === undefined || raw === null || raw === '') return next();
-  if (typeof raw === 'string' && store.isValidProjectId(raw)) return next();
-  return res.status(400).json({ error: `Invalid project scope: ${String(raw)}` });
-});
+// A supplied-but-invalid project scope is a client error, never a widening.
+// Shared with the metrics router — see middleware/projectScope.js.
+router.use(projectScopeGuard());
 
 // --- Collection ---------------------------------------------------------
 
