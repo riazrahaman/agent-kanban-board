@@ -783,7 +783,7 @@ export function getProjectSummaries() {
   const ensure = (p) => {
     let s = map.get(p);
     if (!s) {
-      s = { project: p, task_count: 0, done_count: 0, live_count: 0, archived_count: 0, updated: null };
+      s = { project: p, totalTasks: 0, activeTasks: 0, completedTasks: 0, updated: null };
       map.set(p, s);
     }
     return s;
@@ -791,19 +791,29 @@ export function getProjectSummaries() {
   const touch = (s, iso) => {
     if (iso && (!s.updated || iso > s.updated)) s.updated = iso;
   };
+
+  // Live tasks
   for (const t of tasks) {
     const s = ensure(t.project);
-    s.live_count += 1;
-    s.task_count += 1;
-    if (t.status === STATUSES.DONE) s.done_count += 1;
+    s.totalTasks += 1;
+    if (t.status !== STATUSES.DONE) {
+      s.activeTasks += 1;
+    } else {
+      s.completedTasks += 1;
+    }
     touch(s, t.updated);
   }
+
+  // Archived tasks
   for (const [p, list] of Object.entries(archive)) {
     const s = ensure(p);
-    s.archived_count += list.length;
-    s.task_count += list.length;
-    for (const t of list) touch(s, t.archived_at || t.updated);
+    for (const t of list) {
+      s.totalTasks += 1;
+      s.completedTasks += 1;
+      touch(s, t.archived_at || t.updated);
+    }
   }
+
   return [...map.values()].sort((a, b) => a.project.localeCompare(b.project));
 }
 
