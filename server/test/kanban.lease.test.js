@@ -194,7 +194,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await setExpiry('reap-1', taskExpireMs);
       const future = taskExpireMs + 10;
       const res = await store.reapExpiredClaims({ now: future });
-      assert.ok(res.reclaimed.includes('reap-1'), 'the expired task was reclaimed');
+      assert.ok(res.reclaimed.includes('default/reap-1'), 'the expired task was reclaimed');
       const reclaimed = store.getTask('reap-1');
       assert.equal(reclaimed.status, 'BACKLOG', 'status forced back to BACKLOG');
       assert.equal(reclaimed.assigned_agent, null, 'ownership cleared');
@@ -215,7 +215,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
         });
       // A sweep at "now" (well inside the TTL) must not reclaim THIS task.
       const res = await store.reapExpiredClaims({ now: Date.now() });
-      assert.ok(!res.reclaimed.includes('reap-2'), 'no fresh lease is reclaimed');
+      assert.ok(!res.reclaimed.includes('default/reap-2'), 'no fresh lease is reclaimed');
       assert.equal(store.getTask('reap-2').status, 'BUILDING', 'task stays BUILDING');
       assert.equal(store.getTask('reap-2').assigned_agent, 'fine', 'ownership retained');
       });
@@ -258,8 +258,8 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await setExpiry('reap-done', Date.now() - 1000);
 
       const res = await store.reapExpiredClaims({ now: Date.now() });
-      assert.ok(!res.reclaimed.includes('reap-blk'), 'a BLOCKED task is never reclaimed');
-      assert.ok(!res.reclaimed.includes('reap-done'), 'a DONE task is never reclaimed');
+      assert.ok(!res.reclaimed.includes('default/reap-blk'), 'a BLOCKED task is never reclaimed');
+      assert.ok(!res.reclaimed.includes('default/reap-done'), 'a DONE task is never reclaimed');
       assert.equal(store.getTask('reap-blk').status, 'BLOCKED');
       assert.equal(store.getTask('reap-blk').assigned_agent, 'blocked-owner');
       assert.equal(store.getTask('reap-done').status, 'DONE');
@@ -311,7 +311,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
        // (mutating the lock), so the sweep re-reads a fresh expiry and skips it.
       await store.renewLease('reap-race', 'holder', { caller: { role: 'builder' }, now: t + 10 });
       const res = await store.reapExpiredClaims({ now: t + 10 });
-      assert.ok(!res.reclaimed.includes('reap-race'), 'renew landed first -> it is not reaped');
+      assert.ok(!res.reclaimed.includes('default/reap-race'), 'renew landed first -> it is not reaped');
       assert.equal(store.getTask('reap-race').status, 'BUILDING', 'surviving lease stays BUILDING');
       assert.equal(store.getTask('reap-race').assigned_agent, 'holder', 'ownership retained');
       });
@@ -328,7 +328,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await setExpiry('reap-race2', t);
         // Sweep FIRST, then try to renew: the lease is gone, so renew is rejected.
       const res = await store.reapExpiredClaims({ now: t + 10 });
-      assert.ok(res.reclaimed.includes('reap-race2'), 'the reaper reclaims the expired lease');
+      assert.ok(res.reclaimed.includes('default/reap-race2'), 'the reaper reclaims the expired lease');
       const beat = await store.renewLease('reap-race2', 'holder', { caller: { role: 'builder' }, now: t + 10 });
       assert.equal(beat.status, 409, 'renew after a reclaim is rejected');
       assert.equal(beat.reason, 'not_claimed', 'the task is no longer claimed');

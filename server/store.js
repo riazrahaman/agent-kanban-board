@@ -1286,12 +1286,16 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
   updateInMemoryTask(candidate);
    // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
+   // The auth middleware populates req.caller as { agent_id, role } — reading
+   // `caller.agentId` was always undefined, which attributed every renewal by a
+   // real agent to 'system' in the very audit substrate §2.9 reads from.
+  const actor = (renew ? caller?.agent_id : null) || agentId || 'system';
   notify({
-    actor: renew ? (caller?.agentId || agentId || 'system') : agentId,
+    actor,
     reason: renew ? 'lease_renewed' : 'claimed',
     semantic: new Map([[
       compositeKey(candidate.project, candidate.id),
-      { kind: renew ? 'renewed' : 'claimed', actor: renew ? (caller?.agentId || 'system') : agentId, reason: renew ? 'lease_renewed' : 'claimed' },
+      { kind: renew ? 'renewed' : 'claimed', actor, reason: renew ? 'lease_renewed' : 'claimed' },
       ]]),
    });
   return { task: candidate, status: 200 };
@@ -1506,9 +1510,9 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
         * to the unlocked inner so a caller that is already inside the lock
         * (reapExpiredClaims) does not deadlock on the promise-queue lock.
         */
-       export async function reclaimTask(id, { reason = 'lease_expired', now } = {}) {
+       export async function reclaimTask(id, { reason = 'lease_expired', now, project } = {}) {
        return withMutationLock(async () => {
-        const task = getTask(id);
+        const task = getTask(id, project);
         if (!task) return { error: 'Task not found', status: 404 };
         const nowMs = typeof now === 'number' ? now : nowFn();
         return reclaimTaskInner(task, { reason, nowMs });
@@ -1540,10 +1544,14 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        let reclaimed = 0;
        const ids = [];
        for (const t of candidates) {
-         const r = await reclaimTaskInner(getTask(t.id), { reason: 'lease_expired', nowMs });
+         // getTask MUST be given the candidate's own project: task ids are unique
+         // only within a project, so the 1-arg form resolves against `default` and
+         // either returns null (throwing, aborting the whole sweep) or — when the
+         // same short id exists in `default` — reclaims the wrong task.
+         const r = await reclaimTaskInner(getTask(t.id, t.project), { reason: 'lease_expired', nowMs });
          if (r && r.reclaimed) {
            reclaimed += 1;
-           ids.push(t.id);
+           ids.push(compositeKey(t.project, t.id));
             }
            }
            if (reclaimed > 0) notify();
@@ -1569,13 +1577,21 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        if (!agentId || typeof agentId !== 'string') {
          return { error: 'agent_id is required', status: 400 };
         }
-        // §2.7: project scoping is a no-op today (accepted, ignored — §2.1 lands it
-        // separately). `role` is validation-only for now (validated by the route
-        // against VALID_ROLES) and recorded on the claim but does not filter.
-       void project;
+        // `role` is validation-only (the route checks it against VALID_ROLES) and
+        // is recorded on the claim, but it does not filter candidates.
        void role;
 
+        // §2.1/§2.7: an agent bound to one project must never be handed another
+        // project's card. An invalid project id matches nothing rather than
+        // silently widening to the whole portfolio.
+       const hasScope = project !== undefined && project !== null && project !== '';
+       if (hasScope && !isValidProjectId(project)) {
+         return { unavailable: true, status: 204 };
+         }
+       const scoped = hasScope ? project : null;
+
         const candidates = tasks.filter((t) => {
+         if (scoped !== null && t.project !== scoped) return false;
          if (t.assigned_agent !== null) return false;
          if (t.status !== STATUSES.BACKLOG) return false;
          if (!dependencyGate(t).ok) return false;
