@@ -7,12 +7,14 @@ import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
+import { createRateLimitMiddleware } from './middleware/rateLimit.js';
 
 export function createApp() {
   const app = express();
   app.use(configureCors());
   app.use(express.json());
   app.use(createAuthMiddleware());
+  app.use(createRateLimitMiddleware());
 
   app.use('/api/tasks', tasksRouter);
   app.use('/api/projects', projectsRouter);
