@@ -6,30 +6,42 @@ import { backlogOf, blockedOf, formatDuration, wipOf } from '../lib/portfolioMet
 type Props = {
   /** Jump to a single project's board. */
   onSelectProject: (project: string) => void
-  /** Re-fetch whenever the live task stream changes. */
+  /** Bumped by the caller when the visible board's tasks change. */
   refreshKey: number
+  /** How often to re-poll while visible, in ms. */
+  pollMs?: number
 }
 
-export default function Portfolio({ onSelectProject, refreshKey }: Props) {
+export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 }: Props) {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // This view is cross-project but the task stream feeding `refreshKey` is
+  // scoped to one board, so activity in every OTHER project is invisible to it
+  // — and even in the visible one, a task moving BACKLOG→DONE does not change
+  // the task count. Hence a poll while mounted rather than event-driven
+  // refresh alone.
   useEffect(() => {
     let cancelled = false
-    getMetrics()
-      .then((data) => {
-        if (!cancelled) {
+    const load = () => {
+      getMetrics()
+        .then((data) => {
+          if (cancelled) return
           setMetrics(data)
           setError(null)
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load metrics')
-      })
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setError(err instanceof Error ? err.message : 'Failed to load metrics')
+        })
+    }
+    load()
+    const timer = setInterval(load, pollMs)
     return () => {
       cancelled = true
+      clearInterval(timer)
     }
-  }, [refreshKey])
+  }, [refreshKey, pollMs])
 
   if (error) {
     return (

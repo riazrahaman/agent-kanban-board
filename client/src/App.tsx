@@ -92,6 +92,11 @@ export default function App() {
     let cancelled = false
     const scope = project || undefined
     setLoading(true)
+    // Clear the previous failure too: without this, one failed load left the
+    // board showing a stale error forever, because the render guard is
+    // `!loading && error` and nothing else ever reset it — so a later
+    // successful fetch loaded tasks that were never displayed.
+    setError(null)
 
     getTasks(scope)
        .then((data) => {
@@ -156,9 +161,13 @@ export default function App() {
              className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
             >
               <option value={ALL_PROJECTS}>all projects</option>
+              {/* Names only, no counts: once the board is scoped to one
+                  project the SSE stream carries no other project's rows, so a
+                  count here could not be kept honest. Counts live on the
+                  portfolio, which refreshes on its own. */}
               {projects.map((p) => (
                 <option key={p.project} value={p.project}>
-                  {p.project} ({p.live_count})
+                  {p.project}
                 </option>
               ))}
               {project && !projects.some((p) => p.project === project) && (
