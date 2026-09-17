@@ -15,11 +15,18 @@ export default function App() {
 
      // Phase 2.2: an operator can bind this browser to an agent id so the board
     // actively heartbeats + auto-claims on its behalf. Empty = monitor-only.
-    const [agentId, setAgentId] = useState<string>(() => {
-      if (typeof window === 'undefined') return ''
-     return localStorage.getItem('kanban.agentId') ?? ''
-       })
-    const setAgent = (next: string) => {
+    // The binding is COMMITTED explicitly (blur or Enter), never per keystroke.
+    // Driving the coordinator straight off the input meant typing "builder-1"
+    // fired nine auto-claims, eight of them under partial ids ("b", "bu", ...),
+    // each one moving a real task to BUILDING with a bogus owner and a live
+    // lease. `agentDraft` is what the field shows; `agentId` is what claims.
+    const initialAgent =
+      typeof window === 'undefined' ? '' : localStorage.getItem('kanban.agentId') ?? ''
+    const [agentId, setAgentId] = useState<string>(initialAgent)
+    const [agentDraft, setAgentDraft] = useState<string>(initialAgent)
+    const commitAgent = () => {
+      const next = agentDraft.trim()
+      if (next === agentId) return
       setAgentId(next)
       if (typeof window !== 'undefined') {
         if (next) localStorage.setItem('kanban.agentId', next)
@@ -97,14 +104,23 @@ export default function App() {
          <div className="flex items-center gap-3">
             <input
              type="text"
-             value={agentId}
-             onChange={(e) => setAgent(e.target.value.trim())}
+             value={agentDraft}
+             onChange={(e) => setAgentDraft(e.target.value)}
+             onBlur={commitAgent}
+             onKeyDown={(e) => {
+               if (e.key === 'Enter') commitAgent()
+               }}
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
-             title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Empty = monitor only."
+             title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
              className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
            />
-           {agentId && (
+           {agentDraft.trim() !== agentId && (
+             <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+              unbound · press enter
+             </span>
+            )}
+           {agentId && agentDraft.trim() === agentId && (
              <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
               claim: {coordinator.lastClaimedId ?? '—'}
                {coordinator.lastError ? ` · ${coordinator.lastError}` : ''}

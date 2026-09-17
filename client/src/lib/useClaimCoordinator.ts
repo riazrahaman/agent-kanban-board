@@ -1,7 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { heartbeatTask, nextClaim } from '../api'
-import { selectTasksToHeartbeat, shouldAutoClaim } from './claimCoordinator'
+import {
+  isLostLeaseError,
+  observedLeaseWindowMs,
+  selectTasksToHeartbeat,
+  shouldAutoClaim,
+} from './claimCoordinator'
 
 /**
  * Phase 2.2: the live claim coordinator hook.
@@ -39,7 +44,10 @@ export function useClaimCoordinator({
   intervalMs = 5000,
   projects,
 }: ClaimCoordinatorOptions): CoordinatorResult {
-  const resultRef = useRef<CoordinatorResult>({
+        // State, not a ref: the header renders lastClaimedId / lastError, and a
+        // ref mutation never tells React to re-render, so the display only
+        // refreshed when something unrelated happened to re-render the tree.
+  const [result, setResult] = useState<CoordinatorResult>({
     lastHeartbeatCount: 0,
     lastClaimedId: null,
     lastError: null,
@@ -55,8 +63,8 @@ export function useClaimCoordinator({
   const projectsRef = useRef(projects)
   projectsRef.current = projects
 
+        // Running estimate of the server's lease TTL; see observedLeaseWindowMs.
   const leaseMsRef = useRef<number | undefined>(undefined)
-  leaseMsRef.current = undefined // use server default TTL
 
   useEffect(() => {
     let stop = false
@@ -65,11 +73,14 @@ export function useClaimCoordinator({
      async function runOnce() {
        const who = agentRef.current
         if (!who) return
-        const result = resultRef.current
         const proj = projectsRef.current?.length ? projectsRef.current[0] : undefined
+        const nowMs = Date.now()
+        leaseMsRef.current = observedLeaseWindowMs(
+          tasksRef.current, who, nowMs, leaseMsRef.current,
+          )
 
               // 1. Heartbeat every task this agent is actively holding.
-        const toBeat = selectTasksToHeartbeat(tasksRef.current, who, Date.now(), {
+        const toBeat = selectTasksToHeartbeat(tasksRef.current, who, nowMs, {
           leaseMs: leaseMsRef.current,
             })
         let beat = 0
@@ -82,27 +93,33 @@ export function useClaimCoordinator({
                    // was reaped or stolen; drop it and let the auto-claim pass
                    // pick up the orphaned task.
               const msg = err instanceof Error ? err.message : String(err)
-              if (/not a (lease )?holder|not claimed|no active lease/i.test(msg)) {
+              if (isLostLeaseError(msg)) {
                 continue
                      }
-              result.lastError = msg
+              if (stop) return
+              setResult((r) => ({ ...r, lastHeartbeatCount: beat, lastError: msg }))
               return
                  }
                }
-        result.lastHeartbeatCount = beat
 
               // 2. If we are now idle, pull the next eligible task.
+        let claimedId: string | null = null
+        let claimError: string | null = null
         if (shouldAutoClaim(tasksRef.current, who, Date.now())) {
           try {
             const claimed = await nextClaim(who, proj ? { project: proj, role: 'builder' } : { role: 'builder' })
-            if (claimed) {
-              result.lastClaimedId = claimed.id
-                 }
-             result.lastError = null
+            if (claimed) claimedId = claimed.id
                 } catch (err) {
-              result.lastError = err instanceof Error ? err.message : 'next-claim failed'
+              claimError = err instanceof Error ? err.message : 'next-claim failed'
                  }
                }
+
+        if (stop) return
+        setResult((r) => ({
+          lastHeartbeatCount: beat,
+          lastClaimedId: claimedId ?? r.lastClaimedId,
+          lastError: claimError,
+            }))
           }
 
        async function loop() {
@@ -118,5 +135,5 @@ export function useClaimCoordinator({
           }
        }, [agentId, intervalMs])
 
-  return resultRef.current
+  return result
 }

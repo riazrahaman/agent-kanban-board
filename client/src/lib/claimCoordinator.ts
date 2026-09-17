@@ -119,3 +119,44 @@ export function hasActiveClaim(tasks: Task[], agentId: string, nowMs: number): b
 export function shouldAutoClaim(tasks: Task[], agentId: string, nowMs: number): boolean {
   return !hasActiveClaim(tasks, agentId, nowMs)
 }
+
+/**
+ * A heartbeat rejection meaning "this lease is no longer yours". The server
+ * reports these as `not_lease_holder` / `not_claimed` and `api.ts` formats them
+ * into the thrown message as `heartbeat failed (409) (not_lease_holder)`. Both
+ * the underscored wire form and a spaced prose form are matched, so a reworded
+ * server message does not silently turn the recovery path back into dead code.
+ */
+export const LOST_LEASE_PATTERN =
+  /not[ _]?(a[ _])?lease[ _]?holder|not[ _]?claimed|no[ _]?active[ _]?lease/i
+
+export function isLostLeaseError(message: string): boolean {
+  return LOST_LEASE_PATTERN.test(message)
+}
+
+/**
+ * Estimates the server's lease TTL by observation, since `KANBAN_CLAIM_TTL_MS`
+ * is configurable and is not published to the client. Right after a claim or a
+ * renewal a held task's remaining lease IS the full window, and remaining can
+ * never exceed it, so the largest value ever seen converges on the true TTL.
+ *
+ * Assuming the 300000 default instead meant a server on a 60s TTL had
+ * `remaining <= 0.5 * 300000` true on every tick, so every held task
+ * heartbeated every 5s — and each heartbeat is a full persisted store mutation.
+ *
+ * `previous` is the running estimate; pass undefined on the first call.
+ */
+export function observedLeaseWindowMs(
+  tasks: Task[],
+  agentId: string,
+  nowMs: number,
+  previous?: number
+): number | undefined {
+  let maxRemaining = previous ?? 0
+  for (const task of tasks) {
+    if (task.assigned_agent !== agentId) continue
+    const remaining = leaseRemainingMs(task, nowMs)
+    if (remaining !== null && remaining > maxRemaining) maxRemaining = remaining
+  }
+  return maxRemaining > 0 ? maxRemaining : previous
+}

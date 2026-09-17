@@ -117,3 +117,56 @@ test('leaseRemainingMs returns null for unclaimed tasks and a negative number af
   const after = coord.leaseRemainingMs(task, now + 65000)
   assert.ok(after !== null && after < 0, `expected negative remaining, got ${after}`)
 })
+
+// --- review regressions -------------------------------------------------
+
+test('isLostLeaseError matches the reasons the server actually sends', () => {
+  // These are the exact strings api.ts throws: `heartbeat failed (409) (<reason>)`
+  // with reason ∈ { not_lease_holder, not_claimed }. The original pattern used
+  // spaces ("not a lease holder"), matched neither, and left the documented
+  // drop-the-lease recovery path as dead code.
+  assert.equal(coord.isLostLeaseError('heartbeat failed (409) (not_lease_holder)'), true)
+  assert.equal(coord.isLostLeaseError('heartbeat failed (409) (not_claimed)'), true)
+  // Prose forms must keep working if the server is ever reworded.
+  assert.equal(coord.isLostLeaseError('not a lease holder'), true)
+  assert.equal(coord.isLostLeaseError('no active lease'), true)
+  // A genuine failure must NOT be swallowed as a lost lease.
+  assert.equal(coord.isLostLeaseError('heartbeat failed (500) (Internal Server Error)'), false)
+  assert.equal(coord.isLostLeaseError('NetworkError'), false)
+})
+
+test('observedLeaseWindowMs calibrates to the real server TTL', () => {
+  const now = Date.now()
+  // A 60s server TTL: a freshly renewed lease shows ~60s remaining.
+  const fresh = heldTask({ claim_expires_at: new Date(now + 60000).toISOString() })
+  const estimate = coord.observedLeaseWindowMs([fresh], 'agentA', now)
+  assert.ok(estimate >= 59000 && estimate <= 60000, `expected ~60000, got ${estimate}`)
+
+  // With the real window known, a lease at 50s remaining is NOT yet due; under
+  // the old hard-coded 300000 assumption it was (50000 <= 0.5 * 300000), which
+  // heartbeated every held task on every 5s tick.
+  assert.equal(coord.needsHeartbeat(fresh, 'agentA', now + 10000, { leaseMs: estimate }), false)
+  assert.equal(coord.needsHeartbeat(fresh, 'agentA', now + 10000, {}), true)
+
+  // Past the halfway point of the true window it IS due.
+  assert.equal(coord.needsHeartbeat(fresh, 'agentA', now + 35000, { leaseMs: estimate }), true)
+})
+
+test('observedLeaseWindowMs keeps the high-water mark and ignores other agents', () => {
+  const now = Date.now()
+  const mine = heldTask({ claim_expires_at: new Date(now + 60000).toISOString() })
+  const theirs = heldTask({
+    id: 'other', assigned_agent: 'agentB',
+    claim_expires_at: new Date(now + 999000).toISOString(),
+    })
+  const estimate = coord.observedLeaseWindowMs([mine, theirs], 'agentA', now)
+  assert.ok(estimate <= 60000, `another agent's lease must not skew the estimate, got ${estimate}`)
+
+  // A lease decaying toward expiry must not drag the estimate down with it.
+  const decayed = coord.observedLeaseWindowMs([mine], 'agentA', now + 55000, estimate)
+  assert.equal(decayed, estimate, 'the window estimate is a high-water mark')
+
+  // Nothing held -> keep whatever we already learned.
+  assert.equal(coord.observedLeaseWindowMs([], 'agentA', now, estimate), estimate)
+  assert.equal(coord.observedLeaseWindowMs([], 'agentA', now, undefined), undefined)
+})
