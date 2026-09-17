@@ -1,7 +1,7 @@
 # Multi-Project Enhancements — Handover
 
 **Project:** `agent-kanban-board`
-**Authoritative path:** `/Users/riazrahaman/Documents/agend-grid/agent-kanban-board`
+**Authoritative path:** `~/Documents/agend-grid/agent-kanban-board`
 **Working branch:** `feat/client-coordinator-phase`
 **Roadmap:** `docs/MULTI_PROJECT_ENHANCEMENT_RECOMMENDATIONS.md`
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
@@ -30,7 +30,7 @@
 | Portfolio + switcher | `client/src/components/Portfolio.tsx`, `client/src/lib/portfolioMetrics.ts`, `App.tsx` | **committed** `f52eecc` |
 | Client coordinator | `client/src/lib/` (`claimCoordinator.ts`, `useClaimCoordinator.ts`, `.test.mjs`) | **committed** `8a6f2f1` |
 | Client wiring | `client/src/App.tsx` (agent-id input + coordinator) | **committed** `8a6f2f1` |
-| Old project | `/Users/riazrahaman/Documents/Claude/Projects/budgeting_app_project/agent-kanban-board` | superseded; its diff is in the stash (see §5) |
+| Old project | `~/Documents/Claude/Projects/budgeting_app_project/agent-kanban-board` | superseded; its diff is in the stash (see §5) |
 | Stashed WIP | `git stash@{0}` | **do not delete** — see §5 |
 
 ---
@@ -219,7 +219,7 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
 ## 6. How to verify (run these)
 
 ```sh
-cd /Users/riazrahaman/Documents/agend-grid/agent-kanban-board
+cd "$(git rev-parse --show-toplevel)"
 # server
 cd server && node --check store.js && node --test
 # expected: 123 pass, 0 fail
@@ -232,8 +232,23 @@ npm run build                        # expected: tsc clean, vite build ok
 
 cd ..
 git status --short                   # expect a clean tree
-git stash list                       # confirm stash@{0} still present
+
+# What CI runs, in CI's order. Run this BEFORE pushing — the workflow fails
+# fast on `make sec`, so a failure there hides every later step.
+make sec                             # no /Users or /home paths in tracked files,
+                                     # no dangerouslySetInnerHTML in client/src
+npm test                             # server tests + scripts/test-client-status.js
+                                     # + client tests + client build
 ```
+
+**`make sec` bans absolute home paths in tracked files.** Writing
+`~/Documents/...` or `"$(git rev-parse --show-toplevel)"` keeps a path usable
+without hardcoding somebody's home directory. This document broke CI exactly
+once by carrying `/Users/<name>/...` in its own header.
+
+CI (`.github/workflows/ci.yml`) runs the same steps on **Node 20.x and 22.x**,
+which is stricter than a modern local Node — this repo has already been bitten
+by a Node-20-only failure in the `.mjs`/esbuild test path.
 
 Precedent: macOS system `git` is blocked by the Xcode license — always use
 `/opt/homebrew/bin/git` (prepend `/opt/homebrew/bin` to `PATH`).
