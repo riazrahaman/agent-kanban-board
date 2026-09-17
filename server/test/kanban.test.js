@@ -468,6 +468,116 @@ describe('PI-04 public board hardening', () => {
     assert.match(await readFile(path.join(REPO_ROOT, 'client/src/index.css'), 'utf8'), /--bg:\s*#fbfbfa/);
     for (const file of ['README.md', 'LICENSE', 'client/package-lock.json', 'server/package-lock.json', '.github/workflows/ci.yml']) {
       assert.ok(existsSync(path.join(REPO_ROOT, file)), `${file} must be present`);
-    }
-  });
+     }
+   });
+});
+
+// §10.3 back-compat regression guards (must stay green alongside 16 originals).
+describe('§2.1/§2.8 back-compat regression', () => {
+  let tmpDir;
+
+  after(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+    store.setStorage(null);
+    delete process.env.KANBAN_DATA_DIR;
+    delete process.env.KANBAN_DATA_FILE;
+    delete process.env.KANBAN_ARCHIVING_DISABLED;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    delete process.env.KANBAN_DEFAULT_PROJECT;
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_GIT_DIR;
+   });
+
+  it('21. unfiltered GET /api/tasks returns the union of all projects', async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_DEFAULT_PROJECT = 'default';
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-union-'));
+    store.setStorage(null);
+    process.env.KANBAN_DATA_DIR = tmpDir;
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    await store.createTask({ id: 'u-1', title: 'A', status: 'BACKLOG', round: 1, project: 'atlas' });
+    await store.createTask({ id: 'u-1', title: 'B', status: 'BACKLOG', round: 1, project: 'alpha' });
+    const all = store.getTasks();
+     // Unfiltered list must span every project present (no scoping regression).
+    const projects = new Set(all.map((t) => t.project));
+    assert.ok(projects.has('atlas') && projects.has('alpha'),
+     'unfiltered list spans the projects that were written');
+    // The unfiltered HTTP list is also the union.
+    const serverApp = createApp();
+    const listener = await new Promise((resolve) => {
+      const s = serverApp.listen(0, '127.0.0.1', () => resolve(s));
+      });
+    try {
+      const resp = await fetch(`http://127.0.0.1:${listener.address().port}/api/tasks`);
+      const body = await resp.json();
+      const httpProjects = new Set(body.map((t) => t.project));
+      assert.ok(httpProjects.has('atlas') && httpProjects.has('alpha'),
+        'HTTP unfiltered list spans the projects that were written');
+  } finally {
+      await new Promise((resolve) => listener.close(resolve));
+      }
+    });
+
+  it('22. default project keeps the legacy file; no stray tasks/default.json', async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_DEFAULT_PROJECT = 'default';
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-legacy-'));
+    store.setStorage(null);
+     // No KANBAN_DATA_DIR set here so default uses the legacy file directly.
+    delete process.env.KANBAN_DATA_DIR;
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    await store.createTask({ id: 'legacy-1', title: 'Legacy', status: 'BACKLOG', round: 1 });
+    assert.ok(existsSync(path.join(tmpDir, 'tasks.json')), 'legacy file is used');
+    assert.ok(!existsSync(path.join(tmpDir, 'tasks', 'default.json')), 'no partitioned default file created');
+    const stored = JSON.parse(await readFile(path.join(tmpDir, 'tasks.json'), 'utf8'));
+    assert.ok(Array.isArray(stored.tasks), 'legacy file keeps the {tasks:[]} envelope');
+    assert.equal(stored.tasks[0].project, 'default');
+     });
+
+  it('23. legacy records backfill project/created_at/completed_at on load', async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_DEFAULT_PROJECT = 'default';
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    process.env.KANBAN_ARCHIVE_AFTER_DAYS = '30'; // default; legacy records become eligible by age
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-backfill-'));
+    store.setStorage(null);
+    delete process.env.KANBAN_DATA_DIR;
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+       // Seed records with NO project / created_at / completed_at (pure legacy shape).
+    const past = new Date(Date.now() - 40 * 86400000).toISOString();
+    await writeFile(
+      path.join(tmpDir, 'tasks.json'),
+      JSON.stringify(
+        {
+          tasks: [
+             {
+              id: 'legacy-done', title: 'Legacy DONE', status: 'DONE', round: 1,
+              priority: 'high', depends_on: [], issues: [], agent_logs: [],
+              assigned_agent: null, metadata: {}, updated: past,
+              },
+             {
+              id: 'legacy-open', title: 'Legacy open', status: 'BACKLOG', round: 1,
+              priority: 'medium', depends_on: [], issues: [], agent_logs: [],
+              assigned_agent: null, metadata: {}, updated: past,
+              },
+             ],
+            },
+          null, 2
+        )
+      );
+    await store.loadStore();
+       // Default sweep may move the old DONE; assert every *loaded* record got backfilled.
+    const done = store.getTask('legacy-done') || store.getArchivedTasks('default').find((t) => t.id === 'legacy-done');
+    assert.ok(done, 'legacy done survived (live or archived)');
+    assert.equal(done.project, 'default', 'project backfilled to default');
+    assert.ok(done.created_at, 'created_at backfilled on legacy record');
+    const open = store.getTask('legacy-open');
+    assert.ok(open, 'legacy open task loaded');
+    assert.equal(open.project, 'default');
+    assert.ok(open.created_at, 'created_at backfilled on open legacy record');
+     });
 });

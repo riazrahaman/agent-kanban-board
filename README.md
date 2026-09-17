@@ -87,7 +87,28 @@ The board features pluggable persistence:
    - Persists each task as an individual YAML card (`<ID>.yml`).
    - Automatically commits git transitions on disk (`ops(<ID>): kanban <STATUS>`), eliminating state drift between the board and version control.
 
----
+   3. **Multi-Project Partitioning (§2.1)**:
+   - Every task carries a `project` field (default `default`). Tasks are keyed internally by the composite `project/id`; two projects may share a short `id`.
+   - The default project **reuses the legacy location** (`KANBAN_DATA_FILE` / `server/tasks.json`, or the flat git root), so single-project deployments are byte-for-byte unchanged with no migration.
+   - A *named* project is stored separately: JSON at `KANBAN_DATA_DIR/tasks/<project>.json`, Git at `KANBAN_GIT_DIR/<project>/<id>.yml` and committed as `ops(<project>/<id>): kanban <STATUS>`.
+   - Scope any request with `?project=` (or the `workspace_id` body alias on create, or the `X-Kanban-Project` header); composite ids of the form `atlas:task-1` are accepted on detail lookups.
+   - `GET /api/projects` returns a per-project summary: `{ project, task_count, done_count, live_count, archived_count, updated }`.
+
+   4. **Archiving & Storage Hygiene (§2.8)**:
+   - `DONE` tasks whose `completed_at` (falling back to `created_at`/`updated`) is older than `KANBAN_ARCHIVE_AFTER_DAYS` (default `30`; set to `0` to disable) are moved to an archive sink (JSON `tasks/archive/<project>.json`, Git `archive/<project>/<id>.yml`) and tagged with `archived_at`.
+   - The sweep runs at boot and lazily before list/archive reads; `GET /api/tasks/archive?project=` returns archived tasks. Archived tasks leave the live set but stay queryable.
+
+   | Env var | Default | Purpose |
+   |---|---|---|
+   | `KANBAN_STORAGE_BACKEND` | `json` | `json` or `git`. |
+   | `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
+   | `KANBAN_DATA_DIR` | — | Root for `tasks/<project>.json` and `tasks/archive/<project>.json`. |
+   | `KANBAN_GIT_DIR` | — | Git root; `<project>/<id>.yml`, flat root used for default. |
+   | `KANBAN_GIT_COMMIT` | `true` | `false` disables auto-commit. |
+   | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
+   | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
+
+   ---
 
 ## Security & Authentication
 
@@ -133,12 +154,15 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 
 | Method | Endpoint | Description | Auth / Role Gated |
 |---|---|---|---|
-| `GET` | `/api/tasks` | List all tasks | Public |
-| `POST` | `/api/tasks` | Create task (`id` and `title` required) | Auth required |
-| `GET` | `/api/tasks/:id` | Get single task details | Public |
-| `PATCH` | `/api/tasks/:id` | Update task status or fields | Auth + Role gated |
+| `GET` | `/api/tasks` | List all tasks (`?project=` scopes to one project; unfiltered spans all) | Public |
+| `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
+| `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
+| `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
 | `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
+| `GET` | `/api/projects` | Per-project summary (`task_count`, `done_count`, `live_count`, `archived_count`, `updated`) | Public |
+| `GET` | `/api/tasks/archive` | List archived tasks (`?project=` scopes to one project) | Public |
+| `POST` | `/api/tasks/archive/sweep` | Run the archive sweep now (returns `{ moved, projects }`) | Auth required |
 | `GET` | `/api/events` | Server-Sent Events stream of task snapshots | Public |
 
 ---
