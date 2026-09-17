@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadStore, onChange, getTasks, startReaper, stopReaper, isReaperEnabled } from './store.js';
+import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReaperEnabled } from './store.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import { configureCors } from './middleware/cors.js';
@@ -16,7 +16,18 @@ export function createApp() {
   app.use('/api/tasks', tasksRouter);
   app.use('/api/projects', projectsRouter);
 
+  /**
+   * §2.2 — SSE stream in three modes:
+   *   /api/events                        legacy: full snapshot, `event: tasks`
+   *   /api/events?project=X              same shape, filtered to one project
+   *   /api/events?project=X&mode=diff    per-task events, `event: task.<kind>`
+   * The legacy path is kept byte-compatible so the existing client is unaffected.
+   */
   app.get('/api/events', (req, res) => {
+    const rawProject = typeof req.query.project === 'string' ? req.query.project.trim() : '';
+    const project = rawProject || null;
+    const isDiffMode = req.query.mode === 'diff';
+
     res.set({
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -24,13 +35,38 @@ export function createApp() {
       });
      res.flushHeaders();
 
-     res.write(`event: tasks\ndata: ${JSON.stringify(getTasks())}\n\n`);
+    let closed = false;
+    let unsubscribe = () => {};
 
-     const unsubscribe = onChange((tasks) => {
-      res.write(`event: tasks\ndata: ${JSON.stringify(tasks)}\n\n`);
-       });
+    // Store listeners fire outside the request tick, so a throw here can reach
+    // no error middleware. A write to an already-destroyed socket is the real
+    // failure mode: treat it as a closed client and detach.
+    const send = (event, payload) => {
+      if (closed) return;
+      try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+        } catch {
+        closed = true;
+        unsubscribe();
+        }
+      };
+
+    if (isDiffMode) {
+      unsubscribe = onDiff((evt) => {
+        if (project && evt.project !== project) return;
+        send(`task.${evt.kind}`, evt);
+        });
+      } else {
+      send('tasks', getTasks(project ?? undefined));
+      if (!closed) {
+        unsubscribe = onChange((tasks) => {
+          send('tasks', project ? tasks.filter((t) => t.project === project) : tasks);
+          });
+        }
+      }
 
       req.on('close', () => {
+       closed = true;
        unsubscribe();
         });
     });

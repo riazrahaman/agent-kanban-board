@@ -260,3 +260,62 @@ export function subscribeToEvents(onTasks: (tasks: Task[]) => void): () => void 
     source.close()
   }
 }
+
+/** The per-task event kinds the server's diff stream can emit (§2.2). */
+export const DIFF_KINDS = [
+  'created', 'updated', 'removed', 'archived',
+  'claimed', 'renewed', 'unblocked', 'reclaimed',
+] as const
+
+export type DiffKind = (typeof DIFF_KINDS)[number]
+
+export interface DiffEvent {
+  kind: DiffKind
+  task: Task
+  /** The previous revision; null for a creation. */
+  prev: Task | null
+  project: string
+  /** The agent that caused the mutation, or 'system' for reaper/unlock/archive. */
+  actor: string
+  reason: string | null
+  ts: number
+}
+
+/**
+ * Subscribes to the server's per-task diff stream (§2.2 `mode=diff`), optionally
+ * scoped to one project. Unlike `subscribeToEvents` — which re-broadcasts the
+ * whole task array on every mutation — this delivers exactly one event per
+ * changed task. Returns an unsubscribe that closes the EventSource.
+ */
+export function subscribeToDiffs(
+  onEvent: (event: DiffEvent) => void,
+  { project }: { project?: string } = {},
+): () => void {
+  const params = new URLSearchParams({ mode: 'diff' })
+  if (project) params.set('project', project)
+  const source = new EventSource(`${API_BASE}/events?${params.toString()}`)
+
+  const handlers = DIFF_KINDS.map((kind) => {
+    const handler = (evt: MessageEvent<string>) => {
+      try {
+        onEvent(JSON.parse(evt.data) as DiffEvent)
+      } catch (err) {
+        console.error(`Failed to parse SSE task.${kind} payload`, err)
+      }
+    }
+    source.addEventListener(`task.${kind}`, handler as EventListener)
+    return [kind, handler] as const
+  })
+
+  source.onerror = (err) => {
+    // EventSource auto-reconnects on its own; just log for visibility.
+    console.error('SSE diff connection error', err)
+  }
+
+  return () => {
+    for (const [kind, handler] of handlers) {
+      source.removeEventListener(`task.${kind}`, handler as EventListener)
+    }
+    source.close()
+  }
+}

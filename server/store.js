@@ -767,7 +767,7 @@ export function onDiff(listener) {
  * 'lease_expired', 'unblocked', 'archived'...). This is the substrate for
  * §2.9 metrics + audit; today it's just a console line.
  */
-const auditListeners = [];
+let auditListeners = [];
 export function onAudit(fn) {
   if (typeof fn !== 'function') throw new Error('onAudit listener must be a function');
   auditListeners.push(fn);
@@ -827,9 +827,16 @@ function dispatchDiffEvents({ actor = 'user', reason = null, semantic = null } =
       });
    };
 
-    // Removed: present previously, gone now.
+    // Removed: present previously, gone now. The archive sweep drops rows from
+    // the live set, so an archived task lands here — a semantic override is the
+    // only way it can surface as 'archived' rather than a bare 'removed'.
    for (const [key, prevTask] of prevTaskMap) {
     if (!now.has(key)) {
+      const sev = semantic && semantic.get(key);
+      if (sev) {
+        fire(key, sev.kind, sev.task || prevTask, prevTask, sev.actor, sev.reason);
+        continue;
+        }
       fire(key, 'removed', prevTask, prevTask, actor, reason);
       }
     }
@@ -842,14 +849,17 @@ function dispatchDiffEvents({ actor = 'user', reason = null, semantic = null } =
       fire(key, sev.kind, task, prevTask, sev.actor, sev.reason);
       continue;
      }
-     let kind;
-    if (!prevTask) kind = 'created';
-    else if (prevTask.status === 'DONE' && task.status === 'DONE' &&
-           (task.archived_at || task.status_changed_at)) {
-      kind = 'archived';
-       } else {
-      kind = 'updated';
-      }
+    // Unchanged rows must stay silent: without this, every mutation fanned out
+    // one 'updated' per task in the store. Mutation paths are copy-on-write
+    // (setTaskInMemory swaps the object), so identity is the change signal —
+    // and a semantic override above already fired unconditionally, so the
+    // claim/renew/unblock/reclaim paths never depend on this check.
+    if (prevTask === task) continue;
+    // 'archived' is never inferred here: archiving removes the row from the
+    // live set, so it is emitted from the removed branch via a semantic
+    // override. Inferring it from a DONE->DONE transition mislabelled every
+    // ordinary edit of a done task.
+    const kind = prevTask ? 'updated' : 'created';
     fire(key, kind, task, prevTask, actor, reason);
    }
   prevTaskMap = now;
@@ -1717,6 +1727,7 @@ export async function runArchiveSweep() {
 
     let moved = 0;
     const touchedProjects = new Set();
+    const archivedSemantic = new Map();
 
     const runFor = async (project, liveList) => {
       const eligible = (liveList || []).filter((t) => isEligibleForArchive(t, days, nowMs));
@@ -1767,6 +1778,11 @@ export async function runArchiveSweep() {
       for (const archived of newArchived) {
         list.push(archived);
       }
+      for (const archived of newArchived) {
+        archivedSemantic.set(compositeKey(project, archived.id), {
+          kind: 'archived', actor: 'system', reason: 'archived', task: archived,
+          });
+        }
       moved += eligible.length;
       touchedProjects.add(project);
       };
@@ -1785,7 +1801,9 @@ export async function runArchiveSweep() {
       }
     }
 
-    if (moved > 0) notify();
+    if (moved > 0) {
+      notify({ actor: 'system', reason: 'archived', semantic: archivedSemantic });
+      }
     return moved;
    });
 }
