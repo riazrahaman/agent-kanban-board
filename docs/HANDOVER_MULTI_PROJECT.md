@@ -4,8 +4,10 @@
 **Authoritative path:** `/Users/riazrahaman/Documents/agend-grid/agent-kanban-board`
 **Working branch:** `feat/client-coordinator-phase`
 **Roadmap:** `docs/MULTI_PROJECT_ENHANCEMENT_RECOMMENDATIONS.md`
-**Status:** **IN PROGRESS** — §2.2 complete (engine + endpoints + client); §2.9/§2.3/§2.10 remaining.
-**Last verified:** server 93/93 tests pass, client 15/15 tests pass, client build green.
+**Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
+**Remaining:** browser verification of the UI (see §9), the `stash@{0}` decision (§5), and
+the merge to `main` (§4.6) — the last two are the owner's calls, not blockers to clear.
+**Last verified:** server 122/122, client 19/19, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
 > This document is a resume point. Read §4 "Next steps" first, then §7 (contracts you
@@ -23,6 +25,9 @@
 | Server diff/audit engine | `server/store.js` | **committed** `9472ce2` + fixes in `706129f`/`8405ac9` |
 | Scoped/diff SSE endpoint | `server/server.js` (`GET /api/events`) | **committed** `706129f` |
 | Diff SSE client | `client/src/api.ts` (`subscribeToDiffs`) | **committed** `706129f` |
+| Metrics engine + route | `server/store.js` (`getMetrics`), `server/routes/metrics.js` | **committed** `3bc7258` |
+| Per-project auth + limits | `server/middleware/` (`auth.js`, `projectScope.js`, `rateLimit.js`) | **committed** `a4eb6ef`/`d7bba45` |
+| Portfolio + switcher | `client/src/components/Portfolio.tsx`, `client/src/lib/portfolioMetrics.ts`, `App.tsx` | **committed** `f52eecc` |
 | Client coordinator | `client/src/lib/` (`claimCoordinator.ts`, `useClaimCoordinator.ts`, `.test.mjs`) | **committed** `8a6f2f1` |
 | Client wiring | `client/src/App.tsx` (agent-id input + coordinator) | **committed** `8a6f2f1` |
 | Old project | `/Users/riazrahaman/Documents/Claude/Projects/budgeting_app_project/agent-kanban-board` | superseded; its diff is in the stash (see §5) |
@@ -35,13 +40,20 @@
 Branch `feat/client-coordinator-phase` (main is clean — `--no-ff` merge planned):
 
 ```
+00ef625 fix(u8b): clear stale board error; poll the portfolio instead of guessing
+d7bba45 fix(u7b): close composite-id bypass of per-project auth
+f52eecc feat(u8): §2.10 project switcher + portfolio view
+a4eb6ef feat(u7): §2.3 per-project auth + rate limiting
+fee8afc fix(u6b): metrics defects found in review of u6
+3bc7258 feat(u6): §2.9 cross-project metrics endpoint
+c5a7d1b docs: track handover; record §2.2 done, review fixes, new contracts
 3fc3841 fix(u5c): client coordinator defects found in review
 8405ac9 fix(u5b): project scoping + audit attribution defects found in review
 706129f feat(u5): §2.2 scoped/diff SSE endpoints + audit sinks
 9472ce2 feat(u5a): §2.2 diff-event layer + §2.9 audit substrate in store
-8a6f2f1 feat(u4): client-side claim coordinator + heartbeat/auto-claim (Phase 2.2)
-b59861c feat(u3): claim lease+reaper, dependency-gated claim, fair next-claim queue (§2.4/§2.5/§2.7)
-abc9b29 feat(u2): optimistic concurrency with version + If-Match/expected_version CAS (§2.6)
+8a6f2f1 feat(u4): client-side claim coordinator + heartbeat/auto-claim
+b59861c feat(u3): claim lease+reaper, dependency-gated claim, fair next-claim queue
+abc9b29 feat(u2): optimistic concurrency with version + If-Match/expected_version CAS
 e9d54b2 fix(u1): archive sweep persists before in-memory mutation (KB-05)
 a31fda5 feat: project namespacing + per-project archiving (§2.1, §2.8)
 ```
@@ -118,40 +130,41 @@ until the `removed` branch learned to consult `semantic`.
 A review of the whole branch surfaced eight defects in already-committed code; all are
 fixed with regressions (each verified to fail without its fix). See §8.
 
-### 4.2 §2.9 — cross-project observability  ← NEXT
+### 4.2 §2.9 — cross-project observability — DONE (`3bc7258`, fixes `fee8afc`)
+`GET /api/metrics[?project=X]`. Per project + aggregate: task/live/archived counts, a
+`by_status` histogram, cycle time (count/mean/median/p90/min/max), reclaim counts,
+active agents, claim contention.
 
-**Three constraints that are easy to get wrong here:**
-1. The invalid-`?project=` guard is middleware on the **tasks router**, not the app. A
-   metrics router mounted separately re-opens the bug: `?project=my%20proj` would
-   silently aggregate the whole portfolio. Lift the guard to app level or repeat it.
-2. `dispatchDiffEvents` returns early on its first call (it seeds `prevTaskMap`), so
-   `emitAudit` does not fire for it either. An `onAudit` accumulator registered at boot
-   permanently misses the first mutation — force one priming `notify()` in `startServer`.
-3. For reclaim counts prefer the **persisted** `reclaim_count` field over accumulating
-   audit `reclaimed` events: in-memory counters reset on restart and the endpoint would
-   then disagree with the tasks it is describing.
+Built from **persisted task fields**, not an `onAudit` accumulator — in-memory counters
+reset on restart and would drift from the tasks they describe. That also sidesteps the
+trap noted during planning: `dispatchDiffEvents` returns early on its first call to seed
+`prevTaskMap`, so `emitAudit` never fires for it and an accumulator registered at boot
+would permanently miss the first mutation. Claim contention is the one figure with no
+durable source (a rejected claim commits nothing), so it is reported explicitly as
+since-boot.
 
-- Add `GET /api/metrics?project=X` (and unscoped = aggregated). Return per-project +
-  aggregate: cycle time (BACKLOG→DONE, from `created_at`/`completed_at`), reclaim count
-  (sum of `reclaim_count` / audit `reclaimed` events), claim-contention rate, active-agent
-  count. Wire an `onAudit` consumer to accumulate counters (per-project + global) so the
-  metrics read a maintained structure instead of recomputing from logs.
-- Replace/annotate ad-hoc `console.warn`/`console.error` mutation logging to route through
-  the audit layer where it makes sense (keep KB-05 fail-closed behavior).
-- Commit as `feat(u6): §2.9 metrics endpoint + audit accumulation`.
+`done_count` is the **live board** and agrees with `GET /api/projects`;
+`completed_count` spans archived rows. Cycle time includes archived tasks — they are
+exactly the completed work, so excluding them would make cycle time silently improve as
+history is swept.
 
-### 4.3 §2.3 — per-project auth & isolation
-- Extend `server/middleware/auth.js`: accept per-project tokens / JWT with a `project`
-  claim, so a compromised agent in one project cannot mutate another's board. Per-project
-  rate limiting. Maintain backward-compat with the single `KANBAN_AUTH_TOKEN` when no
-  per-project config is present (fall back to current global check).
-- Commit as `feat(u7): §2.3 per-project auth + rate limiting`.
+### 4.3 §2.3 — per-project auth & isolation — DONE (`a4eb6ef`, fix `d7bba45`)
+`KANBAN_PROJECT_TOKENS` is a JSON map of project -> token; `KANBAN_ADMIN_TOKEN`
+optionally spans all. Unset = the previous single-token behaviour, unchanged.
+Per-project fixed-window rate limiting on mutations only, off unless
+`KANBAN_RATE_LIMIT_PER_MIN` is set.
 
-### 4.4 §2.10 — client multi-project UI
-- Project switcher/filter in the header (tabs or dropdown) instead of one flat board.
-- `Portfolio` view: one row per project with WIP/blocked/done counts, fed by
-  `getProjects()` (`ProjectSummary`).
-- Commit as `feat(u8): §2.10 project switcher + portfolio view`.
+**The load-bearing detail** (see §7): authorization is checked against *every project a
+request references*, not one resolved value — body, `workspace_id`, query,
+`X-Kanban-Project` header **and a composite `project:id` in the URL path**. Missing the
+path channel made the entire feature bypassable; see §8.
+
+### 4.4 §2.10 — client multi-project UI — DONE (`f52eecc`, fixes `00ef625`)
+Header project switcher + a portfolio table. Selecting a project scopes the board, the
+SSE subscription and auto-claim together — all server-side, so a scoped board never
+receives another project's tasks rather than filtering in the browser. The portfolio is
+fed by `/api/metrics` and polls while mounted, because a scoped task stream cannot tell
+it about other projects.
 
 ### 4.5 §2.11 / §2.12 — FUTURE SCOPE (skip this pass)
 Per the roadmap's §4 non-goals, `withMutationLock` hardening (file/Redis/DB lock) and the
@@ -192,11 +205,11 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
 cd /Users/riazrahaman/Documents/agend-grid/agent-kanban-board
 # server
 cd server && node --check store.js && node --test
-# expected: 93 pass, 0 fail  (grows as §2.9 tests are added)
+# expected: 122 pass, 0 fail
 
 cd ../client
 # client tests
-node --test 'src/**/*.test.mjs'      # expected: 15 pass, 0 fail
+node --test 'src/**/*.test.mjs'      # expected: 19 pass, 0 fail
 # build
 npm run build                        # expected: tsc clean, vite build ok
 
@@ -231,7 +244,23 @@ The lease TTL default is 300000 ms (5 min), server on port 4000.
   projects. Anything that sweeps or reports across projects must do the same.
 - **An invalid `?project=` is a 400**, never a silent widening. `getTasks(undefined)`
   means *all* projects, so a route that lets a bad scope fall through to `undefined`
-  hands a caller that believes it is scoped the entire portfolio.
+  hands a caller that believes it is scoped the entire portfolio. The guard is shared
+  middleware (`middleware/projectScope.js`) — a new router that forgets it re-opens the
+  bug on its own endpoints.
+- **Per-project auth authorizes EVERY referenced project, not one "effective" value.**
+  There are four channels that can decide which board is touched, and two of them
+  outrank `?project=`: a body `project`/`workspace_id` (because `createTask` resolves
+  `data.project ?? data.workspace_id ?? projectArg`) and a composite `project:id` in the
+  URL path (because `resolveProjectScope` lets that prefix win). Authorizing a single
+  resolved value is how this was bypassed once already — see §8. If you add a new way to
+  name a project, add it to `referencedProjects()` in the same commit.
+- **Decode before parsing a path segment.** `req.path` is still percent-encoded, so
+  `beta%3Avictim` contains no literal `:`. Any check that looks for the separator before
+  decoding passes the encoded form of the same attack straight through.
+- **`done_count` vs `completed_count`.** In `/api/metrics`, `done_count` is DONE on the
+  live board (and agrees with `/api/projects`); `completed_count` includes archived rows.
+  Cycle time spans archived rows. Keep the two names distinct — collapsing them made the
+  two endpoints disagree about the same project the moment a sweep ran.
 - **KB-05 fail-closed:** persist to storage first, mutate in-memory only after, then
   notify. The diff/audit layer is a *listener* side effect and must never block or throw
   into a committed write (all emits are `try/catch`-guarded).
@@ -283,3 +312,42 @@ Each has a regression test that was verified to fail without its fix.
     `not_claimed`, so the documented drop-the-lease recovery was dead code.
 11. `useClaimCoordinator` returned a mutable ref, so React was never told to re-render
     and the header's claim/error display was intermittently stale.
+
+**In §2.9 / §2.10 / §2.3, found by review of those commits:**
+
+12. `active_agents` counted an assignment with **no** lease as active — the guard read
+    `Number.isNaN(expiry) || expiry > nowMs`, the opposite of its own docstring.
+    Reachable from the public API: `createTask` passes a body `assigned_agent` straight
+    through without a `claim_expires_at`, and the reaper skips records whose expiry is
+    null, so the phantom agent was reported forever with nothing able to clear it.
+13. Claim contention was recorded for a lapsed-but-unreaped lease, so the endpoint said
+    "two agents raced" beside "nobody holds it". With `KANBAN_REAP_ENABLED` off, a
+    polling agent inflated it without bound.
+14. `done_count` included archived rows in metrics but not in `getProjectSummaries`.
+15. **The §2.3 isolation was bypassable via a composite `project:id` in the URL path.**
+    `PATCH /api/tasks/beta:victim?project=alpha` with alpha's token returned 200 and
+    rewrote beta's task, because only the query was authorized while
+    `resolveProjectScope` resolved to beta. Every task-scoped mutating route was
+    affected, and per-project rate budgets were evadable the same way. The first fix was
+    itself incomplete — it checked for `:` before percent-decoding, so `beta%3Avictim`
+    still worked. Both forms are now covered.
+16. The rate-limit bucket map was keyed by unvalidated caller-supplied strings and never
+    evicted, growing for the process lifetime.
+17. The board's `error` state was never cleared, so a single failed load wedged the UI
+    on a stale message permanently — later successful fetches loaded tasks that were
+    never displayed.
+18. The portfolio refreshed on `tasks.length`, which cannot work for a cross-project view
+    fed by a project-scoped stream.
+
+---
+
+## 9. Known gaps
+
+- **The UI has not been exercised in a browser.** The Claude-in-Chrome extension was not
+  connected during this session. Three UI changes therefore rest on `tsc`, the pure-logic
+  unit tests and the verified server endpoints, but not on observed behaviour: the
+  agent-id bind-on-blur/Enter change, the project switcher, and the portfolio table.
+  Worth a manual pass before the merge. The server side of each was verified end-to-end
+  against a running server with `curl`.
+- **`stash@{0}` is still undecided** — see §5. Untouched this session.
+- **`main` is untouched.** The `--no-ff` merge in §4.6 has not been run.
