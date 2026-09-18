@@ -99,19 +99,30 @@ The server and client are configured via environment variables.
 | Variable | Default Value | Description |
 |---|---|---|
 | `PORT` | `4000` | HTTP port on which Express listens. |
-| `HOST` | `127.0.0.1` | Network interface to bind (use `127.0.0.1` for local-first lockdown). |
-| `KANBAN_AUTH_TOKEN` | *(None)* | **Mandatory for mutations.** Shared secret token required for all `POST`, `PATCH`, `PUT`, and `DELETE` calls. If not set, mutating APIs return `503 Service Unavailable`. |
-| `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (single file) or `git` (YAML card per task). |
-| `KANBAN_DATA_FILE` | `server/tasks.json` | Path to JSON file when using `json` storage backend. |
-| `KANBAN_GIT_DIR` | *(See ADR-001)* | Directory containing `.yml` cards when using `git` storage backend. |
-| `KANBAN_GIT_COMMIT` | `true` | When `git` storage is used, set `false` to disable auto-commits on card mutation. |
-| `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Explicit CORS origin allowed to communicate with the API. Wildcard `*` is prohibited. |
+| `HOST` | `127.0.0.1` (local) / `0.0.0.0` (when `PORT` injected) | Network interface to bind. |
+| `KANBAN_AUTH_TOKEN` | *(None)* | **Mandatory for mutations** unless another mechanism is set. Shared secret for all `POST`, `PATCH`, `PUT`, `DELETE`. Unset → mutations return `503`. |
+| `KANBAN_ADMIN_TOKEN` | *(None)* | Superuser token spanning every project. Audited as `admin_write`. |
+| `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map `{"project":"token"}` enabling per-project isolation. |
+| `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h). |
+| `KANBAN_AUTH_LOG` | `off` | Set truthy to emit redacted auth-failure logs. |
+| `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
+| `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
+| `KANBAN_DATA_DIR` | *(None)* | Root for named projects (`tasks/<project>.json`) + archives. |
+| `KANBAN_DEFAULT_PROJECT` | `default` | Implicit single-project name. |
+| `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
+| `KANBAN_GIT_DIR` | *(See ADR-001)* | Directory containing `.yml` cards when using `git` backend. |
+| `KANBAN_GIT_COMMIT` | `true` | Set `false` to disable auto-commits in git mode. |
+| `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. |
+| `KANBAN_CLAIM_TTL_MS` | `300000` | Lease TTL (5 min); expired leases are auto-reclaimed. |
+| `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / *(default)* | Lease reaper switch and interval. |
+| `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` | Opt-in periodic snapshot of task data into `backups/`, rotated to a bounded count. |
+| `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
 
 ### 3.2 Client Environment Variables
 
 | Variable | Default Value | Description |
 |---|---|---|
-| `VITE_API_BASE` | `http://localhost:4000/api` | Base URL of the API server. |
+| `VITE_API_BASE` | `/api` | Base URL of the API server (same-origin by default; set an absolute URL to split origin). |
 | `VITE_PORT` | `5173` | Local Vite dev server port. |
 
 ---
@@ -252,9 +263,11 @@ Autonomous agents interact with the board exclusively through HTTP requests.
 
 ### 6.1 Authentication & Role Headers
 Every mutating request must include:
-1. **Token:** `Authorization: Bearer <KANBAN_AUTH_TOKEN>` or `X-API-Token: <KANBAN_AUTH_TOKEN>`
+1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all), `KANBAN_PROJECT_TOKENS` (per-project map), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set).
 2. **Role:** `X-Agent-Role: <role>` (Allowed: `builder`, `reviewer`, `tester`, `runner`, `system`, `human`, `admin`)
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
+
+> To connect a brand-new project, see [ONBOARDING.md](../../ONBOARDING.md).
 
 ---
 

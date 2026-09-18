@@ -6,6 +6,9 @@ Drag-and-drop interactions are deliberately omitted: agents drive the board stat
 
 Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
 
+> **Connecting a new client or project?** See [ONBOARDING.md](ONBOARDING.md) for the
+> project-implicit model, token distribution, and a curl walkthrough.
+
 ---
 
 ## Project Layout
@@ -115,9 +118,12 @@ The board features pluggable persistence:
 - **Authentication (A07)**:
   - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment; there is no default or fallback token.
   - Mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`. If the token is not configured, mutations fail closed with `503`.
+  - Per-project isolation via `KANBAN_PROJECT_TOKENS` (JSON map `{"project":"token"}`); an admin token (`KANBAN_ADMIN_TOKEN`) spans every project and is audited as `admin_write`.
+  - HMAC session tokens are available when `KANBAN_AUTH_SECRET` is set — clients negotiate a stateless 24h token via `POST /api/auth/session` instead of holding a static secret. See [ONBOARDING.md](ONBOARDING.md).
+  - Identity is sent as `X-Agent-Id` + `X-Agent-Role` (or `body.role`), lowercased, validated against `VALID_ROLES`.
   - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring.
 - **CORS Lockdown (A05)**:
-  - CORS is restricted to `http://localhost:5173` by default. Set one explicit `KANBAN_ALLOWED_ORIGIN` to use another client origin; wildcard `*` is prohibited.
+  - CORS is restricted to `http://localhost:5173` by default. Set `KANBAN_ALLOWED_ORIGIN` (a comma-separated list) to allow other client origins; wildcard `*` is prohibited.
   - Untrusted origins receive no `Access-Control-Allow-Origin` header.
 - **Input Sanitization (A03)**:
   - All untrusted input from agents (task titles, descriptions, and log messages) is escaped to prevent Stored XSS.
@@ -160,10 +166,14 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
 | `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
+| `POST` | `/api/tasks/next-claim` | Claim next available task (`?project=` scopes; role from header) | Auth required |
 | `GET` | `/api/projects` | Per-project summary (`task_count`, `done_count`, `live_count`, `archived_count`, `updated`) | Public |
 | `GET` | `/api/tasks/archive` | List archived tasks (`?project=` scopes to one project) | Public |
 | `POST` | `/api/tasks/archive/sweep` | Run the archive sweep now (returns `{ moved, projects }`) | Auth required |
 | `GET` | `/api/events` | Server-Sent Events stream of task snapshots | Public |
+| `GET` | `/api/metrics` | Cross-project metrics (`?project=` scopes; cycle time, `by_status`, contention) | Public |
+| `GET` | `/api/health`, `/healthz` | Read-only liveness/readiness probe | Public |
+| `POST` | `/api/auth/session` | HMAC session-token handshake (requires `KANBAN_AUTH_SECRET`) | Proof-of-secret |
 
 ---
 

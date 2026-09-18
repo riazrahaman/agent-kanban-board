@@ -292,24 +292,43 @@ flowchart TD
 - **Endpoints:**
   - `GET /`: Returns all tasks.
   - `POST /`: Creates a new task card (Status: 201).
+  - `GET /archive`: Lists archived tasks (`?project=` scopes).
+  - `POST /archive/sweep`: Runs the archive sweep now.
+  - `POST /next-claim`: Claims the next available task (role from header, `?project=` scopes).
   - `GET /:id`: Retrieves single task or returns 404.
   - `PATCH /:id`: Updates status or task attributes.
   - `POST /:id/claim`: Claims task for an agent ID.
+  - `POST /:id/heartbeat`: Renews a task lease.
   - `POST /:id/logs`: Appends structured operational log.
   - `GET /:id/issues`: Lists issue IDs associated with the task.
   - `POST /:id/issues`: Appends an issue ID to the task.
+
+#### `server/routes/projects.js`, `metrics.js`, `health.js`, `auth.js`
+- **Projects:** `GET /` — per-project summary counts.
+- **Metrics:** `GET /` — cross-project metrics (cycle time, `by_status`, contention).
+- **Health:** `GET /` (and `/healthz`) — read-only liveness/readiness probe.
+- **Auth:** `POST /session` — HMAC session-token handshake (`KANBAN_AUTH_SECRET`).
+
+#### `server/sessionAuth.js`
+- **Path:** [`server/sessionAuth.js`](../server/sessionAuth.js)
+- **Functions:** `authSecret()`, `createSessionToken()`, `verifySessionToken()` — stateless HMAC-SHA256 session tokens (24h expiry, role+project bound).
 
 #### `server/middleware/auth.js`
 - **Path:** [`server/middleware/auth.js`](../server/middleware/auth.js)
 - **Enforcement:**
   - Permits open read-only access for `GET` requests.
-  - Fails closed with 503 if `KANBAN_AUTH_TOKEN` is unset.
-  - Validates `Authorization: Bearer <token>` or `X-API-Token: <token>`. Returns 401 on mismatch.
+  - Fails closed with 503 if no auth mechanism (`KANBAN_AUTH_TOKEN`, `KANBAN_PROJECT_TOKENS`, or `KANBAN_AUTH_SECRET`) is configured.
+  - Tries HMAC session tokens first, then falls back to static tokens: per-project (`KANBAN_PROJECT_TOKENS`), admin (`KANBAN_ADMIN_TOKEN`, audited as `admin_write`), or global (`KANBAN_AUTH_TOKEN`). Returns 401 on mismatch.
   - Validates caller role against `VALID_ROLES`. Missing/unauthorized role returns 403.
+  - Optional redacted auth-failure logging via `KANBAN_AUTH_LOG`.
+
+#### `server/middleware/projectScope.js` & `rateLimit.js`
+- **projectScope:** Extracts every project a request references and guards invalid `?project=` as 400.
+- **rateLimit:** Per-project fixed-window rate limiting on mutations, off unless `KANBAN_RATE_LIMIT_PER_MIN` is set.
 
 #### `server/middleware/cors.js`
 - **Path:** [`server/middleware/cors.js`](../server/middleware/cors.js)
-- **Enforcement:** Enforces single explicit origin (`KANBAN_ALLOWED_ORIGIN`, defaults to `http://localhost:5173`). Forbids wildcard `*`.
+- **Enforcement:** Enforces an explicit allow-list of origins (`KANBAN_ALLOWED_ORIGIN`, comma-separated, defaults to `http://localhost:5173`). Forbids wildcard `*` and empty entries.
 
 #### `server/utils/sanitize.js`
 - **Path:** [`server/utils/sanitize.js`](../server/utils/sanitize.js)
