@@ -1886,12 +1886,14 @@ export async function addIssue(id, issueId, project, { expected_version: expecte
     const conflict = versionConflict(task, expectedVersion);
     if (conflict) return conflict;
 
+    const safeIssueId = escapeHtml(issueId);
+
     const candidate = structuredClone(task);
     if (!Array.isArray(candidate.issues)) {
       candidate.issues = [];
       }
-    if (!candidate.issues.includes(issueId)) {
-      candidate.issues.push(issueId);
+    if (!candidate.issues.includes(safeIssueId)) {
+      candidate.issues.push(safeIssueId);
       }
     candidate.updated = new Date().toISOString();
         // §2.6: a committed issue append advances version by exactly one.
