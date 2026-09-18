@@ -100,7 +100,7 @@ export function createApp() {
  */
 export async function startServer(
   port = process.env.PORT || 4000,
-  host = process.env.HOST || '127.0.0.1'
+  host = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1')
 ) {
   await loadStore();
   const app = createApp();
@@ -126,7 +126,7 @@ const isDirectRun =
 
 if (isDirectRun) {
   const PORT = process.env.PORT || 4000;
-  const HOST = process.env.HOST || '127.0.0.1';
+  const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
   startServer(PORT, HOST).then(({ server }) => {
      console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
       });
