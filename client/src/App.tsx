@@ -4,6 +4,7 @@ import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
 import Portfolio from './components/Portfolio'
+import ProjectPicker from './components/ProjectPicker'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
 import HeaderHelp from './components/HeaderHelp'
@@ -27,6 +28,9 @@ export default function App() {
        })
     const [view, setView] = useState<'board' | 'portfolio'>('board')
     const [projects, setProjects] = useState<ProjectSummary[]>([])
+    // True once the (unscoped) project list has settled, so the stale-scope
+    // recovery below never fires against an empty, not-yet-loaded list.
+    const [projectsLoaded, setProjectsLoaded] = useState(false)
     // Phones hide the signal rail to leave room for the board; this control
     // lets it slide in as an overlay on demand. Desktop ignores it (rail is
     // always docked from md up).
@@ -144,10 +148,26 @@ export default function App() {
         if (!cancelled) setProjects(data)
         })
       .catch(() => {/* the switcher degrades to the current scope */})
+      .finally(() => {
+        if (!cancelled) setProjectsLoaded(true)
+        })
     return () => {
       cancelled = true
       }
      }, [tasks.length])
+
+     // Stale-scope auto-recovery (§client bugfix): a persisted project id that
+    // no longer exists on this board (e.g. `test-kanbann` from an older
+    // deployment) would scope both the fetch and the SSE stream to nothing, so
+    // the board showed 0 tasks with no explanation. Once the project list has
+    // loaded, reset the scope to "all projects" (which also clears the stale
+    // localStorage key via selectProject).
+    useEffect(() => {
+      if (!projectsLoaded) return
+      if (project && !projects.some((p) => p.project === project)) {
+        selectProject(ALL_PROJECTS)
+      }
+     }, [projectsLoaded, project, projects])
 
   // Fetch the deployed version once on mount; failure just hides the chip.
   useEffect(() => {
@@ -189,27 +209,7 @@ export default function App() {
            </div>
          </div>
          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-3">
-            <select
-             value={project}
-             onChange={(e) => selectProject(e.target.value)}
-             aria-label="Filter the board to one project"
-             title="Scope the board, the live stream and auto-claim to one project"
-             className="min-w-0 max-w-[10rem] border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
-            >
-              <option value={ALL_PROJECTS}>all projects</option>
-              {/* Names only, no counts: once the board is scoped to one
-                  project the SSE stream carries no other project's rows, so a
-                  count here could not be kept honest. Counts live on the
-                  portfolio, which refreshes on its own. */}
-              {projects.map((p) => (
-                <option key={p.project} value={p.project}>
-                  {p.project}
-                </option>
-              ))}
-              {project && !projects.some((p) => p.project === project) && (
-                <option value={project}>{project}</option>
-              )}
-            </select>
+            <ProjectPicker value={project} projects={projects} onChange={selectProject} />
             <button
              type="button"
              onClick={() => setView((v) => (v === 'board' ? 'portfolio' : 'board'))}
@@ -313,9 +313,24 @@ export default function App() {
                {error}
              </div>
            )}
-           {view === 'board' && !loading && !error && (
-             <>
-                <div className="min-w-0 flex-1 overflow-hidden">
+            {view === 'board' && !loading && !error && tasks.length === 0 && (
+              <div className="flex h-full flex-1 flex-col items-center justify-center gap-1 font-mono text-xs text-muted">
+                {project ? (
+                  <>
+                    <span>No tasks in “{project}”.</span>
+                    <span>Pick “all projects” from the switcher, or add a task via the API.</span>
+                  </>
+                ) : (
+                  <>
+                    <span>No tasks yet.</span>
+                    <span>Add one via the API (see ONBOARDING.md), or bind an agent id to auto-claim.</span>
+                  </>
+                )}
+              </div>
+            )}
+            {view === 'board' && !loading && !error && tasks.length > 0 && (
+              <>
+                 <div className="min-w-0 flex-1 overflow-hidden">
                    <Board tasks={tasks} onOpen={handleOpen} showProject={!project} />
                 </div>
                 {/* Desktop: docked rail. Mobile: it would eat the whole board,
