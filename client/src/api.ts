@@ -1,7 +1,11 @@
 import type { Task, ProjectSummary, MetricsResponse } from './types'
 import { authHeaders, readStoredToken } from './lib/authToken'
 
-const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4000/api')
+// Same-origin `/api`: the deployed server serves the client bundle AND the API
+// on one origin, so a relative base works everywhere (local dev proxies it via
+// vite.config.ts, Render serves it directly). `VITE_API_BASE` remains an escape
+// hatch for a split-origin setup.
+const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
 /**
  * §2.6 optimistic-concurrency surface.
