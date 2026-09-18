@@ -11,7 +11,7 @@
  * `KANBAN_AUTH_TOKEN` for every project.
  */
 import { referencedProjects } from './projectScope.js';
-import { isValidProjectId, defaultProjectName } from '../store.js';
+import { isValidProjectId, defaultProjectName, emitAudit } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 
 export const VALID_ROLES = new Set([
@@ -164,6 +164,23 @@ export function createAuthMiddleware() {
             });
           }
         }
+      } else {
+        // Admin token spans every project — intended superuser behaviour, but
+        // kept observable. Emit a distinct audit entry so admin usage is
+        // distinguishable from ordinary per-project writes in the audit log.
+        const scopesStr = scopes.length > 0 ? scopes.join(',') : defaultProjectName();
+        console.warn(
+          `[kanban auth] ADMIN write on ${req.method} ${req.originalUrl} ` +
+          `(project: ${scopesStr}, agent: ${agentId || 'anonymous'}) role: admin`
+        );
+        emitAudit({
+          ts: new Date().toISOString(),
+          kind: 'admin_write',
+          project: scopes.length > 0 ? scopes[0] : defaultProjectName(),
+          task: null,
+          actor: agentId || 'admin',
+          reason: 'admin_token',
+        });
       }
     } else if (!tokensMatch(providedToken, requiredToken)) {
       return unauthorized();

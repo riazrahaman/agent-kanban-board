@@ -177,6 +177,45 @@ describe('§2.3 per-project auth + rate limiting', () => {
       }
     });
 
+  it('7b. an admin write is auditable with an admin marker', async () => {
+    enableProjectTokens();
+    process.env.KANBAN_ADMIN_TOKEN = ADMIN_TOKEN;
+    const seen = [];
+    const off = store.onAudit((entry) => seen.push(entry));
+    try {
+      const r = await jsonRequest(baseUrl, '/api/tasks?project=alpha', {
+        method: 'POST', headers: headers(ADMIN_TOKEN),
+        body: JSON.stringify({ id: 'adm-audit', title: 'Admin', status: 'BACKLOG', round: 1 }),
+        });
+      assert.equal(r.response.status, 201);
+      const adminEntry = seen.find((e) => e.kind === 'admin_write');
+      assert.ok(adminEntry, 'an admin_write audit entry was emitted');
+      assert.equal(adminEntry.reason, 'admin_token', 'the entry is marked as admin_token');
+      assert.equal(adminEntry.project, 'alpha');
+      } finally {
+      off();
+      }
+    });
+
+  it('7c. an ordinary per-project write is NOT marked admin', async () => {
+    enableProjectTokens();
+    const seen = [];
+    const off = store.onAudit((entry) => seen.push(entry));
+    try {
+      const r = await jsonRequest(baseUrl, '/api/tasks?project=alpha', {
+        method: 'POST', headers: headers(ALPHA_TOKEN),
+        body: JSON.stringify({ id: 'adm-ordinary', title: 'Ordinary', status: 'BACKLOG', round: 1 }),
+        });
+      assert.equal(r.response.status, 201);
+      assert.ok(
+        !seen.some((e) => e.kind === 'admin_write'),
+        'a per-project token must not emit an admin marker',
+        );
+      } finally {
+      off();
+      }
+    });
+
   it('8. reads are never gated by the project token', async () => {
     enableProjectTokens();
     const r = await jsonRequest(baseUrl, '/api/tasks?project=beta');

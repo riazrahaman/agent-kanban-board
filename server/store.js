@@ -815,7 +815,7 @@ export function onAudit(fn) {
    };
 }
 
-function emitAudit(entry) {
+export function emitAudit(entry) {
   for (const fn of [...auditListeners]) {
     try {
       fn(entry);
