@@ -277,6 +277,8 @@ describe('§2.3 per-project auth + rate limiting', () => {
     assert.equal(blocked.response.status, 429, 'the fourth exceeds the window');
     assert.match(blocked.body.error, /Rate limit exceeded for project 'rlx'/);
     assert.ok(blocked.response.headers.get('retry-after'), 'carries Retry-After');
+    assert.equal(blocked.response.headers.get('x-ratelimit-limit'), '3', '429 carries the budget');
+    assert.equal(blocked.response.headers.get('x-ratelimit-remaining'), '0', '429 carries remaining after charge');
 
     // A different project has its own budget.
     const other = await post('rly', 'rly-0');

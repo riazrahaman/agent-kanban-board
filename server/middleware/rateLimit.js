@@ -51,6 +51,13 @@ function windowMs() {
   return Number.isFinite(n) && n > 0 ? n : 60000;
 }
 
+/** Single source of truth for the effective rate-limit configuration. */
+export function rateLimitConfig() {
+  const limit = limitPerWindow();
+  const span = windowMs();
+  return { limit, windowMs: span, enabled: limit > 0 };
+}
+
 export function createRateLimitMiddleware() {
   return (req, res, next) => {
     const limit = limitPerWindow();
@@ -83,6 +90,8 @@ export function createRateLimitMiddleware() {
       if (bucket.count >= limit) {
         const retryMs = Math.max(0, bucket.windowStartMs + span - now);
         res.set('Retry-After', String(Math.ceil(retryMs / 1000)));
+        res.set('X-RateLimit-Limit', String(limit));
+        res.set('X-RateLimit-Remaining', String(Math.max(0, limit - bucket.count)));
         console.warn(
           `[kanban rate limit] 429 on ${req.method} ${req.originalUrl} for project '${scope}'`
         );
