@@ -301,4 +301,39 @@ describe('§2.6 optimistic-concurrency', () => {
     assert.equal(reclaim.response.status, 200, 'holder re-claims at current version');
     assert.equal(reclaim.body.version, 3, 'holder reclaim bumps 2 -> 3');
    });
+
+  it('a throwing mutation neither re-runs nor blocks the queue', async () => {
+    const seen = [];
+    const throwerRuns = { count: 0 };
+    const argSpy = { received: undefined, wasCalled: false };
+
+    const thrower = async () => {
+      throwerRuns.count += 1;
+      throw new Error('boom');
+    };
+    const argProbe = async (arg) => {
+      argSpy.wasCalled = true;
+      argSpy.received = arg;
+      seen.push('probe');
+    };
+    const tail = async () => {
+      seen.push('tail');
+    };
+
+    // The throwing op must NOT be retried, and must not receive the Error as
+    // an argument; the two later ops still run in FIFO order.
+    const results = await Promise.allSettled([
+      store.withMutationLock(thrower),
+      store.withMutationLock(argProbe),
+      store.withMutationLock(tail),
+    ]);
+
+    assert.equal(results[0].status, 'rejected', 'the throwing op rejects');
+    assert.equal(throwerRuns.count, 1, 'the throwing op runs exactly once (no retry)');
+    assert.equal(results[1].status, 'fulfilled', 'the op after the thrower still runs');
+    assert.equal(results[2].status, 'fulfilled', 'the op after the probe still runs');
+    assert.equal(argSpy.wasCalled, true, 'the probe op was invoked');
+    assert.equal(argSpy.received, undefined, 'no Error is passed as an argument to the op');
+    assert.deepEqual(seen, ['probe', 'tail'], 'ops run in FIFO order after a throw');
+   });
 });
