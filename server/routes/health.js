@@ -1,5 +1,10 @@
 import { Router } from 'express';
+import { createRequire } from 'node:module';
 import * as store from '../store.js';
+
+const require = createRequire(import.meta.url);
+// Single source of truth for the deployed version: server/package.json.
+const { version: APP_VERSION } = require('../package.json');
 
 const router = Router();
 
@@ -31,7 +36,7 @@ router.get('/', asyncHandler(async (req, res) => {
       enabled: reaperEnabled,
       running: store.isReaperRunning(),
     },
-    version: '1.0.0',
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
   });
 }));

@@ -223,6 +223,15 @@ export async function nextClaim(
 }
 
 /**
+ * §health — deployed server version + liveness. Open GET.
+ * GET /health
+ */
+export async function getHealth(): Promise<{ version: string; status: string }> {
+  const res = await fetch(`${API_BASE}/health`)
+  return handleResponse<{ version: string; status: string }>(res)
+}
+
+/**
  * §2.1 — portfolio of projects with live/done/archived counts.
  * GET /projects
  */

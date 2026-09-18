@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
-import { getProjects, getTasks, subscribeToEvents } from './api'
+import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
 import Portfolio from './components/Portfolio'
@@ -26,6 +26,9 @@ export default function App() {
        })
     const [view, setView] = useState<'board' | 'portfolio'>('board')
     const [projects, setProjects] = useState<ProjectSummary[]>([])
+    // Deployed server version, shown in the header so operators can tell at a
+    // glance which build is live. Sourced from /api/health (server/package.json).
+    const [version, setVersion] = useState<string | null>(null)
 
     const selectProject = (next: string) => {
       setProject(next)
@@ -141,6 +144,19 @@ export default function App() {
       }
      }, [tasks.length])
 
+  // Fetch the deployed version once on mount; failure just hides the chip.
+  useEffect(() => {
+    let cancelled = false
+    getHealth()
+      .then((h) => {
+        if (!cancelled) setVersion(h.version)
+      })
+      .catch(() => {/* the header simply omits the version */})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
      [tasks, openTaskId],
@@ -156,7 +172,15 @@ export default function App() {
            <div className="flex items-baseline gap-2">
             <h1 className="font-serif text-lg font-normal tracking-tight text-ink">
               Agent Kanban Board
-             </h1>
+            </h1>
+            {version && (
+              <span
+                className="font-mono text-[10px] text-muted"
+                title={`Deployed server version (${version})`}
+              >
+                v{version}
+              </span>
+            )}
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
               loop ops
              </span>
