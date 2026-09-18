@@ -90,9 +90,10 @@ router.post('/archive/sweep', asyncHandler(async (req, res) => {
 /**
  * §2.7 POST /api/tasks/next-claim — atomically select + claim the highest-
  * priority, unclaimed, dependency-satisfied BACKLOG task for the caller.
- * Query: ?role= (validated against VALID_ROLES, 403 on bad), ?project=
- * (accepted, no-op today), ?agent_id= (falls back to the caller's agent_id).
- * Returns 200 + the claimed task, or 204 when nothing is claimable.
+ * The caller's role is taken from the authenticated identity only (never the
+ * query string). Query: ?project= (accepted, no-op today), ?agent_id= (falls
+ * back to the caller's agent_id). Returns 200 + the claimed task, or 204 when
+ * nothing is claimable.
  */
 router.post('/next-claim', asyncHandler(async (req, res) => {
   const agentId =
@@ -103,9 +104,10 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'agent_id is required' });
     }
 
-  // §2.7: the supplied role (query or caller) is validated against VALID_ROLES so
-  // the endpoint cannot be used to smuggle a bad role. 403 on a bad role.
-  const rawRole = req.query?.role ?? req.caller?.role;
+  // §2.7: the role is taken from the authenticated caller only, never the query
+  // string, so an authenticated `builder` cannot elevate to `reviewer` via
+  // `?role=reviewer`. It is still validated against VALID_ROLES (403 on bad).
+  const rawRole = req.caller?.role;
   if (rawRole !== undefined && rawRole !== null && rawRole !== '') {
     const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
     if (!role || !VALID_ROLES.has(role)) {

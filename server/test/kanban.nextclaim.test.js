@@ -206,18 +206,43 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     await store.loadStore();
     });
 
-  it('8. role validation — a bad role is a 403; a real one is allowed', async () => {
+  it('8. role validation — an invalid caller role is 403; a query role is ignored', async () => {
     // next-claim is a mutation, so auth requires a valid X-Agent-Role header;
-    // the route ADDITIONALLY validates any ?role= query hint against VALID_ROLES.
-    // A bad query role (with a valid header that passes auth) must 403 at route.
-    const bad = await jsonRequest(baseUrl, '/api/tasks/next-claim?agent_id=badrole&role=bogus', {
+    // an invalid CALLER role is rejected by the auth middleware (403).
+    const badCaller = await jsonRequest(baseUrl, '/api/tasks/next-claim?agent_id=badrole', {
+      method: 'POST', headers: headers('bogus', 'badrole'),
+      });
+    assert.equal(badCaller.response.status, 403, 'an invalid caller role is rejected with 403');
+    // A bad ?role= query hint is IGNORED: authorization reads req.caller.role only,
+    // so a valid builder caller with ?role=bogus is NOT rejected at the route.
+    const badQuery = await jsonRequest(baseUrl, '/api/tasks/next-claim?agent_id=badrole&role=bogus', {
       method: 'POST', headers: headers('builder', 'badrole'),
       });
-    assert.equal(bad.response.status, 403, 'an invalid ?role= is rejected with 403');
-    // A valid role (no query hint, so the header role is used) is accepted —
-    // nothing left to claim, so 204/200 both fine; the point is no 403.
+    assert.notEqual(badQuery.response.status, 403, 'a bad query role is ignored (not rejected)');
+    // A valid role is accepted — nothing left to claim, so 204/200 both fine.
     const good = await claimNext(baseUrl, 'goodrole', { role: 'reviewer' });
     assert.notEqual(good.response.status, 403, 'a valid role is not rejected');
+    });
+
+  it('13. query ?role= cannot elevate the authenticated caller role', async () => {
+    // A caller authenticated as `builder` passes ?role=reviewer. The claim must
+    // be recorded with the authenticated role (builder), never the query hint —
+    // so the query role is ignored and the claim succeeds as a plain builder claim.
+    await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('esc-1', 'Esc one') });
+    const r = await jsonRequest(baseUrl, '/api/tasks/next-claim?agent_id=esc-agent&role=reviewer', {
+      method: 'POST', headers: headers('builder', 'esc-agent'),
+      });
+    assert.equal(r.response.status, 200, 'builder claim succeeds — query ?role=reviewer is not honored');
+    assert.equal(r.body.id, 'esc-1');
+    assert.equal(r.body.assigned_agent, 'esc-agent', 'task is assigned to the authenticated agent');
+
+    // A caller with no query role claims with their authenticated req.caller.role.
+    await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('esc-2', 'Esc two') });
+    const r2 = await jsonRequest(baseUrl, '/api/tasks/next-claim?agent_id=esc-agent2', {
+      method: 'POST', headers: headers('builder', 'esc-agent2'),
+      });
+    assert.equal(r2.response.status, 200, 'a caller with no query role claims with their authenticated role');
+    assert.equal(r2.body.id, 'esc-2');
     });
 
   it('9. project query is an accepted no-op (does not 404/error)', async () => {
