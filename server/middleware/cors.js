@@ -8,12 +8,14 @@ import cors from 'cors';
  * deliberately configured by the operator.
  */
 export function configureCors() {
-  const allowedOrigin = (
-    process.env.KANBAN_ALLOWED_ORIGIN || 'http://localhost:5173'
-  ).trim();
+  const raw = (process.env.KANBAN_ALLOWED_ORIGIN || 'http://localhost:5173').trim();
+  const allowedOrigins = raw
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
 
-  if (!allowedOrigin || allowedOrigin === '*') {
-    throw new Error('KANBAN_ALLOWED_ORIGIN must be one explicit origin');
+  if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
+    throw new Error('KANBAN_ALLOWED_ORIGIN must be one or more explicit origins');
   }
 
   return cors({
@@ -23,7 +25,7 @@ export function configureCors() {
         return callback(null, true);
       }
 
-      if (origin === allowedOrigin) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 

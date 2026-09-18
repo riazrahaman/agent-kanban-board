@@ -111,6 +111,11 @@ export async function startServer(
 ) {
   await loadStore();
   const app = createApp();
+  if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {
+    console.warn(
+      '[kanban warning] KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).'
+    );
+  }
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
        // §2.4: schedule the lease reaper only on a real boot (not in createApp),
