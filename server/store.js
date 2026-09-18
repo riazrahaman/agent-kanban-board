@@ -504,8 +504,8 @@ const index = new Map();    // `${project}/${id}` -> Task   (O(1) composite look
 const storageCache = new Map(); // project -> per-project storage instance
 let mutationQueue = Promise.resolve();
 
-function withMutationLock(operation) {
-  const run = mutationQueue.then(operation, operation);
+export function withMutationLock(operation) {
+  const run = mutationQueue.then(() => operation(), () => operation());
   mutationQueue = run.catch(() => undefined);
   return run;
 }
