@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReaperEnabled } from './store.js';
+import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
@@ -142,6 +142,8 @@ export async function startServer(
         // Clean shutdown: stop the sweep when the server closes.
         server.on('close', () => stopReaper());
         }
+      startBackup();
+      server.on('close', () => stopBackup());
       resolve({ server, stopReaper: stop || stopReaper });
       });
     });
