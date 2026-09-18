@@ -6,6 +6,7 @@ import Board from './components/Board'
 import Portfolio from './components/Portfolio'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
+import HeaderHelp from './components/HeaderHelp'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
@@ -242,7 +243,8 @@ export default function App() {
              spellCheck={false}
              className="w-28 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
            />
-           {!tokenSaved && (
+            <HeaderHelp />
+            {!tokenSaved && (
              <span
               className="font-mono text-[10px] uppercase tracking-wider text-muted"
               title="Reads work without a token; claim, heartbeat and log writes will return 401."
