@@ -12,6 +12,7 @@
  */
 import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName } from '../store.js';
+import { authSecret, verifySessionToken } from '../sessionAuth.js';
 
 export const VALID_ROLES = new Set([
   'builder',
@@ -96,10 +97,11 @@ export function createAuthMiddleware() {
     }
 
     const requiredToken = process.env.KANBAN_AUTH_TOKEN;
-    if (!projectTokens && !requiredToken) {
-      console.error('[kanban auth] KANBAN_AUTH_TOKEN is not configured; refusing mutation');
+    const sessionEnabled = authSecret() !== null;
+    if (!projectTokens && !requiredToken && !sessionEnabled) {
+      console.error('[kanban auth] no auth mechanism is configured; refusing mutation');
       return res.status(503).json({
-        error: 'Mutating API is unavailable until KANBAN_AUTH_TOKEN is configured',
+        error: 'Mutating API is unavailable until an auth token is configured',
       });
     }
 
@@ -113,6 +115,29 @@ export function createAuthMiddleware() {
       });
     };
     if (!providedToken) return unauthorized();
+
+    // Session-token path. A valid HMAC session token carries its own role and
+    // project; authenticate against those without consulting a server-side
+    // session table. Falls through to the static-token paths below on failure,
+    // so the legacy KANBAN_AUTH_TOKEN / KANBAN_PROJECT_TOKENS path is unchanged.
+    const session = verifySessionToken(providedToken);
+    if (session) {
+      req.caller.role = session.role;
+      const referenced = referencedProjects(req);
+      const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
+      for (const scope of scopes) {
+        if (scope !== session.project) {
+          console.warn(
+            `[kanban auth failure] 403 on ${req.method} ${req.originalUrl}: ` +
+            `session token not valid for project '${scope}' (agent: ${agentId || 'anonymous'})`
+          );
+          return res.status(403).json({
+            error: `Forbidden: token is not authorized for project '${scope}'`,
+          });
+        }
+      }
+      return next();
+    }
 
     if (projectTokens) {
       // §2.3 per-project isolation. Authorize against EVERY project the request

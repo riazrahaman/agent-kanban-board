@@ -5,6 +5,7 @@ import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReape
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
+import authRouter from './routes/auth.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware } from './middleware/rateLimit.js';
@@ -13,6 +14,9 @@ export function createApp() {
   const app = express();
   app.use(configureCors());
   app.use(express.json());
+  // The handshake endpoint must be reachable before the auth middleware: it is
+  // gated by proof-of-secret, not by a pre-existing session token.
+  app.use('/api/auth', authRouter);
   app.use(createAuthMiddleware());
   app.use(createRateLimitMiddleware());
 
