@@ -284,6 +284,32 @@ describe('PI-03 kanban contract', () => {
       });
       assert.equal(malformedRole.response.status, 403);
     });
+
+    it('escapes HTML in issue ids and dedupes on the escaped value', async () => {
+      const payload = '<img src=x onerror=alert(1)>';
+      const created = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(),
+        body: taskBody('xss-issue', 'XSS issue'),
+      });
+      assert.equal(created.response.status, 201);
+
+      const added = await jsonRequest(baseUrl, '/api/tasks/xss-issue/issues', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ issue_id: payload }),
+      });
+      assert.equal(added.response.status, 200);
+      assert.deepEqual(added.body.issues, ['&lt;img src=x onerror=alert(1)&gt;']);
+
+      const duplicate = await jsonRequest(baseUrl, '/api/tasks/xss-issue/issues', {
+        method: 'POST', headers: headers(), body: JSON.stringify({ issue_id: payload }),
+      });
+      assert.equal(duplicate.response.status, 200);
+      assert.deepEqual(duplicate.body.issues, ['&lt;img src=x onerror=alert(1)&gt;']);
+
+      const persisted = store.getTask('xss-issue');
+      assert.deepEqual(persisted.issues, ['&lt;img src=x onerror=alert(1)&gt;']);
+      assert.ok(!persisted.issues[0].includes('<'), 'raw < present');
+      assert.ok(!persisted.issues[0].includes('>'), 'raw > present');
+    });
   });
 
   describe('KB-09 pluggable git-backed storage', () => {
