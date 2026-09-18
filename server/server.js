@@ -9,7 +9,7 @@ import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
-import { createRateLimitMiddleware } from './middleware/rateLimit.js';
+import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 
 export function createApp() {
   const app = express();
@@ -110,6 +110,12 @@ export async function startServer(
   host = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1')
 ) {
   await loadStore();
+  const rl = rateLimitConfig();
+  console.info(
+    rl.enabled
+      ? `rate limit: ${rl.limit}/min/project (window ${rl.windowMs}ms)`
+      : 'rate limit: disabled'
+  );
   const app = createApp();
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
