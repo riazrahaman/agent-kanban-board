@@ -15,10 +15,13 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 
 ```
 .
-├── client/           Vite + React + Tailwind frontend styled to DESIGN.md
+├── client/           Vite + React + Tailwind frontend (editorial-minimalist design system)
 ├── server/           Node/Express API with atomic JSON & git-backed YAML storage
+├── docs/             System design, architecture, file reference, and operator manual
 ├── scripts/          test-agents.js — headless multi-agent workflow demo
 ├── .github/          CI workflow for automated testing and builds
+├── render.yaml       Render.com deploy blueprint (Node service + persistent disk)
+├── railway.json      Railway deploy config (Railpack + healthcheck)
 ├── Makefile          Standard build, test, and security check targets
 └── LICENSE           MIT License
 ```
@@ -132,11 +135,13 @@ The board features pluggable persistence:
 
 ## Design System
 
-The visual interface is styled to the editorial-minimalist design system in `DESIGN.md`:
+The visual interface follows an editorial-minimalist design system:
 - **Hairlines**: Depth is achieved solely through 1px hairlines (`border-line`); shadows and heavy gradients are banned.
 - **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps.
 - **Form + Colour**: Status is encoded in form as well as colour: left 3px severity stripe, text badge, status glyphs (`▲` for review), and active pulsing indicators.
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
+- **Theming**: A warm-cream light palette and a near-black dark palette, toggled in the header; the explicit choice wins over the OS preference and native controls follow via `color-scheme`.
+- **Responsive**: The shell wraps instead of overflowing, board columns snap-scroll at `85vw` on mobile (`w-72` from `md` up), and the Signal Rail collapses into a slide-over drawer below `md`.
 
 ---
 
@@ -177,6 +182,17 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 
 ---
 
+## Deployment
+
+The server is a stateful long-running process (in-memory store, background lease reaper, open SSE connections), so it needs a host that runs a persistent process — **not** a serverless/FaaS platform. Two deploy blueprints ship in the repo:
+
+- **Render** — [`render.yaml`](render.yaml): a single Node web service that builds the client and serves API + SPA on one port, with a persistent disk at `/data`.
+- **Railway** — [`railway.json`](railway.json): Railpack build, `npm --prefix server start`, healthcheck at `/api/health`.
+
+For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth token (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS`), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
+
+---
+
 ## Development & Verification
 
 ```bash
@@ -191,6 +207,8 @@ make build
 # Run security checks (no hardcoded secrets or absolute paths)
 make sec
 ```
+
+`npm test` runs the server suite (151 tests), the client status check, the client unit suite (44 tests, including the mobile-responsive regression guard), and compiles the production bundle.
 
 ---
 

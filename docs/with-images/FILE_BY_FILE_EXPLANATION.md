@@ -248,7 +248,19 @@ flowchart TD
 
 #### `README.md`
 - **Path:** [`README.md`](../README.md)
-- **Content:** System description, quickstart guide, state machine transitions, storage engine modes, API table, and headless demo instructions.
+- **Content:** System description, quickstart guide, state machine transitions, storage engine modes, security/auth model, design system, API table, and headless demo instructions. Links to `ONBOARDING.md`.
+
+#### `ONBOARDING.md`
+- **Path:** [`ONBOARDING.md`](../ONBOARDING.md)
+- **Content:** "Connect a new project" guide: the project-implicit model (no registration endpoint), the four token mechanisms, project-tagging channels, and a curl walkthrough.
+
+#### `render.yaml`
+- **Path:** [`render.yaml`](../render.yaml)
+- **Content:** Render.com blueprint — a single Node web service that builds the client and serves both API + SPA, with a persistent disk mounted at `/data` and auto-generated auth tokens.
+
+#### `railway.json`
+- **Path:** [`railway.json`](../railway.json)
+- **Content:** Railway config-as-code — Railpack builder, `npm --prefix server start`, and `/api/health` healthcheck.
 
 #### `LICENSE`
 - **Path:** [`LICENSE`](../LICENSE)
@@ -270,9 +282,9 @@ flowchart TD
 #### `server/server.js`
 - **Path:** [`server/server.js`](../server/server.js)
 - **Functions:**
-  - `createApp()`: Instantiates Express, mounts CORS and Auth middlewares, mounts `/api/tasks` router, handles `/api/events` Server-Sent Events stream, and configures the global 500 error handler.
-  - `startServer(port, host)`: Asynchronously loads tasks from storage into memory and binds the HTTP server.
-  - CLI Auto-runner: Detects direct execution and launches server on port 4000.
+  - `createApp()`: Instantiates Express, mounts CORS, the `/api/auth` handshake router (before auth), the auth middleware and the rate-limit middleware, mounts `/api/tasks`, `/api/projects`, `/api/metrics` and `/api/health`, handles the `/api/events` Server-Sent Events stream, serves the built client (`client/dist`) with an SPA fallback, and configures the global 500 error handler.
+  - `startServer(port, host)`: Asynchronously loads tasks from storage into memory, logs the startup configuration (auth posture, CORS, rate limit), and binds the HTTP server. Host defaults to `0.0.0.0` whenever `PORT` is set (hosted) and `127.0.0.1` otherwise (local dev).
+  - CLI Auto-runner: Detects direct execution and launches the server.
 
 #### `server/store.js`
 - **Path:** [`server/store.js`](../server/store.js)
@@ -303,11 +315,21 @@ flowchart TD
   - `GET /:id/issues`: Lists issue IDs associated with the task.
   - `POST /:id/issues`: Appends an issue ID to the task.
 
-#### `server/routes/projects.js`, `metrics.js`, `health.js`, `auth.js`
-- **Projects:** `GET /` — per-project summary counts.
-- **Metrics:** `GET /` — cross-project metrics (cycle time, `by_status`, contention).
-- **Health:** `GET /` (and `/healthz`) — read-only liveness/readiness probe.
-- **Auth:** `POST /session` — HMAC session-token handshake (`KANBAN_AUTH_SECRET`).
+#### `server/routes/projects.js`
+- **Path:** [`server/routes/projects.js`](../server/routes/projects.js)
+- **Endpoint:** `GET /` — per-project summary (task/live/done/archived counts + `updated`).
+
+#### `server/routes/metrics.js`
+- **Path:** [`server/routes/metrics.js`](../server/routes/metrics.js)
+- **Endpoint:** `GET /` — cross-project metrics (`?project=` scopes; cycle time, `by_status` histogram, claim contention, active agents).
+
+#### `server/routes/health.js`
+- **Path:** [`server/routes/health.js`](../server/routes/health.js)
+- **Endpoint:** `GET /` (and `/healthz` alias) — read-only liveness/readiness probe: store state, task counts, listener counts, reaper status, version.
+
+#### `server/routes/auth.js`
+- **Path:** [`server/routes/auth.js`](../server/routes/auth.js)
+- **Endpoint:** `POST /session` — HMAC session-token handshake (gated by `KANBAN_AUTH_SECRET`).
 
 #### `server/sessionAuth.js`
 - **Path:** [`server/sessionAuth.js`](../server/sessionAuth.js)
@@ -322,9 +344,13 @@ flowchart TD
   - Validates caller role against `VALID_ROLES`. Missing/unauthorized role returns 403.
   - Optional redacted auth-failure logging via `KANBAN_AUTH_LOG`.
 
-#### `server/middleware/projectScope.js` & `rateLimit.js`
-- **projectScope:** Extracts every project a request references and guards invalid `?project=` as 400.
-- **rateLimit:** Per-project fixed-window rate limiting on mutations, off unless `KANBAN_RATE_LIMIT_PER_MIN` is set.
+#### `server/middleware/projectScope.js`
+- **Path:** [`server/middleware/projectScope.js`](../server/middleware/projectScope.js)
+- **Enforcement:** Extracts every project a request references (body, query, header, composite path) and guards invalid `?project=` as 400 — never a silent widening to the whole portfolio.
+
+#### `server/middleware/rateLimit.js`
+- **Path:** [`server/middleware/rateLimit.js`](../server/middleware/rateLimit.js)
+- **Enforcement:** Per-project fixed-window rate limiting on mutations, off unless `KANBAN_RATE_LIMIT_PER_MIN` is set.
 
 #### `server/middleware/cors.js`
 - **Path:** [`server/middleware/cors.js`](../server/middleware/cors.js)
@@ -334,13 +360,13 @@ flowchart TD
 - **Path:** [`server/utils/sanitize.js`](../server/utils/sanitize.js)
 - **Function:** `escapeHtml(str)` escapes HTML characters (`&`, `<`, `>`, `"`, `'`) to prevent Stored XSS.
 
-#### `server/test/kanban.test.js`
-- **Path:** [`server/test/kanban.test.js`](../server/test/kanban.test.js)
-- **Coverage:** Complete automated test suite testing duplicate prevention, state transitions, role gating, claim contention, fail-closed auth, atomic failure rollback, git persistence, CORS lockdown, and XSS sanitization.
+#### `server/test/` (Node.js built-in test runner)
+- **Paths:** `server/test/kanban.*.test.js`
+- **Coverage:** The server suite (151 tests across 17 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), and periodic backups (`kanban.backup.test.js`).
 
 #### `server/tasks.json`
 - **Path:** [`server/tasks.json`](../server/tasks.json)
-- **Role:** Sample JSON storage file containing historical/seeded swarm tasks.
+- **Role:** Default-project JSON store (created/updated at runtime); the file also ships sample/seeded tasks.
 
 ---
 
@@ -349,11 +375,12 @@ flowchart TD
 #### `client/package.json`
 - **Path:** [`client/package.json`](../client/package.json)
 - **Dependencies:** `react` (^18.3.1), `react-dom` (^18.3.1).
-- **Scripts:** `dev`, `build`, `preview`, `test`.
+- **DevDependencies:** `vite`, `@vitejs/plugin-react`, `typescript`, `tailwindcss`, `postcss`, `autoprefixer`, `esbuild`.
+- **Scripts:** `dev`, `build` (`tsc -b && vite build`), `preview`, `test`.
 
 #### `client/vite.config.ts`
 - **Path:** [`client/vite.config.ts`](../client/vite.config.ts)
-- **Settings:** Configures Vite dev server port and React plugin.
+- **Settings:** Configures the Vite dev server port (`VITE_PORT`, default 5173), the React plugin, and a dev proxy forwarding `/api` to `http://localhost:4000` (changeOrigin) so same-origin `/api` calls reach the backend during local development.
 
 #### `client/tailwind.config.js`
 - **Path:** [`client/tailwind.config.js`](../client/tailwind.config.js)
@@ -369,11 +396,11 @@ flowchart TD
 
 #### `client/index.html`
 - **Path:** [`client/index.html`](../client/index.html)
-- **Content:** Single-page entry HTML, Google font preloading, base dark theme class.
+- **Content:** Single-page entry HTML, Google font preloading, responsive `<meta name="viewport">`, and an inline pre-paint theme script that applies the stored/OS theme before React mounts (avoids a flash of the wrong theme).
 
 #### `client/src/index.css`
 - **Path:** [`client/src/index.css`](../client/src/index.css)
-- **Styles:** Light and dark theme CSS variable definitions meeting WCAG AA contrast standards, tabular numeric font setup, and minimal scrollbars.
+- **Styles:** Light (warm cream) and dark theme CSS variable definitions meeting WCAG AA contrast standards, explicit `color-scheme` per theme (so native form controls match), `@supports (height:100dvh)` shell-height override, `.board-scroll` visible-scrollbar rules, tabular numeric font setup, and minimal global scrollbars.
 
 #### `client/src/main.tsx`
 - **Path:** [`client/src/main.tsx`](../client/src/main.tsx)
@@ -381,7 +408,7 @@ flowchart TD
 
 #### `client/src/App.tsx`
 - **Path:** [`client/src/App.tsx`](../client/src/App.tsx)
-- **Components & Hooks:** Manages `tasks`, `openTaskId`, `theme`, and `loading`. Connects to SSE events stream. Renders header bar, `<Board />`, `<SignalRail />`, `<TaskSheet />`, and `<ErrorBoundary />`.
+- **Components & Hooks:** App shell and state coordinator. Manages `tasks`, `openTaskId`, `project` filter, `view` (Board/Portfolio), `theme`, `railOpen`, and the agent-id/api-token identity. Fetches `getTasks` + subscribes to SSE scoped by project, fetches `/api/health` for the header version chip. Renders a wrapping responsive header, `<Board />`, `<SignalRail />` (docked at `md`+, slide-over drawer below), `<TaskSheet />`, and `<ErrorBoundary />`.
 
 #### `client/src/types.ts`
 - **Path:** [`client/src/types.ts`](../client/src/types.ts)
@@ -407,26 +434,25 @@ flowchart TD
 - **Path:** [`client/src/sanitize.ts`](../client/src/sanitize.ts)
 - **Function:** Client-side HTML string escaping.
 
-#### `client/src/lib/status.ts`
-- **Path:** [`client/src/lib/status.ts`](../client/src/lib/status.ts)
-- **Constants:** `CANONICAL_STATUSES` and `ACTIVE_STATUSES` matching backend definitions.
-
-#### `client/src/lib/signalStats.ts`
-- **Path:** [`client/src/lib/signalStats.ts`](../client/src/lib/signalStats.ts)
-- **Function:** `computeSignalStats(tasks)` calculating active count, blocked count, and total done count.
-
-#### `client/src/lib/signalStats.test.mjs`
-- **Path:** [`client/src/lib/signalStats.test.mjs`](../client/src/lib/signalStats.test.mjs)
-- **Execution:** Compiles TypeScript on-the-fly via `esbuild` and verifies statistical calculations under `node:test`.
-
 #### Components (`client/src/components/`)
-- **`Board.tsx`:** Renders horizontal column container for all 8 columns including `UNKNOWN`.
-- **`Column.tsx`:** Renders column header with task count badge and vertically scrolling card container.
-- **`TaskCard.tsx`:** Renders card ID, status stripe, title, agent assignment, and issues badge.
+- **`Board.tsx`:** Renders the horizontally snap-scrolling column container for all 8 columns including `UNKNOWN`, with edge-fade gradients and paging chevrons that appear when columns are off-screen.
+- **`Column.tsx`:** Renders a column header with task count badge and vertically scrolling card container. Responsive: `85vw` with snap alignment below `md`, fixed `w-72` from `md` up. Memoized.
+- **`TaskCard.tsx`:** Renders card ID, status stripe, title, project chip (unscoped board only), agent assignment, and issues badge. Memoized.
 - **`StatusBadge.tsx`:** Renders status glyphs (`▲`, `•`) and styling.
-- **`TaskSheet.tsx`:** Slide-over modal displaying card details, metadata, logs timeline, and human log submission form.
-- **`SignalRail.tsx`:** Right sidebar rendering Signal Overview metric tiles and recent activity feed.
+- **`TaskSheet.tsx`:** Slide-over modal displaying card details (including the project), metadata, logs timeline, and human log submission form.
+- **`SignalRail.tsx`:** Right sidebar rendering Signal Overview metric tiles and recent activity feed. Docked at `md`+, rendered as a mobile slide-over drawer below `md`.
+- **`Portfolio.tsx`:** Cross-project aggregate view with per-project summary rows.
+- **`HeaderHelp.tsx`:** Header `i` button opening a popover that explains the agent-id (auto-claim) and api-token header fields.
 - **`ErrorBoundary.tsx`:** React Class Error Boundary containing card render errors.
+
+#### Client Libraries (`client/src/lib/`)
+- **`theme.ts`:** Pure theme resolution helpers (`resolveTheme`, `nextTheme`, `isDark`, `THEME_STORAGE_KEY`).
+- **`status.ts`:** `CANONICAL_STATUSES` and `ACTIVE_STATUSES` matching backend definitions.
+- **`signalStats.ts`:** `computeSignalStats(tasks)` calculating active/blocked/done counts.
+- **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.
+- **`claimCoordinator.ts` / `useClaimCoordinator.ts`:** Client-side lease heartbeat + auto-claim coordination bound to the operator's agent identity.
+- **`authToken.ts`:** Browser-local storage/wiring of the operator's API token.
+- **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, and `responsive` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard.
 
 ---
 
@@ -442,4 +468,4 @@ flowchart TD
 
 #### `.github/workflows/ci.yml`
 - **Path:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-- **Pipeline:** Automated CI running security checks (`make sec`), server tests, status tests, client unit tests, and production build across Node 20.x and 22.x.
+- **Pipeline:** Automated CI running discrete steps — security checks (`make sec`), server tests (`npm --prefix server test`), client status tests, client unit tests (`npm --prefix client test`), and the production build — across Node 20.x and 22.x, using `actions/checkout@v4` and `actions/setup-node@v4`.

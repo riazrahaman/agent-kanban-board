@@ -104,7 +104,7 @@ The server and client are configured via environment variables.
 | `KANBAN_ADMIN_TOKEN` | *(None)* | Superuser token spanning every project. Audited as `admin_write`. |
 | `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map `{"project":"token"}` enabling per-project isolation. |
 | `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h). |
-| `KANBAN_AUTH_LOG` | `off` | Set truthy to emit redacted auth-failure logs. |
+| `KANBAN_AUTH_LOG` | `off` | Set truthy (not `0`/`false`) to emit redacted auth-failure logs. |
 | `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
 | `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
 | `KANBAN_DATA_DIR` | *(None)* | Root for named projects (`tasks/<project>.json`) + archives. |
@@ -159,6 +159,27 @@ make build
 npm start
 ```
 
+### 4.3 Cloud Deployment (Render / Railway)
+
+The server is a stateful long-running Node process (it holds an in-memory cache, runs a background lease reaper, and keeps SSE connections open), so it must run on a platform that supports a persistent process — not a serverless/FaaS host. The repo ships two blueprint files:
+
+- `render.yaml` — Render.com web service (Node runtime, disk-backed).
+- `railway.json` — Railway (Railpack builder, healthcheck, start command).
+
+Both rely on the server's own `startCommand` / `npm start` and the fact that it binds `0.0.0.0` whenever `PORT` is injected. Because the in-memory store is backed by files, attach a **persistent volume/disk** and point the storage env vars at it, or all data is lost on redeploy:
+
+| Variable | Value | Why |
+|---|---|---|
+| `KANBAN_STORAGE_BACKEND` | `json` | File backend (default). |
+| `KANBAN_DATA_FILE` | `/data/tasks.json` | **Default project** location — its built-in default is the ephemeral `server/tasks.json`. |
+| `KANBAN_DATA_DIR` | `/data` | Named projects (`tasks/<project>.json`) and archives. |
+| `KANBAN_AUTH_TOKEN` | *(secret)* | Required — mutations fail closed with `503` when unset. |
+| `KANBAN_PROJECT_TOKENS` | *(JSON map)* | Optional per-project scoping, e.g. `{"myapp":"tok"}`. |
+| `KANBAN_ALLOWED_ORIGIN` | *(public URL)* | Comma-separated CORS allow-list. |
+| `HOST` | `0.0.0.0` | Bind all interfaces (auto when `PORT` is set). |
+
+Generate secrets with `openssl rand -hex 32`. Health probes can target `GET /api/health` (or `/healthz`), which reports store-load state and reaper status.
+
 ---
 
 ## 5. Web Dashboard User Guide
@@ -172,14 +193,19 @@ The dashboard is designed for high-density, real-time operational oversight.
 
 ```mermaid
 flowchart TD
-    subgraph UI_Header ["Top Navigation Bar"]
-        Pulse["Live Indicator (pulsing dot)"] --- Title["Title: Agent Kanban Board (loop ops)"]
-        Title --- Count["Total Task Count Badge"]
-        Count --- Theme["Theme Switcher (Light / Dark)"]
+    subgraph UI_Header ["Top Navigation Bar (wraps on narrow viewports)"]
+        Pulse["Live Indicator (pulsing dot)"] --- Title["Title: Agent Kanban Board + version chip (vX.Y.Z)"]
+        Title --- Project["Project Filter (all projects / one project)"]
+        Project --- View["Portfolio / Board Toggle"]
+        View --- Identity["Agent ID + API Token (auto-claim identity)"]
+        Identity --- Help["'i' Help Popover"]
+        Help --- Status["READ-ONLY Badge / claim status / N tasks"]
+        Status --- Theme["Theme Switcher (Light / Dark)"]
+        Theme --- Rail["Signal Rail Toggle (mobile only, below md)"]
     end
 
     subgraph UI_Main ["Main Display Area"]
-        subgraph Board_Columns ["Kanban Columns (Horizontal Scroll)"]
+        subgraph Board_Columns ["Kanban Columns (Horizontal Snap Scroll)"]
             Col1["BACKLOG\nCards waiting to be claimed"]
             Col2["BUILDING\nActive implementation"]
             Col3["IN_REVIEW\nAwaiting reviewer evaluation"]
@@ -190,7 +216,7 @@ flowchart TD
             Col8["ISSUES\nVirtual lane: tasks bearing issues"]
         end
 
-        subgraph Sidebar ["Signal Rail (Right Sidebar)"]
+        subgraph Sidebar ["Signal Rail (Docked Sidebar >= md; Slide-Over Drawer < md)"]
             subgraph Rollup ["Signal Overview"]
                 ActiveStat["Active Tile\n(Building + Review + Test)"]
                 BlockedStat["Blocked Tile\n(Red when count > 0)"]
@@ -225,6 +251,9 @@ flowchart TD
 - **Unknown:** Defensive quarantine lane for cards with unmapped or malformed statuses, isolating corrupt state without unmounting the board.
 - **Issues (Swimlane):** Dedicated column aggregating any card with registered issues.
 
+> [!TIP]
+> The board scrolls horizontally. When more columns exist than fit the viewport, an edge-fade gradient and a paging chevron appear on the side that has hidden columns — click the chevron (or scroll/swipe) to page one column at a time. On the **all projects** view each card also shows its owning **project chip** so cards from different projects are distinguishable; switch the header's project filter to a single project to hide the chips and scope the board.
+
 ### 5.2 Card Anatomy
 - **Left 3px Color Stripe:** Visual severity and state indicator:
   - Green (`border-l-pass`): `DONE`
@@ -234,6 +263,7 @@ flowchart TD
   - Hairline (`border-l-line`): `BACKLOG` / `UNKNOWN`
 - **Task ID:** Monospace identifier (e.g. `chess-c1`).
 - **Status Badge:** Normalized status with glyph markers (`▲` for review, `•` for active execution).
+- **Project Chip:** Shown on the unscoped **all projects** board so cards from different projects are distinguishable (hidden when a single project is selected).
 - **Assigned Agent:** Indicates which autonomous agent holds the card claim.
 - **Issues Pill:** Displayed when active issues exist on the card.
 
@@ -253,7 +283,21 @@ Clicking any card opens the Inspector Sheet:
 - **Activity Feed:** Live streaming log of the 20 most recent agent actions across all tasks with relative timestamps (`12s`, `4m`).
 
 ### 5.5 Theme Customization
-Click the **Light / Dark** button in the header to switch color themes. Your preference is persisted in browser `localStorage`.
+Click the **Light / Dark** button in the header to switch color themes. Your explicit choice always wins over the operating system preference and is persisted in browser `localStorage`; with no stored choice the dashboard follows the OS `prefers-color-scheme`. Native form controls (including the project filter's option popup) follow the active theme via `color-scheme`.
+
+The light theme uses a warm cream palette; the dark theme uses a near-black palette. Both meet WCAG AA contrast for body text.
+
+### 5.6 Responsive & Mobile Layout
+The dashboard is responsive from ~360px phone widths up to widescreen desktop:
+
+- **App shell:** The header wraps onto multiple rows instead of forcing a single wide row, so the page never scrolls horizontally.
+- **Board columns:** Below the `md` breakpoint each column is `85vw` wide with horizontal snap scrolling (one column per swipe); from `md` up columns are a fixed 288px (`w-72`).
+- **Signal Rail:** Docked as a right-hand sidebar at `md` and above; below `md` it collapses into a slide-over **drawer** opened by the header's signal-rail toggle button (with a dimmed backdrop, closable by tapping the backdrop).
+- **Touch targets:** Interactive header controls are enlarged on small screens.
+- **Viewport height:** Uses `100dvh` where supported so the layout is not clipped by mobile browser URL bars.
+- Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available.
+
+A regression guard (`client/src/lib/responsive.test.mjs`) locks these invariants in CI.
 
 ---
 
@@ -398,7 +442,7 @@ flowchart TD
     Err["HTTP Error Encountered"]
     
     Err --> Code503{"Status 503?"}
-    Code503 -- Yes --> Fix503["Cause: KANBAN_AUTH_TOKEN is not set on the server.\nFix: Set export KANBAN_AUTH_TOKEN=... and restart server."]
+    Code503 -- Yes --> Fix503["Cause: No auth mechanism configured (KANBAN_AUTH_TOKEN,\nKANBAN_AUTH_SECRET, and KANBAN_PROJECT_TOKENS all unset),\nor KANBAN_PROJECT_TOKENS is malformed JSON.\nFix: Set a valid token / valid JSON map and restart the server."]
     
     Code503 -- No --> Code401{"Status 401?"}
     Code401 -- Yes --> Fix401["Cause: Missing or incorrect Bearer token / X-API-Token.\nFix: Check token matches server's KANBAN_AUTH_TOKEN."]
@@ -427,15 +471,16 @@ flowchart TD
 | **`404 Not Found`** | Resource Missing | - Task ID does not exist in store. Verify task ID via `GET /api/tasks`. |
 | **`409 Conflict`** | State Machine or Claim Contention | - Attempting an illegal state transition (e.g. `BACKLOG` $\to$ `DONE`).<br>- Attempting to transition out of terminal state `DONE`.<br>- Attempting to claim a task already held by another agent. |
 | **`500 Internal Error`** | Server / Git Error | - Git persistence failure (e.g. git hook rejection, index lock). Check server terminal logs. |
-| **`503 Unavailable`** | Server Unconfigured | - `KANBAN_AUTH_TOKEN` is not configured on the server. Mutations are blocked until configured. |
+| **`503 Unavailable`** | Server Unconfigured | - No auth mechanism is configured (`KANBAN_AUTH_TOKEN`, `KANBAN_AUTH_SECRET`, and `KANBAN_PROJECT_TOKENS` all unset), **or** `KANBAN_PROJECT_TOKENS` is not valid JSON. Mutations are fail-closed until a valid token is configured. |
 
 ---
 
 ## 8. Backup, Storage & Maintenance Operations
 
 ### 8.1 Standalone JSON Mode
-- All data resides in `server/tasks.json` (or `KANBAN_DATA_FILE`).
-- **Backup:** Simply copy the JSON file:
+- All data resides in `server/tasks.json` (default project) or `KANBAN_DATA_DIR/tasks/<project>.json` (named projects).
+- **Automatic backup (recommended):** set `KANBAN_BACKUP_ENABLED=1` (with `KANBAN_BACKUP_INTERVAL_MS` and `KANBAN_BACKUP_KEEP`) to snapshot task data into a `backups/` directory, rotated to a bounded count.
+- **Manual backup:** copy the JSON file(s):
   ```bash
   cp server/tasks.json server/tasks.backup.$(date +%Y%m%d_%H%M%S).json
   ```

@@ -44,11 +44,13 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 
 | Layer / Concern | Technology | Version | Purpose / Rationale |
 |---|---|---|---|
-| **Core UI Framework** | React | ^18.3.1 | Functional components, hooks (`useState`, `useEffect`, `useMemo`), React.StrictMode. |
+| **Core UI Framework** | React | ^18.3.1 | Functional components, hooks (`useState`, `useEffect`, `useMemo`, `useCallback`, `useLayoutEffect`, `useRef`), `React.memo` render gating on `Column`/`TaskCard`, React.StrictMode. |
 | **DOM Renderer** | React DOM | ^18.3.1 | Client-side root mounting (`createRoot`). |
-| **Build & Dev Server** | Vite | ^5.3.3 | Lightning-fast HMR, ES module bundling, asset optimization. |
+| **Build & Dev Server** | Vite | ^5.3.3 | Lightning-fast HMR, ES module bundling, asset optimization, `/api` dev proxy to the backend. |
 | **Language** | TypeScript | ^5.5.3 | Strict type definitions (`types.ts`, `status.ts`, component props). |
-| **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system. |
+| **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
+| **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / near-black dark palettes; explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
+| **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
 
@@ -58,7 +60,8 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 - **Technical Monospace:** `JetBrains Mono` / System Monospace (`ui-monospace`, `SF Mono`, `Menlo`, `Consolas`) with `tabular-nums` for card IDs, counts, timestamps, and metric rollups.
 - **Body Sans-Serif:** System UI stack (`system-ui`, `-apple-system`, `Segoe UI`, `Helvetica`, `Arial`).
 - **Surface & Hairlines:** 1px borders (`border-line`), 0px radius on cards, 3px vertical severity stripe on cards; dropshadows and heavy gradients are banished.
-- **Theme Support:** Dynamic CSS custom properties supporting system preference and manual Light/Dark mode toggling.
+- **Theme Support:** Dynamic CSS custom properties with an explicit Light/Dark toggle; the operator's stored choice wins over the OS `prefers-color-scheme`, and `color-scheme` keeps native form controls in sync.
+- **Responsive Behaviour:** The app shell wraps rather than overflowing horizontally; board columns snap-scroll at `85vw` on mobile; the Signal Rail is a docked sidebar at `md`+ and a slide-over drawer below `md`.
 
 ---
 
@@ -363,8 +366,8 @@ flowchart TD
 | Threat / Vulnerability | OWASP Category | Defense Implemented in Code |
 |---|---|---|
 | **Unauthenticated Mutation** | A07: Identification and Authentication Failures | All mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require a token. No mechanism configured (`KANBAN_AUTH_TOKEN`, `KANBAN_PROJECT_TOKENS`, or `KANBAN_AUTH_SECRET`) → fail-closed `503`. Invalid token returns `401`. |
-| **Cross-Project Privilege Escalation** | A01: Broken Access Control | `KANBAN_PROJECT_TOKENS` (JSON map `project→token`) isolates writes per project; `referencedProjects` authorizes *every* project a request touches. `KANBAN_ADMIN_TOKEN` spans all but is audited as `admin_write`. |
-| **Long-Lived Secret Exposure** | A07: Identification and Authentication Failures | HMAC session tokens via `POST /api/auth/session` (stateless, 24h, role+project bound); raw secret never transmitted. |
+| **Cross-Project Privilege Escalation** | A01: Broken Access Control | `KANBAN_PROJECT_TOKENS` (JSON map `project→token`) isolates writes per project; `referencedProjects` authorizes *every* project a request touches (body/query/header/composite path). `KANBAN_ADMIN_TOKEN` spans all but is audited as `admin_write`. |
+| **Long-Lived Secret Exposure** | A07: Identification and Authentication Failures | HMAC session tokens via `POST /api/auth/session` (stateless, 24h, role+project bound) let clients hold a short-lived token instead of a static secret. Raw secret is never transmitted. |
 | **Unauthorized State Hijacking** | A01: Broken Access Control | Role ownership matrix enforced in `server/store.js`. Missing role returns `403 Forbidden`. Unauthorized transitions blocked. `next-claim` role is read from the authenticated caller, not the URL. |
 | **Stored Cross-Site Scripting (XSS)** | A03: Injection | All agent-authored titles, descriptions, agent IDs, issue IDs, and log messages are sanitized with `escapeHtml` before persistence. Client renders exclusively via React JSX text nodes; `dangerouslySetInnerHTML` is explicitly banned in CI. |
 | **Cross-Origin API Abuse** | A05: Security Misconfiguration | `server/middleware/cors.js` forbids wildcard `*`. Restricted to an explicit allow-list (`KANBAN_ALLOWED_ORIGIN`, comma-separated, default `http://localhost:5173`). Untrusted origins receive no `Access-Control-Allow-Origin` header. |
