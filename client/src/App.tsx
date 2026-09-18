@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
 import { getProjects, getTasks, subscribeToEvents } from './api'
+import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
 import Portfolio from './components/Portfolio'
 import SignalRail from './components/SignalRail'
@@ -78,22 +79,18 @@ export default function App() {
 
     const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme')
-      if (saved === 'light' || saved === 'dark') {
-        return saved
-        }
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      return resolveTheme(localStorage.getItem(THEME_STORAGE_KEY), prefersDark)
       }
     return 'dark'
       })
 
-    useEffect(() => {
+    // Apply the class before paint so the first frame already matches the
+    // resolved theme (no light flash for dark users, no dark flash for light).
+    useLayoutEffect(() => {
     const root = document.documentElement
-    if (theme === 'dark') {
-      root.classList.add('dark')
-      } else {
-      root.classList.remove('dark')
-        }
-    localStorage.setItem('theme', theme)
+    root.classList.toggle('dark', isDark(theme))
+    localStorage.setItem(THEME_STORAGE_KEY, theme)
      }, [theme])
 
      // Re-runs on project change: the fetch AND the SSE subscription are both
@@ -248,7 +245,7 @@ export default function App() {
            </span>
            <button
             type="button"
-            onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+             onClick={() => setTheme(nextTheme)}
             className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
             aria-label="Toggle theme"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
