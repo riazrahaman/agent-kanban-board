@@ -75,6 +75,29 @@ function tokensMatch(a, b) {
   return diff === 0;
 }
 
+/**
+ * Truthy `KANBAN_AUTH_LOG` enables redacted auth-failure logging. Unset/empty
+ * (or the common "0"/"false") keeps the original silent behaviour.
+ */
+function authLogEnabled() {
+  const flag = process.env.KANBAN_AUTH_LOG;
+  if (flag === undefined || flag === '') return false;
+  return flag !== '0' && flag.toLowerCase() !== 'false';
+}
+
+/**
+ * Emits a REDACTED auth-failure line: method, path, caller agent_id, and the
+ * reason — never the token, the Authorization header, or any secret bytes.
+ */
+function logAuthFailure(req, status, reason) {
+  if (!authLogEnabled()) return;
+  const agentId = req.caller?.agent_id || 'anonymous';
+  console.warn(
+    `[kanban auth failure] ${status} on ${req.method} ${req.originalUrl} ` +
+    `(agent: ${agentId}) reason: ${reason}`
+  );
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // Extract caller identity
@@ -107,9 +130,7 @@ export function createAuthMiddleware() {
 
     const providedToken = extractToken(req);
     const unauthorized = () => {
-      console.warn(
-        `[kanban auth failure] 401 on ${req.method} ${req.originalUrl} (agent: ${agentId || 'anonymous'})`
-      );
+      logAuthFailure(req, 401, 'invalid-token');
       return res.status(401).json({
         error: 'Unauthorized: valid token required for mutating operations',
       });
@@ -127,10 +148,7 @@ export function createAuthMiddleware() {
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
       for (const scope of scopes) {
         if (scope !== session.project) {
-          console.warn(
-            `[kanban auth failure] 403 on ${req.method} ${req.originalUrl}: ` +
-            `session token not valid for project '${scope}' (agent: ${agentId || 'anonymous'})`
-          );
+          logAuthFailure(req, 403, `session-token not valid for project '${scope}'`);
           return res.status(403).json({
             error: `Forbidden: token is not authorized for project '${scope}'`,
           });
@@ -155,10 +173,7 @@ export function createAuthMiddleware() {
         for (const scope of scopes) {
           const expected = projectTokens.map.get(scope);
           if (!expected || !tokensMatch(providedToken, expected)) {
-            console.warn(
-              `[kanban auth failure] 403 on ${req.method} ${req.originalUrl}: ` +
-              `token not valid for project '${scope}' (agent: ${agentId || 'anonymous'})`
-            );
+            logAuthFailure(req, 403, `token not valid for project '${scope}'`);
             return res.status(403).json({
               error: `Forbidden: token is not authorized for project '${scope}'`,
             });
@@ -187,9 +202,7 @@ export function createAuthMiddleware() {
     }
 
     if (!role || !VALID_ROLES.has(role)) {
-      console.warn(
-        `[kanban auth failure] 403 on ${req.method} ${req.originalUrl} (role: ${role || 'missing'})`
-      );
+      logAuthFailure(req, 403, `invalid-role (role: ${role || 'missing'})`);
       return res.status(403).json({
         error: 'A valid agent role is required for mutating operations',
       });

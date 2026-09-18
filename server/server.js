@@ -110,6 +110,16 @@ export async function startServer(
   host = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1')
 ) {
   await loadStore();
+
+  // In a hosted environment (PORT set) with no auth mechanism configured, warn
+  // once at startup that mutations are fail-closed until a token is set.
+  if (process.env.PORT && !process.env.KANBAN_AUTH_TOKEN && !process.env.KANBAN_AUTH_SECRET) {
+    console.warn(
+      '[kanban auth] no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
+      'mutations are fail-closed (503) until a token is set'
+    );
+  }
+
   const app = createApp();
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
