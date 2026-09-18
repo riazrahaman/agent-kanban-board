@@ -181,9 +181,6 @@ export default function App() {
                 v{version}
               </span>
             )}
-            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-              loop ops
-             </span>
            </div>
          </div>
          <div className="flex items-center gap-3">
