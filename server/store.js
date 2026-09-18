@@ -497,6 +497,7 @@ export class GitYamlStorage {
 // ============================================================================
 
 let storage = null;
+let storeLoaded = false;    // true once loadStore() has completed (§health read-only)
 let tasks = [];             // every live task across all projects
 let archive = {};           // project -> Task[] (archived, not in `tasks`)
 let listeners = [];
@@ -765,7 +766,16 @@ export async function loadStore() {
   }
 
   await runArchiveSweep();
+  storeLoaded = true;
   notify();
+}
+
+/**
+ * Read-only liveness signal: true once `loadStore()` has completed. The health
+ * endpoint derives `store_loaded` from this without mutating anything.
+ */
+export function isStoreLoaded() {
+  return storeLoaded;
 }
 
 // §2.2 diff-event layer: on each notify(), compute created/updated/removed vs the

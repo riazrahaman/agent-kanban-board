@@ -5,6 +5,7 @@ import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReape
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
+import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
@@ -23,6 +24,8 @@ export function createApp() {
   app.use('/api/tasks', tasksRouter);
   app.use('/api/projects', projectsRouter);
   app.use('/api/metrics', metricsRouter);
+  app.use('/api/health', healthRouter);
+  app.use('/healthz', healthRouter);
 
   /**
    * §2.2 — SSE stream in three modes:
