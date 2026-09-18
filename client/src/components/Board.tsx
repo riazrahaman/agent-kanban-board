@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Task, TaskStatus } from '../types'
 import { groupTasks } from '../board-model.js'
 import Column from './Column'
@@ -19,7 +20,7 @@ type Props = {
 }
 
 export default function Board({ tasks, onOpen }: Props) {
-  const grouped = groupTasks(tasks)
+  const grouped = useMemo(() => groupTasks(tasks), [tasks])
 
   return (
     <div className="flex h-full gap-4 overflow-x-auto p-4">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
 import { getProjects, getTasks, subscribeToEvents } from './api'
 import Board from './components/Board'
@@ -149,6 +149,8 @@ export default function App() {
      [tasks, openTaskId],
   )
 
+  const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
+
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
        <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
@@ -279,10 +281,10 @@ export default function App() {
            )}
            {view === 'board' && !loading && !error && (
              <>
-               <div className="min-w-0 flex-1 overflow-hidden">
-                 <Board tasks={tasks} onOpen={setOpenTaskId} />
-               </div>
-               <SignalRail tasks={tasks} onOpen={setOpenTaskId} />
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <Board tasks={tasks} onOpen={handleOpen} />
+                </div>
+                <SignalRail tasks={tasks} onOpen={handleOpen} />
              </>
            )}
          </ErrorBoundary>

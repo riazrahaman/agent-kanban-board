@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
 import { statusStyle } from '../status.js'
@@ -7,7 +8,17 @@ type Props = {
   onOpen: (id: string) => void
 }
 
-export default function TaskCard({ task, onOpen }: Props) {
+// A task's `version` bumps on every committed mutation (§2.6), so id+version
+// is a sound identity for a card: unchanged version == unchanged card.
+function areEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.task.id === next.task.id &&
+    prev.task.version === next.task.version &&
+    prev.onOpen === next.onOpen
+  )
+}
+
+function TaskCard({ task, onOpen }: Props) {
   const stripe = statusStyle(task.status).stripe
 
   return (
@@ -52,3 +63,5 @@ export default function TaskCard({ task, onOpen }: Props) {
     </div>
   )
 }
+
+export default memo(TaskCard, areEqual)

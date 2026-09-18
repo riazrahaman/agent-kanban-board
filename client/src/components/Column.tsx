@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Task, TaskStatus } from '../types'
 import TaskCard from './TaskCard'
 
@@ -8,7 +9,30 @@ type Props = {
   onOpen: (id: string) => void
 }
 
-export default function Column({ status, title, tasks, onOpen }: Props) {
+// A bucket is unchanged when the id+version signature of its members is
+// identical. `version` bumps on every committed mutation (§2.6), so two lists
+// with the same ids in the same versions render identically even though the
+// SSE stream re-serializes the whole array (and thus new object references)
+// on every broadcast.
+function sameBucket(a: Task[], b: Task[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].version !== b[i].version) return false
+  }
+  return true
+}
+
+function areEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.status === next.status &&
+    prev.title === next.title &&
+    prev.onOpen === next.onOpen &&
+    sameBucket(prev.tasks, next.tasks)
+  )
+}
+
+function Column({ status, title, tasks, onOpen }: Props) {
   const isDone = status === 'DONE' || status === 'done'
 
   return (
@@ -37,3 +61,5 @@ export default function Column({ status, title, tasks, onOpen }: Props) {
     </div>
   )
 }
+
+export default memo(Column, areEqual)
