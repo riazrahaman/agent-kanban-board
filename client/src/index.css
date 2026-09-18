@@ -6,20 +6,21 @@
   /* Keep native form controls (notably the <select> option popup) in the same
      scheme as the page — without this, dark-mode options render unreadable. */
   color-scheme: light;
-  --bg: #fbfbfa;
-  --surface: #ffffff;
-  --line: #e8e8e6;
-  --ink: #191b1e;                       /* 16.7:1 */
-  --muted: #787774;                     /* 4.32:1 */
-  --muted-bg: #f1f1ef;
+  /* Warm "paper" palette — a cream base instead of pure white, to cut glare. */
+  --bg: #f6f2e8;        /* warm cream page — 14.73:1 vs ink */
+  --surface: #fdfbf5;   /* cards/sheets: barely lifted off the cream */
+  --line: #e6dfd0;      /* warm hairline */
+  --ink: #211f1a;       /* warm near-black — 14.73:1 on bg */
+  --muted: #6e6857;     /* warm grey — 4.97:1 on bg */
+  --muted-bg: #efe9db;
   /* operational — the loop's five states */
-  --up: #346538;     --up-bg: #edf3ec;
-  --down: #9f2f2d;   --down-bg: #fdebec;
+  --up: #346538;     --up-bg: #e8efe2;
+  --down: #9f2f2d;   --down-bg: #f9e7e3;
   --pass: var(--up);       --pass-bg: var(--up-bg);
   --fail: var(--down);     --fail-bg: var(--down-bg);
-  --warn: #8A6A12;         --warn-bg: #F7F0E0;   /* 4.89:1 */
-  --block: #4A4D52;        --block-bg: #EEEEEC;  /* 8.20:1 — grey: stalled, not bad */
-  --live: #1F5673;         --live-bg: #E6EEF2;   /* 7.69:1 — running now */
+  --warn: #8A6A12;         --warn-bg: #f6efdc;   /* 4.89:1 */
+  --block: #4A4D52;        --block-bg: #ece7db;  /* 8.20:1 — grey: stalled, not bad */
+  --live: #1F5673;         --live-bg: #e4ecf0;   /* 7.69:1 — running now */
 }
 
 /* The explicit theme class is authoritative. There is NO prefers-color-scheme
