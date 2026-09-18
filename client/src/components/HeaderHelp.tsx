@@ -33,7 +33,7 @@ export default function HeaderHelp() {
         aria-label="What do the agent id and api token fields do?"
         aria-expanded={open}
         title="What do the agent id and api token fields do?"
-        className="flex h-[26px] w-[26px] items-center justify-center border border-line bg-surface font-serif text-[13px] italic leading-none text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98]"
+        className="flex h-[32px] w-[32px] items-center justify-center border border-line bg-surface font-serif text-[13px] italic leading-none text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] md:h-[26px] md:w-[26px]"
       >
         i
       </button>
@@ -41,7 +41,7 @@ export default function HeaderHelp() {
         <div
           role="dialog"
           aria-label="Operator field reference"
-          className="absolute right-0 top-[calc(100%+6px)] z-50 w-80 border border-line bg-surface p-3 text-left shadow-xl"
+          className="absolute right-0 top-[calc(100%+6px)] z-50 w-80 border-2 border-ink/70 bg-surface p-3 text-left"
         >
           <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
             Operator fields

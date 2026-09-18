@@ -491,7 +491,7 @@ describe('PI-04 public board hardening', () => {
     assert.doesNotMatch(source, /rounded-full|shadow-|\bInter\b|\bRoboto\b|👤/i);
     assert.match(source, /tabular-nums/);
     assert.match(source, /StatusBadge/);
-    assert.match(await readFile(path.join(REPO_ROOT, 'client/src/index.css'), 'utf8'), /--bg:\s*#fbfbfa/);
+    assert.match(await readFile(path.join(REPO_ROOT, 'client/src/index.css'), 'utf8'), /--bg:\s*#f6f2e8/);
     for (const file of ['README.md', 'LICENSE', 'client/package-lock.json', 'server/package-lock.json', '.github/workflows/ci.yml']) {
       assert.ok(existsSync(path.join(REPO_ROOT, file)), `${file} must be present`);
      }

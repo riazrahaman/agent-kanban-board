@@ -21,8 +21,8 @@ type Props = {
   showProject?: boolean
 }
 
-// One column is w-72 (18rem = 288px) + the 1rem gap; step a shade under a full
-// column so a tap always reveals a sliver of the next one.
+// One column is w-72 (18rem = 288px) + the 1rem gap on desktop; on phones it
+// is 85vw, so page by the first column's actual width when we can measure it.
 const COLUMN_STEP = 304
 
 export default function Board({ tasks, onOpen, showProject = false }: Props) {
@@ -61,8 +61,16 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
     updateEdges()
   }, [grouped, updateEdges])
 
-  const scrollBy = (dir: 1 | -1) =>
-    scrollRef.current?.scrollBy({ left: dir * COLUMN_STEP, behavior: 'smooth' })
+  const scrollBy = (dir: 1 | -1) => {
+    const el = scrollRef.current
+    if (!el) return
+    // Page by the real column pitch (width + gap) when a child is measurable,
+    // so the mobile 85vw columns snap cleanly; fall back to the desktop step.
+    const first = el.children[0] as HTMLElement | undefined
+    const step =
+      first && first.offsetWidth > 0 ? first.offsetWidth + 16 : COLUMN_STEP
+    el.scrollBy({ left: dir * step, behavior: 'smooth' })
+  }
 
   return (
     <div className="relative flex h-full min-w-0 flex-1">
@@ -71,7 +79,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
       )}
       <div
         ref={scrollRef}
-        className="board-scroll flex h-full w-full gap-4 overflow-x-auto p-4"
+        className="board-scroll flex h-full w-full snap-x scroll-pl-4 gap-4 overflow-x-auto p-4"
       >
         {COLUMNS.map((col) => (
           <Column
@@ -97,7 +105,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
           onClick={() => scrollBy(-1)}
           aria-label="Scroll columns left"
           title="Scroll columns left"
-          className="absolute left-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-line bg-surface font-mono text-sm text-ink shadow-md transition-colors hover:bg-muted-bg active:scale-[0.96]"
+          className="absolute left-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96]"
         >
           ‹
         </button>
@@ -108,7 +116,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
           onClick={() => scrollBy(1)}
           aria-label="Scroll columns right"
           title="Scroll columns right"
-          className="absolute right-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-line bg-surface font-mono text-sm text-ink shadow-md transition-colors hover:bg-muted-bg active:scale-[0.96]"
+          className="absolute right-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96]"
         >
           ›
         </button>

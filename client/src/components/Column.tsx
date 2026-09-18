@@ -41,7 +41,7 @@ function Column({ status, title, tasks, onOpen, showProject = false }: Props) {
   return (
     <div
       className={[
-        'flex w-72 shrink-0 flex-col border border-line bg-surface/40 transition-opacity',
+        'flex w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
         isDone ? 'opacity-70' : '',
       ].join(' ')}
     >

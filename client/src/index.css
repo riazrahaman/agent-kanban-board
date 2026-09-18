@@ -61,6 +61,16 @@ body,
   color: var(--ink);
 }
 
+/* Mobile browsers grow/shrink the visual viewport as the URL bar shows and
+   hides; `100vh` is the *largest* viewport, so an h-screen layout overflows the
+   bottom on phones. `dvh` tracks the viewport that is actually visible. The
+   @supports guard keeps the 100vh fallback for older engines. */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}
+
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
   margin: 0;

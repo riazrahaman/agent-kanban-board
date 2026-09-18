@@ -27,6 +27,10 @@ export default function App() {
        })
     const [view, setView] = useState<'board' | 'portfolio'>('board')
     const [projects, setProjects] = useState<ProjectSummary[]>([])
+    // Phones hide the signal rail to leave room for the board; this control
+    // lets it slide in as an overlay on demand. Desktop ignores it (rail is
+    // always docked from md up).
+    const [railOpen, setRailOpen] = useState(false)
     // Deployed server version, shown in the header so operators can tell at a
     // glance which build is live. Sourced from /api/health (server/package.json).
     const [version, setVersion] = useState<string | null>(null)
@@ -167,11 +171,11 @@ export default function App() {
 
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
-       <header className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5">
-         <div className="flex items-center gap-3">
+       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2.5 sm:px-4">
+         <div className="flex shrink-0 items-center gap-3">
            <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
            <div className="flex items-baseline gap-2">
-            <h1 className="font-serif text-lg font-normal tracking-tight text-ink">
+            <h1 className="whitespace-nowrap font-serif text-lg font-normal tracking-tight text-ink">
               Agent Kanban Board
             </h1>
             {version && (
@@ -184,13 +188,13 @@ export default function App() {
             )}
            </div>
          </div>
-         <div className="flex items-center gap-3">
+         <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-3">
             <select
              value={project}
              onChange={(e) => selectProject(e.target.value)}
              aria-label="Filter the board to one project"
              title="Scope the board, the live stream and auto-claim to one project"
-             className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+             className="min-w-0 max-w-[10rem] border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
             >
               <option value={ALL_PROJECTS}>all projects</option>
               {/* Names only, no counts: once the board is scoped to one
@@ -226,8 +230,8 @@ export default function App() {
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
-           />
+             className="w-32 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-40"
+            />
             <input
              type="password"
              value={tokenDraft}
@@ -246,26 +250,36 @@ export default function App() {
             <HeaderHelp />
             {!tokenSaved && (
              <span
-              className="font-mono text-[10px] uppercase tracking-wider text-muted"
+              className="hidden font-mono text-[10px] uppercase tracking-wider text-muted sm:inline"
               title="Reads work without a token; claim, heartbeat and log writes will return 401."
              >
               read-only
              </span>
             )}
            {agentDraft.trim() !== agentId && (
-             <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+             <span className="hidden font-mono text-[10px] uppercase tracking-wider text-muted lg:inline">
               unbound · press enter
              </span>
-            )}
+           )}
            {agentId && agentDraft.trim() === agentId && (
-             <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+             <span className="hidden font-mono text-[10px] uppercase tracking-wider text-muted lg:inline">
               claim: {coordinator.lastClaimedId ?? '—'}
                {coordinator.lastError ? ` · ${coordinator.lastError}` : ''}
              </span>
-            )}
-           <span className="font-mono text-xs tabular-nums text-ink px-2 py-0.5 border border-line bg-muted-bg">
+           )}
+           <span className="hidden font-mono text-xs tabular-nums text-ink px-2 py-0.5 border border-line bg-muted-bg sm:inline">
              {tasks.length} tasks
            </span>
+           <button
+            type="button"
+            onClick={() => setRailOpen((v) => !v)}
+            aria-pressed={railOpen}
+            aria-label="Toggle signal rail"
+            title="Show/hide the signal overview + activity rail"
+            className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] md:hidden"
+           >
+             Signal
+           </button>
            <button
             type="button"
              onClick={() => setTheme(nextTheme)}
@@ -304,7 +318,23 @@ export default function App() {
                 <div className="min-w-0 flex-1 overflow-hidden">
                    <Board tasks={tasks} onOpen={handleOpen} showProject={!project} />
                 </div>
-                <SignalRail tasks={tasks} onOpen={handleOpen} />
+                {/* Desktop: docked rail. Mobile: it would eat the whole board,
+                    so it becomes an on-demand overlay toggled from the header. */}
+                <div className="hidden md:flex">
+                  <SignalRail tasks={tasks} onOpen={handleOpen} />
+                </div>
+                {railOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30 bg-ink/40 md:hidden"
+                      onClick={() => setRailOpen(false)}
+                      aria-hidden="true"
+                    />
+                    <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface md:hidden">
+                      <SignalRail tasks={tasks} onOpen={handleOpen} />
+                    </div>
+                  </>
+                )}
              </>
            )}
          </ErrorBoundary>
