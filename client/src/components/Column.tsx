@@ -7,6 +7,8 @@ type Props = {
   title: string
   tasks: Task[]
   onOpen: (id: string) => void
+  /** Show each card's owning project (unscoped board only). */
+  showProject?: boolean
 }
 
 // A bucket is unchanged when the id+version signature of its members is
@@ -28,11 +30,12 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.status === next.status &&
     prev.title === next.title &&
     prev.onOpen === next.onOpen &&
+    prev.showProject === next.showProject &&
     sameBucket(prev.tasks, next.tasks)
   )
 }
 
-function Column({ status, title, tasks, onOpen }: Props) {
+function Column({ status, title, tasks, onOpen, showProject = false }: Props) {
   const isDone = status === 'DONE' || status === 'done'
 
   return (
@@ -55,7 +58,7 @@ function Column({ status, title, tasks, onOpen }: Props) {
         className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto p-2"
       >
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onOpen={onOpen} />
+          <TaskCard key={task.id} task={task} onOpen={onOpen} showProject={showProject} />
         ))}
       </div>
     </div>

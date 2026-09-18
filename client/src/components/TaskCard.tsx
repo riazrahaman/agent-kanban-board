@@ -6,6 +6,8 @@ import { statusStyle } from '../status.js'
 type Props = {
   task: Task
   onOpen: (id: string) => void
+  /** Show the owning project — only meaningful on the unscoped "all projects" board. */
+  showProject?: boolean
 }
 
 // A task's `version` bumps on every committed mutation (§2.6), so id+version
@@ -14,11 +16,12 @@ function areEqual(prev: Props, next: Props): boolean {
   return (
     prev.task.id === next.task.id &&
     prev.task.version === next.task.version &&
-    prev.onOpen === next.onOpen
+    prev.onOpen === next.onOpen &&
+    prev.showProject === next.showProject
   )
 }
 
-function TaskCard({ task, onOpen }: Props) {
+function TaskCard({ task, onOpen, showProject = false }: Props) {
   const stripe = statusStyle(task.status).stripe
 
   return (
@@ -37,6 +40,14 @@ function TaskCard({ task, onOpen }: Props) {
           {task.id}
         </span>
         <div className="flex items-center gap-1.5">
+          {showProject && task.project && (
+            <span
+              className="max-w-[10rem] truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"
+              title={`Project: ${task.project}`}
+            >
+              {task.project}
+            </span>
+          )}
           <StatusBadge status={task.status} />
         </div>
       </div>

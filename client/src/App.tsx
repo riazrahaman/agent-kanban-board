@@ -279,7 +279,7 @@ export default function App() {
            {view === 'board' && !loading && !error && (
              <>
                 <div className="min-w-0 flex-1 overflow-hidden">
-                  <Board tasks={tasks} onOpen={handleOpen} />
+                   <Board tasks={tasks} onOpen={handleOpen} showProject={!project} />
                 </div>
                 <SignalRail tasks={tasks} onOpen={handleOpen} />
              </>

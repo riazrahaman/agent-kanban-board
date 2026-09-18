@@ -3,6 +3,9 @@
 @tailwind utilities;
 
 :root {
+  /* Keep native form controls (notably the <select> option popup) in the same
+     scheme as the page — without this, dark-mode options render unreadable. */
+  color-scheme: light;
   --bg: #fbfbfa;
   --surface: #ffffff;
   --line: #e8e8e6;
@@ -27,6 +30,7 @@
    single `.dark` class that drives everything below. */
 
 .dark {
+  color-scheme: dark;
   --bg: #0c0d0f;
   --surface: #121316;
   --line: rgba(255, 255, 255, 0.08);

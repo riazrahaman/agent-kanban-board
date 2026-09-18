@@ -79,6 +79,11 @@ export default function TaskSheet({ task, onClose }: Props) {
                     {task.priority}
                   </span>
                   <StatusBadge status={task.status} />
+                  {task.project && (
+                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted">
+                      {task.project}
+                    </span>
+                  )}
                   {task.assigned_agent && (
                     <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums">
                       {task.assigned_agent}

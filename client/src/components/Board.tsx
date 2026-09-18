@@ -17,9 +17,11 @@ const COLUMNS: { status: TaskStatus; title: string }[] = [
 type Props = {
   tasks: Task[]
   onOpen: (id: string) => void
+  /** Show each card's owning project — useful on the unscoped "all projects" board. */
+  showProject?: boolean
 }
 
-export default function Board({ tasks, onOpen }: Props) {
+export default function Board({ tasks, onOpen, showProject = false }: Props) {
   const grouped = useMemo(() => groupTasks(tasks), [tasks])
 
   return (
@@ -31,6 +33,7 @@ export default function Board({ tasks, onOpen }: Props) {
           title={col.title}
           tasks={grouped[col.status] || []}
           onOpen={onOpen}
+          showProject={showProject}
         />
       ))}
     </div>
