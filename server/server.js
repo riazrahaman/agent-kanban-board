@@ -116,6 +116,16 @@ export async function startServer(
       ? `rate limit: ${rl.limit}/min/project (window ${rl.windowMs}ms)`
       : 'rate limit: disabled'
   );
+
+  // In a hosted environment (PORT set) with no auth mechanism configured, warn
+  // once at startup that mutations are fail-closed until a token is set.
+  if (process.env.PORT && !process.env.KANBAN_AUTH_TOKEN && !process.env.KANBAN_AUTH_SECRET) {
+    console.warn(
+      '[kanban auth] no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
+      'mutations are fail-closed (503) until a token is set'
+    );
+  }
+
   const app = createApp();
   if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {
     console.warn(
