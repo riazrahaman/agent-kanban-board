@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: agent-kanban-board
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm ci --prefix client && npm run build --prefix client && npm ci --prefix server
+    startCommand: npm --prefix server start
+    healthCheckPath: /
+    # Attach a Render Disk at /data so task state survives redeploys. Without it
+    # the default JSON store lives on the ephemeral filesystem and is wiped on
+    # every deploy. Bind the disk, then set the store paths below to /data.
+    disk:
+      name: kanban-data
+      mountPath: /data
+
+envVars:
+  # REQUIRED for a public instance: gates all mutations (POST/PATCH/PUT/DELETE).
+  # Without it the API is read-only and fails closed with 503 on writes.
+  - key: KANBAN_AUTH_TOKEN
+    fromService:
+      type: secret
+      name: KANBAN_AUTH_TOKEN
+  # Optional hardening: a second, privileged token.
+  - key: KANBAN_ADMIN_TOKEN
+    fromService:
+      type: secret
+      name: KANBAN_ADMIN_TOKEN
+  # Restrict the browser origin for CORS. Set to your live hostname.
+  - key: KANBAN_ALLOWED_ORIGIN
+    fromService:
+      type: secret
+      name: KANBAN_ALLOWED_ORIGIN
+  # JSON store on the persistent disk. The DEFAULT project reads KANBAN_DATA_FILE
+  # (its default is the ephemeral server/tasks.json!), while NAMED projects and
+  # archives read KANBAN_DATA_DIR/tasks/ and /archive/. Both must point at /data
+  # or default-project state is lost on redeploy.
+  - key: KANBAN_STORAGE_BACKEND
+    value: json
+  - key: KANBAN_DATA_FILE
+    value: /data/tasks.json
+  - key: KANBAN_DATA_DIR
+    value: /data
+  # Bind to all interfaces so Render can reach the port.
+  - key: HOST
+    value: 0.0.0.0
