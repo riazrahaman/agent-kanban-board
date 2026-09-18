@@ -11,6 +11,24 @@ import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 
+/**
+ * Resolve the interface to bind.
+ *
+ * `net.Server.listen` needs a bare IP/hostname, but orchestration platforms
+ * sometimes hand over an IPv6 literal in URLs' bracketed form (Railway injects
+ * `HOST=[::]`). Passing `[::]` straight through makes Node treat it as a
+ * hostname and fail DNS resolution with `ENOTFOUND`, which — as an unhandled
+ * 'error' event — crashes the process and restart-loops the deploy. Strip the
+ * brackets so `[::]` / `[::1]` become `::` / `::1`. An unset HOST keeps the
+ * hosted-vs-local default (0.0.0.0 when PORT is injected, else loopback).
+ */
+export function resolveHost(env = process.env) {
+  const raw = typeof env.HOST === 'string' ? env.HOST.trim() : '';
+  if (!raw) return env.PORT ? '0.0.0.0' : '127.0.0.1';
+  if (raw.startsWith('[') && raw.endsWith(']')) return raw.slice(1, -1);
+  return raw;
+}
+
 export function createApp() {
   const app = express();
   app.use(configureCors());
@@ -107,7 +125,7 @@ export function createApp() {
  */
 export async function startServer(
   port = process.env.PORT || 4000,
-  host = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1')
+  host = resolveHost()
 ) {
   await loadStore();
   const rl = rateLimitConfig();
@@ -156,7 +174,7 @@ const isDirectRun =
 
 if (isDirectRun) {
   const PORT = process.env.PORT || 4000;
-  const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
+  const HOST = resolveHost();
   startServer(PORT, HOST).then(({ server }) => {
      console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
       });
