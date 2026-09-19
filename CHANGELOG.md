@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,21 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.1.1] — 2026-09-19
+
+### Changed
+
+- **Documentation sync** — the in-app **About view** is now documented in the
+  User & Operator Manual (new §5.7, plus the header switch relabelled
+  "Board / Portfolio / About Switcher" in the UI diagram) and in the System
+  Design & Architecture frontend table (new "Top-Level Views" row). The same
+  edits were mirrored into the `docs/with-images/` copies.
+- **Corrected stale test counts** — the docs now report the real figures:
+  the server suite is 186 tests across 22 files (was listed as 151/17), and the
+  new coverage is named (`kanban.host`, `kanban.orphan`, `kanban.purge`,
+  `kanban.stageowners`, `kanban.version`). README and CHANGELOG server counts
+  updated from 181 to 186.
 
 ## [2.1.0] — 2026-09-19
 
@@ -94,7 +109,7 @@ per-stage ownership) and the custom, Safari-safe project picker.
 
 ### Quality gates
 
-- Server suite: 181 tests. Client suite: 59 tests. CI runs the full matrix on
+- Server suite: 186 tests. Client suite: 59 tests. CI runs the full matrix on
   Node 20.x and 22.x.
 
 ## [1.0.0] — 2026-09-18
