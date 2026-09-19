@@ -16,6 +16,7 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 ```
 .
 ├── client/           Vite + React + Tailwind frontend (editorial-minimalist design system)
+│   └── public/landing/  Screenshots served to the in-app About view
 ├── server/           Node/Express API with atomic JSON & git-backed YAML storage
 ├── docs/             System design, architecture, file reference, and operator manual
 ├── scripts/          test-agents.js — headless multi-agent workflow demo
@@ -50,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board.
+Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, architecture, and live screenshots).
 
 ---
 
@@ -208,7 +209,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (151 tests), the client status check, the client unit suite (44 tests, including the mobile-responsive regression guard), and compiles the production bundle.
+`npm test` runs the server suite (181 tests), the client status check, the client unit suite (59 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
 ---
 
