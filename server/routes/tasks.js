@@ -84,6 +84,23 @@ router.post('/archive/sweep', asyncHandler(async (req, res) => {
   res.json({ moved, projects: store.getProjectSummaries() });
 }));
 
+// --- §admin-purge bulk purge (MUST be declared before /:id so Express treats
+//     `purge` as a static segment, not an :id match) ----------------------
+
+router.post('/purge', asyncHandler(async (req, res) => {
+  const result = await store.purgeTasks({
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+    ids: req.body?.ids,
+    filter: req.body?.filter,
+  });
+  if (result.error) {
+    console.warn(`[kanban rejection] POST /api/tasks/purge: ${result.status} ${result.error}`);
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(result.status).json({ deleted: result.deleted, count: result.count });
+}));
+
 // --- §2.7 fair claim queue (MUST be declared before /:id so Express treats
 //     `next-claim` as a static segment, not an :id match) ------------------
 
@@ -150,6 +167,18 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const task = store.getTask(req.params.id, resolveProjectFromReq(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   res.json(task);
+}));
+
+router.delete('/:id', asyncHandler(async (req, res) => {
+  const result = await store.deleteTask(req.params.id, {
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+  });
+  if (result.error) {
+    console.warn(`[kanban rejection] DELETE /api/tasks/${req.params.id}: ${result.status} ${result.error}`);
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
 }));
 
 router.patch('/:id', asyncHandler(async (req, res) => {

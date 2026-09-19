@@ -292,6 +292,10 @@ export class JsonStorage {
     await this.save(allTasks);
   }
 
+  async deleteTask(task, survivors) {
+    await this.save(survivors);
+  }
+
   async loadArchive() {
     try {
       if (!existsSync(this.archiveFile)) return [];
@@ -477,6 +481,26 @@ export class GitYamlStorage {
   async save(tasks) {
     for (const task of tasks) {
       await this.saveTask(task);
+    }
+  }
+
+  async deleteTask(task) {
+    await mkdir(this.dir, { recursive: true });
+    const filename = `${task.id}.yml`;
+    const filePath = path.resolve(this.dir, filename);
+    // Traversal guard, mirroring saveTask/saveArchiveTask: the resolved path
+    // must remain inside the git root.
+    const targetDir = path.resolve(this.root);
+    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
+      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
+    }
+    if (existsSync(filePath)) {
+      await execFileAsync('git', ['rm', '-f', '--ignore-unmatch', filename], { cwd: this.dir });
+    }
+    if (this.autoCommit) {
+      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
+      const commitMsg = `ops(${composite}): kanban deleted`;
+      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.root });
     }
   }
 
@@ -2143,6 +2167,147 @@ export async function runArchiveSweep() {
       }
     return moved;
    });
+}
+
+// ---------------------------------------------------------------------------
+// Admin delete & bulk purge (§admin-purge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-only delete of a single task. Persists FIRST (fail-closed, KB-05):
+ * the JSON backend rewrites the project partition minus this task; the Git
+ * backend git-rms the card file + commits. Only then is the task dropped from
+ * memory. Requires a privileged role (runner/system/human/admin).
+ */
+export async function deleteTask(id, { caller = {}, project } = {}) {
+  return withMutationLock(async () => {
+    const task = getTask(id, project);
+    if (!task) return { error: 'Task not found', status: 404 };
+
+    if (!isPrivilegedRole(caller.role)) {
+      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
+    }
+
+    const storage = getStorage(task.project);
+    if (storage instanceof GitYamlStorage) {
+      await storage.deleteTask(task);
+    } else {
+      const survivors = getProjectBucket(task.project).filter((t) => t.id !== task.id);
+      await storage.deleteTask(task, survivors);
+    }
+
+    removeFromMemory(task.project, task.id);
+    notify({
+      actor: caller.agent_id || 'admin',
+      reason: 'deleted',
+      semantic: new Map([[
+        compositeKey(task.project, task.id),
+        { kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'deleted', task },
+      ]]),
+    });
+    return { task, status: 200 };
+  });
+}
+
+/**
+ * Admin-only bulk purge of tasks by explicit ids (composite-aware) or a filter.
+ * Persists FIRST per affected project, then drops the rows from memory and
+ * emits one consolidated deletion event. Requires a privileged role.
+ */
+export async function purgeTasks({ caller = {}, project, ids, filter } = {}) {
+  return withMutationLock(async () => {
+    if (!isPrivilegedRole(caller.role)) {
+      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
+    }
+
+    const scoped = project === undefined || project === null || project === ''
+      ? tasks
+      : tasks.filter((t) => t.project === project);
+
+    let candidates;
+    if (Array.isArray(ids) && ids.length > 0) {
+      const idSet = new Set(ids);
+      candidates = scoped.filter((t) => {
+        if (idSet.has(t.id)) return true;
+        if (project === undefined || project === null || project === '') {
+          return idSet.has(compositeKey(t.project, t.id));
+        }
+        return false;
+      });
+    } else if (filter && typeof filter === 'object') {
+      const status = filter.status !== undefined ? normalizeStatus(filter.status) : undefined;
+      const fp = filter.project;
+      const ageDays = filter.older_than_days;
+      const ageThresholdMs =
+        typeof ageDays === 'number' && Number.isFinite(ageDays)
+          ? ageDays * 86400000
+          : null;
+      const nowMs = Date.now();
+      candidates = scoped.filter((t) => {
+        if (status !== undefined && status !== null && t.status !== status) return false;
+        if (fp !== undefined && fp !== null && fp !== '' && t.project !== fp) return false;
+        if ('assigned_agent' in filter) {
+          if (filter.assigned_agent === null) {
+            if (t.assigned_agent != null) return false;
+          } else if (t.assigned_agent !== filter.assigned_agent) {
+            return false;
+          }
+        }
+        if (ageThresholdMs !== null) {
+          const anchor = t.completed_at || t.created_at || t.updated;
+          if (!anchor) return false;
+          const ageMs = nowMs - Date.parse(anchor);
+          if (Number.isNaN(ageMs) || ageMs < ageThresholdMs) return false;
+        }
+        return true;
+      });
+    } else {
+      return { error: 'purge requires ids[] or filter', status: 400 };
+    }
+
+    if (candidates.length === 0) {
+      return { deleted: [], count: 0, status: 200 };
+    }
+
+    // Group by project so each partition is rewritten exactly once (persist-first).
+    const byProject = new Map();
+    for (const t of candidates) {
+      if (!byProject.has(t.project)) byProject.set(t.project, []);
+      byProject.get(t.project).push(t);
+    }
+
+    const semantic = new Map();
+    const deleted = [];
+
+    for (const [p, list] of byProject) {
+      const storage = getStorage(p);
+      if (storage instanceof GitYamlStorage) {
+        for (const t of list) {
+          await storage.deleteTask(t);
+        }
+      } else {
+        const deleteIds = new Set(list.map((t) => t.id));
+        const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
+        await storage.deleteTask(list[0], survivors);
+      }
+      for (const t of list) {
+        removeFromMemory(p, t.id);
+        const key = compositeKey(p, t.id);
+        deleted.push(key);
+        semantic.set(key, {
+          kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'deleted', task: t,
+        });
+      }
+    }
+
+    notify({
+      actor: caller.agent_id || 'admin',
+      reason: 'deleted',
+      semantic,
+    });
+
+    return { deleted, count: deleted.length, status: 200 };
+  });
 }
 
 // Re-export for convenience / tests
