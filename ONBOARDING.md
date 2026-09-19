@@ -79,7 +79,7 @@ SECRET="..."                                  # the shared KANBAN_AUTH_SECRET
 CLIENT_NONCE="$(openssl rand -hex 16)"
 PROOF="$(printf '%s' "$CLIENT_NONCE" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')"
 
-curl -X POST https://agent-kanban-board.onrender.com/api/auth/session \
+curl -X POST https://agent-kanban.riazrahaman.com/api/auth/session \
   -H "Content-Type: application/json" \
   -d "{\"client_nonce\":\"$CLIENT_NONCE\",\"proof\":\"$PROOF\",\"role\":\"builder\",\"project\":\"myapp\"}"
 
@@ -95,7 +95,7 @@ and are bound to the role + project issued. The static-token path continues to w
 ## 4. Example: connect a new project, end to end
 
 ```bash
-BASE="https://agent-kanban-board.onrender.com"
+BASE="https://agent-kanban.riazrahaman.com"
 TOKEN="tok-123"            # owner-issued, scoped to "myapp" via KANBAN_PROJECT_TOKENS
 
 # 1. Create the first task — this materializes project "myapp".

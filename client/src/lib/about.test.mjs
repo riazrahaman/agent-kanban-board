@@ -110,7 +110,7 @@ test('every tour shot points at a bundled /landing asset and has alt text', () =
 
 test('the outbound links point at the real repo and live board', () => {
   assert.equal(ABOUT_GITHUB_URL, 'https://github.com/riazrahaman/agent-kanban-board')
-  assert.match(ABOUT_LIVE_URL, /^https:\/\/agent-kanban-board-production\.up\.railway\.app$/)
+  assert.equal(ABOUT_LIVE_URL, 'https://agent-kanban.riazrahaman.com')
 })
 
 // ---------------------------------------------------------------------------

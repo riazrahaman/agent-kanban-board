@@ -188,7 +188,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 The server is a stateful long-running process (in-memory store, background lease reaper, open SSE connections), so it needs a host that runs a persistent process — **not** a serverless/FaaS platform. Two deploy blueprints ship in the repo:
 
 - **Render** — [`render.yaml`](render.yaml): a single Node web service that builds the client and serves API + SPA on one port, with a persistent disk at `/data`.
-- **Railway** — [`railway.json`](railway.json): Railpack build, `npm --prefix server start`, healthcheck at `/api/health`.
+- **Railway** — [`railway.json`](railway.json): Railpack build, `npm --prefix server start`, healthcheck at `/api/health`. The production instance lives at **<https://agent-kanban.riazrahaman.com>** (custom domain on Railway).
 
 For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth token (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS`), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
 

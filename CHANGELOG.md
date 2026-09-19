@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,17 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.1.2] — 2026-09-19
+
+### Changed
+
+- **Custom production domain** — the live board is now reachable at
+  **<https://agent-kanban.riazrahaman.com>** (a custom domain on Railway, in
+  addition to the `*.up.railway.app` hostname). Pointed the in-app About view's
+  live-demo link (`ABOUT_LIVE_URL`), the README deployment section, `ONBOARDING.md`
+  examples, the presentation notes, and the standalone one-pager at the new
+  domain; the one-pager's stale `v1.0.0` badge was also corrected.
 
 ## [2.1.1] — 2026-09-19
 
