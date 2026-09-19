@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Task } from '../types'
 import { appendLog } from '../api'
 import { normalizePriority } from '../priority'
+import { formatStageOwners } from '../lib/stageOwners'
 import StatusBadge from './StatusBadge'
 
 const PRIORITY_BADGE: Record<Task['priority'], string> = {
@@ -109,6 +110,17 @@ export default function TaskSheet({ task, onClose }: Props) {
                   {task.description || 'No description provided.'}
                 </p>
               </section>
+
+              {task.stage_owners && Object.keys(task.stage_owners).length > 0 && (
+                <section>
+                  <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                    Stage Owners
+                  </h3>
+                  <p className="mt-1.5 font-mono text-[11px] text-muted">
+                    {formatStageOwners(task.stage_owners)}
+                  </p>
+                </section>
+              )}
 
               {task.metadata && Object.keys(task.metadata).length > 0 && (
                 <section>
