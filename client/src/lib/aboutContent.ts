@@ -1,8 +1,7 @@
 export const ABOUT_GITHUB_URL =
   'https://github.com/riazrahaman/agent-kanban-board'
 
-export const ABOUT_LIVE_URL =
-  'https://agent-kanban-board-production.up.railway.app'
+export const ABOUT_LIVE_URL = 'https://agent-kanban.riazrahaman.com'
 
 export type TrustMetric = {
   value: string

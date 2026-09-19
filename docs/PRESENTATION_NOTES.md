@@ -4,7 +4,7 @@ Source material for a talk aimed at **attracting users and contributors**. Every
 here is grounded in the codebase or the live deployment. Where a number is stated it
 was verified at the time of writing (see "Numbers you can trust").
 
-Live demo: <https://agent-kanban-board-production.up.railway.app>
+Live demo: <https://agent-kanban.riazrahaman.com>
 
 ---
 
@@ -174,7 +174,7 @@ first task you post under its id (`[A-Za-z0-9_-]+`).
 You need three things: a **project id**, a **token**, and a **role** per call.
 
 ```bash
-BASE=https://agent-kanban-board-production.up.railway.app
+BASE=https://agent-kanban.riazrahaman.com
 TOKEN=<your project token>          # e.g. from KANBAN_PROJECT_TOKENS
 PROJ=my-project
 
