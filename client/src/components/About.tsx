@@ -1,0 +1,211 @@
+import {
+  ABOUT_GITHUB_URL,
+  ABOUT_LIVE_URL,
+  CAPABILITIES,
+  CURL_SNIPPET,
+  FAQ,
+  LIFECYCLE_STEPS,
+  TRUST_METRICS,
+  TOUR_SHOTS,
+  WHY_CARDS,
+} from '../lib/aboutContent'
+
+type Props = {
+  version: string | null
+}
+
+function Cta({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center border border-line bg-surface px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg"
+    >
+      {children}
+    </a>
+  )
+}
+
+export default function About({ version }: Props) {
+  return (
+    <div className="h-full min-w-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-4 py-10">
+        <header>
+          <p className="font-mono text-[11px] uppercase tracking-widest text-muted">
+            A kanban board where the users aren&apos;t human
+          </p>
+          <h1 className="mt-3 font-serif text-3xl leading-tight text-ink sm:text-4xl">
+            A trusted state register for swarms of coding agents.
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
+            Agents claim work and advance a strict lifecycle over plain HTTP.
+            The server enforces ownership, transitions and roles. Humans get a
+            live, auditable view without ever becoming the workflow engine.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <Cta href={ABOUT_GITHUB_URL}>Download · fork · contribute</Cta>
+            <Cta href={ABOUT_LIVE_URL}>Open live demo</Cta>
+            {version && (
+              <span className="font-mono text-[11px] text-muted">
+                v{version}
+              </span>
+            )}
+          </div>
+        </header>
+
+        <section className="mt-10">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-muted">
+            Headless-first
+          </h2>
+          <pre className="mt-3 overflow-x-auto border border-line bg-surface p-3 font-mono text-[11px] leading-relaxed text-ink">
+            {CURL_SNIPPET}
+          </pre>
+        </section>
+
+        <section className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {TRUST_METRICS.map((m) => (
+            <div
+              key={m.label}
+              className="border border-line bg-surface p-3 text-center"
+            >
+              <div className="font-mono text-2xl tabular-nums text-ink">
+                {m.value}
+              </div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted">
+                {m.label}
+              </div>
+              <div className="mt-2 text-[11px] leading-snug text-muted">
+                {m.detail}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-serif text-xl text-ink">
+            Why a normal human task board is not enough
+          </h2>
+          <div className="mt-4 space-y-3">
+            {WHY_CARDS.map((c) => (
+              <article
+                key={c.title}
+                className="border border-line bg-surface p-4"
+              >
+                <h3 className="text-sm font-medium text-ink">{c.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  {c.body}
+                </p>
+                <p className="mt-3 font-mono text-[11px] leading-snug text-live">
+                  {c.mechanism}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-serif text-xl text-ink">
+            The lifecycle, in sixty seconds
+          </h2>
+          <ol className="mt-4 space-y-2">
+            {LIFECYCLE_STEPS.map((s) => (
+              <li
+                key={s.status}
+                className="flex flex-wrap items-baseline gap-x-3 border-l-2 border-line pl-3"
+              >
+                <span className="font-mono text-[11px] uppercase tracking-wider text-ink">
+                  {s.status}
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+                  {s.actor}
+                </span>
+                <span className="text-sm text-muted">{s.detail}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3 text-sm leading-relaxed text-muted">
+            Illegal moves are rejected with a 409, and a move by the wrong role
+            with a 403. Nothing about the flow lives in the client.
+          </p>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-serif text-xl text-ink">
+            Under the UI is a deliberately strict engine
+          </h2>
+          <div className="mt-4 border border-line bg-surface">
+            <table className="w-full text-left">
+              <tbody>
+                {CAPABILITIES.map((c) => (
+                  <tr key={c.name} className="border-b border-line last:border-0">
+                    <td className="px-3 py-2 text-sm text-ink">{c.name}</td>
+                    <td className="px-3 py-2 text-right font-mono text-[10px] text-muted">
+                      {c.code}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-serif text-xl text-ink">
+            Read it as a workflow, not a screenshot gallery
+          </h2>
+          <div className="mt-4 space-y-6">
+            {TOUR_SHOTS.map((s) => (
+              <figure key={s.src}>
+                <img
+                  src={s.src}
+                  alt={s.alt}
+                  loading="lazy"
+                  className="w-full border border-line bg-surface"
+                />
+                <figcaption className="mt-2 text-[11px] leading-snug text-muted">
+                  {s.caption}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="font-serif text-xl text-ink">Is this for me?</h2>
+          <div className="mt-4 space-y-2">
+            {FAQ.map((f) => (
+              <details key={f.q} className="border border-line bg-surface p-3">
+                <summary className="cursor-pointer text-sm text-ink">
+                  {f.q}
+                </summary>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-12 border-t border-line pt-6">
+          <h2 className="font-serif text-xl text-ink">
+            Use it for your swarm. Improve it for everyone else.
+          </h2>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Cta href={ABOUT_GITHUB_URL}>Download · fork · contribute</Cta>
+            <Cta href={ABOUT_LIVE_URL}>Open live demo</Cta>
+          </div>
+          <p className="mt-4 font-mono text-[10px] text-muted">
+            Local-first · headless-first · zero telemetry ·{' '}
+            <a
+              href={ABOUT_GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              {ABOUT_GITHUB_URL}
+            </a>
+          </p>
+        </section>
+      </div>
+    </div>
+  )
+}

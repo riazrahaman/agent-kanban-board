@@ -3,6 +3,7 @@ import type { ProjectSummary, Task } from './types'
 import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
+import About from './components/About'
 import Portfolio from './components/Portfolio'
 import ProjectPicker from './components/ProjectPicker'
 import SignalRail from './components/SignalRail'
@@ -26,7 +27,7 @@ export default function App() {
       if (typeof window === 'undefined') return ALL_PROJECTS
       return localStorage.getItem('kanban.project') ?? ALL_PROJECTS
        })
-    const [view, setView] = useState<'board' | 'portfolio'>('board')
+    const [view, setView] = useState<'board' | 'portfolio' | 'about'>('board')
     const [projects, setProjects] = useState<ProjectSummary[]>([])
     // True once the (unscoped) project list has settled, so the stale-scope
     // recovery below never fires against an empty, not-yet-loaded list.
@@ -210,15 +211,30 @@ export default function App() {
          </div>
          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-3">
             <ProjectPicker value={project} projects={projects} onChange={selectProject} />
-            <button
-             type="button"
-             onClick={() => setView((v) => (v === 'board' ? 'portfolio' : 'board'))}
-             className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
-             aria-pressed={view === 'portfolio'}
-             title={view === 'board' ? 'Show the cross-project portfolio' : 'Back to the board'}
+            <div
+             role="group"
+             aria-label="Switch between the board, the portfolio and the about page"
+             className="flex items-stretch border border-line bg-surface"
             >
-              {view === 'board' ? 'Portfolio' : 'Board'}
-            </button>
+              {([
+                ['board', 'Board', 'Show the task board'],
+                ['portfolio', 'Portfolio', 'Show the cross-project portfolio'],
+                ['about', 'About', 'About this project'],
+              ] as const).map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setView(value)}
+                  aria-pressed={view === value}
+                  title={hint}
+                  className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] ${
+                    view === value ? 'bg-muted-bg text-ink' : 'text-muted hover:bg-muted-bg hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <input
              type="text"
              value={agentDraft}
@@ -292,9 +308,10 @@ export default function App() {
          </div>
        </header>
 
-       <main className="flex flex-1 overflow-hidden">
-         <ErrorBoundary>
-           {view === 'portfolio' && (
+        <main className="flex flex-1 overflow-hidden">
+          <ErrorBoundary>
+            {view === 'about' && <About version={version} />}
+            {view === 'portfolio' && (
              <Portfolio
                refreshKey={tasks.length}
                onSelectProject={(next) => {

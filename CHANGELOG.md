@@ -8,6 +8,24 @@ version bump here is what the running board reports.
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`) — see
 `git tag -n`.
 
+## [Unreleased]
+
+### Added
+
+- **In-app About view** — a third top-level view alongside Board and Portfolio.
+  It presents the product pitch (a headless-first state register for agent
+  swarms), a curl walkthrough, a trust strip, the "why a normal board isn't
+  enough" cards, the lifecycle walk, a capabilities table, a curated tour of
+  screenshots served from `client/public/landing/`, an FAQ, and community CTAs.
+  The header now shows a single segmented Board / Portfolio / About switcher,
+  and the page reads the live server `version` so it can never show a stale one.
+  Content is data-driven (`client/src/lib/aboutContent.ts`) and guarded by
+  `client/src/lib/about.test.mjs`.
+
+### Quality gates
+
+- Client suite: 59 tests (Adds the About-page source-contract + content tests.)
+
 ## [2.0.0] — 2026-09-19
 
 The third hardening + feature round ("R3") plus the accessibility/UX work. This
@@ -60,7 +78,7 @@ per-stage ownership) and the custom, Safari-safe project picker.
 
 ### Quality gates
 
-- Server suite: 181 tests. Client suite: 48 tests. CI runs the full matrix on
+- Server suite: 181 tests. Client suite: 59 tests. CI runs the full matrix on
   Node 20.x and 22.x.
 
 ## [1.0.0] — 2026-09-18
