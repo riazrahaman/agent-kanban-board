@@ -211,6 +211,23 @@ make sec
 
 `npm test` runs the server suite (181 tests), the client status check, the client unit suite (59 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
+### Releasing
+
+Every user-visible change ships a version bump so the header can never lag the
+code:
+
+1. Bump `version` in `server/package.json` (the UI reads it live via
+   `GET /api/health`) and mirror the same number into the root `package.json`.
+   Additive features bump the **minor** number; fixes and polish bump the
+   **patch** number; breaking changes bump the **major** number.
+2. Move the accumulated `## [Unreleased]` entries in [CHANGELOG.md](CHANGELOG.md)
+   into a new `## [x.y.z] — YYYY-MM-DD` section.
+3. Sync the version string wherever hardcoded in
+   `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md` and
+   `docs/USER_AND_OPERATOR_MANUAL.md` (and their `docs/with-images/` mirrors).
+4. Merge the feature branch into `main` with `--no-ff`, tag the release
+   (`git tag -a vX.Y.Z -m "..."`), and push both the commit and the tag.
+
 ---
 
 ## License

@@ -5,10 +5,18 @@ follows [Semantic Versioning](https://semver.org/). The displayed version in the
 UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
-Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`) — see
-`git tag -n`.
+Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
+`v2.1.0`) — see `git tag -n`.
 
-## [Unreleased]
+**Versioning policy.** Every user-visible change bumps `server/package.json`
+(the UI reads it live), with the same number mirrored into the root
+`package.json`. Additive features bump the **minor** version; backwards-
+compatible fixes and polish bump the **patch** version; breaking changes bump
+the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
+here **and** an annotated git tag. Do not let work accumulate under
+`## [Unreleased]` across a shipped change.
+
+## [2.1.0] — 2026-09-19
 
 ### Added
 
