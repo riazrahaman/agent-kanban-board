@@ -1,10 +1,16 @@
 import {
   ABOUT_GITHUB_URL,
   ABOUT_LIVE_URL,
+  ARCH_INTRO,
+  ARCH_LAYERS,
   CAPABILITIES,
+  CLAIM_FLOW,
   CURL_SNIPPET,
   FAQ,
   LIFECYCLE_STEPS,
+  SAFETY_FOOTER,
+  SAFETY_LAYERS,
+  STACK_ROWS,
   TRUST_METRICS,
   TOUR_SHOTS,
   WHY_CARDS,
@@ -24,6 +30,36 @@ function Cta({ href, children }: { href: string; children: React.ReactNode }) {
     >
       {children}
     </a>
+  )
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="block font-mono text-[9px] uppercase tracking-wider text-muted sm:hidden">
+      {children}
+    </span>
+  )
+}
+
+function FlowRow({
+  label,
+  title,
+  detail,
+}: {
+  label: string
+  title: React.ReactNode
+  detail: React.ReactNode
+}) {
+  return (
+    <div className="flex gap-3 border-b border-line py-2.5 last:border-0">
+      <span className="flex h-7 w-7 flex-none items-center justify-center border border-line bg-surface font-mono text-[11px] text-ink">
+        {label}
+      </span>
+      <div className="min-w-0">
+        <div className="text-sm text-ink">{title}</div>
+        <div className="mt-0.5 text-xs leading-relaxed text-muted">{detail}</div>
+      </div>
+    </div>
   )
 }
 
@@ -147,6 +183,97 @@ export default function About({ version }: Props) {
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="mt-12 border-l-2 border-live pl-4">
+          <p className="font-mono text-[11px] uppercase tracking-widest text-live">
+            Architecture &amp; code flow
+          </p>
+          <h2 className="mt-2 font-serif text-xl text-ink">
+            How it actually works, end to end
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+            {ARCH_INTRO}
+          </p>
+
+          <h3 className="mt-8 font-serif text-lg text-ink">
+            The stack, in one table
+          </h3>
+          <div className="mt-3 border border-line bg-surface sm:table sm:w-full sm:border-collapse">
+            <div className="hidden border-b border-line sm:table-header-group">
+              <div className="sm:table-row">
+                {['Layer', 'Choice', 'Why', 'Location'].map((h) => (
+                  <div
+                    key={h}
+                    className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-muted sm:table-cell"
+                  >
+                    {h}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="sm:table-row-group">
+              {STACK_ROWS.map((r) => (
+                <div
+                  key={r.layer}
+                  className="border-b border-line px-3 py-2.5 last:border-0 sm:table-row sm:px-0 sm:py-0"
+                >
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted sm:hidden">
+                    Layer
+                  </div>
+                  <div className="text-sm text-ink sm:table-cell sm:px-3 sm:py-2 sm:align-top">
+                    {r.layer}
+                  </div>
+                  <div className="mt-1 text-sm text-ink sm:table-cell sm:px-3 sm:py-2 sm:align-top">
+                    <FieldLabel>Choice</FieldLabel>
+                    {r.choice}
+                  </div>
+                  <div className="mt-1 text-xs leading-snug text-muted sm:table-cell sm:px-3 sm:py-2 sm:align-top sm:text-sm sm:leading-relaxed">
+                    <FieldLabel>Why</FieldLabel>
+                    {r.why}
+                  </div>
+                  <div className="mt-1 break-words font-mono text-[10px] text-muted sm:table-cell sm:px-3 sm:py-2 sm:align-top sm:whitespace-nowrap">
+                    <FieldLabel>Location</FieldLabel>
+                    {r.location}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <h3 className="mt-10 font-serif text-lg text-ink">
+            What happens when an agent claims a task
+          </h3>
+          <div className="mt-3">
+            {CLAIM_FLOW.map((s) => (
+              <FlowRow key={s.label} label={s.label} title={s.title} detail={s.detail} />
+            ))}
+          </div>
+
+          <h3 className="mt-10 font-serif text-lg text-ink">
+            Three safety layers around every write
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Each layer answers a different failure — a stale editor, an illegal
+            move, a vanished agent.
+          </p>
+          <div className="mt-3">
+            {SAFETY_LAYERS.map((s) => (
+              <FlowRow key={s.label} label={s.label} title={s.name} detail={s.detail} />
+            ))}
+          </div>
+          <p className="mt-3 font-mono text-[11px] leading-relaxed text-live">
+            {SAFETY_FOOTER}
+          </p>
+
+          <h3 className="mt-10 font-serif text-lg text-ink">
+            Six layers, top to bottom
+          </h3>
+          <div className="mt-3">
+            {ARCH_LAYERS.map((s) => (
+              <FlowRow key={s.label} label={s.label} title={s.title} detail={s.detail} />
+            ))}
           </div>
         </section>
 

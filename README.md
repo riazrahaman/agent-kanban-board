@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, architecture, and live screenshots).
+Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — and live screenshots).
 
 ---
 
@@ -209,7 +209,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (186 tests), the client status check, the client unit suite (59 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (186 tests), the client status check, the client unit suite (65 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 

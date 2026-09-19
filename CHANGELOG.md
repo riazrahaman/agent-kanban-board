@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,43 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.2.0] — 2026-09-19
+
+### Added
+
+- **About view: Architecture & code flow section** — the in-app About view gains
+  an additive "Architecture & code flow" section that goes deeper than the
+  capability list:
+  - **The stack, in one table** — layer → choice → why → code location.
+  - **What happens when an agent claims a task** — a step-by-step walk of the
+    real `next-claim` path (route → auth middleware → `withMutationLock` →
+    `dependencyGate` eligibility → `applyClaim` → persist-before-memory →
+    SSE `notify`).
+  - **Three safety layers around every write** — optimistic concurrency
+    (`version` + `If-Match`), the deterministic state machine
+    (`canTransition` / `canRoleTransition`), and lease ownership, with the
+    persist-first footer.
+  - **Six layers, top to bottom** — a compact mirror of the system-design
+    chapter.
+  - New data exports in `client/src/lib/aboutContent.ts` (`STACK_ROWS`,
+    `CLAIM_FLOW`, `SAFETY_LAYERS`, `SAFETY_FOOTER`, `ARCH_LAYERS`,
+    `ARCH_INTRO`), rendered by `client/src/components/About.tsx`. The section is
+    mobile-first: the stack table collapses into labelled cards on narrow
+    screens (verified at 360/390/1280).
+
+### Changed
+
+- **About trust strip** — corrected stale test counts from `181` server / `48`
+  client to the real `186` / `59`.
+- Docs synced: README, `docs/FILE_BY_FILE_EXPLANATION.md` (+ `with-images`
+  mirror), and §5.7 of the User & Operator Manual (+ mirror) now describe the
+  architecture section.
+
+### Quality gates
+
+- Server suite: 186 tests. Client suite: 65 tests (was 59; adds the
+  architecture-content + additive-preservation guards in `about.test.mjs`).
 
 ## [2.1.2] — 2026-09-19
 

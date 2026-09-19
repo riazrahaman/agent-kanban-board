@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.1.2
+**System:** Agent Kanban Board v2.2.0
 
 ---
 
@@ -296,6 +296,7 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 - **"Why a normal board isn't enough":** three cards pairing each failure mode with the exact mechanism that handles it (`withMutationLock`, the lease plus reaper, the transition graph + role matrix).
 - **Lifecycle walk:** the five-state lifecycle (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`, plus `BLOCKED`) with the role that acts at each step.
 - **Capabilities table:** each capability mapped to the source file that implements it.
+- **Architecture & code flow:** an additive section that goes deeper than the capability list — a **stack table** (layer → choice → why → location), a step-by-step walk of the **next-claim code path** (route → auth → mutation lock → eligibility → `applyClaim` → persist-before-memory → SSE notify), the **three safety layers** that guard every write (optimistic concurrency, the transition graph + role matrix, lease ownership), and a six-layer summary mirroring the system-design chapter. It is mobile-first: the stack table collapses into labelled cards on narrow screens.
 - **Guided tour:** curated screenshots served from `/landing/*.png` (board, project filter, task inspector, portfolio, dark mode).
 - **FAQ and community CTA:** hosting, telemetry, database, and how to connect a project.
 

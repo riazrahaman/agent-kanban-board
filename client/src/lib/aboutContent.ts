@@ -11,12 +11,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '181',
+    value: '186',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '48',
+    value: '59',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -186,3 +186,132 @@ export const TOUR_SHOTS: TourShot[] = [
     caption: 'Same operational model, dark by explicit choice — not OS guesswork',
   },
 ]
+
+export type StackRow = {
+  layer: string
+  choice: string
+  why: string
+  location: string
+}
+
+export const STACK_ROWS: StackRow[] = [
+  {
+    layer: 'Client',
+    choice: 'React 18 · Vite · TypeScript · Tailwind',
+    why: 'An observability viewport, not the workflow engine.',
+    location: 'client/src/',
+  },
+  {
+    layer: 'Transport',
+    choice: 'Express 4 (ESM) + Server-Sent Events',
+    why: 'Plain HTTP any agent can curl; SSE pushes live state to humans.',
+    location: 'server/server.js',
+  },
+  {
+    layer: 'Core engine',
+    choice: 'One module: state machine + RBAC + leases + lock',
+    why: 'A single serialization point is what makes contention deterministic.',
+    location: 'server/store.js',
+  },
+  {
+    layer: 'Persistence',
+    choice: 'Atomic JSON or git-backed YAML',
+    why: 'Local-first, zero dependencies — and git becomes the audit trail.',
+    location: 'JsonStorage · GitYamlStorage',
+  },
+  {
+    layer: 'Auth',
+    choice: 'Static / per-project / HMAC session tokens',
+    why: 'Fail-closed by default; per-project isolation on every write.',
+    location: 'middleware/auth.js · sessionAuth.js',
+  },
+  {
+    layer: 'Deploy',
+    choice: 'One Node process + mounted disk',
+    why: 'SSE and the reaper need a long-lived process — not serverless.',
+    location: 'railway.json · render.yaml',
+  },
+]
+
+export type FlowStep = {
+  label: string
+  title: string
+  detail: string
+}
+
+export const CLAIM_FLOW: FlowStep[] = [
+  {
+    label: '01',
+    title: 'POST /api/tasks/next-claim arrives with an agent id and role.',
+    detail: 'Agents ask for work; they never pick a card from the DOM.',
+  },
+  {
+    label: '02',
+    title: 'Auth middleware verifies the token and sets req.caller = {agent_id, role}.',
+    detail: 'The role is authenticated, never taken from a query string.',
+  },
+  {
+    label: '03',
+    title: 'store.nextClaim() enters withMutationLock.',
+    detail: 'Every write is chained on one process-local promise queue.',
+  },
+  {
+    label: '04',
+    title: 'Selects the highest-priority eligible BACKLOG task.',
+    detail: 'Priority, then FIFO — and its dependencyGate must be satisfied.',
+  },
+  {
+    label: '05',
+    title: 'applyClaim writes the owner, the lease and the stage.',
+    detail: 'Sets assigned_agent, claim_expires_at and stage_owners.BUILDING; lifts BACKLOG → BUILDING; bumps version.',
+  },
+  {
+    label: '06',
+    title: 'Persist first, then memory, then notify.',
+    detail: 'writeAtomic (temp + rename) or a real git commit — the write lands on disk before memory changes.',
+  },
+  {
+    label: '07',
+    title: 'notify() pushes an SSE diff to every connected browser.',
+    detail: 'Humans just watch; the board is a projection of server state.',
+  },
+]
+
+export type SafetyLayer = {
+  label: string
+  name: string
+  detail: string
+}
+
+export const SAFETY_LAYERS: SafetyLayer[] = [
+  {
+    label: 'A',
+    name: 'Optimistic concurrency',
+    detail: 'version + If-Match — a stale write is rejected 409.',
+  },
+  {
+    label: 'B',
+    name: 'Deterministic state machine',
+    detail: 'canTransition → illegal move 409 · canRoleTransition → wrong role 403.',
+  },
+  {
+    label: 'C',
+    name: 'Lease ownership',
+    detail: 'A live lease held by another owner → 409 already-claimed; an expired or orphaned lease is reaped back to BACKLOG.',
+  },
+]
+
+export const SAFETY_FOOTER =
+  'All inside withMutationLock, then persist → update memory → notify over SSE. Persist first (KB-05): memory is never ahead of disk.'
+
+export const ARCH_LAYERS: FlowStep[] = [
+  { label: '1', title: 'Client', detail: 'React viewport — no drag-and-drop, no workflow logic.' },
+  { label: '2', title: 'Transport & security', detail: 'CORS allow-list, token auth, rate limiting, project scope.' },
+  { label: '3', title: 'Routing', detail: 'server.js composes the routers and the SSE channel.' },
+  { label: '4', title: 'Core engine', detail: 'store.js — state machine, RBAC, claims, reaper, mutation lock.' },
+  { label: '5', title: 'State & events', detail: 'In-memory tasks[], diff/audit listeners, broadcast.' },
+  { label: '6', title: 'Persistence', detail: 'writeAtomic into JSON or git YAML, pluggable via the storage factory.' },
+]
+
+export const ARCH_INTRO =
+  'The capability table names the parts. This section shows how they fit together — the stack, the exact path a claim takes through the code, and the three layers that guard every write.'
