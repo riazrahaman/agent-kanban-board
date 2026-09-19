@@ -22,6 +22,14 @@ Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`) — see
   Content is data-driven (`client/src/lib/aboutContent.ts`) and guarded by
   `client/src/lib/about.test.mjs`.
 
+### Changed
+
+- **Softer dark theme** — replaced the near-black dark palette
+  (`--bg: #0c0d0f`) with a warm charcoal one (`--bg: #1a1b1e`, `--surface:
+  #232428`) so the dark theme mirrors the cream light palette and reads as the
+  same product. Text/state tints were lifted for warmth while keeping WCAG AA
+  contrast. Defined solely in `client/src/index.css`.
+
 ### Quality gates
 
 - Client suite: 59 tests (Adds the About-page source-contract + content tests.)
