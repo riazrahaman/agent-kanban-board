@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.1.0
+**System:** Agent Kanban Board v2.1.1
 
 ---
 
@@ -185,7 +185,7 @@ flowchart TD
     subgraph UI_Header ["Top Navigation Bar (wraps on narrow viewports)"]
         Pulse["Live Indicator (pulsing dot)"] --- Title["Title: Agent Kanban Board + version chip (vX.Y.Z)"]
         Title --- Project["Project Filter (all projects / one project)"]
-        Project --- View["Portfolio / Board Toggle"]
+        Project --- View["Board / Portfolio / About Switcher"]
         View --- Identity["Agent ID + API Token (auto-claim identity)"]
         Identity --- Help["'i' Help Popover"]
         Help --- Status["READ-ONLY Badge / claim status / N tasks"]
@@ -286,6 +286,20 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available.
 
 A regression guard (`client/src/lib/responsive.test.mjs`) locks these invariants in CI.
+
+### 5.7 About View
+The header's segmented switcher (**Board / Portfolio / About**) opens a third top-level view: an in-app product overview aimed at new adopters and contributors.
+
+- **Hero:** the product pitch ("A trusted state register for swarms of coding agents"), a short lead, and two calls to action (open the live demo / fork on GitHub).
+- **Headless-first snippet:** a `curl` walkthrough showing an agent claiming the next task and advancing it, to make the API-first model concrete.
+- **Trust strip:** key credibility metrics (server/client test counts, the Node 20 & 22 CI matrix, the count of architecture decision records).
+- **"Why a normal board isn't enough":** three cards pairing each failure mode with the exact mechanism that handles it (`withMutationLock`, the lease plus reaper, the transition graph + role matrix).
+- **Lifecycle walk:** the five-state lifecycle (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`, plus `BLOCKED`) with the role that acts at each step.
+- **Capabilities table:** each capability mapped to the source file that implements it.
+- **Guided tour:** curated screenshots served from `/landing/*.png` (board, project filter, task inspector, portfolio, dark mode).
+- **FAQ and community CTA:** hosting, telemetry, database, and how to connect a project.
+
+The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the warm-charcoal dark palette) and the responsive layout automatically.
 
 ---
 

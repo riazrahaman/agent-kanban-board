@@ -209,7 +209,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (181 tests), the client status check, the client unit suite (59 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (186 tests), the client status check, the client unit suite (59 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
