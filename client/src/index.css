@@ -37,20 +37,23 @@
 
 .dark {
   color-scheme: dark;
-  --bg: #0c0d0f;
-  --surface: #121316;
-  --line: rgba(255, 255, 255, 0.08);
-  --ink: #ececee;
-  --muted: #8a8f98;
-  --muted-bg: rgba(255, 255, 255, 0.06);
-  --scroll-track: rgba(255, 255, 255, 0.06);
-  --scroll-thumb: rgba(255, 255, 255, 0.28);
-  --scroll-thumb-hover: rgba(255, 255, 255, 0.45);
-  --up: #7fb895;   --up-bg: rgba(90, 165, 118, 0.14);
-  --down: #d98480; --down-bg: rgba(207, 88, 83, 0.15);
-  --warn: #D4A94A; --warn-bg: rgba(212, 169, 74, 0.14);
-  --block: #9AA0A8;--block-bg: rgba(255, 255, 255, 0.06);
-  --live: #79A9C7; --live-bg: rgba(121, 169, 199, 0.14);
+  /* Warm charcoal, not black — mirrors the cream light palette so the two
+     themes read as the same product. Lifted well off pure black to cut the
+     harsh near-black contrast that made the board feel heavy. */
+  --bg: #1a1b1e;        /* warm charcoal page — 13.81:1 vs ink */
+  --surface: #232428;   /* cards/sheets: gently raised off the page */
+  --line: rgba(255, 255, 255, 0.10);
+  --ink: #e8e6e1;       /* warm off-white — 13.81:1 on bg */
+  --muted: #9a968d;     /* warm grey — 5.84:1 on bg */
+  --muted-bg: rgba(255, 255, 255, 0.07);
+  --scroll-track: rgba(255, 255, 255, 0.07);
+  --scroll-thumb: rgba(255, 255, 255, 0.30);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.48);
+  --up: #8fc79f;   --up-bg: rgba(120, 190, 145, 0.16);
+  --down: #e39b96; --down-bg: rgba(220, 115, 110, 0.17);
+  --warn: #ddb45c; --warn-bg: rgba(221, 180, 92, 0.16);
+  --block: #a6acb5;--block-bg: rgba(255, 255, 255, 0.07);
+  --live: #8fbcd6; --live-bg: rgba(143, 188, 214, 0.16);
 }
 
 html,

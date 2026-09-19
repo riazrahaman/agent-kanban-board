@@ -49,7 +49,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Build & Dev Server** | Vite | ^5.3.3 | Lightning-fast HMR, ES module bundling, asset optimization, `/api` dev proxy to the backend. |
 | **Language** | TypeScript | ^5.5.3 | Strict type definitions (`types.ts`, `status.ts`, component props). |
 | **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
-| **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / near-black dark palettes; explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
+| **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / warm-charcoal dark palettes; explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
 | **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
