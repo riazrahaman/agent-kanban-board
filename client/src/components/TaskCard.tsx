@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
 import { statusStyle } from '../status.js'
+import { formatStageOwners } from '../lib/stageOwners'
 
 type Props = {
   task: Task
@@ -11,7 +12,9 @@ type Props = {
 }
 
 // A task's `version` bumps on every committed mutation (§2.6), so id+version
-// is a sound identity for a card: unchanged version == unchanged card.
+// is a sound identity for a card: unchanged version == unchanged card. This
+// remains correct for `stage_owners`, which is only ever mutated by a persisted
+// write that also bumps `version` — so id+version stays a sufficient key.
 function areEqual(prev: Props, next: Props): boolean {
   return (
     prev.task.id === next.task.id &&
@@ -71,6 +74,15 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
           </span>
         )}
       </div>
+
+      {task.stage_owners && Object.keys(task.stage_owners).length > 0 && (
+        <div
+          className="mt-1 truncate font-mono text-[10px] text-muted"
+          title={formatStageOwners(task.stage_owners)}
+        >
+          {formatStageOwners(task.stage_owners)}
+        </div>
+      )}
     </div>
   )
 }

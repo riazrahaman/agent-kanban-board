@@ -30,6 +30,7 @@ export type Task = {
   status: TaskStatus
   priority: TaskPriority
   assigned_agent: string | null
+  stage_owners?: Record<string, string>
   agent_logs: AgentLog[]
   branch?: string
   depends_on?: string[]

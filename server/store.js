@@ -425,6 +425,7 @@ export class GitYamlStorage {
       round: task.round,
       issues: task.issues || [],
       assigned_agent: task.assigned_agent ?? null,
+      stage_owners: task.stage_owners || {},
       created_at: task.created_at || task.updated || new Date().toISOString(),
       completed_at: task.completed_at,
       updated: task.updated || new Date().toISOString(),
@@ -1347,6 +1348,7 @@ export async function createTask(data = {}, projectArg) {
       round: data.round,
       issues: Array.isArray(data.issues) ? data.issues : [],
       assigned_agent: data.assigned_agent !== undefined ? data.assigned_agent : null,
+      stage_owners: data.stage_owners && typeof data.stage_owners === 'object' ? data.stage_owners : {},
       agent_logs: Array.isArray(data.agent_logs) ? data.agent_logs : [],
       metadata: data.metadata || {},
       created_at: now,
@@ -1418,6 +1420,25 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
         };
       }
       candidate.status = nextStatus;
+
+      // §2.x: record the acting agent for the newly-entered stage. Only on a
+      // real change (nextStatus !== wasStatus) and only for the four active
+      // stages. `assigned_agent` stays the lease holder — this is a per-stage
+      // provenance map, not a reassignment.
+      const actor = caller?.agent_id || caller?.agentId || null;
+      if (
+        nextStatus !== wasStatus &&
+        actor &&
+        (nextStatus === STATUSES.BUILDING ||
+          nextStatus === STATUSES.IN_REVIEW ||
+          nextStatus === STATUSES.IN_TEST ||
+          nextStatus === STATUSES.DONE)
+      ) {
+        const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
+          ? candidate.stage_owners
+          : {};
+        candidate.stage_owners = { ...owners, [nextStatus]: actor };
+      }
      }
 
      // §2.8: anchor completion time on the transition into DONE.
@@ -1579,6 +1600,12 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
   if (!renew && candidate.status === STATUSES.BACKLOG) {
     candidate.status = STATUSES.BUILDING;
+    // §2.x: the fresh claim promotes BACKLOG → BUILDING; record the builder as
+    // the stage owner for BUILDING (the lease holder stays in `assigned_agent`).
+    const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
+      ? candidate.stage_owners
+      : {};
+    candidate.stage_owners = { ...owners, BUILDING: agentId };
   }
   candidate.updated = isoFromMs(nowMs);
   candidate.version = nextVersionFor(task);
