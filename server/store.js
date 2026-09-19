@@ -1776,8 +1776,11 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        * one lock.
        */
        async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
-       if (!task.assigned_agent) {
-        // Not currently held — nothing to reclaim. Idempotent.
+       const activeStatus = task.status === STATUSES.BUILDING
+        || task.status === STATUSES.IN_REVIEW
+        || task.status === STATUSES.IN_TEST;
+       if (!task.assigned_agent && !activeStatus) {
+        // Not currently held and not active — nothing to reclaim. Idempotent.
          return { task, status: 200, reclaimed: false };
          }
        const fromAgent = task.assigned_agent;
@@ -1791,11 +1794,13 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
        candidate.agent_logs.push({
         timestamp: candidate.updated,
-         message: reason === 'lease_expired'
-          ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
-          : `Task reclaimed to BACKLOG by system (${reason}).`,
+         message: !fromAgent
+          ? 'Task had no owner — reclaimed to BACKLOG by system normalizer.'
+          : (reason === 'lease_expired'
+           ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
+           : `Task reclaimed to BACKLOG by system (${reason}).`),
          agent_id: 'system',
-         reason: 'lease_expired',
+         reason: !fromAgent ? reason : 'lease_expired',
          reclaimed_from: fromAgent,
          });
 
@@ -1844,7 +1849,8 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
         || t.status === STATUSES.IN_TEST;
        if (!active) return false;
        if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
-         return false;
+         // Orphan: active with no owner/lease — structurally stuck, always reclaim.
+         return true;
          }
        const expiresMs = Date.parse(t.claim_expires_at);
         if (Number.isNaN(expiresMs)) return false;
@@ -1857,7 +1863,11 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
          // only within a project, so the 1-arg form resolves against `default` and
          // either returns null (throwing, aborting the whole sweep) or — when the
          // same short id exists in `default` — reclaims the wrong task.
-         const r = await reclaimTaskInner(getTask(t.id, t.project), { reason: 'lease_expired', nowMs });
+         const task = getTask(t.id, t.project);
+         const reason = (task.assigned_agent === null || task.claim_expires_at == null)
+          ? 'orphan_normalized'
+          : 'lease_expired';
+         const r = await reclaimTaskInner(task, { reason, nowMs });
          if (r && r.reclaimed) {
            reclaimed += 1;
            ids.push(compositeKey(t.project, t.id));
