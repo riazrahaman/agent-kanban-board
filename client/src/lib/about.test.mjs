@@ -43,6 +43,12 @@ const {
   FAQ,
   CURL_SNIPPET,
   TOUR_SHOTS,
+  STACK_ROWS,
+  CLAIM_FLOW,
+  SAFETY_LAYERS,
+  SAFETY_FOOTER,
+  ARCH_LAYERS,
+  ARCH_INTRO,
 } = content
 
 // ---------------------------------------------------------------------------
@@ -54,6 +60,13 @@ test('trust metrics expose four complete, non-empty entries', () => {
   for (const m of TRUST_METRICS) {
     assert.ok(m.value && m.label && m.detail, `incomplete trust metric: ${JSON.stringify(m)}`)
   }
+})
+
+test('the trust metrics report the real suite sizes (no stale counts)', () => {
+  const server = TRUST_METRICS.find((m) => /server/i.test(m.label))
+  const client = TRUST_METRICS.find((m) => /client/i.test(m.label))
+  assert.equal(server.value, '186', 'server test count must match the current suite')
+  assert.equal(client.value, '59', 'client test count must match the current suite')
 })
 
 test('the why-cards keep all three differentiation stories', () => {
@@ -113,6 +126,48 @@ test('the outbound links point at the real repo and live board', () => {
   assert.equal(ABOUT_LIVE_URL, 'https://agent-kanban.riazrahaman.com')
 })
 
+test('the stack table covers every layer with a real code location', () => {
+  assert.ok(STACK_ROWS.length >= 5, `expected a full stack, got ${STACK_ROWS.length} rows`)
+  for (const r of STACK_ROWS) {
+    assert.ok(r.layer && r.choice && r.why && r.location, `incomplete stack row: ${JSON.stringify(r)}`)
+  }
+  const locs = STACK_ROWS.map((r) => r.location).join('\n')
+  assert.match(locs, /store\.js/, 'the core engine row must point at store.js')
+  assert.match(locs, /server\.js/, 'the transport row must point at server.js')
+  assert.ok(ARCH_INTRO.length > 0, 'the architecture section needs an intro')
+})
+
+test('the claim flow walks the real next-claim path in order', () => {
+  assert.ok(CLAIM_FLOW.length >= 6, `expected a full flow, got ${CLAIM_FLOW.length} steps`)
+  for (const s of CLAIM_FLOW) {
+    assert.ok(s.label && s.title && s.detail, `incomplete flow step: ${JSON.stringify(s)}`)
+  }
+  const text = CLAIM_FLOW.map((s) => `${s.title} ${s.detail}`).join('\n')
+  assert.match(text, /next-claim/, 'the flow must start from the next-claim route')
+  assert.match(text, /withMutationLock/, 'the flow must pass through the mutation lock')
+  assert.match(text, /applyClaim/, 'the flow must describe applyClaim writing the owner')
+  assert.match(text, /persist/i, 'the flow must state persist-before-memory')
+  assert.match(text, /notify/, 'the flow must end by pushing an SSE diff')
+})
+
+test('the safety layers name all three guards plus the persist-first footer', () => {
+  assert.equal(SAFETY_LAYERS.length, 3)
+  const text = SAFETY_LAYERS.map((s) => `${s.name} ${s.detail}`).join('\n')
+  assert.match(text, /If-Match|version/, 'concurrency guard must mention version/If-Match')
+  assert.match(text, /canTransition/, 'state-machine guard must be named')
+  assert.match(text, /canRoleTransition/, 'role guard must be named')
+  assert.match(text, /lease/i, 'lease ownership guard must be named')
+  assert.match(SAFETY_FOOTER, /withMutationLock/)
+  assert.match(SAFETY_FOOTER, /persist/i)
+})
+
+test('the six-layer summary mirrors the system design chapter', () => {
+  assert.equal(ARCH_LAYERS.length, 6)
+  for (const s of ARCH_LAYERS) {
+    assert.ok(s.label && s.title && s.detail, `incomplete arch layer: ${JSON.stringify(s)}`)
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Source contract
 // ---------------------------------------------------------------------------
@@ -142,6 +197,27 @@ test('App.tsx wires the about view end to end', () => {
     /v === 'about' \? 'board' : 'about'/,
     'the About control must be a segmented switcher, not a toggle that renames itself to Board',
   )
+})
+
+test('About.tsx adds the architecture section without dropping existing sections', () => {
+  // the addon is present
+  assert.match(aboutSource, /Architecture &amp; code flow/, 'the architecture addon must be rendered')
+  assert.match(aboutSource, /STACK_ROWS/, 'the stack table must be data-driven')
+  assert.match(aboutSource, /CLAIM_FLOW/, 'the claim flow must be data-driven')
+  assert.match(aboutSource, /SAFETY_LAYERS/, 'the safety layers must be data-driven')
+  assert.match(aboutSource, /ARCH_LAYERS/, 'the six-layer summary must be data-driven')
+  // the pre-existing sections are all still there (additive, not a rewrite)
+  for (const section of [
+    'TRUST_METRICS',
+    'WHY_CARDS',
+    'LIFECYCLE_STEPS',
+    'CAPABILITIES',
+    'TOUR_SHOTS',
+    'CURL_SNIPPET',
+    'FAQ',
+  ]) {
+    assert.match(aboutSource, new RegExp(section), `existing section ${section} must be preserved`)
+  }
 })
 
 // Banned tokens are assembled from fragments on purpose: this test file itself
