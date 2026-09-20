@@ -169,3 +169,21 @@ Named projects persist to `KANBAN_DATA_DIR/tasks/<project>.json` plus
 `tasks/archive/<project>.json` (or `KANBAN_GIT_DIR/<project>/<id>.yml` in git mode). The default
 project reuses `KANBAN_DATA_FILE` (or `server/tasks.json`). No server-side "add project" step
 exists or is needed — the first `createTask` under a new id creates it.
+
+### Getting alerted when a task is reclaimed
+
+When an agent stops heartbeating, its lease expires and the reaper returns the task to `BACKLOG`
+(and an active task found with no owner is normalized the same way). You can have the board post a
+full-detail alert to a **Telegram** group or chat on every such reclaim:
+
+```bash
+KANBAN_TELEGRAM_BOT_TOKEN=<token from @BotFather>
+KANBAN_TELEGRAM_CHAT_ID=-1001234567890   # negative for a group
+```
+
+Both are required — notifications stay **off** until both are set. Sends are serialized with a
+minimum gap and honour Telegram's `429 retry_after`, delivery failures never affect the reclaim,
+and the bot token is never logged or sent to clients. See **§3.1.1 Telegram Reclaim Notifications**
+in `docs/USER_AND_OPERATOR_MANUAL.md` for the full setup walkthrough (creating the bot, reading the
+group id) and the optional filters (`KANBAN_NOTIFY_EVENTS`, `KANBAN_NOTIFY_PROJECTS`,
+`KANBAN_NOTIFY_INCLUDE_DESC`, `KANBAN_NOTIFY_MIN_INTERVAL_MS`, `KANBAN_BOARD_URL`).
