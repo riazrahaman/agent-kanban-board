@@ -16,7 +16,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '65',
+    value: '68',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -53,6 +53,11 @@ export const WHY_CARDS: WhyCard[] = [
     title: 'An agent skips the workflow',
     body: 'A rogue or buggy agent could jump a card straight to DONE, or a builder could approve its own work.',
     mechanism: 'canTransition + canRoleTransition — illegal moves 409, wrong roles 403, enforced server-side',
+  },
+  {
+    title: 'A task is silently reclaimed',
+    body: 'A lease expiring is the system working correctly — but if nobody is told, a stalled agent looks exactly like a calm, healthy board.',
+    mechanism: 'notifier.js — an onDiff subscriber posts a full-detail alert when the reaper returns a task to BACKLOG',
   },
 ]
 
@@ -141,6 +146,10 @@ export const FAQ: FaqItem[] = [
   {
     q: 'How do I connect a new project?',
     a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it a project token out of band. See ONBOARDING.md for the curl walkthrough.',
+  },
+  {
+    q: 'How will I know when an agent dies?',
+    a: 'The reaper returns the task to BACKLOG and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
   },
 ]
 
@@ -304,6 +313,42 @@ export const SAFETY_LAYERS: SafetyLayer[] = [
 
 export const SAFETY_FOOTER =
   'All inside withMutationLock, then persist → update memory → notify over SSE. Persist first (KB-05): memory is never ahead of disk.'
+
+export const RECLAIM_FLOW: FlowStep[] = [
+  {
+    label: '01',
+    title: 'An agent stops heartbeating mid-task.',
+    detail: 'The card stays BUILDING, IN_REVIEW or IN_TEST with a lease that is quietly running out.',
+  },
+  {
+    label: '02',
+    title: 'The background reaper sweeps expired leases.',
+    detail: 'reapExpiredClaims runs on a timer; a task with no owner at all is treated as structurally stuck and normalized on the next sweep.',
+  },
+  {
+    label: '03',
+    title: 'reclaimTaskInner returns the card to BACKLOG.',
+    detail: 'Owner and lease are cleared, reclaim_count increments and the version bumps — then the write is persisted first.',
+  },
+  {
+    label: '04',
+    title: 'notify() emits a reclaimed diff event.',
+    detail: 'The same event stream that drives the browser carries { kind: reclaimed, reason, prevTask }.',
+  },
+  {
+    label: '05',
+    title: 'notifier.js formats a full-detail alert and posts it to Telegram.',
+    detail: 'Project, title, reason, who held it, when the lease ended, stage owners, the last log and a deep link back to that project.',
+  },
+  {
+    label: '06',
+    title: 'Delivery is fail-silent.',
+    detail: 'A Telegram outage is logged and swallowed — an alert that cannot be sent never breaks the reclaim that triggered it.',
+  },
+]
+
+export const RECLAIM_INTRO =
+  'A vanished agent is the failure the board is most opinionated about. Here is what actually happens, from a stalled heartbeat to a message in your phone.'
 
 export const ARCH_LAYERS: FlowStep[] = [
   { label: '1', title: 'Client', detail: 'React viewport — no drag-and-drop, no workflow logic.' },

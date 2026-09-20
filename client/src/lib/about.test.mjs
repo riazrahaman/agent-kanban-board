@@ -45,6 +45,8 @@ const {
   TOUR_SHOTS,
   STACK_ROWS,
   CLAIM_FLOW,
+  RECLAIM_FLOW,
+  RECLAIM_INTRO,
   SAFETY_LAYERS,
   SAFETY_FOOTER,
   ARCH_LAYERS,
@@ -66,11 +68,11 @@ test('the trust metrics report the real suite sizes (no stale counts)', () => {
   const server = TRUST_METRICS.find((m) => /server/i.test(m.label))
   const client = TRUST_METRICS.find((m) => /client/i.test(m.label))
   assert.equal(server.value, '196', 'server test count must match the current suite')
-  assert.equal(client.value, '65', 'client test count must match the current suite')
+  assert.equal(client.value, '68', 'client test count must match the current suite')
 })
 
-test('the why-cards keep all three differentiation stories', () => {
-  assert.equal(WHY_CARDS.length, 3)
+test('the why-cards keep all the differentiation stories', () => {
+  assert.equal(WHY_CARDS.length, 4)
   for (const c of WHY_CARDS) {
     assert.ok(c.title && c.body && c.mechanism, `incomplete why-card: ${JSON.stringify(c)}`)
   }
@@ -161,6 +163,34 @@ test('the safety layers name all three guards plus the persist-first footer', ()
   assert.match(SAFETY_FOOTER, /persist/i)
 })
 
+test('the reclaim flow explains the stall → reaper → Telegram alert path', () => {
+  assert.ok(RECLAIM_FLOW.length >= 5, `expected the full reclaim story, got ${RECLAIM_FLOW.length} steps`)
+  for (const s of RECLAIM_FLOW) {
+    assert.ok(s.label && s.title && s.detail, `incomplete reclaim step: ${JSON.stringify(s)}`)
+  }
+  const text = RECLAIM_FLOW.map((s) => `${s.title} ${s.detail}`).join('\n')
+  assert.match(text, /heartbeat/i, 'the story must start from a stalled heartbeat')
+  assert.match(text, /reapExpiredClaims/, 'the reaper must be named')
+  assert.match(text, /reclaimTaskInner/, 'the reclaim path must be named')
+  assert.match(text, /notifier\.js/, 'the notifier must be named as the delivery mechanism')
+  assert.match(text, /Telegram/i, 'the alert target must be named')
+  assert.match(text, /fail-silent|never breaks/i, 'the failure isolation guarantee must be stated')
+  assert.ok(RECLAIM_INTRO.length > 0, 'the reclaim section needs an intro')
+})
+
+test('the why-cards cover the silent-reclaim failure mode', () => {
+  assert.equal(WHY_CARDS.length, 4)
+  const mechanisms = WHY_CARDS.map((c) => c.mechanism).join('\n')
+  assert.match(mechanisms, /notifier\.js/, 'the silent-reclaim card must name the notifier')
+})
+
+test('the FAQ answers the "how will I know an agent died" question', () => {
+  const faq = FAQ.map((f) => `${f.q} ${f.a}`).join('\n')
+  assert.match(faq, /KANBAN_TELEGRAM_BOT_TOKEN/, 'the alert setup env var must be documented')
+  assert.match(faq, /KANBAN_TELEGRAM_CHAT_ID/, 'the alert chat env var must be documented')
+  assert.match(faq, /off by default/i, 'the opt-in default must be stated')
+})
+
 test('the six-layer summary mirrors the system design chapter', () => {
   assert.equal(ARCH_LAYERS.length, 6)
   for (const s of ARCH_LAYERS) {
@@ -205,6 +235,7 @@ test('About.tsx adds the architecture section without dropping existing sections
   assert.match(aboutSource, /STACK_ROWS/, 'the stack table must be data-driven')
   assert.match(aboutSource, /CLAIM_FLOW/, 'the claim flow must be data-driven')
   assert.match(aboutSource, /SAFETY_LAYERS/, 'the safety layers must be data-driven')
+  assert.match(aboutSource, /RECLAIM_FLOW/, 'the reclaim-alert flow must be data-driven')
   assert.match(aboutSource, /ARCH_LAYERS/, 'the six-layer summary must be data-driven')
   // the pre-existing sections are all still there (additive, not a rewrite)
   for (const section of [
