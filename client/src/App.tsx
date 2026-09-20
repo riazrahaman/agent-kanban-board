@@ -16,6 +16,24 @@ import { readStoredToken, writeStoredToken } from './lib/authToken'
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
 
+/**
+ * Deep-link support: a `?project=<id>` query (as sent in reclaim alert links)
+ * wins over the last-used scope, so opening an alert lands on the board already
+ * scoped to that task's project. Falls back to the persisted scope, then to
+ * "all projects". The stale-scope recovery below still runs, so a link to a
+ * project that no longer exists resets cleanly instead of showing an empty board.
+ */
+function initialProject(): string {
+  if (typeof window === 'undefined') return ALL_PROJECTS
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('project')
+    if (fromUrl) return fromUrl
+  } catch {
+    // Malformed/unavailable URL — fall through to the persisted scope.
+  }
+  return localStorage.getItem('kanban.project') ?? ALL_PROJECTS
+}
+
 export default function App() {
    const [tasks, setTasks] = useState<Task[]>([])
     const [openTaskId, setOpenTaskId] = useState<string | null>(null)
@@ -23,10 +41,7 @@ export default function App() {
     const [error, setError] = useState<string | null>(null)
 
      // §2.10: which board is shown, and whether we are on the portfolio view.
-    const [project, setProject] = useState<string>(() => {
-      if (typeof window === 'undefined') return ALL_PROJECTS
-      return localStorage.getItem('kanban.project') ?? ALL_PROJECTS
-       })
+    const [project, setProject] = useState<string>(initialProject)
     const [view, setView] = useState<'board' | 'portfolio' | 'about'>('board')
     const [projects, setProjects] = useState<ProjectSummary[]>([])
     // True once the (unscoped) project list has settled, so the stale-scope
@@ -168,7 +183,19 @@ export default function App() {
       if (project && !projects.some((p) => p.project === project)) {
         selectProject(ALL_PROJECTS)
       }
-     }, [projectsLoaded, project, projects])
+      }, [projectsLoaded, project, projects])
+
+  // Persist a deep-linked `?project=` scope and drop the query param, so a
+  // later reload keeps the operator's choice without re-applying a stale link.
+  // Runs once on mount.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const fromUrl = new URLSearchParams(window.location.search).get('project')
+    if (!fromUrl) return
+    selectProject(fromUrl)
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [])
+
 
   // Fetch the deployed version once on mount; failure just hides the chip.
   useEffect(() => {

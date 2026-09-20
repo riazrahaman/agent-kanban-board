@@ -11,12 +11,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '186',
+    value: '196',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '59',
+    value: '65',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -109,6 +109,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Pluggable persistence', code: 'store.js · JsonStorage | GitYamlStorage' },
   { name: 'Atomic writes + git audit trail', code: 'store.js · writeAtomic, serializeCard' },
   { name: 'Real-time push over SSE', code: 'server.js · GET /api/events' },
+  { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
   { name: 'Per-project token isolation', code: 'middleware/auth.js, projectScope.js' },
   { name: 'HMAC session tokens', code: 'sessionAuth.js, routes/auth.js' },
   { name: 'Optimistic concurrency (version + If-Match)', code: 'store.js · nextVersionFor, versionConflict' },
