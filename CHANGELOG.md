@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,16 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.1] — 2026-09-20
+
+### Changed
+
+- **Onboarding guide** — `ONBOARDING.md` §7 ("Storage notes for the owner") now
+  covers reclaim notifications: the two required env vars, the off-by-default
+  behaviour, the delivery guarantees, and a pointer to the full setup
+  walkthrough in the User & Operator Manual. Documentation only — no code or
+  behaviour change.
 
 ## [2.3.0] — 2026-09-20
 
