@@ -114,6 +114,11 @@ The board features pluggable persistence:
    | `KANBAN_GIT_COMMIT` | `true` | `false` disables auto-commit. |
    | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
    | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
+   | `KANBAN_TELEGRAM_BOT_TOKEN` / `KANBAN_TELEGRAM_CHAT_ID` | *(unset)* | Both required to enable Telegram alerts when a lease reaper returns a task to `BACKLOG`. Off when either is unset. |
+   | `KANBAN_NOTIFY_EVENTS` | `lease_expired,orphan_normalized` | Which reclaim reasons alert. |
+   | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
+   | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated task description in the alert. |
+   | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
 
    ---
 
@@ -209,7 +214,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (186 tests), the client status check, the client unit suite (65 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (196 tests, including the Telegram reclaim-notifier guard), the client status check, the client unit suite (65 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 

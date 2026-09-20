@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,52 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.0] — 2026-09-20
+
+### Added
+
+- **Telegram alerts when a task is reclaimed to `BACKLOG`** — when the lease
+  reaper returns an idle task to `BACKLOG`, the server now posts a full-detail
+  alert to a Telegram group or chat.
+  - New `server/notifier.js` — a pure subscriber on the `store.onDiff` stream
+    (`kind === 'reclaimed'`), covering both `lease_expired` (a dead agent) and
+    `orphan_normalized` (an active task found with no owner). No mutation-path
+    surface: the reaper's write has already committed before the alert is sent.
+  - Full-detail HTML message: project, task id, title, priority + round, branch,
+    dependencies, issues, a truncated description, reason, previous owner, lease
+    expiry, last activity, reclaim count, per-stage owners, the last agent log
+    entry, and a deep link back to the board.
+  - **No new dependency** — the Bot API is a plain HTTPS `POST` using the global
+    `fetch` already available on Node 20/22 (the CI matrix).
+  - **Fail-silent delivery** — sends are fire-and-forget and wrapped, so a
+    Telegram outage is logged (`[kanban notify] send failed: …`) and can never
+    break a reclaim; the task still returns to `BACKLOG`.
+  - **One message per task**, serialized with a configurable minimum gap and
+    `429 retry_after` support, so a sweep reclaiming several tasks cannot trip
+    Telegram's per-chat rate limit.
+  - **Off by default** — inert unless both `KANBAN_TELEGRAM_BOT_TOKEN` and
+    `KANBAN_TELEGRAM_CHAT_ID` are set. The token is server-side only and redacted
+    from logs.
+  - Config: `KANBAN_NOTIFY_EVENTS`, `KANBAN_NOTIFY_PROJECTS`,
+    `KANBAN_NOTIFY_INCLUDE_DESC`, `KANBAN_NOTIFY_MIN_INTERVAL_MS`,
+    `KANBAN_BOARD_URL`.
+- **Deep-linkable project scope** — the client now honours `?project=<id>` on
+  load, so a reclaim alert's link opens the board already scoped to that task's
+  project (falling back to the persisted scope, then "all projects"). The query
+  param is consumed and dropped via `history.replaceState`.
+
+### Quality gates
+
+- Server suite: 196 tests (33 suites) — adds `kanban.notify.test.js` (10 tests:
+  config gating, event/project filtering, full-detail rendering, single-escape
+  of stored entities, description truncation, one-send-per-reclaim end to end,
+  a failing webhook never breaking the reclaim, no-op when unconfigured, and
+  token redaction in logs).
+- Client suite: 65 tests. `tsc -b` clean; `vite build` clean.
+- Live end-to-end proof: a real server with a 2.5 s lease TTL delivered
+  `[kanban notify] delivered 1 reclaim alert to telegram` and the task returned
+  to `BACKLOG` with `reclaim_count` 1.
 
 ## [2.2.0] — 2026-09-19
 

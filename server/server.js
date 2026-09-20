@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
+import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
@@ -162,6 +163,18 @@ export async function startServer(
         }
       startBackup();
       server.on('close', () => stopBackup());
+      // §2.11: outbound Telegram alerts for reclaims. Off unless a bot token +
+      // chat id are configured, so tests and unconfigured deployments stay inert.
+      const notifier = startNotifier();
+      server.on('close', () => stopNotifier());
+      if (!notifier) {
+        const ncfg = notifierConfig();
+        if (process.env.KANBAN_TELEGRAM_BOT_TOKEN || process.env.KANBAN_TELEGRAM_CHAT_ID) {
+          console.warn(
+            '[kanban warning] Telegram notifications are partially configured: set BOTH KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to enable them.'
+          );
+        }
+      }
       resolve({ server, stopReaper: stop || stopReaper });
       });
     });
