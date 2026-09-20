@@ -8,6 +8,8 @@ import {
   CURL_SNIPPET,
   FAQ,
   LIFECYCLE_STEPS,
+  RECLAIM_FLOW,
+  RECLAIM_INTRO,
   SAFETY_FOOTER,
   SAFETY_LAYERS,
   STACK_ROWS,
@@ -266,6 +268,18 @@ export default function About({ version }: Props) {
           <p className="mt-3 font-mono text-[11px] leading-relaxed text-live">
             {SAFETY_FOOTER}
           </p>
+
+          <h3 className="mt-10 font-serif text-lg text-ink">
+            What happens when an agent disappears
+          </h3>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+            {RECLAIM_INTRO}
+          </p>
+          <div className="mt-3">
+            {RECLAIM_FLOW.map((s) => (
+              <FlowRow key={s.label} label={s.label} title={s.title} detail={s.detail} />
+            ))}
+          </div>
 
           <h3 className="mt-10 font-serif text-lg text-ink">
             Six layers, top to bottom
