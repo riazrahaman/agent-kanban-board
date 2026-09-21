@@ -367,4 +367,57 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
       await store.loadStore();
        });
+
+  // --- §2.4 holder progress-log extends the lease ---------------------------
+
+  it('12. a progress log from the lease HOLDER extends the lease', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('lease-log-1', 'Holder log'),
+      });
+    await jsonRequest(baseUrl, '/api/tasks/lease-log-1/claim', {
+      method: 'POST', headers: headers(undefined, 'worker-a'), body: JSON.stringify({ agent_id: 'worker-a' }),
+      });
+    const before = store.getTask('lease-log-1').claim_expires_at;
+    // Let wall-clock time advance so the new deadline is observably later.
+    await new Promise((r) => setTimeout(r, 15));
+    const log = await jsonRequest(baseUrl, '/api/tasks/lease-log-1/logs', {
+      method: 'POST', headers: headers('builder', 'worker-a'),
+      body: JSON.stringify({ agent_id: 'worker-a', message: 'halfway there' }),
+      });
+    assert.equal(log.response.status, 200, 'holder may log');
+    const after = store.getTask('lease-log-1').claim_expires_at;
+    assert.ok(Date.parse(after) > Date.parse(before), 'holder log pushed the lease deadline forward');
+    assert.equal(store.getTask('lease-log-1').assigned_agent, 'worker-a', 'ownership unchanged');
+     });
+
+  it('13. a progress log from a NON-holder does not extend the lease', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('lease-log-2', 'Stranger log'),
+      });
+    await jsonRequest(baseUrl, '/api/tasks/lease-log-2/claim', {
+      method: 'POST', headers: headers(undefined, 'owner-agent'), body: JSON.stringify({ agent_id: 'owner-agent' }),
+      });
+    const before = store.getTask('lease-log-2').claim_expires_at;
+    await new Promise((r) => setTimeout(r, 15));
+    const log = await jsonRequest(baseUrl, '/api/tasks/lease-log-2/logs', {
+      method: 'POST', headers: headers('builder', 'stranger'),
+      body: JSON.stringify({ agent_id: 'stranger', message: 'butting in' }),
+      });
+    assert.equal(log.response.status, 200, 'any agent may still append a log');
+    const after = store.getTask('lease-log-2').claim_expires_at;
+    assert.equal(after, before, 'a non-holder must not inherit or extend the lease');
+    assert.equal(store.getTask('lease-log-2').assigned_agent, 'owner-agent', 'ownership unchanged');
+     });
+
+  it('14. the holder log extension keeps an active card off the reaper', async () => {
+    await store.createTask({ id: 'lease-log-3', title: 'Log keeps lease', status: 'BACKLOG', round: 1 });
+    await store.claimTask('lease-log-3', 'worker-b', undefined, {});
+    // Pin the lease to just about to expire, then log as the holder.
+    await setExpiry('lease-log-3', Date.now() + 500);
+    await store.appendLog('lease-log-3', 'worker-b', 'still alive', undefined, {});
+    const swept = await store.reapExpiredClaims({ now: Date.now() + 1000 });
+    assert.ok(!swept.reclaimed.includes('default/lease-log-3'), 'extended lease survived the sweep');
+    assert.equal(store.getTask('lease-log-3').status, 'BUILDING');
+    assert.equal(store.getTask('lease-log-3').assigned_agent, 'worker-b');
+     });
 });

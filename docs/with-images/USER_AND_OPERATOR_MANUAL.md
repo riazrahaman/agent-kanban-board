@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.3.3
+**System:** Agent Kanban Board v2.3.4
 
 ---
 
@@ -114,6 +114,7 @@ The server and client are configured via environment variables.
 | `KANBAN_GIT_COMMIT` | `true` | Set `false` to disable auto-commits in git mode. |
 | `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. |
 | `KANBAN_CLAIM_TTL_MS` | `300000` | Lease TTL (5 min); expired leases are auto-reclaimed. |
+| `KANBAN_ORPHAN_GRACE_MS` | *(lease TTL)* | Grace before an ownerless ACTIVE task is normalized to BACKLOG. Anchored on `updated`; any later write resets it. `0` reaps immediately. |
 | `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / *(default)* | Lease reaper switch and interval. |
 | `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` | Opt-in periodic snapshot of task data into `backups/`, rotated to a bounded count. |
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
@@ -149,7 +150,7 @@ When the lease reaper returns a task to `BACKLOG` (an idle lease expired, or an 
 - **One message per task.** A reclaim alerts immediately; sends are serialized with a ≥1 s gap and a `429 retry_after` is honoured, so a sweep of several tasks delivers several messages without throttling failures.
 - **Failure isolation.** Delivery is fire-and-forget and wrapped: a Telegram outage is logged (`[kanban notify] send failed: …`) and **never** affects the reclaim — the task still returns to `BACKLOG`.
 - **Secrets.** The bot token is server-side only, never sent to clients, never stored on the board, and redacted from logs. Treat it as a password; rotate it in BotFather if it leaks.
-- **Orphan normalization** (active task with no owner) alerts on the next sweep (~≤30 s); a **lease expiry** alerts at TTL + one sweep (default ≈5–5.5 min). The message's `Reason` line distinguishes them.
+- **Orphan normalization** (an *ownerless active* task) is only reaped once a grace window has elapsed (`KANBAN_ORPHAN_GRACE_MS`, default = the lease TTL), then it alerts; a **lease expiry** alerts at TTL + one sweep (default ≈5–5.5 min). The message's `Reason` line distinguishes them. The grace window exists because entering an active stage with a status-only `PATCH` is a legitimate intermediate state, not a stuck card.
 
 ### 3.2 Client Environment Variables
 

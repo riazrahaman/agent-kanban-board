@@ -136,6 +136,27 @@ function getReapIntervalMs() {
   return Number.isFinite(n) && n > 0 ? n : 30000;
 }
 
+/**
+ * §2.4 orphan grace — how long an ownerless ACTIVE task may sit untouched before
+ * the reaper treats it as structurally stuck.
+ *
+ * An active task with no owner/lease is normally created by a status-only PATCH
+ * (the documented orchestrator flow: `PATCH {status:'BUILDING', role:'admin'}`).
+ * That is a *legitimate* intermediate state — per-stage ownership deliberately
+ * keeps `assigned_agent` as the lease holder rather than reassigning it — so
+ * reaping it on the very next sweep destroys a card that was just written to.
+ * The grace window is anchored on `updated`, so any later write (a log, a
+ * transition) resets it. Defaults to the claim TTL: an orphan is only
+ * "structurally stuck" once it has been untouched at least as long as a lease
+ * would have lasted. `0` disables the grace (reap orphans immediately).
+ */
+function getOrphanGraceMs() {
+  const raw = process.env.KANBAN_ORPHAN_GRACE_MS;
+  if (raw === undefined || raw === '') return getClaimTtlMs();
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : getClaimTtlMs();
+}
+
 export function isReaperEnabled() {
   const raw = process.env.KANBAN_REAP_ENABLED;
   if (raw === undefined || raw === '') return true;
@@ -1899,10 +1920,17 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
         || t.status === STATUSES.IN_REVIEW
         || t.status === STATUSES.IN_TEST;
        if (!active) return false;
-       if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
-         // Orphan: active with no owner/lease — structurally stuck, always reclaim.
-         return true;
-         }
+      if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
+        // Orphan: active with no owner/lease. Normally this is a status-only
+        // PATCH that has not yet been claimed — a legitimate intermediate state,
+        // not a stuck card. Only reclaim once it has been untouched for the
+        // grace window, so a freshly-written card survives the next sweep.
+        const graceMs = getOrphanGraceMs();
+        if (graceMs <= 0) return true;
+        const touchedMs = Date.parse(t.updated);
+        if (Number.isNaN(touchedMs)) return true;
+        return nowMs - touchedMs >= graceMs;
+        }
        const expiresMs = Date.parse(t.claim_expires_at);
         if (Number.isNaN(expiresMs)) return false;
         return expiresMs <= nowMs;
@@ -2016,6 +2044,19 @@ export async function appendLog(id, agentId, message, project, { expected_versio
     candidate.updated = new Date().toISOString();
         // §2.6: a committed log append advances version by exactly one.
     candidate.version = nextVersionFor(task);
+    // §2.4: a progress log from the lease HOLDER is proof of life, so extend the
+    // lease. Headless workers report progress with POST /logs and never call
+    // /heartbeat (the browser client heartbeats every 5s), so without this a
+    // long build loses its lease at the TTL and the reaper resets the card.
+    // Only the holder counts: any agent may log on any task, so a non-holder
+    // must never inherit or extend someone else's claim.
+    if (
+      candidate.assigned_agent &&
+      candidate.assigned_agent === agentId &&
+      candidate.claim_expires_at
+    ) {
+      candidate.claim_expires_at = isoFromMs(nowFn() + getClaimTtlMs());
+    }
     if (!Array.isArray(candidate.agent_logs)) {
       candidate.agent_logs = [];
       }

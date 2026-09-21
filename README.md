@@ -119,6 +119,7 @@ The board features pluggable persistence:
    | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
    | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated task description in the alert. |
    | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between Telegram alerts. |
+   | `KANBAN_ORPHAN_GRACE_MS` | *(lease TTL)* | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to BACKLOG. Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
 
    ---
@@ -220,7 +221,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (196 tests, including the Telegram reclaim-notifier guard), the client status check, the client unit suite (68 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (203 tests, including the Telegram reclaim-notifier guard), the client status check, the client unit suite (68 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 

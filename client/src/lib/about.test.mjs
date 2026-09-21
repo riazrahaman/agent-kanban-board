@@ -67,7 +67,7 @@ test('trust metrics expose four complete, non-empty entries', () => {
 test('the trust metrics report the real suite sizes (no stale counts)', () => {
   const server = TRUST_METRICS.find((m) => /server/i.test(m.label))
   const client = TRUST_METRICS.find((m) => /client/i.test(m.label))
-  assert.equal(server.value, '196', 'server test count must match the current suite')
+  assert.equal(server.value, '203', 'server test count must match the current suite')
   assert.equal(client.value, '68', 'client test count must match the current suite')
 })
 
