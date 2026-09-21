@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.3.2
+**System:** Agent Kanban Board v2.3.3
 
 ---
 
@@ -293,7 +293,10 @@ Clicking any card opens the Inspector Sheet:
 - View complete title, priority, status badge, and assigned agent.
 - Read comprehensive task descriptions and structured JSON metadata.
 - **Agent Log:** Reverse-chronological timeline of operational logs submitted by agents.
+- **Stage ownership:** The `stage_owners` history shows which actor created, claimed, or transitioned each lifecycle stage.
 - **Operator Notes (Human Form):** Human operators can enter manual notes directly into the card timeline.
+
+Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-clean selected/filtered tasks with `POST /api/tasks/purge`. Both operations require a privileged role and are audited; they are not available to ordinary lifecycle roles.
 
 > [!NOTE]
 > The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials. Operators should append manual logs using authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token.

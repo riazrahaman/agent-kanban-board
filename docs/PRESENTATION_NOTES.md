@@ -148,9 +148,9 @@ honest boundary of the current system.
 
 ## 7. Engineering credibility
 
-- **Server: 181 passing cases across 31 suites / 21 files.** *(Verified: `node --test`
+- **Server: 196 passing cases across 33 suites / 23 files.** *(Verified: `node --test`
   in `server/`.)*
-- **Client: 48 passing cases across 9 files.** *(Verified: `npm test` in `client/`.)*
+- **Client: 68 passing cases across 10 files.** *(Verified: `npm test` in `client/`.)*
 - **CI** (`.github/workflows/ci.yml`): runs on every push/PR to `main` across a
   **Node 20.x + 22.x matrix** — install, `make sec` (secret/path leak scan +
   `dangerouslySetInnerHTML` ban), server tests, client status tests, client tests, and
@@ -310,12 +310,11 @@ Images live in `docs/presentation-images/`.
 
 | Claim | Value | How to verify |
 |---|---|---|
-| Server tests | **181 passing** (31 suites, 21 files) | `cd server && node --test` |
-| Client tests | **48 passing** (9 files) | `cd client && npm test` |
+| Server tests | **196 passing** (33 suites, 23 files) | `cd server && node --test` |
+| Client tests | **68 passing** (10 files) | `cd client && npm test` |
 | CI matrix | Node **20.x + 22.x** | `.github/workflows/ci.yml` |
 | ADRs | 3 | `docs/decisions/` |
 | Live task count at capture | 51 (Backlog 10 / Done 41) | live board header |
 
-> **Docs drift to fix (and to mention honestly):** the README and several docs still
-> cite older test counts (e.g. "151/17" and "44"). The real figures are 181 and 48.
-> Correcting these is a good first contribution.
+> **Docs status:** the current figures are 196 server tests and 68 client tests, and
+> they are in sync with the README.

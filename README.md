@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — and live screenshots).
+Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
 
 ---
 
@@ -118,6 +118,7 @@ The board features pluggable persistence:
    | `KANBAN_NOTIFY_EVENTS` | `lease_expired,orphan_normalized` | Which reclaim reasons alert. |
    | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
    | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated task description in the alert. |
+   | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between Telegram alerts. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
 
    ---
@@ -173,10 +174,15 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 |---|---|---|---|
 | `GET` | `/api/tasks` | List all tasks (`?project=` scopes to one project; unfiltered spans all) | Public |
 | `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
+| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks | Auth + privileged role required |
 | `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
+| `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
+| `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease | Auth required |
 | `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
+| `GET` | `/api/tasks/:id/issues` | List task issue IDs | Public |
+| `POST` | `/api/tasks/:id/issues` | Append a task issue ID | Auth required |
 | `POST` | `/api/tasks/next-claim` | Claim next available task (`?project=` scopes; role from header) | Auth required |
 | `GET` | `/api/projects` | Per-project summary (`task_count`, `done_count`, `live_count`, `archived_count`, `updated`) | Public |
 | `GET` | `/api/tasks/archive` | List archived tasks (`?project=` scopes to one project) | Public |

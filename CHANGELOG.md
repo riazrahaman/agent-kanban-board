@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,20 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.3] — 2026-09-21
+
+### Changed
+
+- **Documentation sync** — corrected markdown rendering and stale About copy; completed
+  code-flow coverage for purge/delete/heartbeat/issues, `stage_owners`, project deep
+  links, and `RECLAIM_FLOW`; corrected presentation counts; synchronized the HANDOVER
+  living state and recommendations status.
+
+### Quality gates
+
+- Server and client release checks pass with the version guard validating this changelog
+  section and the synchronized documentation version strings.
 
 ## [2.3.2] — 2026-09-20
 

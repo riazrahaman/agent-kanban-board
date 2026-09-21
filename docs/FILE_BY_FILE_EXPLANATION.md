@@ -288,8 +288,10 @@ flowchart TD
   - `POST /`: Creates a new task card (Status: 201).
   - `GET /archive`: Lists archived tasks (`?project=` scopes).
   - `POST /archive/sweep`: Runs the archive sweep now.
+  - `POST /purge`: Bulk-deletes selected or filtered tasks; declared before `/:id` and gated by `isPrivilegedRole`.
   - `POST /next-claim`: Claims the next available task (role from header, `?project=` scopes).
   - `GET /:id`: Retrieves single task or returns 404.
+  - `DELETE /:id`: Deletes one task; privileged-role gated via `isPrivilegedRole`.
   - `PATCH /:id`: Updates status or task attributes.
   - `POST /:id/claim`: Claims task for an agent ID.
   - `POST /:id/heartbeat`: Renews a task lease.
@@ -441,7 +443,7 @@ flowchart TD
 - **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.
 - **`claimCoordinator.ts` / `useClaimCoordinator.ts`:** Client-side lease heartbeat + auto-claim coordination bound to the operator's agent identity.
 - **`authToken.ts`:** Browser-local storage/wiring of the operator's API token.
-- **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
+- **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, `RECLAIM_INTRO` / `RECLAIM_FLOW`, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
 - **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `about`, and `responsive` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard.
 
 ---

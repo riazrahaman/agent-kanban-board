@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.3.2  
+**System Version:** 2.3.3  
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -51,7 +51,10 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
 | **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / warm-charcoal dark palettes; explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
 | **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. |
-| **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' | 'portfolio' | 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server version prop so it can never go stale. |
+| **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' \| 'portfolio' \| 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server `version` prop so it can never go stale. |
+| **Project Deep Link** | URL query + local storage | Browser Native | On load the client reads `?project=` (as sent in reclaim alerts), scopes the board to that project, persists the choice, and removes the one-time query parameter. |
+| **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
+| **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. |
 | **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `BACKLOG` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |

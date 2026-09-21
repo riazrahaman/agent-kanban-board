@@ -306,8 +306,10 @@ flowchart TD
   - `POST /`: Creates a new task card (Status: 201).
   - `GET /archive`: Lists archived tasks (`?project=` scopes).
   - `POST /archive/sweep`: Runs the archive sweep now.
+  - `POST /purge`: Bulk-deletes selected or filtered tasks; declared before `/:id` and gated by `isPrivilegedRole`.
   - `POST /next-claim`: Claims the next available task (role from header, `?project=` scopes).
   - `GET /:id`: Retrieves single task or returns 404.
+  - `DELETE /:id`: Deletes one task; privileged-role gated via `isPrivilegedRole`.
   - `PATCH /:id`: Updates status or task attributes.
   - `POST /:id/claim`: Claims task for an agent ID.
   - `POST /:id/heartbeat`: Renews a task lease.
@@ -414,7 +416,7 @@ flowchart TD
 
 #### `client/src/App.tsx`
 - **Path:** [`client/src/App.tsx`](../client/src/App.tsx)
-- **Components & Hooks:** App shell and state coordinator. Manages `tasks`, `openTaskId`, `project` filter, `view` (Board/Portfolio), `theme`, `railOpen`, and the agent-id/api-token identity. Fetches `getTasks` + subscribes to SSE scoped by project, fetches `/api/health` for the header version chip. Renders a wrapping responsive header, `<Board />`, `<SignalRail />` (docked at `md`+, slide-over drawer below), `<TaskSheet />`, and `<ErrorBoundary />`.
+- **Components & Hooks:** App shell and state coordinator. Manages `tasks`, `openTaskId`, `project` filter, `view` (Board/Portfolio/About), `theme`, `railOpen`, and the agent-id/api-token identity. Fetches `getTasks` + subscribes to SSE scoped by project, fetches `/api/health` for the header version chip. Renders a wrapping responsive header (with the three-way Board/Portfolio/About segmented switcher), `<Board />`, `<About />`, `<SignalRail />` (docked at `md`+, slide-over drawer below), `<TaskSheet />`, and `<ErrorBoundary />`.
 
 #### `client/src/types.ts`
 - **Path:** [`client/src/types.ts`](../client/src/types.ts)
@@ -459,7 +461,7 @@ flowchart TD
 - **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.
 - **`claimCoordinator.ts` / `useClaimCoordinator.ts`:** Client-side lease heartbeat + auto-claim coordination bound to the operator's agent identity.
 - **`authToken.ts`:** Browser-local storage/wiring of the operator's API token.
-- **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
+- **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, `RECLAIM_INTRO` / `RECLAIM_FLOW`, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
 - **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `about`, and `responsive` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard.
 
 ---

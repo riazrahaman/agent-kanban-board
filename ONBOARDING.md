@@ -149,9 +149,14 @@ lease-based and auto-reclaimed by the background reaper if not renewed before th
 | Method | Endpoint | Auth |
 |---|---|---|
 | `GET` / `POST` | `/api/tasks` | read open / write auth |
+| `POST` | `/api/tasks/purge` | auth + privileged role |
 | `GET` / `PATCH` | `/api/tasks/:id` | read open / write auth+role |
+| `DELETE` | `/api/tasks/:id` | auth + privileged role |
 | `POST` | `/api/tasks/:id/claim` | auth + contention |
+| `POST` | `/api/tasks/:id/heartbeat` | auth |
 | `POST` | `/api/tasks/:id/logs` | auth |
+| `GET` | `/api/tasks/:id/issues` | open |
+| `POST` | `/api/tasks/:id/issues` | auth |
 | `POST` | `/api/tasks/next-claim` | auth |
 | `GET` | `/api/projects` | open |
 | `GET` | `/api/tasks/archive` | open |

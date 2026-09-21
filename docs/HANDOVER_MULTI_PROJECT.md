@@ -2,15 +2,16 @@
 
 **Project:** `agent-kanban-board`
 **Authoritative path:** `~/Documents/agend-grid/agent-kanban-board`
-**Working branch:** `feat/client-coordinator-phase`
+**Working branch:** merged to `main` (the former `feat/client-coordinator-phase` branch is retired)
 **Roadmap:** `docs/MULTI_PROJECT_ENHANCEMENT_RECOMMENDATIONS.md`
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
 **Merged:** `main` is at the `--no-ff` merge `91c8df0` and pushed to `origin`.
 **Remaining:** nothing blocking. UI verified in a browser; known gaps in §9.
-**Last verified:** server 123/123, client 26/26, `tsc` + `vite build` green.
+**Last verified:** server 196/196, client 68/68, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
-> This document is a resume point. Read §4 "Next steps" first, then §7 (contracts you
+> This document is partly a frozen historical record; the live state is v2.3.3 on `main`.
+> Read §4 "Next steps" first, then §7 (contracts you
 > must not break) and §8 (defects already found — do not reintroduce them). Do not
 > assume anything is done from the summary alone — run the test commands in §6 to
 > confirm before building further.
@@ -37,7 +38,7 @@
 
 ## 2. Git state
 
-Branch `feat/client-coordinator-phase` (main is clean — `--no-ff` merge planned):
+Historical branch `feat/client-coordinator-phase` (all commits below are ancestors of `main`):
 
 ```
 00ef625 fix(u8b): clear stale board error; poll the portfolio instead of guessing
@@ -58,7 +59,7 @@ e9d54b2 fix(u1): archive sweep persists before in-memory mutation (KB-05)
 a31fda5 feat: project namespacing + per-project archiving (§2.1, §2.8)
 ```
 
-The working tree is clean and nothing is staged. `main` is still untouched.
+The working tree was clean and nothing staged at this handover; the listed work is merged into `main`.
 
 ---
 
@@ -171,12 +172,7 @@ Per the roadmap's §4 non-goals, `withMutationLock` hardening (file/Redis/DB loc
 WebSocket push channel are out of scope for this pass. Do not implement unless asked.
 
 ### 4.6 Merge
-When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
-```
-/opt/homebrew/bin/git checkout main
-/opt/homebrew/bin/git merge --no-ff feat/client-coordinator-phase -m "merge: multi-project enhancements §2.2-§2.10"
-```
-`main` must stay clean until then.
+The `--no-ff` merge was completed; the listed commits are ancestors of `main`.
 
 ---
 
@@ -222,11 +218,12 @@ When §2.2/§2.3/§2.5(verify)/§2.9/§2.10 are all green:
 cd "$(git rev-parse --show-toplevel)"
 # server
 cd server && node --check store.js && node --test
-# expected: 123 pass, 0 fail
+# expected: 196 pass across 33 suites / 23 files, 0 fail
 
 cd ../client
 # client tests
-node --test 'src/**/*.test.mjs'      # expected: 26 pass, 0 fail
+npx tsc -b                           # expected: exit 0
+npm test                             # expected: 68 pass, 0 fail
 # build
 npm run build                        # expected: tsc clean, vite build ok
 
@@ -417,10 +414,10 @@ Each has a regression test that was verified to fail without its fix.
   A genuine unmount mid-claim can still orphan one claim — the request is already on the
   wire — but the page is going away in that case. An `AbortController` per tick would
   narrow it further without closing it, since the server may already have committed.
-- **CORS allows exactly one origin** (`KANBAN_ALLOWED_ORIGIN`, default
-  `http://localhost:5173`). Serving the client anywhere else — including a `vite preview`
-  on 5174 — fails every request with an opaque "Failed to fetch" in the UI. Worth
-  checking first when the board loads empty.
+- **CORS allows an explicit comma-separated origin allow-list** (`KANBAN_ALLOWED_ORIGIN`,
+  default `http://localhost:5173`); wildcard `*` is rejected. Serving the client from an
+  origin not on that list — including a `vite preview` on 5174 — fails requests with an
+  opaque "Failed to fetch" in the UI. Worth checking first when the board loads empty.
 - **§2.3 isolates writes, not reads.** With `KANBAN_PROJECT_TOKENS` configured every GET
   stays open, including unscoped `GET /api/metrics`, which aggregates active-agent names
   and cycle times across all projects in one response. This matches the pre-existing
@@ -430,4 +427,4 @@ Each has a regression test that was verified to fail without its fix.
   oversight to patch silently.
 - **`stash@{0}` is resolved** — rejected and dropped, preserved as the tag
   `wip/rejected-camelcase-project-summaries`. See §5.
-- **`main` is untouched.** The `--no-ff` merge in §4.6 has not been run.
+- **`main` includes the completed merge.** The `--no-ff` merge in §4.6 has been run.
