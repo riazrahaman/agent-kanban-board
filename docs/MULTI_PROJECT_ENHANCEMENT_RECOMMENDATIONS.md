@@ -1,6 +1,6 @@
 # Agent Kanban Board — Multi-Project Enhancement Recommendations
 
-**Status:** Proposed
+**Status:** Historical implementation record — §2.1–§2.10 shipped; §2.11 (distributed lock) and §2.12 (WebSocket push channel) remain future scope.
 **Scope:** Enable multiple parallel projects / agent swarms to safely share a single Kanban server instance.
 **Author context:** Produced from a code review of `server/store.js`, `server/server.js`, `server/routes/tasks.js`, `server/middleware/auth.js`, `client/src/App.tsx`, and `client/src/types.ts` on the current `main` branch.
 
