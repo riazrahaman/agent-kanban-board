@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '196',
+    value: '203',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -110,6 +110,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Role-gated transitions', code: 'store.js · canRoleTransition' },
   { name: 'Lease ownership + heartbeat', code: 'store.js · applyClaim, renewLease' },
   { name: 'Background lease reaper', code: 'store.js · reapExpiredClaims, startReaper' },
+  { name: 'Orphan grace window', code: 'store.js · getOrphanGraceMs (KANBAN_ORPHAN_GRACE_MS)' },
   { name: 'Process-local mutation lock', code: 'store.js · withMutationLock (ADR-003)' },
   { name: 'Pluggable persistence', code: 'store.js · JsonStorage | GitYamlStorage' },
   { name: 'Atomic writes + git audit trail', code: 'store.js · writeAtomic, serializeCard' },
@@ -149,7 +150,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'How will I know when an agent dies?',
-    a: 'The reaper returns the task to BACKLOG and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
+    a: 'The reaper returns the task to BACKLOG and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. A held lease dies the moment it stops being renewed; an ownerless active card is only normalized once a grace window has passed. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
   },
 ]
 
@@ -307,7 +308,7 @@ export const SAFETY_LAYERS: SafetyLayer[] = [
   {
     label: 'C',
     name: 'Lease ownership',
-    detail: 'A live lease held by another owner → 409 already-claimed; an expired or orphaned lease is reaped back to BACKLOG.',
+    detail: 'A live lease held by another owner → 409 already-claimed; an expired lease is reaped immediately, while an ownerless active card waits out a grace window (KANBAN_ORPHAN_GRACE_MS, default = the lease TTL) before it is normalized.',
   },
 ]
 

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,43 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.4] — 2026-09-21
+
+### Fixed
+
+- **Reclaim false-positives.** Two features added days apart contradicted each other:
+  per-stage ownership (`c75a881`) deliberately made `patchTask` write only `stage_owners`
+  and leave `assigned_agent` as the lease holder, while orphan normalization (`a0b8980`)
+  then declared any *ownerless active* task "structurally stuck, always reclaim" with no
+  grace period. The documented orchestrator flow enters a stage with a status-only `PATCH`,
+  so every card driven into `BUILDING`/`IN_REVIEW`/`IN_TEST` was reverted to `BACKLOG` by
+  the next 30 s sweep (one live card was reclaimed 16 s after a write). Two changes:
+  - **Orphan grace window** — `KANBAN_ORPHAN_GRACE_MS` (default = `KANBAN_CLAIM_TTL_MS`,
+    i.e. 5 min): an ownerless active task is only normalized once it has been untouched
+    for the window, anchored on `updated`, so any later write resets the clock. `0`
+    restores immediate reaping. A genuinely abandoned orphan is still cleaned up.
+  - **Holder progress-log extends the lease** — `appendLog` now renews `claim_expires_at`
+    when the caller is the lease holder. Headless builders/reviewers report progress with
+    `POST /logs` and never call `/heartbeat` (only the browser client does, every 5 s), so
+    long builds were losing their lease at the TTL and being reaped mid-flight. A
+    non-holder log never extends or steals the lease.
+
+### Changed
+
+- **`riaz` orchestration skill v1.2.1** (outside this repo, at
+  `~/.agents/skills/riaz/SKILL.md`) — Stage B now enters an active stage by **claiming**
+  (`POST /claim` writes owner + lease and promotes `BACKLOG → BUILDING`) instead of a
+  status-only `PATCH`; added an explicit heartbeat cadence (every TTL/2) and a
+  lease-loss recovery rule, and clarified that `expected_version` guards the CAS check
+  but not the state machine.
+
+### Quality gates
+
+- Server suite 203 tests / 33 suites / 0 fail (was 196); new coverage in
+  `kanban.orphan.test.js` (grace window, clock reset, opt-out) and `kanban.lease.test.js`
+  (holder vs non-holder log). Falsification confirmed the new tests fail without the fixes.
+- Client suite 68 tests / 0 fail; `tsc -b` and the production build are clean.
 
 ## [2.3.3] — 2026-09-21
 

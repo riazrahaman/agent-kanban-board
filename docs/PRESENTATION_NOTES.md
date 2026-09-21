@@ -148,7 +148,7 @@ honest boundary of the current system.
 
 ## 7. Engineering credibility
 
-- **Server: 196 passing cases across 33 suites / 23 files.** *(Verified: `node --test`
+- **Server: 203 passing cases across 33 suites / 23 files.** *(Verified: `node --test`
   in `server/`.)*
 - **Client: 68 passing cases across 10 files.** *(Verified: `npm test` in `client/`.)*
 - **CI** (`.github/workflows/ci.yml`): runs on every push/PR to `main` across a
@@ -310,11 +310,11 @@ Images live in `docs/presentation-images/`.
 
 | Claim | Value | How to verify |
 |---|---|---|
-| Server tests | **196 passing** (33 suites, 23 files) | `cd server && node --test` |
+| Server tests | **203 passing** (33 suites, 23 files) | `cd server && node --test` |
 | Client tests | **68 passing** (10 files) | `cd client && npm test` |
 | CI matrix | Node **20.x + 22.x** | `.github/workflows/ci.yml` |
 | ADRs | 3 | `docs/decisions/` |
 | Live task count at capture | 51 (Backlog 10 / Done 41) | live board header |
 
-> **Docs status:** the current figures are 196 server tests and 68 client tests, and
+> **Docs status:** the current figures are 203 server tests and 68 client tests, and
 > they are in sync with the README.
