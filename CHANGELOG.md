@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,25 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.5] — 2026-09-21
+
+### Changed
+
+- **Documentation sync for the 2.3.4 reclaim fix.** The standalone one-pager
+  (`docs/Agent_Kanban_Board_OnePager_v5.html`) was left behind by the 2.3.4 release: its nav badge
+  still read `v2.3.3` and its proof strip still claimed **196** server tests. Both are corrected to
+  `v2.3.5` and **203**.
+- **`ONBOARDING.md` reclaim wording corrected.** It described an ownerless active task as
+  normalized "the same way" as an expired lease, i.e. immediately. That is no longer true — the
+  orphan grace window (`KANBAN_ORPHAN_GRACE_MS`, default = the lease TTL) now applies. The section
+  says so explicitly, including that a status-only `PATCH` into an active stage is not instantly
+  reverted.
+
+### Quality gates
+
+- Server suite 203 tests / 33 suites / 0 fail; client suite 68 tests / 0 fail; `tsc -b` and the
+  production build are clean. Documentation-only change — no runtime code was touched.
 
 ## [2.3.4] — 2026-09-21
 
