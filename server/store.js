@@ -445,7 +445,11 @@ export class GitYamlStorage {
       project: this.ownedProject,
       title: task.title,
       status: task.status,
-      branch: task.branch || `task/${task.id}`,
+      // No fabrication: a branch is a *claim about a real git ref*, so an
+      // absent value must round-trip as null rather than being invented here
+      // (the notifier renders this field to a human). An empty/whitespace-only
+      // string is treated as absent, matching the notifier's '' omission rule.
+      branch: typeof task.branch === 'string' && task.branch.trim() ? task.branch : null,
       depends_on: task.depends_on || [],
       round: task.round,
       issues: task.issues || [],
@@ -1388,7 +1392,10 @@ export async function createTask(data = {}, projectArg) {
       description: escapeHtml(data.description || ''),
       status,
       priority: data.priority || 'medium',
-      branch: data.branch || `task/${data.id}`,
+      // Same rule as serializeCard: never invent a branch. This site is the
+      // one that leaked a *stale sibling's* value on the orchestrator path, so
+      // it must read data.branch only — never a neighbouring task's branch.
+      branch: typeof data.branch === 'string' && data.branch.trim() ? data.branch : null,
       depends_on: Array.isArray(data.depends_on) ? data.depends_on : [],
       round: data.round,
       issues: Array.isArray(data.issues) ? data.issues : [],
