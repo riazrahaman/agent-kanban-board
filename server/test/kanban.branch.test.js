@@ -272,4 +272,205 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
     );
     assert.ok(text2.includes('<b>Branch:</b> feat/paginate'), 'a real branch is still surfaced');
   });
+
+  // ========================================================================
+  // Cycle 2: the PATCH path must apply the SAME rule as the other two.
+  //
+  // Previously the allow-list loop assigned `candidate[key] = patch[key]` with
+  // no normalisation, so `""`, `"   "` and `123` were served back by REST and
+  // persisted verbatim while the git YAML card (serializeCard) showed null —
+  // the same task reporting different branches per backend. All three sites now
+  // call the one exported `toBranch`.
+  // ========================================================================
+
+  /** Asserts a task's branch is `expected` at every observable layer. */
+  async function assertBranchEverywhere(id, expected, label) {
+    const mem = store.getTask(id);
+    assert.equal(mem.branch, expected, `${label}: in-memory`);
+
+    const read = await jsonRequest(baseUrl, `/api/tasks/${id}`, { headers: headers() });
+    assert.equal(read.response.status, 200);
+    assert.equal(read.body.branch, expected, `${label}: GET response`);
+
+    const raw = await readFile(dataFile, 'utf8');
+    const persisted = JSON.parse(raw).tasks.find((t) => t.id === id);
+    assert.equal(persisted.branch, expected, `${label}: tasks.json on disk`);
+  }
+
+  async function patchBranch(id, value, label) {
+    const res = await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+      method: 'PATCH', headers: headers(), body: JSON.stringify({ branch: value }),
+    });
+    assert.equal(res.response.status, 200, `${label}: PATCH succeeds`);
+    return res;
+  }
+
+  it('11. PATCH branch:"" clears to null in the response, memory and on GET', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(),
+      body: taskBody('br-p-empty', 'Patch empty', { branch: 'feat/start' }),
+    });
+    assert.equal(store.getTask('br-p-empty').branch, 'feat/start');
+
+    const res = await patchBranch('br-p-empty', '', 'empty');
+    assert.equal(res.body.branch, null, 'PATCH response does not echo ""');
+    await assertBranchEverywhere('br-p-empty', null, 'empty');
+  });
+
+  it('12. PATCH branch:"   " clears to null in the response, memory and on GET', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(),
+      body: taskBody('br-p-blank', 'Patch blank', { branch: 'feat/start' }),
+    });
+
+    const res = await patchBranch('br-p-blank', '   ', 'blank');
+    assert.equal(res.body.branch, null, 'whitespace-only is not served back raw');
+    assert.notEqual(res.body.branch, '   ');
+    await assertBranchEverywhere('br-p-blank', null, 'blank');
+    const raw = await readFile(dataFile, 'utf8');
+    assert.doesNotMatch(raw, /"branch":\s*"[\s]*"/, 'no whitespace-only branch persisted');
+  });
+
+  it('13. PATCH branch:123 clears to null (a non-string is not a ref)', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(),
+      body: taskBody('br-p-num', 'Patch numeric', { branch: 'feat/start' }),
+    });
+
+    const res = await patchBranch('br-p-num', 123, 'numeric');
+    assert.equal(res.body.branch, null, 'PATCH response does not echo the number');
+    assert.notEqual(res.body.branch, 123);
+    await assertBranchEverywhere('br-p-num', null, 'numeric');
+    // `123` used to land in tasks.json as a JSON *number*, violating the
+    // client's declared `branch?: string`.
+    const raw = await readFile(dataFile, 'utf8');
+    assert.doesNotMatch(raw, /"branch":\s*123/, 'no numeric branch persisted');
+  });
+
+  it('14. PATCH branch:null stays null (an explicit clear is idempotent)', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(),
+      body: taskBody('br-p-null', 'Patch null', { branch: 'feat/start' }),
+    });
+
+    const res = await patchBranch('br-p-null', null, 'null');
+    assert.equal(res.body.branch, null);
+    await assertBranchEverywhere('br-p-null', null, 'null');
+
+    // Clearing an already-cleared value is a no-op, not an error.
+    const again = await patchBranch('br-p-null', null, 'null again');
+    assert.equal(again.body.branch, null);
+    await assertBranchEverywhere('br-p-null', null, 'null again');
+  });
+
+  it('15. PATCH branch:"fix/real" is preserved verbatim at every layer', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('br-p-real', 'Patch real'),
+    });
+    assert.equal(store.getTask('br-p-real').branch, null, 'starts null');
+
+    const res = await patchBranch('br-p-real', 'fix/real', 'real');
+    assert.equal(res.body.branch, 'fix/real', 'a real ref is set');
+    await assertBranchEverywhere('br-p-real', 'fix/real', 'real');
+
+    // And it survives a reload from disk.
+    await store.loadStore();
+    assert.equal(store.getTask('br-p-real').branch, 'fix/real', 'survives reload');
+  });
+
+  it('16. PATCH branch:"  fix/padded  " is kept VERBATIM, untrimmed (trim rule)', async () => {
+    // Documented decision: a branch is the caller's exact claim about a ref, so
+    // the only transformation `toBranch` performs is collapsing *blank* values
+    // to null. Real (non-blank) values are never rewritten — padding included.
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('br-p-pad', 'Patch padded'),
+    });
+
+    const res = await patchBranch('br-p-pad', '  fix/padded  ', 'padded');
+    assert.equal(res.body.branch, '  fix/padded  ', 'padding is not silently trimmed');
+    await assertBranchEverywhere('br-p-pad', '  fix/padded  ', 'padded');
+    assert.equal(store.getTask('br-p-pad').branch.trim(), 'fix/padded', 'the ref itself is intact');
+  });
+
+  it('17. the three write paths AGREE for a blank branch (create, PATCH, both sinks)', async () => {
+    // Same task, every path: create with a blank branch, PATCH it blank again,
+    // then read the value through the in-memory/JSON sink and the git YAML card
+    // (serializeCard). All four reads must be identical — this is the property
+    // that was violated when only the PATCH path skipped normalisation.
+    const created = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(),
+      body: taskBody('br-agree', 'Agreement', { branch: '   ' }),
+    });
+    assert.equal(created.body.branch, null, 'create path normalises the blank');
+
+    const patched = await patchBranch('br-agree', '   ', 'agree');
+    assert.equal(patched.body.branch, null, 'PATCH path normalises the blank');
+
+    const memoryValue = store.getTask('br-agree').branch;
+    const get = await jsonRequest(baseUrl, '/api/tasks/br-agree', { headers: headers() });
+    const jsonValue = JSON.parse(await readFile(dataFile, 'utf8'))
+      .tasks.find((t) => t.id === 'br-agree').branch;
+
+    // The git card is produced from the very same task object via serializeCard.
+    const gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-branch-agree-'));
+    const gitStorage = new store.GitYamlStorage(gitDir, { autoCommit: false });
+    await gitStorage.saveTask(store.getTask('br-agree'));
+    const cardValue = yaml.parse(await readFile(path.join(gitDir, 'br-agree.yml'), 'utf8')).branch;
+    await rm(gitDir, { recursive: true, force: true });
+
+    const observed = { memoryValue, patchResponse: patched.body.branch, jsonValue, cardValue };
+    assert.deepEqual(
+      Object.values(observed), [null, null, null, null],
+      `all paths agree on null: ${JSON.stringify(observed)}`
+    );
+    assert.equal(get.body.branch, null, 'GET agrees too');
+
+    // Same agreement check on a real value, so agreement is not just "null wins".
+    await patchBranch('br-agree', 'feat/agreed', 'agree real');
+    const gitDir2 = await mkdtemp(path.join(os.tmpdir(), 'kanban-branch-agree2-'));
+    const gitStorage2 = new store.GitYamlStorage(gitDir2, { autoCommit: false });
+    await gitStorage2.saveTask(store.getTask('br-agree'));
+    const cardReal = yaml.parse(await readFile(path.join(gitDir2, 'br-agree.yml'), 'utf8')).branch;
+    await rm(gitDir2, { recursive: true, force: true });
+    assert.equal(store.getTask('br-agree').branch, 'feat/agreed');
+    assert.equal(cardReal, 'feat/agreed', 'real values agree across sinks');
+  });
+
+  it('18. toBranch is the single shared rule (unit table)', () => {
+    // One exported definition, three call sites — the regression was three
+    // private rules that could drift. Pin the predicate itself.
+    const cases = [
+      [null, null], [undefined, null], ['', null], ['   ', null], ['\t\n', null],
+      [123, null], [0, null], [true, null], [false, null], [[], null], [{}, null],
+      [['feat/x'], null], [{ branch: 'feat/x' }, null],
+      ['feat/x', 'feat/x'], ['fix/real', 'fix/real'], ['  fix/padded  ', '  fix/padded  '],
+    ];
+    for (const [input, expected] of cases) {
+      assert.equal(
+        store.toBranch(input), expected,
+        `toBranch(${JSON.stringify(input)}) === ${JSON.stringify(expected)}`
+      );
+    }
+  });
+
+  it('19. a whitespace-only PATCH never renders a blank Branch row to a human', async () => {
+    // notifier.line() only guards `=== ''`, so it cannot save us: the value must
+    // already be null by the time it reaches the notifier.
+    const cfg = notifierConfig({
+      KANBAN_TELEGRAM_BOT_TOKEN: 'BOT-TOKEN-SECRET',
+      KANBAN_TELEGRAM_CHAT_ID: '-5349084979',
+    });
+    const res = await patchBranch('br-p-blank', '   ', 'notifier blank');
+    assert.equal(res.body.branch, null);
+    const task = store.getTask('br-p-blank');
+    const text = formatReclaimMessage(
+      {
+        kind: 'reclaimed', reason: 'lease_expired', project: 'default',
+        task, prev: { ...task, assigned_agent: 'builder-1', agent_logs: [] },
+      },
+      cfg
+    );
+    assert.ok(!/<b>Branch:<\/b>\s*$/m.test(text), 'no Branch row with an empty value');
+    assert.doesNotMatch(text, /<b>Branch:<\/b>\s*<\/?/, 'no dangling Branch row');
+  });
 });

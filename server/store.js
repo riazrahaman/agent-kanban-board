@@ -206,6 +206,31 @@ export function isValidTaskId(id) {
 }
 
 /**
+ * Canonical normaliser for `task.branch` — the ONE definition of the rule,
+ * shared by all three write paths (GitYamlStorage.serializeCard, createTask and
+ * the patchTask allow-list). Before this existed the two create/serialize sites
+ * coerced blanks to `null` while the PATCH path assigned verbatim, so the same
+ * task could report `"   "` / `123` over REST and persist it, yet read back as
+ * `null` from the git YAML card.
+ *
+ * A branch is a *claim about a real git ref* that the reclaim notifier renders
+ * to a human, so an unusable value must round-trip as `null` rather than being
+ * invented (`task/<id>`) or served back raw. The rule:
+ *
+ *   - a string with non-whitespace content is kept **verbatim, untrimmed**: a
+ *     ref is the caller's exact claim, so `'  fix/padded  '` stays byte-for-byte
+ *     as sent. Decided deliberately — trimming here would silently rewrite real
+ *     caller data, and all three paths already agreed on preserving padding;
+ *     collapsing the *blank* cases to `null` is the essential invariant.
+ *   - everything else — absent, `null`, `''`, whitespace-only, and non-strings
+ *     (`123` also violates the client's declared `branch?: string`) — is
+ *     `null`.
+ */
+export function toBranch(value) {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/**
  * The implicit project that single-project deployments live in. Its storage
  * reuses the legacy location (KANBAN_DATA_FILE / flat git root) so a single
  * project deployment is byte-for-byte unchanged.
@@ -447,9 +472,10 @@ export class GitYamlStorage {
       status: task.status,
       // No fabrication: a branch is a *claim about a real git ref*, so an
       // absent value must round-trip as null rather than being invented here
-      // (the notifier renders this field to a human). An empty/whitespace-only
-      // string is treated as absent, matching the notifier's '' omission rule.
-      branch: typeof task.branch === 'string' && task.branch.trim() ? task.branch : null,
+      // (the notifier renders this field to a human). Blank/whitespace-only and
+      // non-string values are treated as absent — see `toBranch`, the single
+      // shared rule used by all three write paths.
+      branch: toBranch(task.branch),
       depends_on: task.depends_on || [],
       round: task.round,
       issues: task.issues || [],
@@ -1392,10 +1418,11 @@ export async function createTask(data = {}, projectArg) {
       description: escapeHtml(data.description || ''),
       status,
       priority: data.priority || 'medium',
-      // Same rule as serializeCard: never invent a branch. This site is the
-      // one that leaked a *stale sibling's* value on the orchestrator path, so
-      // it must read data.branch only — never a neighbouring task's branch.
-      branch: typeof data.branch === 'string' && data.branch.trim() ? data.branch : null,
+      // Same rule as serializeCard — the shared `toBranch` normaliser. This
+      // site is the one that leaked a *stale sibling's* value on the
+      // orchestrator path, so it must read data.branch only — never a
+      // neighbouring task's branch.
+      branch: toBranch(data.branch),
       depends_on: Array.isArray(data.depends_on) ? data.depends_on : [],
       round: data.round,
       issues: Array.isArray(data.issues) ? data.issues : [],
@@ -1513,6 +1540,14 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       if (key in patch) {
         if ((key === 'title' || key === 'description') && typeof patch[key] === 'string') {
           candidate[key] = escapeHtml(patch[key]);
+        } else if (key === 'branch') {
+          // The third write path: same shared rule as createTask/serializeCard,
+          // so a blank, whitespace-only or non-string branch cannot be served
+          // back by REST or persisted to either sink. `branch: null` stays null
+          // (an explicit clear) and a real ref is set verbatim. escapeHtml is
+          // deliberately NOT applied here — a branch is a ref, not prose, and
+          // has never been HTML-escaped on any path.
+          candidate[key] = toBranch(patch[key]);
         } else {
           candidate[key] = patch[key];
         }
