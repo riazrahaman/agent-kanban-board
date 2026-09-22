@@ -218,7 +218,7 @@ The `--no-ff` merge was completed; the listed commits are ancestors of `main`.
 cd "$(git rev-parse --show-toplevel)"
 # server
 cd server && node --check store.js && node --test
-# expected: 203 pass across 33 suites / 23 files, 0 fail
+# expected: 222 pass across 34 suites / 24 files, 0 fail
 
 cd ../client
 # client tests

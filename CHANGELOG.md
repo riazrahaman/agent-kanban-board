@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,53 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.6] — 2026-09-22
+
+### Fixed
+
+- **`branch` no longer fabricated as `task/<id>`.** An absent branch was invented as a ref
+  that does not exist in git, and orchestrator-created tasks could silently inherit a *stale
+  branch belonging to a previously created task*. Because `branch` is rendered to a human in
+  reclaim alerts, a lease-expiry notification could advertise a branch that does not exist, or
+  someone else's branch. Both sites are now pinned to the caller's own value, `null` when absent.
+- **The PATCH path skipped normalisation.** `createTask` and `serializeCard` coerced blanks to
+  `null` while the `patchTask` allow-list assigned verbatim, so the *same* task could report
+  `"   "` or `123` over REST and persist it, yet read back as `null` from the git YAML card. All
+  three write paths now call one shared exported `toBranch` so they cannot drift apart again.
+
+  The rule, now a single definition in `server/store.js`: a string with non-whitespace content is
+  kept **verbatim, untrimmed** (a ref is the caller's exact claim — `"  fix/padded  "` stays
+  byte-for-byte as sent); everything else — absent, `null`, `""`, whitespace-only, and non-strings
+  such as `123` — becomes `null`. `escapeHtml` is deliberately not applied to `branch`: it is a
+  ref, not prose, and has never been HTML-escaped on any path.
+
+- **Reclaim alerts omit the Branch row entirely when there is no branch**, rather than printing a
+  dangling label.
+
+### Added
+
+- **Branch-integrity regression guard** (`server/test/kanban.branch.test.js`, 19 tests). It pins
+  the invariant at every layer that matters — the HTTP API, both persisted sinks (JSON + git YAML
+  card), and the notifier text a human actually reads — across hostile inputs including `""`,
+  `"   "`, `"\t"`, `123`, `0`, `false`, `[]`, `{}`, and a `null`-vs-omitted distinction. The
+  git-card cases run with `autoCommit: false`, so the suite stays hermetic.
+
+### Known limitation
+
+- **Existing records are not migrated.** Normalisation happens on *write*, not on *read*: a card
+  written by an older build keeps its dirty value until something rewrites it. A pre-fix card
+  holding `branch: "   "` or a fabricated `task/<id>` is still served verbatim by `GET`, and can
+  still render a blank `Branch:` row in a reclaim alert. On a git-backed board an unrelated write
+  re-serialises that card, so its card value becomes `null` while memory/REST still hold the raw
+  value. Cleaning is a data operation, not a code one — patch the card (`PATCH {branch: null}`) or
+  migrate the sink. Treat a branch as fabricated only when it exactly equals `task/` + **that
+  task's own id**; a looser "starts with `task/`" rule destroys real refs.
+
+### Quality gates
+
+- Server suite **222 tests / 34 suites / 0 fail**; client suite 68 tests / 0 fail; `make sec`
+  clean; `tsc -b` and the production build are clean. Verified on Node 20.x and 22.x via CI.
 
 ## [2.3.5] — 2026-09-21
 

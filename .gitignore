@@ -9,3 +9,6 @@ tasks.json
 
 # Local agent tooling config, not part of the project
 opencode.json
+
+# Riaz protocol config (contains tokens) — never commit
+.opencode/
