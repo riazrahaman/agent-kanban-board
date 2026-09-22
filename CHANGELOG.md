@@ -16,6 +16,37 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [Unreleased]
+
+### Added
+
+- **Version-bump guard in CI** (`scripts/check-version-bump.sh`). `kanban.version.test.js`
+  asserts that the current version is *internally consistent* — manifests agree, a CHANGELOG
+  section exists for it, docs declare the same number — but it cannot see the *previous*
+  version, so a user-visible change can ship completely unbumped and stay green. That is exactly
+  how the branch-field fix reached `main` while the live board still reported `2.3.5`. Answering
+  "has this changed since the base branch?" needs git history, so the rule now lives in the
+  workflow, at the gate that blocks the merge. The job checks out with `fetch-depth: 0` so the
+  merge base is reachable, and runs before dependency install so a missing bump fails fast.
+
+  Scope is deliberate: `server/**/*.js` (excluding `server/test/`) and `client/src/**`
+  (excluding tests) require a bump; docs-only, test-only, tooling-only and manifest-only changes
+  do not. A naive "any commit must bump" rule would fail most of this repo's history — most of
+  `v2.3.0`–`v2.3.6` were documentation syncs — and would be disabled within a week.
+
+- **`README.md` → Releasing** documents the guard, its scope, and how to run it locally
+  (`./scripts/check-version-bump.sh origin/main`).
+
+### Quality gates
+
+- Guard verified against 13 scenarios in a scratch clone: source-change-without-bump fails;
+  source-change-with-bump passes; docs-only, test-only (server and client), tooling-only,
+  manifest-only and no-change all pass; nested runtime dirs (`server/routes/`,
+  `server/middleware/`) and `server/utils/` correctly count as source; a missing base ref and a
+  missing argument each exit 2 with a clear message rather than a silent pass.
+- No runtime code changed in this release. Server suite 222 tests / 34 suites / 0 fail; client
+  68 / 0 fail; `make sec` clean; `tsc -b` and the production build clean.
+
 ## [2.3.6] — 2026-09-22
 
 ### Fixed

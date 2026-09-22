@@ -240,6 +240,21 @@ code:
 4. Merge the feature branch into `main` with `--no-ff`, tag the release
    (`git tag -a vX.Y.Z -m "..."`), and push both the commit and the tag.
 
+CI enforces step 1: `scripts/check-version-bump.sh` fails the build when
+user-visible source changed but `server/package.json` still carries the base
+branch's version. It is scoped deliberately — docs-only, test-only and
+tooling-only changes do **not** require a bump, since those are not user-visible
+behaviour. `kanban.version.test.js` cannot catch a missing bump (it only asserts
+that the current version is internally consistent), which is why the rule lives
+in the workflow.
+
+Run it locally against your base branch:
+
+```sh
+git fetch origin main
+./scripts/check-version-bump.sh origin/main
+```
+
 ---
 
 ## License
