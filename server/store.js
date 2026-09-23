@@ -124,9 +124,14 @@ export function setNowFn(fn) {
 // ============================================================================
 function getClaimTtlMs() {
   const raw = process.env.KANBAN_CLAIM_TTL_MS;
-  if (raw === undefined || raw === '') return 300000;
+  // Default raised 300000 -> 600000 (v2.3.11): headless builders only POST /logs
+  // (which extends the lease since v2.3.4) and the browser heartbeats every 5s,
+  // but measured log gaps on the production board showed median 46s / p95 315s,
+  // so a 5-minute TTL reaped live work 6% of the time; 10 minutes cuts that to
+  // ~2.6% without meaningfully delaying recovery of genuinely dead agents.
+  if (raw === undefined || raw === '') return 600000;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 300000;
+  return Number.isFinite(n) && n > 0 ? n : 600000;
 }
 
 function getReapIntervalMs() {
@@ -146,15 +151,19 @@ function getReapIntervalMs() {
  * keeps `assigned_agent` as the lease holder rather than reassigning it — so
  * reaping it on the very next sweep destroys a card that was just written to.
  * The grace window is anchored on `updated`, so any later write (a log, a
- * transition) resets it. Defaults to the claim TTL: an orphan is only
- * "structurally stuck" once it has been untouched at least as long as a lease
- * would have lasted. `0` disables the grace (reap orphans immediately).
+ * transition) resets it. Defaults to a FIXED 5-minute window, deliberately
+ * DECOUPLED from the claim TTL (v2.3.11): deriving it from `getClaimTtlMs()`
+ * meant raising the TTL (300s -> 600s) silently doubled how long an ownerless
+ * active card could sit unowned before being normalized. The two knobs answer
+ * different questions — "how long may a lease run idle" vs "how long may a
+ * nobody-owned card sit untouched" — so they no longer share a default.
+ * `0` disables the grace (reap orphans immediately).
  */
 function getOrphanGraceMs() {
   const raw = process.env.KANBAN_ORPHAN_GRACE_MS;
-  if (raw === undefined || raw === '') return getClaimTtlMs();
+  if (raw === undefined || raw === '') return 300000;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : getClaimTtlMs();
+  return Number.isFinite(n) && n >= 0 ? n : 300000;
 }
 
 export function isReaperEnabled() {
@@ -1580,6 +1589,20 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     candidate.version = nextVersionFor(task);
       // expected_version is a request-time guard only; never persist it.
     delete candidate.expected_version;
+
+    // §2.4: ANY committed write by the lease HOLDER is proof of life, so extend
+    // the lease — not only POST /logs. A holder that PATCHes a status transition
+    // (e.g. builder -> IN_REVIEW) previously kept the original claim clock, so a
+    // long review could start with a nearly-expired lease. Same holder-only rule
+    // as appendLog: any agent may patch fields on a task, so a non-holder must
+    // never inherit or extend someone else's claim.
+    if (
+      candidate.assigned_agent &&
+      candidate.assigned_agent === caller.agent_id &&
+      candidate.claim_expires_at
+    ) {
+      candidate.claim_expires_at = isoFromMs(nowFn() + getClaimTtlMs());
+    }
 
     const storage = getStorage(candidate.project);
     await storage.saveTask(candidate, projectBucket(candidate.project, candidate));

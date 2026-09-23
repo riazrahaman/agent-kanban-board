@@ -421,3 +421,53 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
     assert.equal(store.getTask('lease-log-3').assigned_agent, 'worker-b');
      });
 });
+
+// --- v2.3.11 lease hardening ----------------------------------------------
+describe('lease hardening (v2.3.11)', () => {
+  it('15. the default claim TTL is 10 minutes (raised from 5)', async () => {
+    delete process.env.KANBAN_CLAIM_TTL_MS;
+    // Freeze the clock for the duration of the probe, then restore a
+    // wall-clock nowFn (what the outer suite uses anyway).
+    const T0 = 1_000_000;
+    store.setNowFn(() => T0);
+    try {
+      await store.createTask({ id: 'ttl-default', title: 'TTL default', status: 'BACKLOG', round: 1 });
+      await store.claimTask('ttl-default', 'ttl-prober', undefined, {});
+      const t = store.getTask('ttl-default');
+      assert.equal(t.claim_expires_at, new Date(T0 + 600_000).toISOString(),
+        'unset KANBAN_CLAIM_TTL_MS must yield a 600000ms lease');
+    } finally {
+      delete process.env.KANBAN_CLAIM_TTL_MS;
+      store.setNowFn(() => Date.now());
+    }
+  });
+
+  it('16. a status PATCH by the holder extends the lease (proof of life beyond logs)', async () => {
+    await store.createTask({ id: 'lease-patch-1', title: 'Holder patch extends', status: 'BACKLOG', round: 1 });
+    await store.claimTask('lease-patch-1', 'worker-c', undefined, {});
+    // Pin the lease to just about to expire, then PATCH as the holder.
+    await setExpiry('lease-patch-1', Date.now() + 500);
+    const patched = await store.patchTask('lease-patch-1', { status: 'IN_REVIEW' }, {
+      caller: { agent_id: 'worker-c', role: 'builder' },
+    });
+    assert.equal(patched.status, 200);
+    const t = store.getTask('lease-patch-1');
+    const expires = Date.parse(t.claim_expires_at);
+    assert.ok(expires > Date.now() + 500_000, `holder PATCH re-arms the full TTL (got ${expires})`);
+    assert.equal(t.status, 'IN_REVIEW');
+  });
+
+  it('17. a status PATCH by a non-holder never extends or steals the lease', async () => {
+    await store.createTask({ id: 'lease-patch-2', title: 'Stranger patch', status: 'BACKLOG', round: 1 });
+    await store.claimTask('lease-patch-2', 'worker-d', undefined, {});
+    const before = store.getTask('lease-patch-2').claim_expires_at;
+    const patched = await store.patchTask(
+      'lease-patch-2', { title: 'retitled by an outsider' }, {
+        caller: { agent_id: 'stranger-1', role: 'admin' },
+      });
+    assert.equal(patched.status, 200, 'any authorized role may still patch fields');
+    const t = store.getTask('lease-patch-2');
+    assert.equal(t.claim_expires_at, before, 'non-holder PATCH leaves the lease untouched');
+    assert.equal(t.assigned_agent, 'worker-d', 'ownership unchanged');
+  });
+});

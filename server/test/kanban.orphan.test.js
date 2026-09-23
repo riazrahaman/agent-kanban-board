@@ -8,7 +8,10 @@ import * as store from '../store.js';
 
 const TOKEN = 'kanban-orphan-token';
 
-// Mirrors the default of KANBAN_ORPHAN_GRACE_MS (absent => KANBAN_CLAIM_TTL_MS).
+// Mirrors the default of KANBAN_ORPHAN_GRACE_MS — a FIXED 300000ms since
+// v2.3.11, deliberately decoupled from KANBAN_CLAIM_TTL_MS (whose default rose
+// to 600000ms in the same release). These tests run with the env unset, so the
+// fixed default applies; a TTL change can no longer shift this window.
 const ORPHAN_GRACE_MS = 300000;
 
 describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => {

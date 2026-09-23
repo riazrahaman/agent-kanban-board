@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,37 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.11] — 2026-09-24
+
+### Changed
+
+- **Default claim TTL raised 300 s → 600 s** (`getClaimTtlMs`, `KANBAN_CLAIM_TTL_MS`).
+  Measured production evidence: across 2,066 gaps between worker progress logs the
+  median gap was 46 s but the p95 was 315 s, so a 5-minute TTL was reaping leases
+  from live workers mid-build — 6.0% of heartbeating claims at 300 s versus 2.6% at
+  600 s. Headless workers report progress with `POST /logs` and never call
+  `/heartbeat`, so the lease was the only thing keeping the card alive.
+- **Orphan grace decoupled from the TTL** (`getOrphanGraceMs`,
+  `KANBAN_ORPHAN_GRACE_MS`). The grace default was "fall back to the claim TTL",
+  which meant raising the TTL would have silently doubled the orphan window to
+  10 minutes. The orphan grace now defaults to a fixed **300 s** — the two knobs
+  answer different questions (how long a live worker may pause vs. how long an
+  ownerless card may sit untouched).
+- **A holder PATCH now extends the lease** (`patchTask`). Progress logs already
+  extended the holder's lease (`appendLog`); a status transition did not, so a
+  worker that only moved the card (the documented orchestrator flow) could lose
+  its lease mid-flight. Any committed write by the lease holder — log, heartbeat,
+  or status/field PATCH — now re-arms the full TTL. A non-holder write still never
+  extends or steals the lease.
+
+### Quality gates
+
+- Server suite 226 tests / 36 suites / 0 fail (adds `lease hardening (v2.3.11)`:
+  default-TTL probe, holder-PATCH extension, stranger/admin PATCH leaves the lease
+  untouched; `kanban.notify.test.js` pins its own TTL so the default raise cannot
+  drift its 6-minute sweeps). Client suite 77 / 0 fail. `make sec` clean; `tsc -b`
+  and the production build clean.
 
 ## [2.3.10] — 2026-09-23
 
