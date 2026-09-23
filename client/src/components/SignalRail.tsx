@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { Task } from '../types'
 import { computeSignalStats } from '../lib/signalStats'
+import { decodeStored } from '../sanitize'
 
 type Props = {
   tasks: Task[]
@@ -39,9 +40,9 @@ export default function SignalRail({ tasks, onOpen }: Props) {
        for (const log of Array.isArray(task.agent_logs) ? task.agent_logs : []) {
         items.push({
           taskId: task.id,
-          taskTitle: task.title,
+          taskTitle: decodeStored(task.title),
           agentId: log.agent_id,
-          message: log.message,
+          message: decodeStored(log.message),
           timestamp: log.timestamp,
         })
       }

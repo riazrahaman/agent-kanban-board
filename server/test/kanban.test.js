@@ -455,7 +455,10 @@ describe('PI-04 public board hardening', () => {
     );
 
     const taskSheet = await readFile(path.join(REPO_ROOT, 'client/src/components/TaskSheet.tsx'), 'utf8');
-    assert.match(taskSheet, /\{log\.message\}/);
+    // The sheet decodes the stored entities for display (client/src/sanitize.ts
+    // decodeStored) but still renders the result as a JSX text node — never as
+    // HTML — so a decoded '<script>' stays inert in the DOM.
+    assert.match(taskSheet, /\{decodeStored\(log\.message\)\}/);
     assert.doesNotMatch(taskSheet, /dangerouslySetInnerHTML/);
   });
 
