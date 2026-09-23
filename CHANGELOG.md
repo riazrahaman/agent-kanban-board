@@ -47,6 +47,40 @@ here **and** an annotated git tag. Do not let work accumulate under
 - No runtime code changed in this release. Server suite 222 tests / 34 suites / 0 fail; client
   68 / 0 fail; `make sec` clean; `tsc -b` and the production build clean.
 
+## [2.3.7] — 2026-09-23
+
+### Fixed
+
+- **The About page's proof strip showed a stale test count.** It read `203 server tests` when the
+  suite was 222. The 2.3.6 branch-integrity guard added 19 tests and a 24th file, pushing the real
+  total to 222; the docs and one-pager were refreshed at the time but this one spot inside the app
+  was missed.
+- **The guard that should have caught it was not a guard.** `about.test.mjs` contained a test
+  literally named *"the trust metrics report the real suite sizes (no stale counts)"* that asserted
+  a hardcoded `'203'`. It checked that the number had not changed from the number it asserted — it
+  could never detect drift, and passed for as long as the metric was wrong. It now counts the test
+  declarations in `server/test/*.test.js` and `client/src/**/*.test.mjs` and compares the metric
+  against that, so the next drift fails the build. Both counts also assert `> 0`, so a silent
+  discovery failure fails loudly instead of passing vacuously.
+
+### Changed
+
+- **`docs/with-images/FILE_BY_FILE_EXPLANATION.md` re-synced with its twin.** The 2.3.6 pass updated
+  `docs/FILE_BY_FILE_EXPLANATION.md` to 222 tests / 24 files but left the `with-images/` mirror on
+  203 / 23, and did not add `kanban.branch.test.js` to its coverage list. Both files now agree.
+- **`docs/HANDOVER_MULTI_PROJECT.md`** "last verified" line corrected from server 203/203 to 222/222.
+- Version strings bumped to 2.3.7 in `SYSTEM_DESIGN_AND_ARCHITECTURE.md`, `USER_AND_OPERATOR_MANUAL.md`
+  and their `docs/with-images/` mirrors.
+
+### Quality gates
+
+- Server suite 222 tests / 34 suites / 0 fail; client suite 68 / 0 fail; client status check pass;
+  `make sec` clean; `tsc -b` and the production build clean. The About bundle hash changed
+  (`index-DNuh978L.js` → `index-Dj-XYvTS.js`), confirming the metric reached the shipped artifact
+  rather than only the source.
+- While fixing this, the new counted test immediately caught a missing `readdirSync` import in its
+  own first run — evidence it exercises real behaviour rather than passing trivially.
+
 ## [2.3.6] — 2026-09-22
 
 ### Fixed
