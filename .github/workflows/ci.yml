@@ -72,7 +72,7 @@ jobs:
           node server/server.js &
           SERVER_PID=$!
           for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:3000/api/health >/dev/null && break
+            curl -sf http://127.0.0.1:4000/api/health >/dev/null && break
             sleep 1
           done
 
@@ -81,7 +81,7 @@ jobs:
           # create with only the token returns "A valid agent role is required
           # for mutating operations" (verified against the real server).
           seed_id() {
-            curl -sf -X POST http://127.0.0.1:3000/api/tasks \
+            curl -sf -X POST http://127.0.0.1:4000/api/tasks \
               -H "x-api-token: $KANBAN_AUTH_TOKEN" \
               -H 'x-agent-id: ci-layout' -H 'x-agent-role: admin' \
               -H 'Content-Type: application/json' -d "$1" >/dev/null
@@ -91,13 +91,13 @@ jobs:
           seed_id "{\"id\":\"layout-short\",\"title\":\"Short title\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
           seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
           # Give one card a long agent id so the footer row is exercised too.
-          curl -sf -X POST "http://127.0.0.1:3000/api/tasks/layout-long-agent/claim?project=layoutfixture" \
+          curl -sf -X POST "http://127.0.0.1:4000/api/tasks/layout-long-agent/claim?project=layoutfixture" \
             -H "x-api-token: $KANBAN_AUTH_TOKEN" -H 'x-agent-id: ci-layout' -H 'x-agent-role: builder' \
             -H 'Content-Type: application/json' -d "{\"agent_id\":\"agent-${LONG_TOKEN:0:44}}\"}" >/dev/null || true
 
           # Fail loudly if the fixture did not land — otherwise the guard would
           # run against an empty board and pass vacuously.
-          SEEDED=$(curl -sf "http://127.0.0.1:3000/api/tasks?project=layoutfixture" \
+          SEEDED=$(curl -sf "http://127.0.0.1:4000/api/tasks?project=layoutfixture" \
             -H "x-api-token: $KANBAN_AUTH_TOKEN" | grep -o '"id"' | wc -l)
           echo "layout fixture seeded: $SEEDED task(s)"
           if [ "$SEEDED" -lt 4 ]; then
@@ -138,7 +138,7 @@ jobs:
           fi
 
           STATUS=0
-          node scripts/check-card-layout.mjs "http://127.0.0.1:3000" 9222 || STATUS=$?
+          node scripts/check-card-layout.mjs "http://127.0.0.1:4000" 9222 || STATUS=$?
 
           kill $CHROME_PID $SERVER_PID 2>/dev/null || true
           exit $STATUS
@@ -149,3 +149,4 @@ jobs:
           KANBAN_DATA_DIR: /tmp/ci-layout
           KANBAN_DATA_FILE: /tmp/ci-layout/tasks.json
           KANBAN_STORAGE_BACKEND: json
+          PORT: '4000'
