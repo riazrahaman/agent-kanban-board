@@ -39,7 +39,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
-          <span className="font-mono text-xs tabular-nums text-ink tracking-wider">
+          <span className="font-mono text-xs tabular-nums text-ink tracking-wider break-words [overflow-wrap:anywhere]">
           {task.id}
         </span>
         <div className="flex items-center gap-1.5">
@@ -55,7 +55,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
         </div>
       </div>
 
-      <p className="text-sm font-medium leading-snug text-ink">
+      <p className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]">
         {task.title}
       </p>
 

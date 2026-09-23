@@ -82,7 +82,12 @@ test('the trust metrics report the real suite sizes (no stale counts)', () => {
         if (!filter(entry.name)) continue
         const body = readFileSync(full, 'utf8')
         // `it('...'` / `test('...'` declarations, ignoring commented lines.
-        total += (body.match(/^\s*(?:await\s+)?(?:it|test)\s*\(/gm) || []).length
+        // The optional `[\w$]+\.` receiver matters: node:test runs nested
+        // subtests declared as `t.test('...')` inside a parent test, and the
+        // runner counts each one as a case. Without this the count silently
+        // under-reports (68 vs the runner's 69), which is precisely the drift
+        // this test exists to catch.
+        total += (body.match(/^\s*(?:await\s+)?(?:[\w$]+\.)?(?:it|test)\s*\(/gm) || []).length
       }
     }
     walk(dir)

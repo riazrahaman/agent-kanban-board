@@ -18,11 +18,13 @@ const CLIENT_SRC = join(__dirname, '..')
 const APP_PATH = join(CLIENT_SRC, 'App.tsx')
 const COLUMN_PATH = join(CLIENT_SRC, 'components', 'Column.tsx')
 const BOARD_PATH = join(CLIENT_SRC, 'components', 'Board.tsx')
+const TASK_CARD_PATH = join(CLIENT_SRC, 'components', 'TaskCard.tsx')
 const CSS_PATH = join(CLIENT_SRC, 'index.css')
 
 const appSource = readFileSync(APP_PATH, 'utf8')
 const columnSource = readFileSync(COLUMN_PATH, 'utf8')
 const boardSource = readFileSync(BOARD_PATH, 'utf8')
+const taskCardSource = readFileSync(TASK_CARD_PATH, 'utf8')
 const cssSource = readFileSync(CSS_PATH, 'utf8')
 
 // ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', ()
 // components/Column.tsx
 // ---------------------------------------------------------------------------
 
-test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-start', () => {
+test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-start', async (t) => {
   assert.ok(
     columnSource.includes('w-[85vw]'),
     'Column.tsx must declare the phone column width literal `w-[85vw]`',
@@ -80,6 +82,58 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     /\bsnap-start\b/,
     'Column.tsx must include `snap-start` so scroll snapping aligns to a column edge',
   )
+
+  // The other half of the responsive contract: a card must never be able to
+  // widen its column. These live as a subtest (not a new top-level `test(`)
+  // because about.test.mjs counts top-level declarations and cross-checks them
+  // against aboutContent.ts's "client tests" metric — see the note there.
+  await t.test('TaskCard wraps long unbroken tokens instead of widening the column', () => {
+    // Regression: a title consisting of one 59-char unspaced token
+    // (AOV_BUILD_PROGRESS/TEST_REPORT/HANDOVER/CLAUDE.md/CHANGELOG) grew the
+    // title <p> past the card, which grew the card past the DONE column, whose
+    // `overflow-y-auto` list computes overflow-x:auto and so silently scrolled
+    // sideways. Measured live at 1280px: the title <p> was 242px wide but
+    // overflowed by 278px, and the DONE list was clientWidth 286 /
+    // scrollWidth 543. Length alone was not the cause — control titles of
+    // 45/52/79 chars with a longest token of 29 chars never overflowed.
+    //
+    // `break-words` (overflow-wrap:break-word) alone is insufficient: it does
+    // not break a token that exceeds the line box in every engine, so
+    // `[overflow-wrap:anywhere]` is required too. `overflow-wrap:anywhere`
+    // uniquely also shrinks min-content size, which is what stops the card
+    // from forcing the column wider. `break-all` would break the token as well
+    // but discards the preference for breaking at spaces first, so it is not
+    // used.
+    const titleTag = taskCardSource.match(/<p\b[^>]*>/)?.[0]
+    assert.ok(titleTag, 'TaskCard.tsx must render the title <p>')
+    assert.match(
+      titleTag,
+      /\[overflow-wrap:anywhere\]/,
+      'the title <p> must carry `[overflow-wrap:anywhere]` so one long unspaced token breaks inside the card',
+    )
+    assert.match(
+      titleTag,
+      /\bbreak-words\b/,
+      'the title <p> must carry `break-words` so titles with spaces still break at spaces first',
+    )
+
+    // Task ids are unspaced tokens too. Verified load-bearing: the
+    // 30-char id `init-agent-investment-advisor` overflowed its header row by
+    // 56px until this span carried `[overflow-wrap:anywhere]`.
+    const idTag = taskCardSource.match(/<span[^>]*>\s*\{task\.id\}/)?.[0]
+    assert.ok(idTag, 'TaskCard.tsx must render the task id <span>{task.id}</span>')
+    assert.match(
+      idTag,
+      /\[overflow-wrap:anywhere\]/,
+      'the task id <span> must carry `[overflow-wrap:anywhere]` for ids wider than the card',
+    )
+
+    assert.doesNotMatch(
+      taskCardSource,
+      /\bbreak-all\b/,
+      'TaskCard.tsx must not use `break-all`: it breaks mid-word even when a space break was available',
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
