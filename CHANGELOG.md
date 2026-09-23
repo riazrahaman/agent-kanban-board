@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -46,6 +46,79 @@ here **and** an annotated git tag. Do not let work accumulate under
   missing argument each exit 2 with a clear message rather than a silent pass.
 - No runtime code changed in this release. Server suite 222 tests / 34 suites / 0 fail; client
   68 / 0 fail; `make sec` clean; `tsc -b` and the production build clean.
+
+## [2.3.8] — 2026-09-23
+
+### Fixed
+
+- **Long unbreakable tokens overflowed task cards and widened the board column.** A title
+  carrying a slash-joined path with no break opportunity (e.g.
+  `AOV_BUILD_PROGRESS/TEST_REPORT/HANDOVER/CLAUDE.md/CHANGELOG`) painted straight out of its
+  card. Measured live at 1280px: the title `<p>` was 242px wide but overflowed by 278px, and the
+  DONE lane's list was `clientWidth 286 / scrollWidth 543` — the column silently scrolled
+  sideways. Length alone was never the cause: control titles of 45/52/79 characters with a
+  longest token of 29 characters never overflowed.
+
+  Fixed with `break-words [overflow-wrap:anywhere]`. `overflow-wrap:break-word` alone is
+  insufficient — only `anywhere` also shrinks the element's *min-content* size, which is what
+  stops a token from forcing its flex parent wider. The card's id `<span>` proved load-bearing,
+  not cosmetic: with only the title fixed, the lane still overflowed `321` vs `286`, because a
+  different card's header row (id span + project badge) shrank its flex child to min-content.
+
+- **The same defect at 10 further render sites, found by a codebase-wide sweep.** The whole
+  task-detail drawer was affected, not just cards. Overflow measured against the parent's
+  content-box edge, before → after (px painted past the parent):
+
+  | site | before | after |
+  |---|---|---|
+  | `TaskSheet` id span | 213 | −6 |
+  | `TaskSheet` title | 405 | −5 |
+  | `TaskSheet` project badge | 81 | −9 |
+  | `TaskSheet` assigned-agent badge | 81 | −9 |
+  | `TaskSheet` description | 270 | −9 |
+  | `TaskSheet` stage owners | 99 | −6 |
+  | `TaskSheet` log agent badge | 121 | −87 |
+  | `TaskSheet` log message | 205 | −8 |
+  | `TaskCard` assigned agent | 266 | −4 |
+  | `ErrorBoundary` error message | 336 | −2 |
+
+  Applied **per site**, not as a global CSS rule. A systemic rule was measured and rejected: it
+  fixed the targets but also re-wrapped unrelated elements, breaking the `BACKLOG` status badge
+  mid-word (19px → 34px). A global rule cannot distinguish a leaf text node from a layout
+  container. Per-site produced **0 geometry diffs** on normal content (171-element whole-tree
+  diff).
+
+  Deliberately not changed: the metadata `<pre>` (already `overflow-auto`; wrapping would
+  reformat the JSON) and every `truncate` site (`white-space:nowrap` wins over `overflow-wrap`,
+  so they stay ellipsised — verified: 7/7 still nowrap + ellipsis, none gained wrapping).
+
+- **Board lanes rendered in raw array order, not recency order.** A lane draws top-to-bottom in
+  the order the API returns, so "what just moved" sat wherever the record happened to land — the
+  DONE lane opened on a day-old smoke test. `getTasks()` now orders by `updated` descending (the
+  key stamped on create and on every mutation), falling back to `created_at`, with records
+  carrying neither sorting last rather than throwing. Sorted on a **copy**: `tasks` is the live
+  array the store mutates, and an in-place sort would have reordered the store's internals on
+  every read. Verified against a live server (seed A,B,C,D then touch A): `D,C,B,A` → `A,D,C,B`,
+  stable across repeated reads.
+
+### Fixed (tooling)
+
+- **The client test-count guard could not see node:test subtests.** `about.test.mjs` counted
+  top-level `it(`/`test(` declarations with a line-anchored regex, so a nested
+  `t.test(...)` subtest — which the runner *does* execute and count — was invisible. It counted
+  68 while the runner executed 69, i.e. the About page displayed a stale number while the guard
+  that exists to catch stale numbers reported green. The regex now allows a receiver
+  (`(?:[\w$]+\.)?`), so the count matches the runner (server 223, client 72). This is the same
+  defect class as the `203`-vs-`222` drift fixed in 2.3.7, one level down.
+
+### Quality gates
+
+- Server suite **223 / 0 fail**; client **72 / 0 fail**; production build clean; `make sec` clean.
+- Both new guards proven non-vacuous by mutation: removing a wrapping class fails the responsive
+  guard (72 → 70 pass / 2 fail); removing the recency sort fails the ordering test
+  (223 → 222 pass / 1 fail).
+- Live verification on a locally served production build with a hostile fixture: page overflow
+  `0`, lane `clientWidth/scrollWidth` `286/286`, drawer scroller `441/441`.
 
 ## [2.3.7] — 2026-09-23
 

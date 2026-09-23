@@ -1022,11 +1022,32 @@ export function onChange(listener) {
    };
 }
 
+/**
+ * Orders records most-recently-touched first.
+ *
+ * The board renders a lane top-to-bottom in the order the API returns, so the
+ * list must be recency-ordered or "what just moved" is buried wherever the
+ * record happened to sit in the array. `updated` is stamped on create and on
+ * every mutation, so it is the right key. Falls back to created_at, then to
+ * insertion into the returned copy for records that carry neither (legacy
+ * data), so the comparison is total and stable.
+ *
+ * Sorts a COPY: `tasks` is the live in-memory array the store mutates.
+ */
+function byRecency(a, b) {
+  const ka = Date.parse(a.updated ?? a.created_at ?? '');
+  const kb = Date.parse(b.updated ?? b.created_at ?? '');
+  const va = Number.isNaN(ka) ? -Infinity : ka;
+  const vb = Number.isNaN(kb) ? -Infinity : kb;
+  if (vb !== va) return vb - va;
+  return 0;
+}
+
 export function getTasks(project) {
   // No filter -> all live projects (preserves current single-project behavior).
-  if (project === undefined || project === null || project === '') return tasks;
+  if (project === undefined || project === null || project === '') return [...tasks].sort(byRecency);
   if (!isValidProjectId(project)) return [];
-  return tasks.filter((t) => t.project === project);
+  return tasks.filter((t) => t.project === project).sort(byRecency);
 }
 
 export function getTask(id, project) {

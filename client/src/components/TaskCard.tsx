@@ -39,7 +39,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
-          <span className="font-mono text-xs tabular-nums text-ink tracking-wider">
+          <span className="font-mono text-xs tabular-nums text-ink tracking-wider break-words [overflow-wrap:anywhere]">
           {task.id}
         </span>
         <div className="flex items-center gap-1.5">
@@ -55,13 +55,13 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
         </div>
       </div>
 
-      <p className="text-sm font-medium leading-snug text-ink">
+      <p className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]">
         {task.title}
       </p>
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
         {task.assigned_agent ? (
-          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums">
+          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums break-words [overflow-wrap:anywhere]">
             {task.assigned_agent}
           </span>
         ) : (

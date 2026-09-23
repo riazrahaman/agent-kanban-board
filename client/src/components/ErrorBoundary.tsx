@@ -23,7 +23,9 @@ export default class ErrorBoundary extends Component<Props, State> {
        return (
           <div className="m-6 border border-fail bg-fail-bg p-4 font-mono text-xs text-fail">
             <p className="font-semibold uppercase tracking-wider">Rendering Error</p>
-            <p className="mt-1 opacity-90">{this.state.error.message}</p>
+            <p className="mt-1 break-words opacity-90 [overflow-wrap:anywhere]">
+              {this.state.error.message}
+            </p>
           </div>
         )
       }
