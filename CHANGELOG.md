@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -46,6 +46,50 @@ here **and** an annotated git tag. Do not let work accumulate under
   missing argument each exit 2 with a clear message rather than a silent pass.
 - No runtime code changed in this release. Server suite 222 tests / 34 suites / 0 fail; client
   68 / 0 fail; `make sec` clean; `tsc -b` and the production build clean.
+
+## [2.3.9] — 2026-09-23
+
+### Fixed
+
+- **2.3.8 regression: long task ids were squashed into a ~30px sliver.** The 2.3.8 fix
+  put `overflow-wrap:anywhere` on the card's id `<span>`. That class lowers an element's
+  **min-content size** — which is exactly why it was chosen (it stops a long token widening
+  the lane) — but the span sits in the header's flex row (`justify-between`, `nowrap`) with
+  `min-width:auto` and `flex-shrink:1`. With a near-zero min-content size the span absorbed
+  nearly all the shrink: `init-agent-investment-advisor` rendered **30px wide × 176px tall,
+  wrapping character-by-character over 11 lines** (`ini/t-/age/ntc/inv/est/men/t-/adv/iso/r`),
+  against a normal card's 86px × 16px one-liner. 64 of 142 live cards had a multi-line header.
+
+  Verified this was introduced by 2.3.8, not pre-existing, by reverting the class live:
+  before, 3 cards wrapped (max 3 lines) with 1 row overflowing 55px; after, the overflow was
+  gone but 3 cards squashed, one to 11 lines.
+
+  The rule is now: **prose wraps, identifiers ellipsise.** Task ids, project slugs, agent ids
+  and log agent ids are identifiers and must stay on ONE line — `min-w-0` + `truncate`, with
+  the full value in a `title` tooltip, and their flex siblings pinned `shrink-0` so they cannot
+  squeeze them. Titles, descriptions, log messages and raw error text stay wrapped with
+  `overflow-wrap:anywhere`, which is where that class belongs.
+
+  Corrected in `TaskCard.tsx` (header id, assigned agent, issues badge) and `TaskSheet.tsx`
+  (id, project badge, assigned-agent badge, stage owners, log agent id, log timestamp).
+
+- **CI gap that let the regression ship.** No unit test could catch it: asserting a className
+  string cannot know how the browser lays that class out. Added
+  `scripts/check-card-layout.mjs`, which drives a real headless Chrome over CDP, loads the
+  built board, and measures **every** card's header-row height and id line count — failing if
+  any card's header wrapped. It seeds its own worst-case fixture (the id that regressed plus a
+  long unbreakable token) so an empty board cannot pass vacuously, and runs as a CI step after
+  the client build.
+
+### Quality gates
+
+- The layout guard was verified **both ways**: against the reintroduced 2.3.8 code it fails
+  naming `init-agent-investment-advisor` (`headerH=80px, idLines=5`); against the fix it passes
+  across every card (≤26px, zero horizontal overflow).
+- `responsive.test.mjs` now splits its 16 sites into prose vs identifier contracts, so a
+  regression to either behaviour fails. Proved non-vacuous: reverting the id span to the 2.3.8
+  classes fails it (72 → 70 pass / 2 fail).
+- Server suite 223 / 0 fail; client 72 / 0 fail; production build clean; `make sec` clean.
 
 ## [2.3.8] — 2026-09-23
 
