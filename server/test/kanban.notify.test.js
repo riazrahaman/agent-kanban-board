@@ -58,6 +58,11 @@ describe('§2.11 Telegram reclaim notifier', () => {
     delete process.env.KANBAN_NOTIFY_INCLUDE_DESC;
     delete process.env.KANBAN_NOTIFY_MIN_INTERVAL_MS;
     delete process.env.KANBAN_BOARD_URL;
+    // These tests sweep `now: Date.now() + 6min` and expect the claim from a
+    // moment earlier to be expired. The v2.3.11 TTL default is 10 minutes, so
+    // pin the legacy 5-minute TTL explicitly instead of leaning on the default
+    // (the tests exercise the notifier, not the lease clock).
+    process.env.KANBAN_CLAIM_TTL_MS = '300000';
     // Named-project data resolves through KANBAN_DATA_DIR (not setStorage), so
     // point it at the temp dir too — otherwise these tests would read and write
     // the real on-disk board and leak state between runs.
@@ -71,6 +76,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
     stopNotifier();
     store.setStorage(null);
     delete process.env.KANBAN_DATA_DIR;
+    delete process.env.KANBAN_CLAIM_TTL_MS;
     await rm(tmpDir, { recursive: true, force: true });
   });
 

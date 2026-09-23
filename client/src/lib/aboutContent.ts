@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '223',
+    value: '226',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -308,7 +308,7 @@ export const SAFETY_LAYERS: SafetyLayer[] = [
   {
     label: 'C',
     name: 'Lease ownership',
-    detail: 'A live lease held by another owner → 409 already-claimed; an expired lease is reaped immediately, while an ownerless active card waits out a grace window (KANBAN_ORPHAN_GRACE_MS, default = the lease TTL) before it is normalized.',
+    detail: 'A live lease held by another owner → 409 already-claimed; an expired lease is reaped immediately, while an ownerless active card waits out a decoupled grace window (KANBAN_ORPHAN_GRACE_MS, fixed 300 s default) before it is normalized.',
   },
 ]
 

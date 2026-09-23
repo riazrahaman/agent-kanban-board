@@ -179,7 +179,8 @@ exists or is needed — the first `createTask` under a new id creates it.
 
 When an agent stops heartbeating, its lease expires and the reaper returns the task to `BACKLOG`.
 An active task found with **no owner at all** is normalized the same way, but only after it has sat
-untouched for the orphan grace window (`KANBAN_ORPHAN_GRACE_MS`, default = the lease TTL) — so a
+untouched for the orphan grace window (`KANBAN_ORPHAN_GRACE_MS`, decoupled from the claim TTL,
+default 5 min) — so a
 status-only `PATCH` into an active stage is not instantly reverted. You can have the board post a
 full-detail alert to a **Telegram** group or chat on every such reclaim:
 
