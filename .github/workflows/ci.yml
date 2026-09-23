@@ -57,6 +57,11 @@ jobs:
         run: npm --prefix client run build
 
       - name: Card Layout Guard
+        # Runs on the 22.x leg only: the guard needs a global `WebSocket`, which
+        # Node 20 does not provide. It is a browser-layout integration check —
+        # Node-version independent — so once per push is the right coverage, and
+        # the unit/server suites still run the full 20 + 22 matrix.
+        if: matrix.node-version == '22.x'
         # Closes a real gap: the 2.3.8 release fixed a text overflow but silently
         # squashed long card ids into a 30px sliver (11 lines) because
         # `overflow-wrap:anywhere` lowers min-content size inside a flex row.
