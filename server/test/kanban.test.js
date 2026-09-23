@@ -607,3 +607,49 @@ describe('§2.1/§2.8 back-compat regression', () => {
     assert.ok(open.created_at, 'created_at backfilled on open legacy record');
      });
 });
+
+
+// ---------------------------------------------------------------------------
+// List ordering. The board renders a lane top-to-bottom in the order the API
+// returns, so the list MUST be recency-ordered ("what just moved" first, not
+// buried wherever the record sits in the array). Ordering is asserted on the
+// store directly: the HTTP layer is already covered elsewhere and a store-level
+// check isolates the comparator from route timing.
+// ---------------------------------------------------------------------------
+describe('list ordering is most-recently-touched first', () => {
+  it('orders getTasks() by updated, newest first, and a later write lifts a record', () => {
+    const mk = (id, updated) => ({
+      id, project: 'ordprobe', title: id, description: '', status: 'BACKLOG',
+      priority: 'low', branch: null, depends_on: [], round: 1, issues: [],
+      assigned_agent: null, stage_owners: {}, agent_logs: [], metadata: {},
+      created_at: updated, updated, version: 1,
+    });
+
+    // Seed in deliberately non-sorted order (B newest, then D, C, A oldest).
+    for (const t of [mk('ord-a', '2026-01-01T00:00:00.000Z'),
+                     mk('ord-b', '2026-04-01T00:00:00.000Z'),
+                     mk('ord-c', '2026-02-01T00:00:00.000Z'),
+                     mk('ord-d', '2026-03-01T00:00:00.000Z')]) {
+      store.setTaskInMemory(t);
+    }
+
+    const order = () => store.getTasks('ordprobe').map((t) => t.id);
+    assert.deepEqual(order(), ['ord-b', 'ord-d', 'ord-c', 'ord-a'],
+      'newest updated first, oldest last');
+
+    // A later write to the oldest record must lift it to the head of the lane.
+    const touched = store.getTask('ord-a', 'ordprobe');
+    touched.updated = '2026-05-01T00:00:00.000Z';
+    assert.equal(order()[0], 'ord-a', 'the most recently touched record renders first');
+
+    // Reads must be stable and must not reorder the live in-memory array.
+    assert.deepEqual(order(), order(), 'repeated reads are stable');
+
+    // Records with no usable timestamp must not throw and must sort last.
+    store.setTaskInMemory({ id: 'ord-untimed', project: 'ordprobe', title: 'x',
+      description: '', status: 'BACKLOG', priority: 'low', branch: null,
+      depends_on: [], round: 1, issues: [], assigned_agent: null,
+      stage_owners: {}, agent_logs: [], metadata: {}, version: 1 });
+    assert.equal(order().at(-1), 'ord-untimed', 'untimed legacy record sorts last, no throw');
+  });
+});
