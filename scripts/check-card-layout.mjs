@@ -35,8 +35,10 @@ import {
 
 const readSafe = (f) => { try { return readRaw(f, 'utf8'); } catch { return ''; } };
 
-// `WebSocket` is a global in Node 22+ (this repo tests on 20 and 22 — on 20 it
-// is present behind --experimental-websocket, so resolve it defensively).
+// `WebSocket` is a global on Node 22+ but NOT on Node 20, so this guard is run
+// on the 22.x CI leg only (see the workflow's `if:`). It is a browser-layout
+// integration check — Node-version independent — so running it once per push is
+// the right coverage, and the unit/server matrix still exercises both versions.
 const WS = globalThis.WebSocket;
 
 const BASE = process.argv[2] || 'http://127.0.0.1:4100';
@@ -133,10 +135,6 @@ const PROBE = `(() => {
 })()`;
 
 async function main() {
-  if (!WS) {
-    console.error('layout guard: global WebSocket unavailable — run on Node 22+, or node --experimental-websocket');
-    process.exit(2);
-  }
   let target = null;
   let usedPort = null;
   const tried = [];
@@ -154,6 +152,13 @@ async function main() {
     console.error('layout guard: no reachable Chrome DevTools page target.');
     console.error('  tried -> ' + tried.join(', '));
     console.error('  start Chromium with --remote-debugging-port=9222 (or pass the port as arg 2 / CDP_PORT)');
+    process.exit(2);
+  }
+
+  // Fail fast BEFORE constructing: `new undefined` would throw an opaque
+  // TypeError instead of the message below.
+  if (!WS) {
+    console.error('layout guard: global WebSocket unavailable (needs Node 22+) — run this on the 22.x leg');
     process.exit(2);
   }
 
