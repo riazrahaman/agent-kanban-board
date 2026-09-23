@@ -242,13 +242,13 @@ test('TaskSheet wraps every unbroken-token render site (and not the nowrap ones)
   // collapsed to 30px wide, wrapped character-by-character over 11 lines.
   const SITES = [
     ['id', /className="([^"]*)"[^>]*>\s*\{task\.id\}/, 213, 'identifier'],
-    ['title', /className="([^"]*)"[^>]*>\s*\{task\.title\}/, 405, 'prose'],
+    ['title', /className="([^"]*)"[^>]*>\s*\{decodeStored\(task\.title\)\}/, 405, 'prose'],
     ['project', /className="([^"]*)"[^>]*>\s*\{task\.project\}/, 81, 'identifier'],
     ['assigned_agent', /className="([^"]*)"[^>]*>\s*\{task\.assigned_agent\}/, 81, 'identifier'],
-    ['description', /className="([^"]*)"[^>]*>\s*\{task\.description/, 270, 'prose'],
+    ['description', /className="([^"]*)"[^>]*>\s*\{decodeStored\(task\.description\)/, 270, 'prose'],
     ['stage_owners', /className="([^"]*)"[^>]*>\s*\{formatStageOwners\(task\.stage_owners\)\}/, 99, 'identifier'],
     ['log.agent_id', /className="([^"]*)"[^>]*>\s*\{log\.agent_id\}/, 121, 'identifier'],
-    ['log.message', /className="([^"]*)"[^>]*>\s*\{log\.message\}/, 205, 'prose'],
+    ['log.message', /className="([^"]*)"[^>]*>\s*\{decodeStored\(log\.message\)\}/, 205, 'prose'],
   ]
 
   let verified = 0

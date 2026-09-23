@@ -3,6 +3,7 @@ import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
 import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
+import { decodeStored } from '../sanitize'
 
 type Props = {
   task: Task
@@ -67,7 +68,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
       </div>
 
       <p className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]">
-        {task.title}
+        {decodeStored(task.title)}
       </p>
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">

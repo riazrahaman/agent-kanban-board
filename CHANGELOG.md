@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,39 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.10] — 2026-09-23
+
+### Fixed
+
+- **Stored HTML entities reached the user as visible noise.** The server escapes
+  untrusted text on write (`escapeHtml`: `& < > " '`), but the client rendered
+  the stored value verbatim, so a log saying "it's done" displayed as
+  "it&#039;s done" — on cards, in the task sheet's title/description, in the
+  agent-log panel, and in the signal rail. `client/src/sanitize.ts` (previously
+  dead code) now carries `decodeStored`, mirroring `server/notifier.js`'s
+  `DECODE_ORDER` with the same load-bearing invariant: the specific entities
+  decode first and `&amp;` LAST, so a stored `&amp;lt;` decodes exactly once and
+  can never become a real tag. Applied at every render site: `TaskSheet` title /
+  description / log message, `TaskCard` title, `SignalRail` message + title.
+  XSS-safe by construction: the decoded value is still rendered as a JSX text
+  node, so `<script>` stays inert text; the server-side escape (the real
+  defense) is untouched, and `kanban.test.js`'s XSS contract now asserts the
+  decode wrapper is present alongside the `dangerouslySetInnerHTML` ban.
+
+- **The agent-log panel read backwards.** `TaskSheet` sorted log entries
+  newest-first, but the log is a narrative — entries are appended in
+  chronological order, so the panel now reads oldest-first (writing order).
+  The SignalRail "recent activity" feed is unchanged: it is a live ticker, where
+  newest-first is correct.
+
+### Quality gates
+
+- Server suite **223 tests / 35 suites / 0 fail** (the XSS contract test now
+  asserts the decode wrapper); client suite **77 tests / 0 fail** (adds the
+  `sanitize.test.mjs` decode/round-trip suite and updates the responsive +
+  About source-contract guards to the new call shape); `tsc -b` and the
+  production build clean.
 
 ## [Unreleased]
 

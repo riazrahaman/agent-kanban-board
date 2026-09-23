@@ -3,6 +3,7 @@ import type { Task } from '../types'
 import { appendLog } from '../api'
 import { normalizePriority } from '../priority'
 import { formatStageOwners } from '../lib/stageOwners'
+import { decodeStored } from '../sanitize'
 import StatusBadge from './StatusBadge'
 
 const PRIORITY_BADGE: Record<Task['priority'], string> = {
@@ -78,7 +79,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </span>
                 </div>
                 <h2 className="text-base font-semibold leading-snug text-ink break-words [overflow-wrap:anywhere]">
-                  {task.title}
+                  {decodeStored(task.title)}
                 </h2>
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
                   <span
@@ -120,7 +121,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                   Description
                 </h3>
                 <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink break-words [overflow-wrap:anywhere]">
-                  {task.description || 'No description provided.'}
+                  {decodeStored(task.description) || 'No description provided.'}
                 </p>
               </section>
 
@@ -159,9 +160,11 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </span>
                 </div>
                 <div className="mt-2 space-y-2">
+                  {/* Oldest first — the log is a narrative; entries are appended
+                      chronologically, so reading order matches writing order. */}
                   {[...task.agent_logs]
                     .sort(
-                      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+                      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
                     )
                     .map((log, i) => (
                       <div
@@ -183,7 +186,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                           </span>
                         </div>
                         <p className="mt-1.5 text-xs leading-relaxed text-ink whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                          {log.message}
+                          {decodeStored(log.message)}
                         </p>
                       </div>
                     ))}
