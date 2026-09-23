@@ -68,11 +68,13 @@ export default function TaskSheet({ task, onClose }: Props) {
             <div className="flex items-start justify-between gap-3 border-b border-line p-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="font-mono text-xs tabular-nums text-ink tracking-wider">
+                  <span className="font-mono text-xs tabular-nums text-ink tracking-wider break-words [overflow-wrap:anywhere]">
                     {task.id}
                   </span>
                 </div>
-                <h2 className="text-base font-semibold leading-snug text-ink">{task.title}</h2>
+                <h2 className="text-base font-semibold leading-snug text-ink break-words [overflow-wrap:anywhere]">
+                  {task.title}
+                </h2>
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
                   <span
                     className={`border px-1.5 py-0.5 uppercase tracking-wider ${PRIORITY_BADGE[normalizePriority(task.priority)]}`}
@@ -81,12 +83,12 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </span>
                   <StatusBadge status={task.status} />
                   {task.project && (
-                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted">
+                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted break-words [overflow-wrap:anywhere]">
                       {task.project}
                     </span>
                   )}
                   {task.assigned_agent && (
-                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums">
+                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums break-words [overflow-wrap:anywhere]">
                       {task.assigned_agent}
                     </span>
                   )}
@@ -106,7 +108,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                 <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Description
                 </h3>
-                <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink">
+                <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-ink break-words [overflow-wrap:anywhere]">
                   {task.description || 'No description provided.'}
                 </p>
               </section>
@@ -116,7 +118,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                   <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                     Stage Owners
                   </h3>
-                  <p className="mt-1.5 font-mono text-[11px] text-muted">
+                  <p className="mt-1.5 font-mono text-[11px] text-muted break-words [overflow-wrap:anywhere]">
                     {formatStageOwners(task.stage_owners)}
                   </p>
                 </section>
@@ -153,14 +155,14 @@ export default function TaskSheet({ task, onClose }: Props) {
                         className="border border-line bg-surface p-2.5"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink">
+                          <span className="border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink break-words [overflow-wrap:anywhere]">
                             {log.agent_id}
                           </span>
                           <span className="font-mono text-[10px] tabular-nums text-ink">
                             {formatTimestamp(log.timestamp)}
                           </span>
                         </div>
-                        <p className="mt-1.5 text-xs leading-relaxed text-ink whitespace-pre-wrap">
+                        <p className="mt-1.5 text-xs leading-relaxed text-ink whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                           {log.message}
                         </p>
                       </div>
@@ -190,7 +192,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                 rows={3}
                 className="w-full resize-none border border-line bg-bg px-2.5 py-1.5 text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
               />
-              {error && <p className="font-mono text-xs text-fail">{error}</p>}
+              {error && <p className="font-mono text-xs text-fail break-words [overflow-wrap:anywhere]">{error}</p>}
               <button
                 type="submit"
                 disabled={submitting || !message.trim()}

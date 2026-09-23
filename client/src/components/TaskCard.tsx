@@ -61,7 +61,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
         {task.assigned_agent ? (
-          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums">
+          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums break-words [overflow-wrap:anywhere]">
             {task.assigned_agent}
           </span>
         ) : (
