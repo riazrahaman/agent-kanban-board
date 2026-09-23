@@ -9,7 +9,7 @@
 // stageOwners.test.mjs) so this runs on every Node version CI covers.
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -65,10 +65,51 @@ test('trust metrics expose four complete, non-empty entries', () => {
 })
 
 test('the trust metrics report the real suite sizes (no stale counts)', () => {
+  // Cross-check against the ACTUAL suite files rather than hardcoding the
+  // expected numbers. Hardcoding them here is exactly what let this metric go
+  // stale: this test was named "no stale counts" while asserting a fixed '203'
+  // against a suite that had grown to 222, so it could never detect drift.
+  // Counted from the files themselves: `it(`/`test(` declarations per suite.
+  const SERVER_TEST_DIR = join(CLIENT_SRC, '..', '..', 'server', 'test')
+  const clientDir = CLIENT_SRC
+
+  const countCases = (dir, filter) => {
+    let total = 0
+    const walk = (d) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name)
+        if (entry.isDirectory()) { walk(full); continue }
+        if (!filter(entry.name)) continue
+        const body = readFileSync(full, 'utf8')
+        // `it('...'` / `test('...'` declarations, ignoring commented lines.
+        total += (body.match(/^\s*(?:await\s+)?(?:it|test)\s*\(/gm) || []).length
+      }
+    }
+    walk(dir)
+    return total
+  }
+
+  const serverActual = countCases(SERVER_TEST_DIR, (n) => n.endsWith('.test.js'))
+  const clientActual = countCases(clientDir, (n) => n.endsWith('.test.mjs'))
+
   const server = TRUST_METRICS.find((m) => /server/i.test(m.label))
   const client = TRUST_METRICS.find((m) => /client/i.test(m.label))
-  assert.equal(server.value, '203', 'server test count must match the current suite')
-  assert.equal(client.value, '68', 'client test count must match the current suite')
+
+  // Guard the guard: if discovery silently finds nothing, fail loudly rather
+  // than passing vacuously.
+  assert.ok(serverActual > 0, 'must find server test cases to compare against')
+  assert.ok(clientActual > 0, 'must find client test cases to compare against')
+
+  assert.equal(
+    server.value,
+    String(serverActual),
+    `About page claims ${server.value} server tests but the suite declares ${serverActual}`,
+  )
+  assert.equal(
+    client.value,
+    String(clientActual),
+    `About page claims ${client.value} client tests but the suite declares ${clientActual}`,
+  )
 })
 
 test('the why-cards keep all the differentiation stories', () => {

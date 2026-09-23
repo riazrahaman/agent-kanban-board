@@ -7,7 +7,7 @@
 **Status:** §2.2, §2.9, §2.3 and §2.10 are all **DONE**. §2.11/§2.12 remain out of scope.
 **Merged:** `main` is at the `--no-ff` merge `91c8df0` and pushed to `origin`.
 **Remaining:** nothing blocking. UI verified in a browser; known gaps in §9.
-**Last verified:** server 203/203, client 68/68, `tsc` + `vite build` green.
+**Last verified:** server 222/222, client 68/68, `tsc` + `vite build` green.
 **Working tree:** clean. Everything below is committed.
 
 > This document is partly a frozen historical record; the live state is v2.3.3 on `main`.
