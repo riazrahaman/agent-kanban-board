@@ -68,7 +68,12 @@ export default function TaskSheet({ task, onClose }: Props) {
             <div className="flex items-start justify-between gap-3 border-b border-line p-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="font-mono text-xs tabular-nums text-ink tracking-wider break-words [overflow-wrap:anywhere]">
+                  {/* Identifier, not prose — one line, ellipsised, full value in
+                      the tooltip. Same reasoning as TaskCard's header id. */}
+                  <span
+                    className="min-w-0 truncate font-mono text-xs tabular-nums text-ink tracking-wider"
+                    title={task.id}
+                  >
                     {task.id}
                   </span>
                 </div>
@@ -83,12 +88,18 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </span>
                   <StatusBadge status={task.status} />
                   {task.project && (
-                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-muted break-words [overflow-wrap:anywhere]">
+                    <span
+                      className="min-w-0 max-w-[12rem] truncate border border-line bg-muted-bg px-1.5 py-0.5 text-muted"
+                      title={`Project: ${task.project}`}
+                    >
                       {task.project}
                     </span>
                   )}
                   {task.assigned_agent && (
-                    <span className="inline-flex items-center gap-1 border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums break-words [overflow-wrap:anywhere]">
+                    <span
+                      className="min-w-0 max-w-[14rem] truncate border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums"
+                      title={task.assigned_agent}
+                    >
                       {task.assigned_agent}
                     </span>
                   )}
@@ -118,7 +129,10 @@ export default function TaskSheet({ task, onClose }: Props) {
                   <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                     Stage Owners
                   </h3>
-                  <p className="mt-1.5 font-mono text-[11px] text-muted break-words [overflow-wrap:anywhere]">
+                  <p
+                    className="mt-1.5 min-w-0 truncate font-mono text-[11px] text-muted"
+                    title={formatStageOwners(task.stage_owners)}
+                  >
                     {formatStageOwners(task.stage_owners)}
                   </p>
                 </section>
@@ -155,10 +169,16 @@ export default function TaskSheet({ task, onClose }: Props) {
                         className="border border-line bg-surface p-2.5"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink break-words [overflow-wrap:anywhere]">
+                          {/* Same flex-squash hazard: an identifier in a
+                              justify-between row. min-w-0 + truncate keeps it one
+                              line; the timestamp is pinned so it can't be squeezed. */}
+                          <span
+                            className="min-w-0 truncate border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink"
+                            title={log.agent_id}
+                          >
                             {log.agent_id}
                           </span>
-                          <span className="font-mono text-[10px] tabular-nums text-ink">
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink">
                             {formatTimestamp(log.timestamp)}
                           </span>
                         </div>

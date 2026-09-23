@@ -55,3 +55,97 @@ jobs:
 
       - name: Build Client
         run: npm --prefix client run build
+
+      - name: Card Layout Guard
+        # Closes a real gap: the 2.3.8 release fixed a text overflow but silently
+        # squashed long card ids into a 30px sliver (11 lines) because
+        # `overflow-wrap:anywhere` lowers min-content size inside a flex row.
+        # No class-name assertion or unit test can detect that — it is a layout
+        # outcome. This drives a real headless Chrome over CDP and measures every
+        # card's header row, failing if any card's header wrapped.
+        #
+        # It seeds its own worst-case fixture (the id that regressed, plus a
+        # long unbreakable token) because an empty board would pass vacuously.
+        run: |
+          set -e
+          mkdir -p /tmp/ci-layout
+          node server/server.js &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/api/health >/dev/null && break
+            sleep 1
+          done
+
+          LONG_TOKEN='AOV_BUILD_PROGRESS/TEST_REPORT/HANDOVER/CLAUDE.md/CHANGELOG_SUMMARY_AND_NOTES'
+          # Mutating endpoints require BOTH a token and a valid agent role — a
+          # create with only the token returns "A valid agent role is required
+          # for mutating operations" (verified against the real server).
+          seed_id() {
+            curl -sf -X POST http://127.0.0.1:3000/api/tasks \
+              -H "x-api-token: $KANBAN_AUTH_TOKEN" \
+              -H 'x-agent-id: ci-layout' -H 'x-agent-role: admin' \
+              -H 'Content-Type: application/json' -d "$1" >/dev/null
+          }
+          seed_id "{\"id\":\"init-agent-investment-advisor\",\"title\":\"Init agent-investment-advisor\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
+          seed_id "{\"id\":\"layout-worst-case-long-id\",\"title\":\"Title with $LONG_TOKEN embedded\",\"description\":\"Desc $LONG_TOKEN\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
+          seed_id "{\"id\":\"layout-short\",\"title\":\"Short title\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
+          seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
+          # Give one card a long agent id so the footer row is exercised too.
+          curl -sf -X POST "http://127.0.0.1:3000/api/tasks/layout-long-agent/claim?project=layoutfixture" \
+            -H "x-api-token: $KANBAN_AUTH_TOKEN" -H 'x-agent-id: ci-layout' -H 'x-agent-role: builder' \
+            -H 'Content-Type: application/json' -d "{\"agent_id\":\"agent-${LONG_TOKEN:0:44}}\"}" >/dev/null || true
+
+          # Fail loudly if the fixture did not land — otherwise the guard would
+          # run against an empty board and pass vacuously.
+          SEEDED=$(curl -sf "http://127.0.0.1:3000/api/tasks?project=layoutfixture" \
+            -H "x-api-token: $KANBAN_AUTH_TOKEN" | grep -o '"id"' | wc -l)
+          echo "layout fixture seeded: $SEEDED task(s)"
+          if [ "$SEEDED" -lt 4 ]; then
+            echo "::error::layout fixture did not seed (got $SEEDED of 4) — the guard would pass vacuously"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          # Launch a headless Chrome for the guard. The binary name is not
+          # guaranteed across runner images (`google-chrome`, `google-chrome-stable`,
+          # `chromium`, `chromium-browser`), so resolve it rather than assuming.
+          # A missing browser is treated as a SKIP (exit 0) with a loud warning,
+          # not a failure: the layout guard must not block unrelated work on a
+          # runner-image change, and the local gate still exercises it.
+          CHROME_BIN=''
+          for c in google-chrome google-chrome-stable chromium chromium-browser; do
+            if command -v "$c" >/dev/null 2>&1; then CHROME_BIN="$c"; break; fi
+          done
+          if [ -z "$CHROME_BIN" ]; then
+            echo "::warning::no Chrome/Chromium found on this runner — skipping the card layout guard"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 0
+          fi
+          echo "layout guard using: $CHROME_BIN"
+
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-port=9222 --remote-allow-origins='*' about:blank &
+          CHROME_PID=$!
+          READY=0
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:9222/json/version >/dev/null 2>&1; then READY=1; break; fi
+            sleep 1
+          done
+          if [ "$READY" != "1" ]; then
+            echo "::warning::Chrome DevTools endpoint never came up — skipping the card layout guard"
+            kill $CHROME_PID $SERVER_PID 2>/dev/null || true
+            exit 0
+          fi
+
+          STATUS=0
+          node scripts/check-card-layout.mjs "http://127.0.0.1:3000" 9222 || STATUS=$?
+
+          kill $CHROME_PID $SERVER_PID 2>/dev/null || true
+          exit $STATUS
+        env:
+          KANBAN_AUTH_TOKEN: ci-layout-token
+          KANBAN_ADMIN_TOKEN: ci-layout-token
+          KANBAN_REAP_ENABLED: 'false'
+          KANBAN_DATA_DIR: /tmp/ci-layout
+          KANBAN_DATA_FILE: /tmp/ci-layout/tasks.json
+          KANBAN_STORAGE_BACKEND: json

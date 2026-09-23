@@ -39,10 +39,21 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
-          <span className="font-mono text-xs tabular-nums text-ink tracking-wider break-words [overflow-wrap:anywhere]">
+        {/* The id is an identifier, not prose: it must stay on ONE line. Wrapping
+            it (overflow-wrap:anywhere) was a regression — `anywhere` lowers the
+            element's min-content size, and with `min-width:auto` in this flex row
+            the span then absorbed nearly all the shrink, collapsing a long id into
+            a ~30px sliver wrapped character-by-character over 11 lines. `min-w-0
+            flex-1 truncate` lets it claim the row and ellipsise instead, with the
+            full value in the tooltip. The badge group is pinned so it cannot be
+            squeezed either. */}
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-xs tabular-nums text-ink tracking-wider"
+          title={task.id}
+        >
           {task.id}
         </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {showProject && task.project && (
             <span
               className="max-w-[10rem] truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"
@@ -61,7 +72,14 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
         {task.assigned_agent ? (
-          <span className="inline-flex items-center gap-1 font-mono text-ink tabular-nums break-words [overflow-wrap:anywhere]">
+          /* Agent ids are identifiers: one line, ellipsised, full value in the
+             tooltip. `inline-flex` + overflow-wrap let this wrap into a narrow
+             column when the row was tight, so it is pinned the same way as the
+             header id. */
+          <span
+            className="min-w-0 truncate font-mono text-ink tabular-nums"
+            title={task.assigned_agent}
+          >
             {task.assigned_agent}
           </span>
         ) : (
@@ -69,7 +87,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
         )}
 
         {task.issues && task.issues.length > 0 && (
-          <span className="font-mono text-[10px] tabular-nums text-warn px-1 py-0.5 bg-warn-bg border border-line">
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-warn px-1 py-0.5 bg-warn-bg border border-line">
             {task.issues.length} {task.issues.length === 1 ? 'issue' : 'issues'}
           </span>
         )}

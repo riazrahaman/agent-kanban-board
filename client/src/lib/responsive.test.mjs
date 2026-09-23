@@ -121,15 +121,46 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
       'the title <p> must carry `break-words` so titles with spaces still break at spaces first',
     )
 
-    // Task ids are unspaced tokens too. Verified load-bearing: the
-    // 30-char id `init-agent-investment-advisor` overflowed its header row by
-    // 56px until this span carried `[overflow-wrap:anywhere]`.
+    // Task ids are unspaced tokens too — but an id is an IDENTIFIER, not prose,
+    // and wrapping it was a regression. `overflow-wrap:anywhere` lowers the
+    // element's min-content size; inside the header's flex row, where the span
+    // had `min-width:auto` and `flex-shrink:1`, that let the span absorb nearly
+    // all the shrink and collapse the 28-char `init-agent-investment-advisor`
+    // into a ~30px sliver wrapped character-by-character over 11 lines (header
+    // row 176px tall vs 21px for a normal card). 64 of 142 live cards had a
+    // multi-line header id. The id must therefore stay on ONE line and
+    // ellipsise, with the badge group pinned so it cannot be squeezed.
     const idTag = taskCardSource.match(/<span[^>]*>\s*\{task\.id\}/)?.[0]
     assert.ok(idTag, 'TaskCard.tsx must render the task id <span>{task.id}</span>')
     assert.match(
       idTag,
+      /\btruncate\b/,
+      'the task id <span> must carry `truncate` so an over-long id ellipsises on ONE line instead of wrapping',
+    )
+    assert.match(
+      idTag,
+      /\bmin-w-0\b/,
+      'the task id <span> must carry `min-w-0`: without it, `min-width:auto` lets the flex row shrink it to a sliver',
+    )
+    assert.match(
+      idTag,
+      /\bflex-1\b/,
+      'the task id <span> must carry `flex-1` so it claims the row rather than being squeezed by the badge group',
+    )
+    assert.doesNotMatch(
+      idTag,
       /\[overflow-wrap:anywhere\]/,
-      'the task id <span> must carry `[overflow-wrap:anywhere]` for ids wider than the card',
+      'the task id <span> must NOT carry `[overflow-wrap:anywhere]` — it lowers min-content and caused the sliver regression',
+    )
+    assert.match(
+      idTag,
+      /title=\{task\.id\}/,
+      'the task id <span> must expose the full value via `title` since it can be ellipsised',
+    )
+    assert.match(
+      taskCardSource,
+      /flex shrink-0 items-center gap-1\.5/,
+      'the header badge group must carry `shrink-0` so it cannot squeeze the id',
     )
 
     assert.doesNotMatch(
@@ -142,19 +173,39 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     // drawer: the card's assigned_agent span. Measured 266px past its row at
     // 1280px (row 242px wide, span grew to 508px), and the row is a flex row
     // with no wrapping, so the card itself was pushed wider.
-    const agentTag = taskCardSource.match(
-      /<span className="([^"]*)">\s*\{task\.assigned_agent\}/,
+    //
+    // An agent id is an IDENTIFIER, so the same correction as the header id
+    // applies: it must stay on one line and ellipsise rather than wrap, or the
+    // flex row shrinks it into a sliver. The full value stays reachable via
+    // `title`, and the sibling issues badge is pinned with `shrink-0`.
+    const agentCls = taskCardSource.match(
+      /className="([^"]*)"[^>]*>\s*\{task\.assigned_agent\}/,
     )?.[1]
-    assert.ok(agentTag, 'TaskCard.tsx must render the assigned_agent <span>')
+    assert.ok(agentCls, 'TaskCard.tsx must render the assigned_agent <span>')
     assert.match(
-      agentTag,
-      /\[overflow-wrap:anywhere\]/,
-      'the TaskCard assigned_agent <span> must carry `[overflow-wrap:anywhere]`: it overflowed 266px with one long agent id',
+      agentCls,
+      /\btruncate\b/,
+      'the TaskCard assigned_agent <span> must carry `truncate`: an agent id is an identifier and must stay on ONE line',
     )
     assert.match(
-      agentTag,
-      /\bbreak-words\b/,
-      'the TaskCard assigned_agent <span> must also carry `break-words`',
+      agentCls,
+      /\bmin-w-0\b/,
+      'the TaskCard assigned_agent <span> must carry `min-w-0` so the flex row cannot shrink it to a sliver',
+    )
+    assert.doesNotMatch(
+      agentCls,
+      /\[overflow-wrap:anywhere\]/,
+      'the TaskCard assigned_agent <span> must NOT carry `[overflow-wrap:anywhere]`: it lowers min-content and invites the sliver regression',
+    )
+    assert.match(
+      taskCardSource,
+      /title=\{task\.assigned_agent\}/,
+      'the assigned_agent <span> must expose the full value via `title` since it can be ellipsised',
+    )
+    assert.match(
+      taskCardSource,
+      /shrink-0 font-mono text-\[10px\] tabular-nums text-warn/,
+      'the card issues badge must carry `shrink-0` so it cannot squeeze the agent id',
     )
   })
 })
@@ -181,40 +232,89 @@ test('TaskSheet wraps every unbroken-token render site (and not the nowrap ones)
   // Each entry: a stable JSX pattern whose captured className is asserted. The
   // pattern matches the element even when the class is absent, so the assertion
   // below is what fails — the guard cannot pass vacuously.
+  //
+  // `kind` splits the two contracts. PROSE (title, description, log message,
+  // raw error text) must WRAP: one long unspaced token would otherwise paint
+  // outside the drawer. IDENTIFIERS (task id, project slug, agent ids) must NOT
+  // wrap — they must stay on ONE line and ellipsise, because wrapping lowers
+  // min-content size and a flex row will then shrink the element into a sliver.
+  // That is exactly the 2.3.8 regression: `init-agent-investment-advisor`
+  // collapsed to 30px wide, wrapped character-by-character over 11 lines.
   const SITES = [
-    ['id', /<span className="([^"]*)">\s*\{task\.id\}/, 213],
-    ['title', /<h2 className="([^"]*)">\s*\{task\.title\}/, 405],
-    ['project', /<span className="([^"]*)">\s*\{task\.project\}/, 81],
-    ['assigned_agent', /<span className="([^"]*)">\s*\{task\.assigned_agent\}/, 81],
-    ['description', /<p className="([^"]*)">\s*\{task\.description/, 270],
-    ['stage_owners', /<p className="([^"]*)">\s*\{formatStageOwners\(task\.stage_owners\)\}/, 99],
-    ['log.agent_id', /<span className="([^"]*)">\s*\{log\.agent_id\}/, 121],
-    ['log.message', /<p className="([^"]*)">\s*\{log\.message\}/, 205],
+    ['id', /className="([^"]*)"[^>]*>\s*\{task\.id\}/, 213, 'identifier'],
+    ['title', /className="([^"]*)"[^>]*>\s*\{task\.title\}/, 405, 'prose'],
+    ['project', /className="([^"]*)"[^>]*>\s*\{task\.project\}/, 81, 'identifier'],
+    ['assigned_agent', /className="([^"]*)"[^>]*>\s*\{task\.assigned_agent\}/, 81, 'identifier'],
+    ['description', /className="([^"]*)"[^>]*>\s*\{task\.description/, 270, 'prose'],
+    ['stage_owners', /className="([^"]*)"[^>]*>\s*\{formatStageOwners\(task\.stage_owners\)\}/, 99, 'identifier'],
+    ['log.agent_id', /className="([^"]*)"[^>]*>\s*\{log\.agent_id\}/, 121, 'identifier'],
+    ['log.message', /className="([^"]*)"[^>]*>\s*\{log\.message\}/, 205, 'prose'],
   ]
 
   let verified = 0
-  for (const [name, pattern, measuredOverflowPx] of SITES) {
+  for (const [name, pattern, measuredOverflowPx, kind] of SITES) {
     const cls = taskSheetSource.match(pattern)?.[1]
     assert.ok(
       cls,
       `TaskSheet.tsx must still render the \`${name}\` element (pattern ${pattern}) — ` +
         'if this node was renamed, update this guard rather than dropping the site',
     )
-    assert.match(
-      cls,
-      /\[overflow-wrap:anywhere\]/,
-      `TaskSheet \`${name}\` must carry \`[overflow-wrap:anywhere]\`: it overflowed by ${measuredOverflowPx}px ` +
-        'at 1280px with one long unspaced token, because `anywhere` (unlike `break-word`) also shrinks ' +
-        "the element's min-content size",
-    )
-    assert.match(
-      cls,
-      /\bbreak-words\b/,
-      `TaskSheet \`${name}\` must also carry \`break-words\` so content with spaces breaks at spaces first`,
-    )
+    if (kind === 'prose') {
+      assert.match(
+        cls,
+        /\[overflow-wrap:anywhere\]/,
+        `TaskSheet \`${name}\` is prose and must carry \`[overflow-wrap:anywhere]\`: it overflowed by ${measuredOverflowPx}px ` +
+          'at 1280px with one long unspaced token, because `anywhere` (unlike `break-word`) also shrinks ' +
+          "the element's min-content size",
+      )
+      assert.match(
+        cls,
+        /\bbreak-words\b/,
+        `TaskSheet \`${name}\` must also carry \`break-words\` so content with spaces breaks at spaces first`,
+      )
+    } else {
+      assert.match(
+        cls,
+        /\btruncate\b/,
+        `TaskSheet \`${name}\` is an IDENTIFIER (overflowed ${measuredOverflowPx}px before the fix) and must carry \`truncate\` ` +
+          'so it stays on ONE line and ellipsises instead of wrapping',
+      )
+      assert.match(
+        cls,
+        /\bmin-w-0\b/,
+        `TaskSheet \`${name}\` must carry \`min-w-0\`: in a flex row, \`min-width:auto\` lets it be squeezed into a sliver`,
+      )
+      assert.doesNotMatch(
+        cls,
+        /\[overflow-wrap:anywhere\]/,
+        `TaskSheet \`${name}\` must NOT carry \`[overflow-wrap:anywhere]\`: wrapping an identifier lowers min-content and caused the sliver regression`,
+      )
+    }
     verified += 1
   }
   assert.equal(verified, 8, 'all 8 measured drawer sites must be covered by this guard')
+
+  // Every identifier site must also expose its full value, since it ellipsises.
+  // The tooltip may carry a label prefix (e.g. `Project: ${task.project}`), so
+  // match the interpolated expression rather than the whole attribute value.
+  for (const [name, pattern, , kind] of SITES) {
+    if (kind !== 'identifier') continue
+    const expr = { id: 'task\\.id', project: 'task\\.project', assigned_agent: 'task\\.assigned_agent',
+      stage_owners: 'formatStageOwners\\(task\\.stage_owners\\)', 'log.agent_id': 'log\\.agent_id' }[name]
+    assert.match(
+      taskSheetSource,
+      new RegExp(`title=\\{[^}]*${expr}[^}]*\\}`),
+      `TaskSheet \`${name}\` must expose the full value via \`title\` because it can be ellipsised`,
+    )
+  }
+
+  // The timestamp that shares the log-agent flex row must be pinned, or it can
+  // squeeze the agent badge instead.
+  assert.match(
+    taskSheetSource,
+    /shrink-0 font-mono text-\[10px\] tabular-nums text-ink/,
+    'the log timestamp must carry `shrink-0` so it cannot squeeze the agent id',
+  )
 
   // `break-all` would also stop the overflow but breaks mid-word even when a
   // space break was available, so it must not be used as the fix.
@@ -229,7 +329,7 @@ test('TaskSheet wraps every unbroken-token render site (and not the nowrap ones)
   // path/URL/identifier — and this `p` sits in a `p-4` box with no clipping,
   // so an unbroken message painted past the form edge.
   const submitErr = taskSheetSource.match(
-    /\{error && <p className="([^"]*)">\{error\}<\/p>\}/,
+    /className="([^"]*)"[^>]*>\{error\}/,
   )?.[1]
   assert.ok(submitErr, 'TaskSheet.tsx must render {error && <p>{error}</p>}')
   assert.match(
