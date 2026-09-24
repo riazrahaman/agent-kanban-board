@@ -2,7 +2,7 @@
 
 A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
-Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, WIP capacity limits, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing.
+Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing.
 
 Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
 
@@ -222,7 +222,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (250 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, and the v2.5.0 comments/settings suites; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (258 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -277,6 +277,30 @@ tracked as `opt-*` backlog cards on the live board. Honest status per item:
    per-milestone progress.
 5. **Integration Hooks** — outbound webhooks / API sync with GitHub, Jira, etc.
    (the Telegram reclaim notifier is the only outbound hook today).
+
+### From the external security & quality review (Sep 2024)
+
+A third-party review of the codebase identified 22 findings and 12
+enhancement proposals. All are triaged and tracked as `rev-*` backlog cards on
+the live board (metadata `source: claude-external-review-2026-09-24`). Top
+priority items:
+
+1. **Purge cross-project scope bypass (SEC-01)** — a default-scoped token can
+   purge other projects via `filter.project` or bare `ids`; purge candidate
+   selection must be scoped to the caller's authorized projects.
+2. **Role self-assertion via `X-Agent-Role` (SEC-02)** — privileged roles
+   should be derived only from verified sources (admin token / session token),
+   never from the self-declared header.
+3. **Corrupt-store fail-closed (BUG-01)** — a corrupt `tasks.json` currently
+   loads as empty and is overwritten; the server should refuse to boot or
+   quarantine instead.
+4. **Optional read authentication (ENH-01)** — `KANBAN_READ_AUTH` to gate
+   GETs/SSE, with single-use HMAC stream tickets for `EventSource`.
+5. **Backups in the deploy blueprint (ENH-02)** — enable `KANBAN_BACKUP_*` in
+   `render.yaml`/`railway.json` plus a restore runbook.
+
+The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
+ENH-01..12) lives on the `kanbann` project of the live board.
 
 ---
 

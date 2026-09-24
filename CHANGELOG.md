@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,54 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.2] — 2026-09-24
+
+### Fixed
+
+- **SEC-01 — purge cross-project scope bypass.** `purgeTasks` clamps its scope
+  to the caller's authorized project: an unscoped purge now only reaches the
+  default project (previously it swept EVERY project), and a `filter.project`
+  that disagrees with the `?project=` scope is rejected with 403 rather than
+  silently widening the blast radius. `deleteTask` gained the same scope clamp
+  (defense-in-depth per the Reviewer) so a composite `project:id` path segment
+  cannot address another project's card.
+- **SEC-02 — destructive ops no longer trust the asserted role.** The
+  `X-Agent-Role` header is caller-declared; any token holder could previously
+  self-declare `admin` and purge everything. Destructive operations (task
+  delete / bulk purge) now require `caller.privileged`, which the auth
+  middleware derives from the **credential**: the `KANBAN_ADMIN_TOKEN` bearer
+  or a session token whose server-issued role is privileged. Per-project
+  tokens are by-convention worker credentials (functional roles such as
+  builder/reviewer/tester stay assertable; privileged ops do not). Legacy
+  single-token deployments keep their historical semantics unchanged.
+- **BUG-01 — corrupt data file could be wiped.** `JsonStorage.load()` now
+  fails closed: an existing but corrupt/unparseable data file makes
+  `loadStore()` throw and `startServer` refuse to boot (the file is preserved
+  for recovery), instead of starting empty and letting the next save overwrite
+  the board. An absent file still boots normally as an empty board. The git
+  backend's directory-level load failure also refuses boot now; per-card
+  corruption is still skipped with a warning (git files are independent).
+
+### Added
+
+- 3 new purge/delete scope + privilege tests (`kanban.purge.test.js`) and a
+  new `kanban.corruptfile.test.js` suite (5 tests) covering the fail-closed
+  load behavior on both the JSON and git backends.
+
+### Removed
+
+- **Advisory WIP capacity badges** (the client-side `n/3` per-column limit
+  guard shipped in v2.4.0). They were advisory-only (never server-enforced)
+  and misread as a hard constraint; column headers now show the plain task
+  count. Server behavior is unchanged.
+
+### Quality gates
+
+- Server suite: 258 tests across 41 suites, 0 fail (adds 8 tests; both new
+  gates falsified and restored byte-exact). Client suite: 102 tests, 0 fail.
+- `tsc -b` clean, `vite build` clean, `make sec` clean, banned-pattern grep
+  clean, release-version guard 5/5, doc mirror parity IDENTICAL ×3.
 
 ## [2.5.1] — 2026-09-24
 

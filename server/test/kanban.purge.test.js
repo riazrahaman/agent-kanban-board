@@ -202,3 +202,122 @@ describe('admin purge/delete', () => {
     assert.ok(!ids.includes('disk-1'), 'deleted task absent from on-disk partition');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-01 / SEC-02 hardening (v2.5.2)
+//   SEC-01: purge scope is clamped to the caller's authorized project.
+//   SEC-02: destructive ops gate on the credential-derived privileged flag,
+//           not the caller-asserted X-Agent-Role header.
+// ---------------------------------------------------------------------------
+describe('purge scope + privilege hardening (v2.5.2)', () => {
+  let tmpDir;
+  let server;
+  let baseUrl;
+
+  before(async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_REAP_ENABLED = 'false';
+    process.env.KANBAN_DEFAULT_PROJECT = 'default';
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-purge-hardening-'));
+    store.setStorage(null);
+    process.env.KANBAN_DATA_DIR = tmpDir;
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    await store.loadStore();
+    ({ server, baseUrl } = await startTestServer(createApp()));
+  });
+
+  after(async () => {
+    store.stopReaper();
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_REAP_ENABLED;
+    delete process.env.KANBAN_DATA_DIR;
+    delete process.env.KANBAN_DATA_FILE;
+    store.setStorage(null);
+  });
+
+  it('10. unscoped purge cannot sweep another project via filter.project -> 403', async () => {
+    // Seed one task in each of two projects.
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers('admin'), body: taskBody('h-default-1', 'Default'),
+    });
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers('admin'), body: taskBody('h-other-1', 'Other', { project: 'other' }),
+    });
+
+    const r = await jsonRequest(baseUrl, '/api/tasks/purge', {
+      method: 'POST', headers: headers('admin'),
+      body: JSON.stringify({ filter: { project: 'other' } }),
+    });
+    assert.equal(r.response.status, 403, 'cross-project filter purge rejected');
+    assert.match(r.body.error, /Forbidden: purge scope is limited to project/);
+    assert.ok(store.getTask('h-other-1', 'other'), 'foreign task survives');
+  });
+
+  it('11. per-project token + asserted admin role cannot delete -> 403 (SEC-02)', async () => {
+    const prevProjectTokens = process.env.KANBAN_PROJECT_TOKENS;
+    const prevAdminToken = process.env.KANBAN_ADMIN_TOKEN;
+    const projectToken = 'tok-project-worker';
+    const adminToken = 'tok-real-admin';
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ alpha: projectToken });
+    process.env.KANBAN_ADMIN_TOKEN = adminToken;
+    try {
+      // Seed the alpha card with the PROJECT token itself: with project tokens
+      // configured, the global suite token is no longer authorized for alpha.
+      await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader(projectToken),
+          'Content-Type': 'application/json',
+          'X-Agent-Role': 'builder',
+          'X-Agent-Id': 'alpha-builder',
+        },
+        body: taskBody('h-alpha-1', 'Alpha', { project: 'alpha' }),
+      });
+
+      // The project token, even asserting X-Agent-Role: admin, must not
+      // confer destructive privilege.
+      const denied = await jsonRequest(baseUrl, '/api/tasks/h-alpha-1?project=alpha', {
+        method: 'DELETE',
+        headers: {
+          Authorization: authHeader(projectToken),
+          'Content-Type': 'application/json',
+          'X-Agent-Role': 'admin',
+          'X-Agent-Id': 'rogue',
+        },
+      });
+      assert.equal(denied.response.status, 403, 'asserted admin role must not confer privilege');
+      assert.ok(store.getTask('h-alpha-1', 'alpha'), 'task survives the denied delete');
+
+      // The admin token bearer (credential-derived privilege) deletes fine.
+      const allowed = await jsonRequest(baseUrl, '/api/tasks/h-alpha-1?project=alpha', {
+        method: 'DELETE',
+        headers: {
+          Authorization: authHeader(adminToken),
+          'Content-Type': 'application/json',
+          'X-Agent-Role': 'admin',
+          'X-Agent-Id': 'board-architect',
+        },
+      });
+      assert.equal(allowed.response.status, 200, 'admin token deletes');
+      assert.equal(store.getTask('h-alpha-1', 'alpha'), null, 'task removed');
+    } finally {
+      if (prevProjectTokens === undefined) delete process.env.KANBAN_PROJECT_TOKENS;
+      else process.env.KANBAN_PROJECT_TOKENS = prevProjectTokens;
+      if (prevAdminToken === undefined) delete process.env.KANBAN_ADMIN_TOKEN;
+      else process.env.KANBAN_ADMIN_TOKEN = prevAdminToken;
+    }
+  });
+
+  it('12. unauthenticated delete -> 401', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers('admin'), body: taskBody('h-noauth-1', 'Survives'),
+    });
+    const r = await jsonRequest(baseUrl, '/api/tasks/h-noauth-1', { method: 'DELETE' });
+    assert.equal(r.response.status, 401);
+    assert.ok(store.getTask('h-noauth-1'), 'task survives');
+  });
+});

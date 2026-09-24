@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.5.1
+**System:** Agent Kanban Board v2.5.2
 
 ---
 
@@ -286,7 +286,7 @@ flowchart TD
 - **Issues (Swimlane):** Dedicated column aggregating any card with registered issues.
 
 > [!NOTE]
-> **WIP limits are advisory.** The Building and In Review columns carry a `n/3` capacity badge; at exactly 3 the badge turns amber, and beyond it the column header shows a red `WIP limit exceeded` banner. This is a client-side visual guard only — the server does not enforce a WIP ceiling, and agents can still claim.
+> **Column counts.** Each column header shows a plain task count. The earlier advisory WIP capacity badges (`n/3` on Building / In Review) were removed in v2.5.2 — the server never enforced a WIP ceiling and the fixed cap of 3 was arbitrary, so the guard was dropped. Counts are informational only.
 
 > [!TIP]
 > The board scrolls horizontally. When more columns exist than fit the viewport, an edge-fade gradient and a paging chevron appear on the side that has hidden columns — click the chevron (or scroll/swipe) to page one column at a time. On the **all projects** view each card also shows its owning **project chip** so cards from different projects are distinguishable; switch the header's project filter to a single project to hide the chips and scope the board.
