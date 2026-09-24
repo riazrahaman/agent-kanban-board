@@ -36,6 +36,7 @@ router.get('/', asyncHandler(async (req, res) => {
       enabled: reaperEnabled,
       running: store.isReaperRunning(),
     },
+    backup: store.backupStatus(),
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   });

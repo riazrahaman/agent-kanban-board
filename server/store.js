@@ -1,5 +1,5 @@
 import { readFile, writeFile, rename, mkdir, readdir, copyFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -3036,4 +3036,43 @@ export function isBackupRunning() {
 
 export async function runBackupNow() {
   await runBackup();
+}
+
+/**
+ * Backup observability for /api/health (ENH-02, v2.5.5). Reports the current
+ * config, whether the timer is running, and the freshest snapshot on disk so
+ * operators can verify snapshots are actually happening without shelling into
+ * the container. Read-only; never touches the mutation lock.
+ */
+export function backupStatus() {
+  const enabled = isBackupEnabled();
+  const root = defaultBackupRoot();
+  let lastBackupAt = null;
+  let backupCount = 0;
+  try {
+    const entries = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(e.name))
+      .map((e) => e.name)
+      .sort();
+    backupCount = entries.length;
+    if (entries.length > 0) {
+      // Stamp format is an ISO timestamp with : and . replaced by -, so the
+      // freshest snapshot sorts last lexicographically.
+      const stamp = entries[entries.length - 1];
+      const iso = stamp.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/, 'T$1:$2:$3.$4Z');
+      const parsed = Date.parse(iso);
+      lastBackupAt = Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+    }
+  } catch {
+    // No backups directory yet: count stays 0, last stays null.
+  }
+  return {
+    enabled,
+    running: isBackupRunning(),
+    interval_ms: getBackupIntervalMs(),
+    keep: getBackupKeep(),
+    backup_root: root,
+    backup_count: backupCount,
+    last_backup_at: lastBackupAt,
+  };
 }
