@@ -38,14 +38,14 @@
 
 .dark {
   color-scheme: dark;
-  /* Warm charcoal, not black — mirrors the cream light palette so the two
-     themes read as the same product. Lifted well off pure black to cut the
-     harsh near-black contrast that made the board feel heavy. */
-  --bg: #1a1b1e;        /* warm charcoal page — 13.81:1 vs ink */
-  --surface: #232428;   /* cards/sheets: gently raised off the page */
-  --line: rgba(255, 255, 255, 0.10);
-  --ink: #e8e6e1;       /* warm off-white — 13.81:1 on bg */
-  --muted: #9a968d;     /* warm grey — 5.84:1 on bg */
+  /* Green-tinted charcoal — matches riazrahaman.com's dark theme so the two
+     sites read as one product family. Brighter muted text and visible lines
+     (vs the previous near-invisible rgba lines) drive the visibility win. */
+  --bg: #1b211d;        /* deep green-charcoal page */
+  --surface: #252d27;   /* cards/sheets: raised panel tone */
+  --line: #445047;      /* visible green-grey hairlines */
+  --ink: #e8ece4;       /* warm green-tinted off-white — 13.1:1 on bg */
+  --muted: #b4beaf;     /* bright sage grey — 8.8:1 on bg */
   --muted-bg: rgba(255, 255, 255, 0.07);
   --scroll-track: rgba(255, 255, 255, 0.07);
   --scroll-thumb: rgba(255, 255, 255, 0.30);
