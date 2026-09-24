@@ -1,13 +1,14 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadStore, onChange, onDiff, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
+import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
 import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
+import settingsRouter from './routes/settings.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
@@ -45,6 +46,8 @@ export function createApp() {
   app.use('/api/metrics', metricsRouter);
   app.use('/api/health', healthRouter);
   app.use('/healthz', healthRouter);
+  // v2.5.0: per-project display settings (column colors).
+  app.use('/api/settings', settingsRouter);
 
   /**
    * §2.2 — SSE stream in three modes:
@@ -94,6 +97,21 @@ export function createApp() {
           });
         }
       }
+
+    // v2.5.0: push display-settings changes (column colors) live so an
+    // operator's save applies immediately in every open browser. A scoped
+    // stream receives both its own project's saves and the board-default save
+    // (a default save can change any project's resolved colors). Snapshot
+    // mode only — the diff contract is strictly per-task events.
+    if (!closed && !isDiffMode) {
+      send('settings', getSettings(project ?? undefined));
+      const unsubSettings = onSettings(({ project: savedProject }) => {
+        if (project && savedProject !== project && savedProject !== 'default') return;
+        send('settings', getSettings(project ?? undefined));
+      });
+      const prevUnsub = unsubscribe;
+      unsubscribe = () => { unsubSettings(); prevUnsub(); };
+    }
 
       req.on('close', () => {
         closed = true;

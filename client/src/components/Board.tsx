@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Task, TaskStatus } from '../types'
 import { groupTasks } from '../board-model.js'
 import Column from './Column'
+import { resolveColumnAccent, type ColumnColors } from '../lib/columnColors'
 
 const COLUMNS: { status: TaskStatus; title: string; stepNumber?: string; wipLimit?: number }[] = [
   { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
@@ -19,13 +20,15 @@ type Props = {
   onOpen: (id: string) => void
   /** Show each card's owning project — useful on the unscoped "all projects" board. */
   showProject?: boolean
+  /** v2.5.0: resolved per-project column colors (accent overrides). */
+  columnColors?: ColumnColors | null
 }
 
 // One column is w-72 (18rem = 288px) + the 1rem gap on desktop; on phones it
 // is 85vw, so page by the first column's actual width when we can measure it.
 const COLUMN_STEP = 304
 
-export default function Board({ tasks, onOpen, showProject = false }: Props) {
+export default function Board({ tasks, onOpen, showProject = false, columnColors }: Props) {
   const grouped = useMemo(() => groupTasks(tasks), [tasks])
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
@@ -91,6 +94,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
             tasks={grouped[col.status] || []}
             onOpen={onOpen}
             showProject={showProject}
+            accentClass={resolveColumnAccent(col.status, columnColors)}
           />
         ))}
       </div>

@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.4.0  
+**System Version:** 2.5.0    
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -55,6 +55,8 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Board Filters & Sorting** | `components/BoardFilters.tsx`, `lib/filterTasks.ts`, `lib/boardSort.ts` | Browser Native | Live substring search (id/title/description/branch/agent), priority + assignee quick filters, and a persisted column sort (`priority \| updated \| id`, stable, re-applied on every SSE snapshot under `localStorage kanban.sort`). |
 | **Metrics Dashboard** | `components/MetricsDashboard.tsx`, `lib/dashboardMetrics.ts` | Browser Native | Toggleable 7-tile summary (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the **unfiltered** task list so totals stay stable while filters narrow the board. |
 | **Advisory WIP Limits** | `components/Board.tsx` `COLUMNS`, `components/Column.tsx` | Client only | Building / In Review carry a `n/3` capacity badge with amber at-limit and red over-limit banners. Deliberately a visual guard — the server imposes no WIP ceiling. |
+| **Custom Column Colors** | `routes/settings.js`, `store.js` (`getSettings`/`updateSettings`), `lib/columnColors.ts`, `components/ColumnColorsControl.tsx` | Server + Client | v2.5.0 per-project accent overrides resolved stock → board default → project override, persisted through both storage backends and pushed live over an SSE `event: settings`; the palette is the design system's 8 accent tokens (no raw hex). |
+| **Task Comments** | `store.js` (`addComment`), `POST /api/tasks/:id/comments`, `components/TaskSheet.tsx` | Server + Client | v2.5.0 discussion thread per card, a `comments[]` array deliberately separate from the `agent_logs` machine audit trail; escapeHtml on write, §2.6 CAS guard, one version bump, KB-05 persist-first. |
 | **Project Deep Link** | URL query + local storage | Browser Native | On load the client reads `?project=` (as sent in reclaim alerts), scopes the board to that project, persists the choice, and removes the one-time query parameter. |
 | **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |

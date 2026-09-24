@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
-import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
+import { getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToEvents, subscribeToSettings } from './api'
+import type { ColumnColors } from './lib/columnColors'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
 import BoardFilters from './components/BoardFilters'
@@ -269,6 +270,38 @@ export default function App() {
   )
 
   const [showMetrics, setShowMetrics] = useState(false)
+  // v2.5.0: per-project column colors, resolved server-side. Loaded on mount
+  // and on project change; live-updated via the SSE `settings` event; saved
+  // optimistically through PUT /api/settings.
+  const [columnColors, setColumnColors] = useState<ColumnColors | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getSettings(project || undefined)
+      .then((s) => {
+        if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
+      })
+      .catch(() => {
+        // Display-only: leave the stock palette on failure.
+      })
+    const unsub = subscribeToSettings((s) => {
+      if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
+    }, { project: project || undefined })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [project])
+  const handleColumnColorsChange = useCallback((colors: ColumnColors) => {
+    setColumnColors(colors)
+    saveSettings(project || undefined, colors).catch(() => {
+      // Revert silently is safest visually-neutral option: keep the optimistic
+      // value but let the next SSE/fetch re-sync.
+    })
+  }, [project])
+  const handleColumnColorsReset = useCallback(() => {
+    setColumnColors(null)
+    saveSettings(project || undefined, {}).catch(() => {})
+  }, [project])
 
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
@@ -446,6 +479,9 @@ export default function App() {
                     onSortChange={handleSortChange}
                     showMetrics={showMetrics}
                     onToggleMetrics={() => setShowMetrics((v) => !v)}
+                    columnColors={columnColors}
+                    onColumnColorsChange={handleColumnColorsChange}
+                    onColumnColorsReset={handleColumnColorsReset}
                   />
                   {showMetrics && (
                     <MetricsDashboard
@@ -458,6 +494,7 @@ export default function App() {
                       tasks={filteredTasks}
                       onOpen={handleOpen}
                       showProject={!project}
+                      columnColors={columnColors}
                     />
                   </div>
                 </div>

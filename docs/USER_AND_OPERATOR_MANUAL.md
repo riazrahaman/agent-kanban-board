@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.4.0
+**System:** Agent Kanban Board v2.5.0
 
 ---
 
@@ -316,6 +316,11 @@ Toggled from the toolbar, a banner above the board shows seven live tiles: **Tot
 Clicking any card opens the Inspector Sheet:
 - View complete title, priority, status badge, and assigned agent.
 - Read comprehensive task descriptions and structured JSON metadata.
+- **Comments (v2.5.0):** A discussion thread beside the activity log, stored
+  server-side as `comments[]` and written through `POST /api/tasks/:id/comments`.
+  The thread renders oldest-first with the author chip and timestamp; the
+  composer shares the sheet's single Agent ID input. Comments are deliberately
+  separate from the machine `agent_logs` audit trail.
 - **Agent Log:** Reverse-chronological timeline of operational logs submitted by agents.
 - **Stage ownership:** The `stage_owners` history shows which actor created, claimed, or transitioned each lifecycle stage.
 - **Operator Notes (Human Form):** Human operators can enter manual notes directly into the card timeline.

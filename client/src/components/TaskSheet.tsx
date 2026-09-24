@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Task } from '../types'
-import { appendLog } from '../api'
+import { addComment, appendLog } from '../api'
 import { normalizePriority } from '../priority'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
@@ -26,8 +26,11 @@ function formatTimestamp(ts: string): string {
 export default function TaskSheet({ task, onClose }: Props) {
   const [agentId, setAgentId] = useState('Human')
   const [message, setMessage] = useState('')
+  const [commentText, setCommentText] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [commenting, setCommenting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [commentError, setCommentError] = useState<string | null>(null)
 
   const open = !!task
 
@@ -38,12 +41,29 @@ export default function TaskSheet({ task, onClose }: Props) {
     setSubmitting(true)
     setError(null)
     try {
-      await appendLog(task.id, agentId.trim() || 'Human', message.trim())
+      await appendLog(task.id, agentId.trim() || 'Human', message.trim(), { project: task.project })
       setMessage('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit log')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // v2.5.0: the discussion composer shares the sheet's single Agent ID field.
+  async function handleComment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!task || !commentText.trim()) return
+
+    setCommenting(true)
+    setCommentError(null)
+    try {
+      await addComment(task.id, agentId.trim() || 'Human', commentText.trim(), { project: task.project })
+      setCommentText('')
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : 'Failed to post comment')
+    } finally {
+      setCommenting(false)
     }
   }
 
@@ -150,6 +170,49 @@ export default function TaskSheet({ task, onClose }: Props) {
                 </section>
               )}
 
+              {/* v2.5.0: discussion thread — human conversation, kept separate
+                  from the machine audit trail below. Oldest first, like the log. */}
+              <section>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                    Comments
+                  </h3>
+                  <span className="font-mono text-[10px] tabular-nums text-muted">
+                    {(task.comments?.length ?? 0)} {(task.comments?.length ?? 0) === 1 ? 'comment' : 'comments'}
+                  </span>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {[...(task.comments ?? [])]
+                    .sort(
+                      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+                    )
+                    .map((comment, i) => (
+                      <div
+                        key={`${comment.timestamp}-${i}`}
+                        className="border border-line bg-muted-bg/50 p-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className="min-w-0 truncate border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink"
+                            title={comment.agent_id}
+                          >
+                            {comment.agent_id}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink">
+                            {formatTimestamp(comment.timestamp)}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs leading-relaxed text-ink whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                          {decodeStored(comment.message)}
+                        </p>
+                      </div>
+                    ))}
+                  {(task.comments?.length ?? 0) === 0 && (
+                    <p className="font-mono text-xs text-muted py-2">No comments yet.</p>
+                  )}
+                </div>
+              </section>
+
               <section>
                 <div className="flex items-center justify-between">
                   <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
@@ -196,6 +259,29 @@ export default function TaskSheet({ task, onClose }: Props) {
                 </div>
               </section>
             </div>
+
+            {/* v2.5.0: discussion composer. Shares the sheet's single Agent ID
+                input (one "who am I" field for both composers). */}
+            <form
+              onSubmit={handleComment}
+              className="space-y-2 border-t border-line bg-surface p-4 pb-2"
+            >
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                placeholder="Add a comment..."
+                rows={2}
+                className="w-full resize-none border border-line bg-bg px-2.5 py-1.5 text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
+              />
+              {commentError && <p className="font-mono text-xs text-fail break-words [overflow-wrap:anywhere]">{commentError}</p>}
+              <button
+                type="submit"
+                disabled={commenting || !commentText.trim()}
+                className="w-full border border-line bg-muted-bg px-3 py-1.5 font-mono text-xs font-medium uppercase tracking-wider text-ink transition-colors hover:bg-line/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {commenting ? 'Posting…' : 'Post comment'}
+              </button>
+            </form>
 
             <form
               onSubmit={handleSubmit}

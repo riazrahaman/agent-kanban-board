@@ -11,6 +11,8 @@ type Props = {
   onOpen: (id: string) => void
   /** Show each card's owning project (unscoped board only). */
   showProject?: boolean
+  /** v2.5.0: resolved top-accent class override (per-project column colors). */
+  accentClass?: string
 }
 
 const COLUMN_ACCENTS: Record<string, string> = {
@@ -46,15 +48,16 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.wipLimit === next.wipLimit &&
     prev.onOpen === next.onOpen &&
     prev.showProject === next.showProject &&
+    prev.accentClass === next.accentClass &&
     sameBucket(prev.tasks, next.tasks)
   )
 }
 
-function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProject = false }: Props) {
+function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProject = false, accentClass }: Props) {
   const isDone = status === 'DONE' || status === 'done'
   const isBlocked = status === 'BLOCKED' || status === 'blocked'
   const normalizedStatus = String(status).toUpperCase()
-  const topAccent = COLUMN_ACCENTS[normalizedStatus] || 'border-t-2 border-t-line'
+  const topAccent = accentClass ?? COLUMN_ACCENTS[normalizedStatus] ?? 'border-t-2 border-t-line'
   const isOverWip = typeof wipLimit === 'number' && tasks.length > wipLimit
   const isAtWip = typeof wipLimit === 'number' && tasks.length === wipLimit
 
