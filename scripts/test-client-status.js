@@ -12,7 +12,11 @@ test('client status helper renders malformed statuses safely and consistently', 
     stripe: 'border-l-line',
     badge: 'bg-muted-bg text-muted',
   })
-  assert.equal(statusStyle('BUILDING').stripe, statusStyle('IN_TEST').stripe)
+  // v2.4.0: BUILDING (blue/live) and IN_TEST (violet/test) are deliberately DISTINCT
+  // so the verification stage is identifiable at a glance.
+  assert.notEqual(statusStyle('BUILDING').stripe, statusStyle('IN_TEST').stripe)
+  assert.equal(statusStyle('BUILDING').stripe, 'border-l-live')
+  assert.equal(statusStyle('IN_TEST').stripe, 'border-l-test')
   assert.equal(statusStyle('IN_REVIEW').badge, 'bg-warn-bg text-warn')
 
   const grouped = groupTasks([
