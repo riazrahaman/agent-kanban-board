@@ -1,6 +1,6 @@
 const STATUS_STYLES = {
   DONE: { stripe: 'border-l-pass', badge: 'bg-pass-bg text-pass' },
-  IN_TEST: { stripe: 'border-l-live', badge: 'bg-live-bg text-live' },
+  IN_TEST: { stripe: 'border-l-test', badge: 'bg-test-bg text-test' },
   IN_REVIEW: { stripe: 'border-l-warn', badge: 'bg-warn-bg text-warn' },
   BUILDING: { stripe: 'border-l-live', badge: 'bg-live-bg text-live' },
   BLOCKED: { stripe: 'border-l-block', badge: 'bg-block-bg text-block' },

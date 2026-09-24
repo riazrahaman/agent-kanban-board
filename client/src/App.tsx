@@ -3,8 +3,10 @@ import type { ProjectSummary, Task } from './types'
 import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
+import BoardFilters from './components/BoardFilters'
 import About from './components/About'
 import Portfolio from './components/Portfolio'
+import MetricsDashboard from './components/MetricsDashboard'
 import ProjectPicker from './components/ProjectPicker'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
@@ -12,6 +14,8 @@ import HeaderHelp from './components/HeaderHelp'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
+import { filterTasks } from './lib/filterTasks'
+import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
@@ -210,10 +214,61 @@ export default function App() {
     }
   }, [])
 
+  const [searchQuery, setSearchQuery] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [assigneeFilter, setAssigneeFilter] = useState('all')
+  // Column ordering is an explicit, persisted control (default: priority).
+  // Unlike the removed local reorder buttons, the choice survives SSE
+  // snapshots and reloads, because it re-applies on every new tasks array.
+  const [boardSort, setBoardSort] = useState<BoardSort>(readStoredSort)
+
+  const assignees = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of tasks) {
+      if (t.assigned_agent) set.add(t.assigned_agent)
+    }
+    return Array.from(set).sort()
+  }, [tasks])
+
+  const filteredTasks = useMemo(() => {
+    const list = filterTasks(tasks, {
+      search: searchQuery,
+      priority: priorityFilter,
+      assignee: assigneeFilter,
+    })
+    return sortTasks(list, boardSort)
+  }, [tasks, searchQuery, priorityFilter, assigneeFilter, boardSort])
+
+  const handleSortChange = useCallback((next: BoardSort) => {
+    setBoardSort(next)
+    writeStoredSort(next)
+  }, [])
+
+  const resetFilters = useCallback(() => {
+    setSearchQuery('')
+    setPriorityFilter('all')
+    setAssigneeFilter('all')
+  }, [])
+
+  const handleExport = useCallback(() => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(tasks, null, 2))
+    const downloadAnchor = document.createElement('a')
+    downloadAnchor.setAttribute('href', dataStr)
+    downloadAnchor.setAttribute(
+      'download',
+      `kanban-export-${project || 'all'}-${new Date().toISOString().slice(0, 10)}.json`,
+    )
+    document.body.appendChild(downloadAnchor)
+    downloadAnchor.click()
+    downloadAnchor.remove()
+  }, [tasks, project])
+
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
      [tasks, openTaskId],
   )
+
+  const [showMetrics, setShowMetrics] = useState(false)
 
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
@@ -374,8 +429,37 @@ export default function App() {
             )}
             {view === 'board' && !loading && !error && tasks.length > 0 && (
               <>
-                 <div className="min-w-0 flex-1 overflow-hidden">
-                   <Board tasks={tasks} onOpen={handleOpen} showProject={!project} />
+                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                  <BoardFilters
+                    search={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    priority={priorityFilter}
+                    onPriorityChange={setPriorityFilter}
+                    assignee={assigneeFilter}
+                    onAssigneeChange={setAssigneeFilter}
+                    assignees={assignees}
+                    totalCount={tasks.length}
+                    filteredCount={filteredTasks.length}
+                    onReset={resetFilters}
+                    onExport={handleExport}
+                    sort={boardSort}
+                    onSortChange={handleSortChange}
+                    showMetrics={showMetrics}
+                    onToggleMetrics={() => setShowMetrics((v) => !v)}
+                  />
+                  {showMetrics && (
+                    <MetricsDashboard
+                      tasks={tasks}
+                      onClose={() => setShowMetrics(false)}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <Board
+                      tasks={filteredTasks}
+                      onOpen={handleOpen}
+                      showProject={!project}
+                    />
+                  </div>
                 </div>
                 {/* Desktop: docked rail. Mobile: it would eat the whole board,
                     so it becomes an on-demand overlay toggled from the header. */}

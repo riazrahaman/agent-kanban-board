@@ -22,3 +22,19 @@ const PRIORITY_RANK: Record<string, TaskPriority> = {
 export function normalizePriority(raw: string | null | undefined): TaskPriority {
   return (raw && PRIORITY_RANK[raw]) || 'medium'
 }
+
+export const PRIORITY_BADGE: Record<TaskPriority, string> = {
+  high: 'bg-fail-bg text-fail border-fail/40 font-semibold',
+  medium: 'bg-warn-bg text-warn border-warn/40',
+  low: 'bg-muted-bg text-muted border-line',
+}
+
+export function priorityBadgeClass(priority: string | null | undefined): string {
+  return PRIORITY_BADGE[normalizePriority(priority)]
+}
+
+export const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+}

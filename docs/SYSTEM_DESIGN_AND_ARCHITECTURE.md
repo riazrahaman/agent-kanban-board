@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.3.13  
+**System Version:** 2.4.0  
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -52,6 +52,9 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / warm-charcoal dark palettes; explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
 | **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. |
 | **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' \| 'portfolio' \| 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server `version` prop so it can never go stale. |
+| **Board Filters & Sorting** | `components/BoardFilters.tsx`, `lib/filterTasks.ts`, `lib/boardSort.ts` | Browser Native | Live substring search (id/title/description/branch/agent), priority + assignee quick filters, and a persisted column sort (`priority \| updated \| id`, stable, re-applied on every SSE snapshot under `localStorage kanban.sort`). |
+| **Metrics Dashboard** | `components/MetricsDashboard.tsx`, `lib/dashboardMetrics.ts` | Browser Native | Toggleable 7-tile summary (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the **unfiltered** task list so totals stay stable while filters narrow the board. |
+| **Advisory WIP Limits** | `components/Board.tsx` `COLUMNS`, `components/Column.tsx` | Client only | Building / In Review carry a `n/3` capacity badge with amber at-limit and red over-limit banners. Deliberately a visual guard — the server imposes no WIP ceiling. |
 | **Project Deep Link** | URL query + local storage | Browser Native | On load the client reads `?project=` (as sent in reclaim alerts), scopes the board to that project, persists the choice, and removes the one-time query parameter. |
 | **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |

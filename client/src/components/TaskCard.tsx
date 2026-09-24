@@ -1,9 +1,11 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
 import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
+import { normalizePriority, priorityBadgeClass } from '../priority'
+import { patchTask } from '../api'
 
 type Props = {
   task: Task
@@ -25,8 +27,33 @@ function areEqual(prev: Props, next: Props): boolean {
   )
 }
 
-function TaskCard({ task, onOpen, showProject = false }: Props) {
+function TaskCard({
+  task,
+  onOpen,
+  showProject = false,
+}: Props) {
   const stripe = statusStyle(task.status).stripe
+  const isHigh = normalizePriority(task.priority) === 'high'
+  const estimate = (task.metadata?.estimate ?? task.metadata?.points ?? task.metadata?.size) as string | number | undefined
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [draftTitle, setDraftTitle] = useState(task.title)
+
+  const handleSaveTitle = async (e?: React.SyntheticEvent) => {
+    e?.stopPropagation()
+    const trimmed = draftTitle.trim()
+    if (!trimmed || trimmed === task.title) {
+      setDraftTitle(task.title)
+      setEditingTitle(false)
+      return
+    }
+    try {
+      await patchTask(task.id, { title: trimmed }, { project: task.project, expected_version: task.version })
+    } catch {
+      setDraftTitle(task.title)
+    } finally {
+      setEditingTitle(false)
+    }
+  }
 
   return (
     <div
@@ -37,6 +64,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
         'hover:bg-muted-bg/50',
         'border-l-[3px]',
         stripe,
+        isHigh ? 'border-r-2 border-r-fail' : '',
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -63,13 +91,54 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
               {task.project}
             </span>
           )}
+          {estimate !== undefined && estimate !== '' && (
+            <span
+              className="border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted"
+              title={`Estimate / Effort: ${estimate}`}
+            >
+              ⚡ {String(estimate)}
+            </span>
+          )}
+          <span
+            className={`border px-1 py-0.5 font-mono text-[10px] uppercase tracking-wider ${priorityBadgeClass(task.priority)}`}
+            title={`Priority: ${task.priority}`}
+          >
+            {task.priority}
+          </span>
           <StatusBadge status={task.status} />
         </div>
       </div>
 
-      <p className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]">
-        {decodeStored(task.title)}
-      </p>
+      {editingTitle ? (
+        <input
+          type="text"
+          value={draftTitle}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onBlur={handleSaveTitle}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSaveTitle(e)
+            if (e.key === 'Escape') {
+              setDraftTitle(task.title)
+              setEditingTitle(false)
+            }
+          }}
+          autoFocus
+          className="w-full border border-line bg-surface px-1.5 py-0.5 font-mono text-sm text-ink focus:outline-none"
+        />
+      ) : (
+        <p
+          className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]"
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            setDraftTitle(task.title)
+            setEditingTitle(true)
+          }}
+          title="Double-click to edit title"
+        >
+          {decodeStored(task.title)}
+        </p>
+      )}
 
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
         {task.assigned_agent ? (

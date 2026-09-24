@@ -16,6 +16,38 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [2.4.0] — 2026-09-24
+
+### Added
+
+- **Search Bar & Quick Filters (`client/src/components/BoardFilters.tsx`, `client/src/lib/filterTasks.ts`)**:
+  - Live substring search matching across task titles, IDs, descriptions, and branch names with instant filtering.
+  - Multi-criteria quick filters: priority filter (`high`, `medium`, `low`), dynamic assignee selector populated from active/held tasks, and instant `Reset` action.
+- **Work-In-Progress (WIP) Capacity Limits & Effort Sizing (`client/src/components/Column.tsx`, `client/src/components/TaskCard.tsx`)**:
+  - Configurable WIP capacity limits on active columns (`BUILDING` cap 3, `IN_REVIEW` cap 3) with warning badges and limit violation banners.
+  - Sizing & effort indicator badge (`⚡ <estimate>`) dynamically rendered from task metadata (`estimate`, `points`, `size`).
+- **High-Impact Ticket Prioritisation & Clear Status Workflow Labels**:
+  - Prominent high-priority card right-accent (`border-r-2 border-r-fail`) and priority badge chips.
+  - Numbered workflow steps (`01 Backlog`, `02 Building`, `03 In Review`, `04 In Test`) for transparent visual flow.
+- **Live Metrics Dashboard Summary (`client/src/components/MetricsDashboard.tsx`, `client/src/lib/dashboardMetrics.ts`)**:
+  - Toggleable summary dashboard banner showing Total Tickets, Backlog, In-Flight WIP, Blocked, Completed, Average Cycle Time (derived from completed work), and Overdue/Stalled active tasks exceeding the freshness threshold.
+  - The dashboard always summarises the WHOLE board scope — it is deliberately fed the unfiltered task list, so totals stay stable while filters narrow the board.
+- **JSON Export (`client/src/App.tsx`, `client/src/components/BoardFilters.tsx`)**:
+  - One-click JSON export with ISO datestamp for backing up and sharing board task states. (A paired import was considered and dropped: a browser-side merge into local state was invisible to the server and silently discarded by the next SSE snapshot — export remains, import awaits a server-backed design.)
+- **In-Column Sorting (`client/src/lib/boardSort.ts`)**:
+  - Explicit column-ordering control (`Sort: Priority | Recently Updated | Task ID`), persisted per browser (`localStorage kanban.sort`) and re-applied on every SSE snapshot. Priority sort ranks high → medium → low and keeps the server's recency order within a rank (stable sort); ties never jump.
+  - This replaces the first-draft ▲/▼ move controls, which mutated only local state and were silently wiped by the next live update.
+- **Double-Click Inline Title Editing**:
+  - Instant inline title editing directly on cards with Enter/Blur persistence and Escape cancellation, backed by optimistic CAS version verification.
+- **Distinct verification-stage colour (IN_TEST)**:
+  - New `--test`/`--test-bg` violet token pair (light + dark, WCAG AA); `IN_TEST` cards now use the violet left-stripe and badge and the In Test column a violet top accent — previously `BUILDING` and `IN_TEST` shared the identical blue treatment and were indistinguishable at a glance.
+
+### Quality gates
+
+- Server suite: 234 tests across 37 suites, 0 fail. Client suite: 94 tests, 0 fail (adds `boardSort.test.mjs`, 8 tests; trust metrics self-check keeps the About page counts in lockstep with the real suite sizes).
+- `tsc -b` clean; production bundle builds clean; `make sec` clean; visual-contract grep clean; version lockstep guard 5/5; `check-version-bump.sh` exit 0 (2.3.13 → 2.4.0); docs mirrors prose-identical; markdown tables clean.
+- Future enhancements from the original recommendations file (Ticket Details Panel comments, operator assignment, custom column colours, milestones, integration hooks) are recorded in the README **Roadmap** section and as `opt-*` backlog cards on the live board; the two root handover files were removed.
+
 ## [2.3.13] — 2026-09-24
 
 ### Fixed

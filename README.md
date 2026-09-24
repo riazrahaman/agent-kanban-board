@@ -2,7 +2,7 @@
 
 A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
-Drag-and-drop interactions are deliberately omitted: agents drive the board state, eliminating stray human clicks that could corrupt loop execution.
+Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, WIP capacity limits, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing.
 
 Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
 
@@ -222,7 +222,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (234 tests, including the Telegram reclaim-notifier guard and the branch-integrity regression guard), the client status check, the client unit suite (77 tests, including the mobile-responsive and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (234 tests, including the Telegram reclaim-notifier guard and the branch-integrity regression guard), the client status check, the client unit suite (86 tests, including the mobile-responsive, dashboard-metrics, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -255,6 +255,27 @@ Run it locally against your base branch:
 git fetch origin main
 ./scripts/check-version-bump.sh origin/main
 ```
+
+---
+
+## Roadmap / Future Enhancements
+
+Ideas captured from community feedback (formerly `kanban_recommendations.md` /
+`kanban_handover.md`) that are deliberately **not** built yet. They are also
+tracked as `opt-*` backlog cards on the live board. Honest status per item:
+
+1. **Ticket Details Panel** — a click-out side panel with full description,
+   comments, and activity history. Largely exists today as the task inspector
+   (TaskSheet); the outstanding piece is a comment thread.
+2. **Operator Assignment** — an admin/operator can already work around this by
+   claiming on an agent's behalf, but there is no explicit "assign to agent"
+   action beyond agent self-claim, and no avatars.
+3. **Custom Column Colors** — per-operator colour-coding of swimlanes (the
+   palette is fixed today; each stage does carry a distinct accent).
+4. **Milestones / Goals** — group tickets under a milestone banner and show
+   per-milestone progress.
+5. **Integration Hooks** — outbound webhooks / API sync with GitHub, Jira, etc.
+   (the Telegram reclaim notifier is the only outbound hook today).
 
 ---
 
