@@ -1646,6 +1646,21 @@ export async function createTask(data = {}, projectArg) {
     if (!data.id || !data.title) {
       return { error: 'id and title are required', status: 400 };
     }
+    // BUG-02 (v2.5.4): field-type validation. A non-string title used to
+    // escapeHtml into an empty string, and a non-string priority passed
+    // through verbatim — which later crashed the client's filterTasks
+    // (toLowerCase on a non-string) and blanked the whole board above the
+    // ErrorBoundary. Reject wrong shapes at the door instead.
+    if (typeof data.title !== 'string' || data.title.trim() === '') {
+      return { error: 'title must be a non-empty string', status: 400 };
+    }
+    if (data.description !== undefined && data.description !== null && typeof data.description !== 'string') {
+      return { error: 'description must be a string', status: 400 };
+    }
+    const priorityError = validatePriority(data.priority);
+    if (priorityError) {
+      return { error: priorityError, status: 400 };
+    }
 
     // Project resolution: body.project > body.workspace_id (alias) > query/header arg.
     const rawProject = data.project ?? data.workspace_id ?? projectArg;
@@ -1689,7 +1704,9 @@ export async function createTask(data = {}, projectArg) {
       title: escapeHtml(data.title),
       description: escapeHtml(data.description || ''),
       status,
-      priority: data.priority || 'medium',
+      priority: typeof data.priority === 'string' && data.priority !== ''
+        ? data.priority.toLowerCase()
+        : 'medium',
       // Same rule as serializeCard — the shared `toBranch` normaliser. This
       // site is the one that leaked a *stale sibling's* value on the
       // orchestrator path, so it must read data.branch only — never a
@@ -1835,8 +1852,27 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 
     for (const key of allowed) {
       if (key in patch) {
-        if ((key === 'title' || key === 'description') && typeof patch[key] === 'string') {
+        // BUG-02 (v2.5.4): type-validate the prose fields on PATCH too. The old
+        // behaviour silently skipped a non-string title/description (keeping a
+        // stale value) and stored a non-string priority verbatim — the same
+        // client-crash shape as createTask.
+        if (key === 'title') {
+          if (typeof patch[key] !== 'string' || patch[key].trim() === '') {
+            return { error: 'title must be a non-empty string', status: 400 };
+          }
           candidate[key] = escapeHtml(patch[key]);
+        } else if (key === 'description') {
+          if (patch[key] !== null && typeof patch[key] !== 'string') {
+            return { error: 'description must be a string', status: 400 };
+          }
+          candidate[key] = typeof patch[key] === 'string' ? escapeHtml(patch[key]) : '';
+        } else if (key === 'priority') {
+          const priorityError = validatePriority(patch[key]);
+          if (priorityError) return { error: priorityError, status: 400 };
+          candidate[key] =
+            typeof patch[key] === 'string' && patch[key] !== ''
+              ? patch[key].toLowerCase()
+              : 'medium';
         } else if (key === 'branch') {
           // The third write path: same shared rule as createTask/serializeCard,
           // so a blank, whitespace-only or non-string branch cannot be served
@@ -1927,6 +1963,20 @@ export function dependencyGate(task) {
     if (!depTask || depTask.status !== STATUSES.DONE) unresolved.push(dep);
   }
   return { ok: unresolved.length === 0, unresolved };
+}
+
+/**
+ * BUG-02 (v2.5.4): priority must be a string in {low, medium, high}
+ * (case-insensitive). Absent/null defaults to medium; anything else is a 400.
+ * Returns an error message or null when valid.
+ */
+function validatePriority(priority) {
+  if (priority === undefined || priority === null || priority === '') return null;
+  if (typeof priority !== 'string') return 'priority must be a string (low, medium, or high)';
+  if (!['low', 'medium', 'high'].includes(priority.toLowerCase())) {
+    return 'priority must be one of: low, medium, high';
+  }
+  return null;
 }
 
 /**
