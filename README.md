@@ -114,6 +114,7 @@ The board features pluggable persistence:
    | `KANBAN_GIT_COMMIT` | `true` | `false` disables auto-commit. |
    | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
    | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
+   | `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep; trash rows persist until then). |
    | `KANBAN_TELEGRAM_BOT_TOKEN` / `KANBAN_TELEGRAM_CHAT_ID` | *(unset)* | Both required to enable Telegram alerts when a lease reaper returns a task to `BACKLOG`. Off when either is unset. |
    | `KANBAN_NOTIFY_EVENTS` | `lease_expired,orphan_normalized` | Which reclaim reasons alert. |
    | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
@@ -176,7 +177,10 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 |---|---|---|---|
 | `GET` | `/api/tasks` | List all tasks (`?project=` scopes to one project; unfiltered spans all) | Public |
 | `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
-| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks | Auth + privileged role required |
+| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | Auth + privileged role required |
+| `GET` | `/api/tasks/trash` | List soft-deleted tasks in the trash sink (project-scoped) | Read |
+| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to BACKLOG | Auth (admin) |
+| `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | Auth + privileged role required |
 | `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
 | `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
@@ -222,7 +226,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (270 tests, including the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (278 tests, including the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 

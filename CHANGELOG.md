@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,18 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.6] — 2026-09-24
+
+### Added
+
+- **Soft-delete trash sink + restore (ENH-03).** `DELETE /api/tasks/:id` and the default `POST /api/tasks/purge` no longer destroy data — they park the task (stamped `deleted_at`/`deleted_by`, version bumped) in a per-project `trash/` sink beside the archive, on both the JSON and git backends (git cards are parked as plain untracked YAML under `<root>/trash/<project>/` so history stays clean). New endpoints: `GET /api/tasks/trash` (lists the sink, project-scoped), `POST /api/tasks/trash/:id/restore` (returns the card to BACKLOG with owner/lease/stage-owners cleared, a `restored_at` stamp, an agent-log entry, and a fresh claimable state), and `DELETE /api/tasks/trash/:id` (admin-only permanent removal from the sink).
+- **True permanent purge preserved.** `POST /api/tasks/purge` with `{ "hard": true }` bypasses the sink for irreversible deletion.
+- **Retention sweep.** `KANBAN_TRASH_DAYS` (default 30; 0/negative disables) hard-deletes sink rows older than the window, anchored on `deleted_at || updated || created_at`; the sweep runs on the existing archive-sweep cadence (GET /tasks, /archive, /metrics all sweep first) and trash survives service restarts via `loadStore()`. A trash row whose id collides with a live card cannot be restored (409).
+
+### Quality gates
+
+Server suite: 278 tests across 42 suites, 0 failures (new `kanban.trash.test.js`: 8 tests covering soft-delete parking, restore, project scoping, restore-conflict, hard delete, hard purge, restart persistence and retention off-switch; restore path falsified by stubbing then restored byte-exact). Client suite: 102. `tsc -b`, `vite build`, `make sec`, version lockstep, doc-mirror parity and markdown-table checks all green.
 
 ## [2.5.5] — 2026-09-24
 

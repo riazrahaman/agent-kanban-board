@@ -399,6 +399,35 @@ export class JsonStorage {
     await writeAtomic(this.archiveFile, JSON.stringify(payload, null, 2));
   }
 
+  // v2.5.6: trash sink, mirroring the archive sibling. Deleted tasks land here
+  // (stamped deleted_at/deleted_by) so an admin can restore or hard-purge them.
+  get trashFile() {
+    const dir = path.dirname(this.filePath);
+    return path.join(dir, 'trash', `${this.project || defaultProjectName()}.json`);
+  }
+
+  async loadTrash() {
+    try {
+      if (!existsSync(this.trashFile)) return [];
+      const parsed = JSON.parse(await readFile(this.trashFile, 'utf-8'));
+      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      backfillLeaseFields(list);
+      return list;
+    } catch (err) {
+      console.warn(`[kanban JsonStorage] loadTrash error: ${err.message} — starting empty`);
+      return [];
+    }
+  }
+
+  async saveTrash(tasks) {
+    const payload = {
+      project: this.project || defaultProjectName(),
+      updated_at: new Date().toISOString(),
+      tasks,
+    };
+    await writeAtomic(this.trashFile, JSON.stringify(payload, null, 2));
+  }
+
   async loadSettings() {
     try {
       if (!existsSync(this.settingsFile)) return {};
@@ -597,6 +626,69 @@ export class GitYamlStorage {
     }
   }
 
+  // v2.5.6: trash sink for the git backend. Cards are parked as plain YAML
+  // under <root>/trash/<project>/ (NOT git-tracked — the trash is an operator
+  // safety net, not history); restore re-writes the live card via saveTask,
+  // which resumes normal git commits.
+  async trashTask(task) {
+    const p = this.ownedProject;
+    const trashDir = path.join(this.root, 'trash', p);
+    await mkdir(trashDir, { recursive: true });
+    const filename = `${task.id}.yml`;
+    const filePath = path.resolve(trashDir, filename);
+    const targetDir = path.resolve(this.root);
+    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
+      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
+    }
+    const trashed = Object.assign({}, task, {
+      deleted_at: task.deleted_at || new Date().toISOString(),
+    });
+    await writeAtomic(filePath, yaml.stringify(this.serializeCard(trashed, task.status)));
+    // Remove the live card file (untracked removal — no commit; the trash
+    // write is authoritative and git status stays clean).
+    if (existsSync(path.join(this.dir, filename))) {
+      await rm(path.join(this.dir, filename), { force: true });
+    }
+  }
+
+  async loadTrash() {
+    const trashDir = path.join(this.root, 'trash', this.ownedProject);
+    try {
+      const entries = await readdir(trashDir);
+      const files = entries.filter(
+        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
+      );
+      const tasks = [];
+      for (const file of files) {
+        try {
+          const raw = await readFile(path.join(trashDir, file), 'utf-8');
+          const parsed = yaml.parse(raw);
+          if (parsed && parsed.id) {
+            backfillLeaseFields([parsed]);
+            tasks.push(parsed);
+          }
+        } catch (err) {
+          console.warn(`[kanban GitYamlStorage] trash read ${file}: ${err.message}`);
+        }
+      }
+      return tasks;
+    } catch (err) {
+      return []; // absent trash dir is the normal first-boot case
+    }
+  }
+
+  async trashRemove(task) {
+    const p = this.ownedProject;
+    const filename = `${task.id}.yml`;
+    const trashDir = path.join(this.root, 'trash', p);
+    const trashPath = path.resolve(trashDir, filename);
+    const targetDir = path.resolve(this.root);
+    if (!trashPath.startsWith(targetDir + path.sep) && trashPath !== targetDir) {
+      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
+    }
+    await rm(trashPath, { force: true });
+  }
+
   async deleteTask(task) {
     await mkdir(this.dir, { recursive: true });
     const filename = `${task.id}.yml`;
@@ -687,6 +779,18 @@ let mutationQueue = Promise.resolve();
 // at read time in getSettings().
 let projectSettings = new Map();
 let settingsListeners = [];
+
+// v2.5.6 (ENH-03): trash sink. project -> Task[] (soft-deleted, not live).
+let trash = {};
+// KANBAN_TRASH_DAYS: how long a soft-deleted task survives before the sweep
+// hard-deletes it. Default 30; 0 disables retention (trash keeps everything
+// until hard-purged); a negative value also disables the sweep.
+function getTrashDays() {
+  const raw = process.env.KANBAN_TRASH_DAYS;
+  if (raw === undefined || raw === null || raw === '') return 30;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 30;
+}
 
 export function withMutationLock(operation) {
   const run = mutationQueue.then(() => operation(), () => operation());
@@ -957,6 +1061,18 @@ export async function loadStore() {
       if (s && typeof s === 'object' && Object.keys(s).length) projectSettings.set(p, s);
     } catch (err) {
       console.warn(`[kanban] settings load error for ${p}: ${err.message}`);
+    }
+  }
+
+  // v2.5.6: load the trash sink alongside archives so a restart never loses
+  // soft-deleted rows (the whole point of the sink).
+  trash = {};
+  for (const p of projectSet) {
+    try {
+      const tl = await getStorage(p).loadTrash();
+      if (tl && tl.length) trash[p] = tl;
+    } catch (err) {
+      console.warn(`[kanban] trash load error for ${p}: ${err.message}`);
     }
   }
 
@@ -2582,6 +2698,11 @@ function isEligibleForArchive(task, days, nowMs) {
  */
 export async function runArchiveSweep() {
   return withMutationLock(async () => {
+    // v2.5.6: the trash-retention sweep rides the same cadence (any read path
+    // that sweeps the archive also ages out the trash sink). Called via the
+    // UNLOCKED inner — runArchiveSweep already holds the lock; awaiting the
+    // locked wrapper here would deadlock the non-reentrant promise chain.
+    await runTrashSweepInner();
     const days = getArchiveAfterDays();
     if (days === 0) return 0;
 
@@ -2729,14 +2850,30 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
       return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
     }
 
+    /**
+     * v2.5.6 (ENH-03): soft-delete. The task is stamped deleted_at/deleted_by,
+     * parked in the per-project trash sink, and dropped from the live
+     * partition — recoverable via restoreFromTrash until the retention sweep
+     * (KANBAN_TRASH_DAYS, default 30) or a hard purge removes it.
+     */
+    const deletedAt = new Date(nowFn()).toISOString();
     const storage = getStorage(task.project);
+    const trashed = Object.assign(structuredClone(task), {
+      deleted_at: deletedAt,
+      deleted_by: caller.agent_id || 'admin',
+      version: nextVersionFor(task),
+    });
+
     if (storage instanceof GitYamlStorage) {
-      await storage.deleteTask(task);
+      await storage.trashTask(task);
     } else {
       const survivors = getProjectBucket(task.project).filter((t) => t.id !== task.id);
-      await storage.deleteTask(task, survivors);
+      await storage.save(survivors);
+      const sink = [...(trash[task.project] || []), trashed];
+      await storage.saveTrash(sink);
     }
 
+    trash[task.project] = [...(trash[task.project] || []), trashed];
     removeFromMemory(task.project, task.id);
     notify({
       actor: caller.agent_id || 'admin',
@@ -2755,7 +2892,7 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
  * Persists FIRST per affected project, then drops the rows from memory and
  * emits one consolidated deletion event. Requires a privileged role.
  */
-export async function purgeTasks({ caller = {}, project, ids, filter } = {}) {
+export async function purgeTasks({ caller = {}, project, ids, filter, hard = false } = {}) {
   return withMutationLock(async () => {
     if (!destructivePrivilege(caller)) {
       return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
@@ -2843,14 +2980,47 @@ export async function purgeTasks({ caller = {}, project, ids, filter } = {}) {
 
     for (const [p, list] of byProject) {
       const storage = getStorage(p);
-      if (storage instanceof GitYamlStorage) {
-        for (const t of list) {
-          await storage.deleteTask(t);
+      if (hard) {
+        // v2.5.6: {hard:true} = permanent deletion, bypassing the trash sink.
+        if (storage instanceof GitYamlStorage) {
+          for (const t of list) {
+            await storage.deleteTask(t);
+          }
+        } else {
+          const deleteIds = new Set(list.map((t) => t.id));
+          const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
+          await storage.deleteTask(list[0], survivors);
         }
       } else {
-        const deleteIds = new Set(list.map((t) => t.id));
-        const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
-        await storage.deleteTask(list[0], survivors);
+        // Soft-delete: park each row in the trash sink (persist-first), then
+        // drop it from the live partition.
+        const deletedAt = new Date(nowFn()).toISOString();
+        if (storage instanceof GitYamlStorage) {
+          for (const t of list) {
+            await storage.trashTask(t);
+          }
+        } else {
+          const deleteIds = new Set(list.map((t) => t.id));
+          const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
+          await storage.save(survivors);
+          const sink = [
+            ...(trash[p] || []),
+            ...list.map((t) => Object.assign(structuredClone(t), {
+              deleted_at: deletedAt,
+              deleted_by: caller.agent_id || 'admin',
+              version: nextVersionFor(t),
+            })),
+          ];
+          await storage.saveTrash(sink);
+        }
+        trash[p] = [
+          ...(trash[p] || []),
+          ...list.map((t) => Object.assign(structuredClone(t), {
+            deleted_at: deletedAt,
+            deleted_by: caller.agent_id || 'admin',
+            version: nextVersionFor(t),
+          })),
+        ];
       }
       for (const t of list) {
         removeFromMemory(p, t.id);
@@ -2870,6 +3040,167 @@ export async function purgeTasks({ caller = {}, project, ids, filter } = {}) {
 
     return { deleted, count: deleted.length, status: 200 };
   });
+}
+
+// ---------------------------------------------------------------------------
+// v2.5.6 (ENH-03): soft-delete trash sink. deleteTask/purgeTasks route into
+// `trash` (a per-project sink beside the archive) instead of destroying data;
+// restore returns a card to BACKLOG; a sweep hard-deletes rows older than
+// KANBAN_TRASH_DAYS (default 30). `purgeTasks({hard:true})` bypasses the sink
+// for true permanent deletion.
+// ---------------------------------------------------------------------------
+
+function trashList(project) {
+  if (project === undefined || project === null || project === '') {
+    let out = [];
+    for (const list of Object.values(trash)) out = out.concat(list);
+    return out.sort((a, b) => String(b.deleted_at || '').localeCompare(String(a.deleted_at || '')));
+  }
+  if (!isValidProjectId(project)) return [];
+  return [...(trash[project] || [])];
+}
+
+function trashFind(project, id) {
+  const list = trash[project] || [];
+  return list.find((t) => t.id === id) || null;
+}
+
+async function trashPersistRemove(project, removedTask) {
+  const storage = getStorage(project);
+  const remaining = (trash[project] || []).filter((t) => t.id !== removedTask.id);
+  if (storage instanceof GitYamlStorage) {
+    await storage.trashRemove(removedTask);
+  } else {
+    await storage.saveTrash(remaining);
+  }
+  if (remaining.length === 0) delete trash[project];
+  else trash[project] = remaining;
+}
+
+/**
+ * Admin-only restore of a soft-deleted task back to the live board (BACKLOG).
+ * Persists FIRST (KB-05): the live partition gains the restored card and the
+ * trash sink loses it, both before memory mutates.
+ */
+export async function restoreFromTrash(id, { caller = {}, project } = {}) {
+  return withMutationLock(async () => {
+    const authorizedProject =
+      project === undefined || project === null || project === ''
+        ? defaultProjectName()
+        : project;
+    const trashed = trashFind(authorizedProject, id);
+    if (!trashed) return { error: 'Task not found in trash', status: 404 };
+
+    if (index.has(compositeKey(authorizedProject, id))) {
+      return { error: 'A live task with this id already exists', status: 409 };
+    }
+
+    const restored = structuredClone(trashed);
+    restored.status = STATUSES.BACKLOG;
+    restored.assigned_agent = null;
+    restored.claim_expires_at = null;
+    restored.stage_owners = {};
+    restored.deleted_at = undefined;
+    restored.deleted_by = undefined;
+    restored.restored_at = new Date().toISOString();
+    restored.updated = restored.restored_at;
+    restored.version = nextVersionFor(trashed);
+    restored.agent_logs = [
+      ...(Array.isArray(restored.agent_logs) ? restored.agent_logs : []),
+      {
+        timestamp: restored.restored_at,
+        message: escapeHtml('Task restored from trash by board admin.'),
+        agent_id: escapeHtml(caller.agent_id || 'admin'),
+      },
+    ];
+
+    // Persist FIRST: live partition + trash sink, then memory.
+    const storage = getStorage(authorizedProject);
+    if (storage instanceof GitYamlStorage) {
+      await storage.saveTask(restored);
+      await storage.trashRemove(trashed);
+    } else {
+      await storage.saveTask(restored, getProjectBucket(authorizedProject));
+      await trashPersistRemove(authorizedProject, trashed);
+    }
+
+    updateInMemoryTask(restored);
+    notify({
+      actor: caller.agent_id || 'admin',
+      reason: 'restored',
+      semantic: new Map([[
+        compositeKey(authorizedProject, id),
+        { kind: 'created', actor: caller.agent_id || 'admin', reason: 'restored', prevTask: null, task: restored },
+      ]]),
+    });
+    return { task: restored, status: 200 };
+  });
+}
+
+/**
+ * Admin-only hard delete of a soft-deleted task (permanent). Requires a
+ * privileged credential, mirroring the other destructive ops.
+ */
+export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
+  return withMutationLock(async () => {
+    if (!destructivePrivilege(caller)) {
+      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
+    }
+    const authorizedProject =
+      project === undefined || project === null || project === ''
+        ? defaultProjectName()
+        : project;
+    const trashed = trashFind(authorizedProject, id);
+    if (!trashed) return { error: 'Task not found in trash', status: 404 };
+    await trashPersistRemove(authorizedProject, trashed);
+    notify({
+      actor: caller.agent_id || 'admin',
+      reason: 'purged_from_trash',
+      semantic: new Map([[
+        compositeKey(authorizedProject, id),
+        { kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'purged_from_trash', task: trashed },
+      ]]),
+    });
+    return { task: trashed, status: 200 };
+  });
+}
+
+/**
+ * Trash retention sweep: hard-deletes sink rows older than
+ * KANBAN_TRASH_DAYS (default 30). Runs inside the existing archive sweep
+ * cadence (GET /archive, GET /tasks, GET /metrics all sweep first).
+ *
+ * Lock discipline (mirrors reclaimTaskInner/public reclaimTask): the inner
+ * function does the work WITHOUT acquiring the mutation lock, so
+ * runArchiveSweep — which already holds the lock — can call it directly.
+ * The exported wrapper acquires the lock for standalone callers.
+ */
+async function runTrashSweepInner() {
+  const days = getTrashDays();
+  if (days <= 0) return { purged: [], now: Date.now() };
+  const nowMs = Date.now();
+  const purged = [];
+  for (const [project, list] of Object.entries(trash)) {
+    const expired = list.filter((t) => {
+      const anchor = t.deleted_at || t.updated || t.created_at;
+      if (!anchor) return false;
+      const age = nowMs - Date.parse(anchor);
+      return !Number.isNaN(age) && age >= days * 86400000;
+    });
+    for (const t of expired) {
+      await trashPersistRemove(project, t);
+      purged.push(compositeKey(project, t.id));
+    }
+  }
+  return { purged, now: nowMs };
+}
+
+export async function runTrashSweep() {
+  return withMutationLock(() => runTrashSweepInner());
+}
+
+export function getTrashedTasks(project) {
+  return trashList(project);
 }
 
 // Re-export for convenience / tests
