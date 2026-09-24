@@ -15,7 +15,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
-import { normalizePriority, PRIORITY_WEIGHT } from './priority'
+import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
@@ -217,6 +217,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [assigneeFilter, setAssigneeFilter] = useState('all')
+  // Column ordering is an explicit, persisted control (default: priority).
+  // Unlike the removed local reorder buttons, the choice survives SSE
+  // snapshots and reloads, because it re-applies on every new tasks array.
+  const [boardSort, setBoardSort] = useState<BoardSort>(readStoredSort)
 
   const assignees = useMemo(() => {
     const set = new Set<string>()
@@ -232,12 +236,13 @@ export default function App() {
       priority: priorityFilter,
       assignee: assigneeFilter,
     })
-    return [...list].sort((a, b) => {
-      const wa = PRIORITY_WEIGHT[normalizePriority(a.priority)] ?? 1
-      const wb = PRIORITY_WEIGHT[normalizePriority(b.priority)] ?? 1
-      return wa - wb
-    })
-  }, [tasks, searchQuery, priorityFilter, assigneeFilter])
+    return sortTasks(list, boardSort)
+  }, [tasks, searchQuery, priorityFilter, assigneeFilter, boardSort])
+
+  const handleSortChange = useCallback((next: BoardSort) => {
+    setBoardSort(next)
+    writeStoredSort(next)
+  }, [])
 
   const resetFilters = useCallback(() => {
     setSearchQuery('')
@@ -258,44 +263,12 @@ export default function App() {
     downloadAnchor.remove()
   }, [tasks, project])
 
-  const handleImport = useCallback((jsonString: string) => {
-    try {
-      const parsed = JSON.parse(jsonString)
-      if (Array.isArray(parsed)) {
-        setTasks((prev) => {
-          const map = new Map(prev.map((t) => [t.id, t]))
-          for (const item of parsed) {
-            if (item && item.id && item.title) {
-              map.set(item.id, item)
-            }
-          }
-          return Array.from(map.values())
-        })
-      }
-    } catch {
-      // Ignore invalid JSON format
-    }
-  }, [])
-
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
      [tasks, openTaskId],
   )
 
   const [showMetrics, setShowMetrics] = useState(false)
-
-  const handleReorder = useCallback((sourceId: string, targetId: string) => {
-    setTasks((prev) => {
-      const sourceIndex = prev.findIndex((t) => t.id === sourceId)
-      const targetIndex = prev.findIndex((t) => t.id === targetId)
-      if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return prev
-
-      const next = [...prev]
-      const [moved] = next.splice(sourceIndex, 1)
-      next.splice(targetIndex, 0, moved)
-      return next
-    })
-  }, [])
 
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
@@ -469,13 +442,14 @@ export default function App() {
                     filteredCount={filteredTasks.length}
                     onReset={resetFilters}
                     onExport={handleExport}
-                    onImport={handleImport}
+                    sort={boardSort}
+                    onSortChange={handleSortChange}
                     showMetrics={showMetrics}
                     onToggleMetrics={() => setShowMetrics((v) => !v)}
                   />
                   {showMetrics && (
                     <MetricsDashboard
-                      tasks={filteredTasks}
+                      tasks={tasks}
                       onClose={() => setShowMetrics(false)}
                     />
                   )}
@@ -484,7 +458,6 @@ export default function App() {
                       tasks={filteredTasks}
                       onOpen={handleOpen}
                       showProject={!project}
-                      onReorder={handleReorder}
                     />
                   </div>
                 </div>

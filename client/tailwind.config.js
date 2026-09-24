@@ -21,11 +21,24 @@ export default {
         'block-bg': 'var(--block-bg)',
         live: 'var(--live)',
         'live-bg': 'var(--live-bg)',
+        test: 'var(--test)',
+        'test-bg': 'var(--test-bg)',
       },
       fontFamily: {
         sans: ['system-ui', '-apple-system', 'Segoe UI', 'Helvetica', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', 'SF Mono', 'JetBrains Mono', 'Menlo', 'Consolas', 'monospace'],
         serif: ['Instrument Serif', 'Georgia', 'Times New Roman', 'serif'],
+      },
+      keyframes: {
+        // `animate-fadeIn` was used by MetricsDashboard without a definition —
+        // a silent no-op. Defined here so the entrance fade actually runs.
+        fadeIn: {
+          from: { opacity: '0', transform: 'translateY(-2px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      animation: {
+        fadeIn: 'fadeIn 180ms ease-out',
       },
     },
   },

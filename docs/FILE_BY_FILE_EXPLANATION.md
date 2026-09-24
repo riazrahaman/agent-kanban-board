@@ -400,7 +400,7 @@ flowchart TD
 
 #### `client/src/App.tsx`
 - **Path:** [`client/src/App.tsx`](../client/src/App.tsx)
-- **Components & Hooks:** App shell and state coordinator. Manages `tasks`, `openTaskId`, `project` filter, `view` (Board/Portfolio/About), `theme`, `railOpen`, and the agent-id/api-token identity. Fetches `getTasks` + subscribes to SSE scoped by project, fetches `/api/health` for the header version chip. Renders a wrapping responsive header (with the three-way Board/Portfolio/About segmented switcher), `<Board />`, `<About />`, `<SignalRail />` (docked at `md`+, slide-over drawer below), `<TaskSheet />`, and `<ErrorBoundary />`.
+- **Components & Hooks:** App shell and state coordinator. Manages `tasks`, `openTaskId`, `project` filter, `view` (Board/Portfolio/About), `theme`, `railOpen`, the agent-id/api-token identity, and the board filter/sort state (search, priority, assignee, plus the persisted column sort from `lib/boardSort.ts`). Fetches `getTasks` + subscribes to SSE scoped by project, fetches `/api/health` for the header version chip, and exports the visible tasks to JSON. Renders a wrapping responsive header (with the three-way Board/Portfolio/About segmented switcher), `<Board />`, `<About />`, `<SignalRail />` (docked at `md`+, slide-over drawer below), `<TaskSheet />`, and `<ErrorBoundary />`. The metrics dashboard is fed the unfiltered task list on purpose so its totals stay stable while filters narrow the board.
 
 #### `client/src/types.ts`
 - **Path:** [`client/src/types.ts`](../client/src/types.ts)
@@ -420,16 +420,18 @@ flowchart TD
 
 #### `client/src/priority.ts`
 - **Path:** [`client/src/priority.ts`](../client/src/priority.ts)
-- **Function:** `normalizePriority()` safely mapping triage ratings (`P0-critical`, etc.) to `'high' | 'medium' | 'low'`.
+- **Function:** `normalizePriority()` safely mapping triage ratings (`P0-critical`, etc.) to `'high' | 'medium' | 'low'`; `priorityBadgeClass()` and `PRIORITY_WEIGHT` drive the priority badge chips and the default sort order.
 
 #### `client/src/sanitize.ts`
 - **Path:** [`client/src/sanitize.ts`](../client/src/sanitize.ts)
 - **Function:** Client-side HTML entity handling. `escapeHtml` mirrors the server's escaping (the definition of the entity set); `decodeStored` inverts it for display — the server escapes untrusted text on write, so the client decodes the known entity set at render time (`TaskSheet` title/description/log message, `TaskCard` title, `SignalRail` message). Decode order matters: specific entities first, `&amp;` last, so a stored `&amp;lt;` never becomes a real tag. Decoded values are still rendered as JSX text nodes — never HTML. Guarded by `client/src/lib/sanitize.test.mjs`.
 
 #### Components (`client/src/components/`)
-- **`Board.tsx`:** Renders the horizontally snap-scrolling column container for all 8 columns including `UNKNOWN`, with edge-fade gradients and paging chevrons that appear when columns are off-screen.
-- **`Column.tsx`:** Renders a column header with task count badge and vertically scrolling card container. Responsive: `85vw` with snap alignment below `md`, fixed `w-72` from `md` up. Memoized.
-- **`TaskCard.tsx`:** Renders card ID, status stripe, title, project chip (unscoped board only), agent assignment, and issues badge. Memoized.
+- **`Board.tsx`:** Renders the horizontally snap-scrolling column container for all 8 columns including `UNKNOWN`, with edge-fade gradients and paging chevrons that appear when columns are off-screen. `COLUMNS` carries the workflow step numbers (`01`–`04`) and the advisory WIP limits (3 on Building / In Review) down to each `Column`.
+- **`BoardFilters.tsx`:** Filter/sort/export toolbar rendered above the board: live substring search, priority and assignee quick filters, the persisted column sort selector (`Priority | Recently Updated | Task ID`), a `Reset` action when any filter is active, one-click JSON export, and the metrics-dashboard toggle. Shows an `n of m tasks` counter.
+- **`MetricsDashboard.tsx`:** Toggleable summary banner with 7 tiles (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the unfiltered task list by `lib/dashboardMetrics.ts`.
+- **`Column.tsx`:** Renders a column header with workflow step number, task count badge (including `n/limit` WIP badges and a violation banner when the advisory WIP limit is exceeded) and vertically scrolling card container. Each column carries a distinct top accent per stage (violet for In Test). Responsive: `85vw` with snap alignment below `md`, fixed `w-72` from `md` up. Memoized.
+- **`TaskCard.tsx`:** Renders card ID, status stripe, priority badge, effort/estimate chip (`⚡` from task metadata), title (double-click to inline-edit with optimistic CAS), project chip (unscoped board only), agent assignment, and issues badge. High-priority cards get a red right accent. Memoized.
 - **`StatusBadge.tsx`:** Renders status glyphs (`▲`, `•`) and styling.
 - **`TaskSheet.tsx`:** Slide-over modal displaying card details (including the project), metadata, logs timeline, and human log submission form.
 - **`SignalRail.tsx`:** Right sidebar rendering Signal Overview metric tiles and recent activity feed. Docked at `md`+, rendered as a mobile slide-over drawer below `md`.
@@ -441,12 +443,15 @@ flowchart TD
 #### Client Libraries (`client/src/lib/`)
 - **`theme.ts`:** Pure theme resolution helpers (`resolveTheme`, `nextTheme`, `isDark`, `THEME_STORAGE_KEY`).
 - **`status.ts`:** `CANONICAL_STATUSES` and `ACTIVE_STATUSES` matching backend definitions.
+- **`filterTasks.ts`:** Pure filter predicate — live substring search (id/title/description/branch/assigned_agent), normalized-priority filter, and assignee filter including `unassigned`. Guarded by `filterTasks.test.mjs`.
+- **`boardSort.ts`:** Column ordering for the board — `sortTasks(tasks, sort)` over `priority | updated | id` (stable, non-mutating; priority reuses `PRIORITY_WEIGHT`), plus `readStoredSort`/`writeStoredSort` persisting the choice under `localStorage kanban.sort` so column order survives SSE snapshots and reloads. Guarded by `boardSort.test.mjs`.
+- **`dashboardMetrics.ts`:** Pure computations behind the metrics dashboard (total/backlog/wip/blocked/done counts, average cycle time, overdue/stalled). Guarded by `dashboardMetrics.test.mjs`.
 - **`signalStats.ts`:** `computeSignalStats(tasks)` calculating active/blocked/done counts.
 - **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.
 - **`claimCoordinator.ts` / `useClaimCoordinator.ts`:** Client-side lease heartbeat + auto-claim coordination bound to the operator's agent identity.
 - **`authToken.ts`:** Browser-local storage/wiring of the operator's API token.
 - **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, `RECLAIM_INTRO` / `RECLAIM_FLOW`, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
-- **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `about`, and `responsive` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard.
+- **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `filterTasks`, `dashboardMetrics`, `boardSort`, `sanitize`, `about`, and `responsive` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard.
 
 ---
 

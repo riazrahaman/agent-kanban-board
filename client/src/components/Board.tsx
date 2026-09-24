@@ -19,14 +19,13 @@ type Props = {
   onOpen: (id: string) => void
   /** Show each card's owning project — useful on the unscoped "all projects" board. */
   showProject?: boolean
-  onReorder?: (sourceId: string, targetId: string) => void
 }
 
 // One column is w-72 (18rem = 288px) + the 1rem gap on desktop; on phones it
 // is 85vw, so page by the first column's actual width when we can measure it.
 const COLUMN_STEP = 304
 
-export default function Board({ tasks, onOpen, showProject = false, onReorder }: Props) {
+export default function Board({ tasks, onOpen, showProject = false }: Props) {
   const grouped = useMemo(() => groupTasks(tasks), [tasks])
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
@@ -92,7 +91,6 @@ export default function Board({ tasks, onOpen, showProject = false, onReorder }:
             tasks={grouped[col.status] || []}
             onOpen={onOpen}
             showProject={showProject}
-            onReorder={onReorder}
           />
         ))}
       </div>

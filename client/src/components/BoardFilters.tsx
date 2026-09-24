@@ -10,7 +10,8 @@ type Props = {
   filteredCount: number
   onReset: () => void
   onExport?: () => void
-  onImport?: (jsonString: string) => void
+  sort: 'priority' | 'updated' | 'id'
+  onSortChange: (sort: 'priority' | 'updated' | 'id') => void
   showMetrics?: boolean
   onToggleMetrics?: () => void
 }
@@ -27,25 +28,12 @@ export default function BoardFilters({
   filteredCount,
   onReset,
   onExport,
-  onImport,
+  sort,
+  onSortChange,
   showMetrics,
   onToggleMetrics,
 }: Props) {
   const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all'
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const content = event.target?.result as string
-      if (content && onImport) {
-        onImport(content)
-      }
-    }
-    reader.readAsText(file)
-    e.target.value = ''
-  }
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4">
@@ -101,6 +89,18 @@ export default function BoardFilters({
           ))}
         </select>
 
+        <select
+          value={sort}
+          onChange={(e) => onSortChange(e.target.value as 'priority' | 'updated' | 'id')}
+          aria-label="Sort tasks within columns"
+          title="Column ordering (persisted for this browser)"
+          className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+        >
+          <option value="priority">Sort: Priority</option>
+          <option value="updated">Sort: Recently Updated</option>
+          <option value="id">Sort: Task ID</option>
+        </select>
+
         {isFiltered && (
           <button
             type="button"
@@ -123,22 +123,6 @@ export default function BoardFilters({
           >
             Export
           </button>
-        )}
-
-        {onImport && (
-          <label
-            title="Import tasks from JSON"
-            aria-label="Import tasks from JSON"
-            className="cursor-pointer border border-line bg-surface px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98]"
-          >
-            Import
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </label>
         )}
 
         {onToggleMetrics && (

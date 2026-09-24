@@ -26,6 +26,7 @@
   --warn: #8A6A12;         --warn-bg: #f6efdc;   /* 4.89:1 */
   --block: #4A4D52;        --block-bg: #ece7db;  /* 8.20:1 — grey: stalled, not bad */
   --live: #1F5673;         --live-bg: #e4ecf0;   /* 7.69:1 — running now */
+  --test: #6B4E9B;         --test-bg: #ece5f5;   /* 6.4:1 — verification stage (violet) */
 }
 
 /* The explicit theme class is authoritative. There is NO prefers-color-scheme
@@ -54,6 +55,7 @@
   --warn: #ddb45c; --warn-bg: rgba(221, 180, 92, 0.16);
   --block: #a6acb5;--block-bg: rgba(255, 255, 255, 0.07);
   --live: #8fbcd6; --live-bg: rgba(143, 188, 214, 0.16);
+  --test: #b9a3e3; --test-bg: rgba(169, 138, 224, 0.18);
 }
 
 html,

@@ -285,21 +285,44 @@ flowchart TD
 - **Unknown:** Defensive quarantine lane for cards with unmapped or malformed statuses, isolating corrupt state without unmounting the board.
 - **Issues (Swimlane):** Dedicated column aggregating any card with registered issues.
 
+> [!NOTE]
+> **WIP limits are advisory.** The Building and In Review columns carry a `n/3` capacity badge; at exactly 3 the badge turns amber, and beyond it the column header shows a red `WIP limit exceeded` banner. This is a client-side visual guard only — the server does not enforce a WIP ceiling, and agents can still claim.
+
 > [!TIP]
 > The board scrolls horizontally. When more columns exist than fit the viewport, an edge-fade gradient and a paging chevron appear on the side that has hidden columns — click the chevron (or scroll/swipe) to page one column at a time. On the **all projects** view each card also shows its owning **project chip** so cards from different projects are distinguishable; switch the header's project filter to a single project to hide the chips and scope the board.
+
+### 5.1.1 Filter, Sort & Export Toolbar
+A toolbar above the board (`BoardFilters.tsx`) operates the board view:
+
+- **Search:** live substring filter matching task id, title, description, branch and assigned agent, with an inline `×` clear button.
+- **Priority filter:** `All Priorities` / `High (P0 / P1)` / `Medium (P2)` / `Low (P3)` — normalizes the triage ratings before matching.
+- **Assignee filter:** `All Assignees` / `Unassigned` / one entry per agent currently holding work.
+- **Sort selector:** orders cards inside every column — `Sort: Priority` (default: high → medium → low, server recency within a rank), `Sort: Recently Updated` (newest first), or `Sort: Task ID` (lexical). The choice is persisted in this browser (`localStorage kanban.sort`) and re-applied on every live update.
+- **Reset:** appears only while a filter is active and clears all of them.
+- **Export:** downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
+- **Metrics:** toggles the summary dashboard (§5.1.2). The dashboard always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
+
+The right-hand counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`.
+
+### 5.1.2 Metrics Dashboard
+Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Building + In Review + In Test), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
 
 ### 5.2 Card Anatomy
 - **Left 3px Color Stripe:** Visual severity and state indicator:
   - Green (`border-l-pass`): `DONE`
-  - Blue (`border-l-live`): `BUILDING` / `IN_TEST`
+  - Blue (`border-l-live`): `BUILDING`
+  - Violet (`border-l-test`): `IN_TEST`
   - Yellow (`border-l-warn`): `IN_REVIEW`
   - Grey (`border-l-block`): `BLOCKED`
   - Hairline (`border-l-line`): `BACKLOG` / `UNKNOWN`
 - **Task ID:** Monospace identifier (e.g. `chess-c1`).
 - **Status Badge:** Normalized status with glyph markers (`▲` for review, `•` for active execution).
+- **Priority Badge:** The card's priority as a colored chip (red `high` / amber `medium` / grey `low`); `high` cards additionally carry a red right-edge accent so they stand out in a dense column.
+- **Effort / Estimate Chip:** When a task carries `metadata.estimate`, `metadata.points` or `metadata.size`, a `⚡ <value>` chip displays the sizing (display only — set it via the API's `metadata` field).
 - **Project Chip:** Shown on the unscoped **all projects** board so cards from different projects are distinguishable (hidden when a single project is selected).
 - **Assigned Agent:** Indicates which autonomous agent holds the card claim.
 - **Issues Pill:** Displayed when active issues exist on the card.
+- **Inline Title Editing:** Double-click a card's title to edit it in place — Enter or blur saves (optimistic, version-checked), Escape cancels.
 
 ### 5.3 Task Inspector Sheet (Slide-Over Drawer)
 Clicking any card opens the Inspector Sheet:

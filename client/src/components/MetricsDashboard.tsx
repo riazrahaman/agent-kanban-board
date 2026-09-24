@@ -14,7 +14,7 @@ export default function MetricsDashboard({ tasks, onClose }: Props) {
     <div
       role="region"
       aria-label="Metrics Dashboard"
-      className="border-b border-line bg-surface/70 px-3 py-2.5 sm:px-4 backdrop-blur-xs transition-all animate-fadeIn"
+      className="border-b border-line bg-surface/70 px-3 py-2.5 sm:px-4 backdrop-blur-sm transition-all animate-fadeIn"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">

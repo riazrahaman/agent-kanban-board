@@ -16,7 +16,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '86',
+    value: '94',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -123,8 +123,8 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Search & real-time quick filters', code: 'BoardFilters.tsx, lib/filterTasks.ts' },
   { name: 'WIP capacity guards & estimation badges', code: 'Column.tsx, TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
-  { name: 'Board JSON Export & Import', code: 'App.tsx, BoardFilters.tsx' },
-  { name: 'In-column card prioritisation & reordering', code: 'Column.tsx, TaskCard.tsx' },
+  { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
+  { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
   { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
 ]
 

@@ -31,13 +31,22 @@ here **and** an annotated git tag. Do not let work accumulate under
   - Numbered workflow steps (`01 Backlog`, `02 Building`, `03 In Review`, `04 In Test`) for transparent visual flow.
 - **Live Metrics Dashboard Summary (`client/src/components/MetricsDashboard.tsx`, `client/src/lib/dashboardMetrics.ts`)**:
   - Toggleable summary dashboard banner showing Total Tickets, Backlog, In-Flight WIP, Blocked, Completed, Average Cycle Time (derived from completed work), and Overdue/Stalled active tasks exceeding the freshness threshold.
-- **JSON Export & Import (`client/src/App.tsx`, `client/src/components/BoardFilters.tsx`)**:
-  - One-click JSON export with ISO datestamp for backing up and sharing board task states.
-  - JSON import with format validation and optimistic state reconciliation.
-- **In-Column Card Reordering & Prioritisation**:
-  - Accessible in-column move controls (`▲` and `▼`) allowing operators to reorder and prioritise tasks within any column while strictly preserving security and clone dependency boundaries.
+  - The dashboard always summarises the WHOLE board scope — it is deliberately fed the unfiltered task list, so totals stay stable while filters narrow the board.
+- **JSON Export (`client/src/App.tsx`, `client/src/components/BoardFilters.tsx`)**:
+  - One-click JSON export with ISO datestamp for backing up and sharing board task states. (A paired import was considered and dropped: a browser-side merge into local state was invisible to the server and silently discarded by the next SSE snapshot — export remains, import awaits a server-backed design.)
+- **In-Column Sorting (`client/src/lib/boardSort.ts`)**:
+  - Explicit column-ordering control (`Sort: Priority | Recently Updated | Task ID`), persisted per browser (`localStorage kanban.sort`) and re-applied on every SSE snapshot. Priority sort ranks high → medium → low and keeps the server's recency order within a rank (stable sort); ties never jump.
+  - This replaces the first-draft ▲/▼ move controls, which mutated only local state and were silently wiped by the next live update.
 - **Double-Click Inline Title Editing**:
   - Instant inline title editing directly on cards with Enter/Blur persistence and Escape cancellation, backed by optimistic CAS version verification.
+- **Distinct verification-stage colour (IN_TEST)**:
+  - New `--test`/`--test-bg` violet token pair (light + dark, WCAG AA); `IN_TEST` cards now use the violet left-stripe and badge and the In Test column a violet top accent — previously `BUILDING` and `IN_TEST` shared the identical blue treatment and were indistinguishable at a glance.
+
+### Quality gates
+
+- Server suite: 234 tests across 37 suites, 0 fail. Client suite: 94 tests, 0 fail (adds `boardSort.test.mjs`, 8 tests; trust metrics self-check keeps the About page counts in lockstep with the real suite sizes).
+- `tsc -b` clean; production bundle builds clean; `make sec` clean; visual-contract grep clean; version lockstep guard 5/5; `check-version-bump.sh` exit 0 (2.3.13 → 2.4.0); docs mirrors prose-identical; markdown tables clean.
+- Future enhancements from the original recommendations file (Ticket Details Panel comments, operator assignment, custom column colours, milestones, integration hooks) are recorded in the README **Roadmap** section and as `opt-*` backlog cards on the live board; the two root handover files were removed.
 
 ## [2.3.13] — 2026-09-24
 
