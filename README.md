@@ -222,7 +222,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (250 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, and the v2.5.0 comments/settings suites), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (250 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, and the v2.5.0 comments/settings suites; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
