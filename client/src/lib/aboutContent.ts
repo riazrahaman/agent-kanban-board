@@ -181,7 +181,7 @@ export type TourShot = {
 export const TOUR_SHOTS: TourShot[] = [
   {
     src: '/landing/board.png',
-    alt: 'The board showing Backlog, Building, In Review and In Test columns with task cards',
+    alt: 'The board with the filter, sort and export toolbar, priority badges, WIP limits and stage-accents on every column',
     caption: 'The board — a live projection of server state, not the source of truth',
   },
   {
@@ -191,8 +191,8 @@ export const TOUR_SHOTS: TourShot[] = [
   },
   {
     src: '/landing/task-sheet.png',
-    alt: 'A task detail sheet showing description, metadata and the agent log',
-    caption: 'Every card carries its evidence: metadata, per-stage owners and the agent log',
+    alt: 'A task detail sheet showing priority and status badges, description, metadata, a comment thread and the agent log',
+    caption: 'Every card carries its evidence: metadata, comments, per-stage owners and the agent log',
   },
   {
     src: '/landing/portfolio.png',

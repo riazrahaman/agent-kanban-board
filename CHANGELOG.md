@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,23 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.1] — 2026-09-24
+
+### Changed
+
+- **About-page tour screenshots refreshed.** The six `/landing/*.png` screenshots in the in-app
+  About view were still v2.2.0-era captures; they are re-taken against a seeded v2.5.0 board so
+  they now show the filter/sort/export toolbar, priority badges, effort chips, WIP capacity
+  badges, stage step numbers, the distinct violet IN_TEST accent, a custom BUILDING accent,
+  the task sheet's comment thread, and both themes plus the 390px mobile layout. The board and
+  task-sheet `TOUR_SHOTS` alt/caption text in `client/src/lib/aboutContent.ts` were updated to
+  describe the new features.
+
+### Quality gates
+
+- Server suite: 250 tests / 39 suites (unchanged — no runtime code touched). Client suite:
+  102 tests. `tsc -b` clean; `vite build` clean; mirror parity identical; tables clean.
 
 ## [2.5.0] — 2026-09-24
 
