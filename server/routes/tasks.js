@@ -207,6 +207,20 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     console.warn(
         `[kanban rejection] PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`
        );
+        // §2.5: a dependency-conflict 409 carries a `reason` +
+        // `unresolved_dependencies` so callers can branch on "blocked on deps"
+        // (mirrors the claim route's shape; a contention/version 409 carries no
+        // reason).
+    if (result.status === 409 && result.reason) {
+     return res.status(409).json({
+        error: result.error,
+        reason: result.reason,
+           ...(result.unresolved_dependencies
+              ? { unresolved_dependencies: result.unresolved_dependencies }
+              : {}),
+         status: 409,
+          });
+    }
     return res.status(result.status).json({ error: result.error });
       }
   res.status(200).json(result.task);

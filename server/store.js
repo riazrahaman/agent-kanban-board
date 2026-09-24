@@ -1528,6 +1528,30 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           status: 403,
         };
       }
+
+      // §2.5: dependency gate on transitions INTO an active stage. The claim
+      // path already refuses a dependent task whose blockers are not DONE
+      // (`applyClaim`); a status-only PATCH must not become a side door around
+      // that contract. Any entry into BUILDING / IN_REVIEW / IN_TEST is gated
+      // here, so PATCH and claim agree on what may go active. Transitions
+      // within/through DONE, BLOCKED and BACKLOG stay ungated: unblocking
+      // (maybeUnlockDependentsInner) and backtracking are lock-internal or
+      // non-claiming moves.
+      if (
+        nextStatus === STATUSES.BUILDING ||
+        nextStatus === STATUSES.IN_REVIEW ||
+        nextStatus === STATUSES.IN_TEST
+      ) {
+        const gate = dependencyGate(candidate);
+        if (!gate.ok) {
+          return {
+            error: 'Task has unsatisfied dependencies',
+            status: 409,
+            reason: 'dependency_unsatisfied',
+            unresolved_dependencies: gate.unresolved,
+          };
+        }
+      }
       candidate.status = nextStatus;
 
       // §2.x: record the acting agent for the newly-entered stage. Only on a
