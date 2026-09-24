@@ -3,6 +3,7 @@ import type { ProjectSummary, Task } from './types'
 import { getHealth, getProjects, getTasks, subscribeToEvents } from './api'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
+import BoardFilters from './components/BoardFilters'
 import About from './components/About'
 import Portfolio from './components/Portfolio'
 import ProjectPicker from './components/ProjectPicker'
@@ -12,6 +13,7 @@ import HeaderHelp from './components/HeaderHelp'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
+import { filterTasks } from './lib/filterTasks'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
@@ -210,6 +212,32 @@ export default function App() {
     }
   }, [])
 
+  const [searchQuery, setSearchQuery] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [assigneeFilter, setAssigneeFilter] = useState('all')
+
+  const assignees = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of tasks) {
+      if (t.assigned_agent) set.add(t.assigned_agent)
+    }
+    return Array.from(set).sort()
+  }, [tasks])
+
+  const filteredTasks = useMemo(() => {
+    return filterTasks(tasks, {
+      search: searchQuery,
+      priority: priorityFilter,
+      assignee: assigneeFilter,
+    })
+  }, [tasks, searchQuery, priorityFilter, assigneeFilter])
+
+  const resetFilters = useCallback(() => {
+    setSearchQuery('')
+    setPriorityFilter('all')
+    setAssigneeFilter('all')
+  }, [])
+
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
      [tasks, openTaskId],
@@ -374,8 +402,22 @@ export default function App() {
             )}
             {view === 'board' && !loading && !error && tasks.length > 0 && (
               <>
-                 <div className="min-w-0 flex-1 overflow-hidden">
-                   <Board tasks={tasks} onOpen={handleOpen} showProject={!project} />
+                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                  <BoardFilters
+                    search={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    priority={priorityFilter}
+                    onPriorityChange={setPriorityFilter}
+                    assignee={assigneeFilter}
+                    onAssigneeChange={setAssigneeFilter}
+                    assignees={assignees}
+                    totalCount={tasks.length}
+                    filteredCount={filteredTasks.length}
+                    onReset={resetFilters}
+                  />
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <Board tasks={filteredTasks} onOpen={handleOpen} showProject={!project} />
+                  </div>
                 </div>
                 {/* Desktop: docked rail. Mobile: it would eat the whole board,
                     so it becomes an on-demand overlay toggled from the header. */}
