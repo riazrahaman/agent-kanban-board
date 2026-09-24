@@ -335,10 +335,10 @@ export class JsonStorage {
   }
 
   async load() {
+    if (!existsSync(this.filePath)) {
+      return []; // absent file: normal first boot
+    }
     try {
-      if (!existsSync(this.filePath)) {
-        return [];
-      }
       const raw = await readFile(this.filePath, 'utf-8');
       const parsed = JSON.parse(raw);
        // §2.6: legacy JSON records predate the CAS version field; backfill to 1
@@ -347,8 +347,14 @@ export class JsonStorage {
       backfillLeaseFields(list);
       return list;
     } catch (err) {
-      console.warn(`[kanban JsonStorage] load error: ${err.message} — starting empty`);
-      return [];
+      // BUG-01 (v2.5.2): the file EXISTS but is corrupt (parse failure, wrong
+      // shape, unreadable). Fail closed — loading an empty list here would let
+      // the next save overwrite the corrupt file and destroy the board's
+      // data. startServer awaits loadStore(), so the throw refuses to boot.
+      console.error(
+        `[kanban JsonStorage] corrupt data file ${this.filePath}: ${err.message} — refusing to start (fix or remove the file; a backup may be recoverable)`
+      );
+      throw err;
     }
   }
 
@@ -455,8 +461,14 @@ export class GitYamlStorage {
       }
       return tasks;
     } catch (err) {
-      console.warn(`[kanban GitYamlStorage] load error: ${err.message}`);
-      return [];
+      // BUG-01 (v2.5.2): a readdir/environmental failure is not "no data" —
+      // fail closed rather than starting empty (the JSON backend's corrupt
+      // file does not apply here: cards are independent files, and the
+      // per-file loop above already warns + skips bad cards).
+      console.error(
+        `[kanban GitYamlStorage] cannot read card dir ${this.dir}: ${err.message} — refusing to start`
+      );
+      throw err;
     }
   }
 
@@ -1899,6 +1911,7 @@ const PRIVILEGED_ROLE_SET = new Set(['runner', 'system', 'human', 'admin']);
 function isPrivilegedRole(role) {
   return typeof role === 'string' && PRIVILEGED_ROLE_SET.has(role.toLowerCase());
 }
+export { isPrivilegedRole };
 
 /**
  * §2.5 dependency gate. A dep is *satisfied* iff it resolves to a live task that
@@ -2622,17 +2635,47 @@ export async function runArchiveSweep() {
 // ---------------------------------------------------------------------------
 
 /**
+ * SEC-02 (v2.5.2): destructive operations are gated on a privilege flag the
+ * auth middleware DERIVES from the credential, never on the caller-asserted
+ * `X-Agent-Role` header alone. When the middleware stamped a flag, it wins;
+ * direct store callers (unit tests, legacy middleware) fall back to the role
+ * check so single-token deployments keep their historical semantics.
+ */
+function destructivePrivilege(caller) {
+  return caller.privileged === undefined || caller.privileged === null
+    ? isPrivilegedRole(caller.role)
+    : caller.privileged === true;
+}
+
+/**
  * Admin-only delete of a single task. Persists FIRST (fail-closed, KB-05):
  * the JSON backend rewrites the project partition minus this task; the Git
  * backend git-rms the card file + commits. Only then is the task dropped from
- * memory. Requires a privileged role (runner/system/human/admin).
+ * memory. Requires a privileged credential (see destructivePrivilege).
  */
 export async function deleteTask(id, { caller = {}, project } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
 
-    if (!isPrivilegedRole(caller.role)) {
+    /**
+     * SEC-01 (v2.5.2, defense-in-depth per Reviewer): resolveProjectScope lets
+     * a composite `project:id` id outrank the ?project= scope, so a caller
+     * could address another project's card through the path segment. A
+     * destructive delete may only land inside the authorized scope.
+     */
+    const authorizedProject =
+      project === undefined || project === null || project === ''
+        ? defaultProjectName()
+        : project;
+    if (task.project !== authorizedProject) {
+      return {
+        error: `Forbidden: delete scope is limited to project '${authorizedProject}'`,
+        status: 403,
+      };
+    }
+
+    if (!destructivePrivilege(caller)) {
       return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
     }
 
@@ -2664,27 +2707,48 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
  */
 export async function purgeTasks({ caller = {}, project, ids, filter } = {}) {
   return withMutationLock(async () => {
-    if (!isPrivilegedRole(caller.role)) {
+    if (!destructivePrivilege(caller)) {
       return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
     }
 
-    const scoped = project === undefined || project === null || project === ''
-      ? tasks
-      : tasks.filter((t) => t.project === project);
+    /**
+     * SEC-01 (v2.5.2): the purge scope is clamped to the caller's authorized
+     * scope. An unscoped call (no ?project=) was previously allowed to sweep
+     * EVERY project, and `filter.project` could name any project — so a
+     * token scoped to project A (or the default) could bulk-delete another
+     * project's tasks that the auth layer never authorized. Now: an unscoped
+     * purge may only target the default project, and a `filter.project` must
+     * either agree with the ?project= scope or, on an unscoped call, be the
+     * default project.
+     */
+    const authorizedProject =
+      project === undefined || project === null || project === ''
+        ? defaultProjectName()
+        : project;
+    const scoped = tasks.filter((t) => t.project === authorizedProject);
 
     let candidates;
     if (Array.isArray(ids) && ids.length > 0) {
       const idSet = new Set(ids);
       candidates = scoped.filter((t) => {
         if (idSet.has(t.id)) return true;
-        if (project === undefined || project === null || project === '') {
-          return idSet.has(compositeKey(t.project, t.id));
-        }
-        return false;
+        return idSet.has(compositeKey(t.project, t.id));
       });
     } else if (filter && typeof filter === 'object') {
       const status = filter.status !== undefined ? normalizeStatus(filter.status) : undefined;
       const fp = filter.project;
+      // A filter.project that disagrees with the authorized scope widens the
+      // blast radius past the token's grant — reject rather than silently
+      // intersecting (the caller's intent cannot be satisfied safely).
+      if (
+        fp !== undefined && fp !== null && fp !== '' &&
+        fp !== authorizedProject
+      ) {
+        return {
+          error: `Forbidden: purge scope is limited to project '${authorizedProject}'`,
+          status: 403,
+        };
+      }
       const ageDays = filter.older_than_days;
       const ageThresholdMs =
         typeof ageDays === 'number' && Number.isFinite(ageDays)

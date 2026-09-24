@@ -6,7 +6,6 @@ type Props = {
   status: TaskStatus
   title: string
   stepNumber?: string
-  wipLimit?: number
   tasks: Task[]
   onOpen: (id: string) => void
   /** Show each card's owning project (unscoped board only). */
@@ -45,7 +44,6 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.status === next.status &&
     prev.title === next.title &&
     prev.stepNumber === next.stepNumber &&
-    prev.wipLimit === next.wipLimit &&
     prev.onOpen === next.onOpen &&
     prev.showProject === next.showProject &&
     prev.accentClass === next.accentClass &&
@@ -53,19 +51,17 @@ function areEqual(prev: Props, next: Props): boolean {
   )
 }
 
-function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProject = false, accentClass }: Props) {
+function Column({ status, title, stepNumber, tasks, onOpen, showProject = false, accentClass }: Props) {
   const isDone = status === 'DONE' || status === 'done'
   const isBlocked = status === 'BLOCKED' || status === 'blocked'
   const normalizedStatus = String(status).toUpperCase()
   const topAccent = accentClass ?? COLUMN_ACCENTS[normalizedStatus] ?? 'border-t-2 border-t-line'
-  const isOverWip = typeof wipLimit === 'number' && tasks.length > wipLimit
-  const isAtWip = typeof wipLimit === 'number' && tasks.length === wipLimit
 
   return (
     <div
       className={[
         'flex w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
-        isOverWip ? 'border-t-2 border-t-fail' : topAccent,
+        topAccent,
         isDone ? 'opacity-70' : '',
       ].join(' ')}
     >
@@ -86,24 +82,14 @@ function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProjec
         <span
           className={[
             'font-mono text-[11px] tabular-nums px-1.5 py-0.5 border border-line',
-            isOverWip
-              ? 'bg-fail-bg text-fail border-fail/40 font-bold'
-              : isAtWip
-              ? 'bg-warn-bg text-warn border-warn/40 font-bold'
-              : isBlocked && tasks.length > 0
+            isBlocked && tasks.length > 0
               ? 'bg-fail-bg text-fail border-fail/40 font-bold'
               : 'bg-muted-bg text-muted',
           ].join(' ')}
-          title={typeof wipLimit === 'number' ? `WIP limit: ${wipLimit}` : undefined}
         >
-          {typeof wipLimit === 'number' ? `${tasks.length}/${wipLimit}` : tasks.length}
+          {tasks.length}
         </span>
       </div>
-      {isOverWip && (
-        <div className="border-b border-fail/30 bg-fail-bg px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-fail">
-          WIP limit exceeded ({tasks.length}/{wipLimit})
-        </div>
-      )}
       <div
         data-status={status}
         className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto p-2"

@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '250',
+    value: '258',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -121,7 +121,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Optimistic concurrency (version + If-Match)', code: 'store.js · nextVersionFor, versionConflict' },
   { name: 'Admin delete + bulk purge', code: 'store.js · deleteTask, purgeTasks' },
   { name: 'Search & real-time quick filters', code: 'BoardFilters.tsx, lib/filterTasks.ts' },
-  { name: 'WIP capacity guards & estimation badges', code: 'Column.tsx, TaskCard.tsx' },
+  { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
@@ -181,7 +181,7 @@ export type TourShot = {
 export const TOUR_SHOTS: TourShot[] = [
   {
     src: '/landing/board.png',
-    alt: 'The board with the filter, sort and export toolbar, priority badges, WIP limits and stage-accents on every column',
+    alt: 'The board with the filter, sort and export toolbar, priority badges and stage-accents on every column',
     caption: 'The board — a live projection of server state, not the source of truth',
   },
   {

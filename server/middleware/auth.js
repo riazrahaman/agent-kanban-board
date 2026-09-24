@@ -11,7 +11,7 @@
  * `KANBAN_AUTH_TOKEN` for every project.
  */
 import { referencedProjects } from './projectScope.js';
-import { isValidProjectId, defaultProjectName, emitAudit } from '../store.js';
+import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 
 export const VALID_ROLES = new Set([
@@ -137,6 +137,20 @@ export function createAuthMiddleware() {
     };
     if (!providedToken) return unauthorized();
 
+    /**
+     * §2.3b (SEC-02, v2.5.2): the asserted `X-Agent-Role` is caller-declared and
+     * must NEVER confer a destructive privilege on its own. Destructive
+     * operations (task delete / purge) additionally require `caller.privileged`,
+     * which is DERIVED from the credential that proved the request, not from
+     * the header: the admin token, or a session token whose server-issued role
+     * is privileged. When neither is configured the legacy single-token mode
+     * keeps its historical semantics (any valid bearer token may claim admin),
+     * so single-token deployments keep working; per-project deployments are the
+     * configuration this hardening targets, and there project tokens never
+     * confer privileged ops.
+     */
+    const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+
     // Session-token path. A valid HMAC session token carries its own role and
     // project; authenticate against those without consulting a server-side
     // session table. Falls through to the static-token paths below on failure,
@@ -144,6 +158,7 @@ export function createAuthMiddleware() {
     const session = verifySessionToken(providedToken);
     if (session) {
       req.caller.role = session.role;
+      req.caller.privileged = isPrivilegedRole(session.role);
       const referenced = referencedProjects(req);
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
       for (const scope of scopes) {
@@ -166,7 +181,6 @@ export function createAuthMiddleware() {
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
 
       // An admin token, when configured, spans every project.
-      const adminToken = process.env.KANBAN_ADMIN_TOKEN;
       const isAdmin = adminToken ? tokensMatch(providedToken, adminToken) : false;
 
       if (!isAdmin) {
@@ -179,7 +193,11 @@ export function createAuthMiddleware() {
             });
           }
         }
+        // A per-project token is by-convention a worker credential: functional
+        // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
+        req.caller.privileged = false;
       } else {
+        req.caller.privileged = true;
         // Admin token spans every project — intended superuser behaviour, but
         // kept observable. Emit a distinct audit entry so admin usage is
         // distinguishable from ordinary per-project writes in the audit log.
