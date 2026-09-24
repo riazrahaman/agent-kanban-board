@@ -6,6 +6,7 @@ import Board from './components/Board'
 import BoardFilters from './components/BoardFilters'
 import About from './components/About'
 import Portfolio from './components/Portfolio'
+import MetricsDashboard from './components/MetricsDashboard'
 import ProjectPicker from './components/ProjectPicker'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
@@ -281,6 +282,21 @@ export default function App() {
      [tasks, openTaskId],
   )
 
+  const [showMetrics, setShowMetrics] = useState(false)
+
+  const handleReorder = useCallback((sourceId: string, targetId: string) => {
+    setTasks((prev) => {
+      const sourceIndex = prev.findIndex((t) => t.id === sourceId)
+      const targetIndex = prev.findIndex((t) => t.id === targetId)
+      if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return prev
+
+      const next = [...prev]
+      const [moved] = next.splice(sourceIndex, 1)
+      next.splice(targetIndex, 0, moved)
+      return next
+    })
+  }, [])
+
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
   return (
@@ -454,9 +470,22 @@ export default function App() {
                     onReset={resetFilters}
                     onExport={handleExport}
                     onImport={handleImport}
+                    showMetrics={showMetrics}
+                    onToggleMetrics={() => setShowMetrics((v) => !v)}
                   />
+                  {showMetrics && (
+                    <MetricsDashboard
+                      tasks={filteredTasks}
+                      onClose={() => setShowMetrics(false)}
+                    />
+                  )}
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <Board tasks={filteredTasks} onOpen={handleOpen} showProject={!project} />
+                    <Board
+                      tasks={filteredTasks}
+                      onOpen={handleOpen}
+                      showProject={!project}
+                      onReorder={handleReorder}
+                    />
                   </div>
                 </div>
                 {/* Desktop: docked rail. Mobile: it would eat the whole board,

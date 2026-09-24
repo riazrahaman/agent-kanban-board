@@ -11,6 +11,7 @@ type Props = {
   onOpen: (id: string) => void
   /** Show each card's owning project (unscoped board only). */
   showProject?: boolean
+  onReorder?: (sourceId: string, targetId: string) => void
 }
 
 const COLUMN_ACCENTS: Record<string, string> = {
@@ -46,11 +47,12 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.wipLimit === next.wipLimit &&
     prev.onOpen === next.onOpen &&
     prev.showProject === next.showProject &&
+    prev.onReorder === next.onReorder &&
     sameBucket(prev.tasks, next.tasks)
   )
 }
 
-function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProject = false }: Props) {
+function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProject = false, onReorder }: Props) {
   const isDone = status === 'DONE' || status === 'done'
   const isBlocked = status === 'BLOCKED' || status === 'blocked'
   const normalizedStatus = String(status).toUpperCase()
@@ -105,8 +107,16 @@ function Column({ status, title, stepNumber, wipLimit, tasks, onOpen, showProjec
         data-status={status}
         className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto p-2"
       >
-        {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onOpen={onOpen} showProject={showProject} />
+        {tasks.map((task, idx) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            onOpen={onOpen}
+            showProject={showProject}
+            neighborAboveId={idx > 0 ? tasks[idx - 1].id : undefined}
+            neighborBelowId={idx < tasks.length - 1 ? tasks[idx + 1].id : undefined}
+            onReorder={onReorder}
+          />
         ))}
       </div>
     </div>

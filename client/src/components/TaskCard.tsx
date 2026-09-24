@@ -12,6 +12,9 @@ type Props = {
   onOpen: (id: string) => void
   /** Show the owning project — only meaningful on the unscoped "all projects" board. */
   showProject?: boolean
+  neighborAboveId?: string
+  neighborBelowId?: string
+  onReorder?: (sourceId: string, targetId: string) => void
 }
 
 // A task's `version` bumps on every committed mutation (§2.6), so id+version
@@ -23,11 +26,21 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.task.id === next.task.id &&
     prev.task.version === next.task.version &&
     prev.onOpen === next.onOpen &&
-    prev.showProject === next.showProject
+    prev.showProject === next.showProject &&
+    prev.neighborAboveId === next.neighborAboveId &&
+    prev.neighborBelowId === next.neighborBelowId &&
+    prev.onReorder === next.onReorder
   )
 }
 
-function TaskCard({ task, onOpen, showProject = false }: Props) {
+function TaskCard({
+  task,
+  onOpen,
+  showProject = false,
+  neighborAboveId,
+  neighborBelowId,
+  onReorder,
+}: Props) {
   const stripe = statusStyle(task.status).stripe
   const isHigh = normalizePriority(task.priority) === 'high'
   const estimate = (task.metadata?.estimate ?? task.metadata?.points ?? task.metadata?.size) as string | number | undefined
@@ -48,6 +61,20 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
       setDraftTitle(task.title)
     } finally {
       setEditingTitle(false)
+    }
+  }
+
+  const handleMoveUp = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (neighborAboveId && onReorder) {
+      onReorder(task.id, neighborAboveId)
+    }
+  }
+
+  const handleMoveDown = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (neighborBelowId && onReorder) {
+      onReorder(task.id, neighborBelowId)
     }
   }
 
@@ -79,6 +106,32 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
           {task.id}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
+          {(neighborAboveId || neighborBelowId) && (
+            <div className="flex items-center gap-0.5 border border-line bg-muted-bg px-0.5 py-0.2">
+              {neighborAboveId && (
+                <button
+                  type="button"
+                  onClick={handleMoveUp}
+                  title="Move card up in column"
+                  aria-label="Move card up in column"
+                  className="px-0.5 font-mono text-[9px] text-muted hover:text-ink transition-colors active:scale-90"
+                >
+                  ▲
+                </button>
+              )}
+              {neighborBelowId && (
+                <button
+                  type="button"
+                  onClick={handleMoveDown}
+                  title="Move card down in column"
+                  aria-label="Move card down in column"
+                  className="px-0.5 font-mono text-[9px] text-muted hover:text-ink transition-colors active:scale-90"
+                >
+                  ▼
+                </button>
+              )}
+            </div>
+          )}
           {showProject && task.project && (
             <span
               className="max-w-[10rem] truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"

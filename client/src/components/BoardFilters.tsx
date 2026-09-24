@@ -11,6 +11,8 @@ type Props = {
   onReset: () => void
   onExport?: () => void
   onImport?: (jsonString: string) => void
+  showMetrics?: boolean
+  onToggleMetrics?: () => void
 }
 
 export default function BoardFilters({
@@ -26,6 +28,8 @@ export default function BoardFilters({
   onReset,
   onExport,
   onImport,
+  showMetrics,
+  onToggleMetrics,
 }: Props) {
   const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all'
 
@@ -135,6 +139,24 @@ export default function BoardFilters({
               className="hidden"
             />
           </label>
+        )}
+
+        {onToggleMetrics && (
+          <button
+            type="button"
+            onClick={onToggleMetrics}
+            aria-pressed={showMetrics}
+            aria-label="Toggle metrics dashboard"
+            title="Toggle summary metrics dashboard"
+            className={[
+              'border px-2 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98]',
+              showMetrics
+                ? 'border-ink bg-muted-bg text-ink font-semibold'
+                : 'border-line bg-surface text-muted hover:bg-muted-bg hover:text-ink',
+            ].join(' ')}
+          >
+            Metrics
+          </button>
         )}
       </div>
 
