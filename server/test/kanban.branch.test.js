@@ -21,7 +21,7 @@
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'yaml';
@@ -472,5 +472,102 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
     );
     assert.ok(!/<b>Branch:<\/b>\s*$/m.test(text), 'no Branch row with an empty value');
     assert.doesNotMatch(text, /<b>Branch:<\/b>\s*<\/?/, 'no dangling Branch row');
+  });
+
+  // ========================================================================
+  // Cycle 3: READ paths must normalise legacy dirty values too (issue #30).
+  //
+  // The three WRITE paths all call `toBranch`, but `backfillLeaseFields` — the
+  // hook every storage backend runs on load — normalised only the lease fields,
+  // so a branch persisted dirty by an older build re-emerged verbatim on every
+  // API read. These tests seed dirty values DIRECTLY into the sink (bypassing
+  // the write paths, like a legacy file would) and assert the read surfaces
+  // null / verbatim exactly as the write-path contract promises.
+  // ========================================================================
+
+  /** Seeds a task record directly into the JSON sink, bypassing the write paths. */
+  async function seedDirtyRecord(id, branchValue, extra = {}) {
+    const raw = await readFile(dataFile, 'utf8');
+    const data = JSON.parse(raw);
+    data.tasks.push({
+      id, project: 'default', title: `Legacy ${id}`, description: '',
+      status: 'BACKLOG', priority: 'medium', round: 1, issues: [],
+      assigned_agent: null, agent_logs: [], metadata: {},
+      created_at: new Date().toISOString(), updated: new Date().toISOString(),
+      ...extra,
+      ...(branchValue === undefined ? {} : { branch: branchValue }),
+    });
+    await writeFile(dataFile, JSON.stringify(data));
+    return id;
+  }
+
+  async function readBranchEverywhere(id, expected, label) {
+    const mem = store.getTask(id);
+    assert.equal(mem.branch, expected, `${label}: in-memory after loadStore`);
+
+    const read = await jsonRequest(baseUrl, `/api/tasks/${id}`, { headers: headers() });
+    assert.equal(read.response.status, 200);
+    assert.equal(read.body.branch, expected, `${label}: GET response`);
+  }
+
+  it('20. legacy dirty branches are normalised on READ (issue #30)', async () => {
+    // Seed records exactly like an older build's sink would carry them, then
+    // reload: every dirty shape must read back null, matching the write paths.
+    // (A stored non-blank STRING like the old fabricated `task/<id>` default is
+    // a different shape entirely — it is kept verbatim, tested in 21.)
+    await seedDirtyRecord('br-r-blank', '');
+    await seedDirtyRecord('br-r-ws', '   ');
+    await seedDirtyRecord('br-r-num', 123);
+
+    await store.loadStore();
+
+    await readBranchEverywhere('br-r-blank', null, 'empty string');
+    await readBranchEverywhere('br-r-ws', null, 'whitespace-only');
+    await readBranchEverywhere('br-r-num', null, 'non-string 123');
+  });
+
+  it('21. a legacy REAL branch survives the read normalisation verbatim', async () => {
+    // The normaliser must not silently rewrite real caller data on read either
+    // — padding included, same rule as the PATCH path promises.
+    await seedDirtyRecord('br-r-real', '  fix/legacy  ');
+    await store.loadStore();
+    await readBranchEverywhere('br-r-real', '  fix/legacy  ', 'legacy real (padded, verbatim)');
+    assert.equal(store.getTask('br-r-real').branch.trim(), 'fix/legacy', 'ref intact');
+  });
+
+  it('22. the git-YAML card load path normalises a dirty card on READ', async () => {
+    // Same backfill hook runs on GitYamlStorage.load; a card persisted with a
+    // dirty branch by an older build must read back null, and on the NEXT save
+    // (which re-serialises from memory) the card on disk agrees with memory.
+    const gitDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-branch-read-'));
+    const card = [
+      'id: br-g-dirty', 'project: atlas', 'title: Legacy git card', 'status: BACKLOG',
+      'priority: medium', 'round: 1', 'branch: "   "', 'version: 1',
+      'assigned_agent: null', 'agent_logs: []', 'metadata: {}',
+    ].join('\n');
+    await writeFile(path.join(gitDir, 'br-g-dirty.yml'), `${card}\n`, 'utf8');
+
+    const gitStorage = new store.GitYamlStorage(gitDir, { project: 'atlas', autoCommit: false });
+    const loaded = await gitStorage.load();
+    const cardTask = loaded.find((t) => t.id === 'br-g-dirty');
+    assert.equal(cardTask.branch, null, 'dirty card branch normalised on load');
+
+    // Memory and the card now agree after a re-serialise.
+    await gitStorage.saveTask(cardTask);
+    const cardValue = yaml.parse(await readFile(path.join(gitDir, 'br-g-dirty.yml'), 'utf8')).branch;
+    assert.equal(cardValue, null, 're-serialised card agrees with memory');
+    await rm(gitDir, { recursive: true, force: true });
+  });
+
+  it('23. an absent branch key in a legacy record stays absent, not invented', async () => {
+    // Normalising an absent key must not invent a branch property the record
+    // never had — `undefined` stays undefined, matching createTask's "absent
+    // stays absent" rule.
+    await seedDirtyRecord('br-r-absent', undefined);
+    await store.loadStore();
+    const mem = store.getTask('br-r-absent');
+    assert.equal(mem.branch ?? null, null, 'reads as null either way');
+    const read = await jsonRequest(baseUrl, '/api/tasks/br-r-absent', { headers: headers() });
+    assert.equal(read.body.branch ?? null, null, 'GET reads as null');
   });
 });

@@ -294,12 +294,21 @@ function compositeKey(project, id) {
  * Backfills the lease fields (§2.4) + CAS version (§2.6) on records loaded from
  * a JSON sink that predates them: `claim_expires_at` -> null, `reclaim_count` ->
  * 0, `version` -> 1. Additive so legacy data is total without a migration step.
+ *
+ * `branch` is normalised through the shared `toBranch` normaliser so legacy
+ * dirty values (whitespace-only strings, empty strings, non-strings like 123,
+ * stale `task/<id>` fabrications) are nulled on READ exactly as the write paths
+ * (serializeCard / createTask / patchTask) normalise them on WRITE. Without
+ * this a legacy dirty branch persisted by an older build re-emerges verbatim in
+ * every API response and on git-backend cards (they re-serialise from memory on
+ * each save), so read and write would disagree forever.
  */
 function backfillLeaseFields(list) {
   for (const t of list) {
     if (!Number.isInteger(t.version)) t.version = 1;
     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
     if (t.reclaim_count === undefined) t.reclaim_count = 0;
+    if (t.branch !== undefined) t.branch = toBranch(t.branch);
   }
   return list;
 }

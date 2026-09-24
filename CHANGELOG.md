@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,38 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.13] — 2026-09-24
+
+### Fixed
+
+- **Legacy dirty `branch` values are now normalised on READ paths (issue #30).**
+  The write paths (serializeCard / createTask / patchTask) all normalise `branch`
+  through the shared `toBranch()` normaliser, but `backfillLeaseFields()` — the hook
+  every storage backend's load path runs — normalised only `version`,
+  `claim_expires_at` and `reclaim_count`. A legacy record with a dirty branch
+  (`""`, whitespace-only, or a non-string) therefore re-emerged verbatim in every
+  API response and, on the git backend, was re-serialised onto cards from memory on
+  every save — so read and write disagreed forever. `backfillLeaseFields()` now
+  applies the same normaliser on read: a usable string is kept verbatim (padding
+  and all), everything else becomes `null`, and an absent key stays absent. The
+  git-backend memory-vs-card divergence disappears with the same change, since
+  cards re-serialise from the normalised memory value.
+
+### Changed
+
+- **Documentation sync.** Removed a stale out-of-order `## [Unreleased]` section from
+  this changelog (the version-bump guard it described shipped inside v2.3.7);
+  corrected stale test counts in `docs/PRESENTATION_NOTES.md` and the standalone
+  one-pager (server 222 → **234**, client 68 → **77**; one-pager badge → v2.3.13).
+
+### Quality gates
+
+- Server suite **234 tests / 37 suites / 0 fail** (the branch suite gains 4 read-path
+  normalisation tests, including the git-YAML card round-trip; falsified by
+  neutralising the backfill normaliser — the suite went red and was restored
+  byte-exact); client suite **77 tests / 0 fail** (About trust-metric guard now
+  asserts 234); `tsc -b` and the production build clean.
 
 ## [2.3.12] — 2026-09-24
 
@@ -107,37 +139,6 @@ here **and** an annotated git tag. Do not let work accumulate under
   `sanitize.test.mjs` decode/round-trip suite and updates the responsive +
   About source-contract guards to the new call shape); `tsc -b` and the
   production build clean.
-
-## [Unreleased]
-
-### Added
-
-- **Version-bump guard in CI** (`scripts/check-version-bump.sh`). `kanban.version.test.js`
-  asserts that the current version is *internally consistent* — manifests agree, a CHANGELOG
-  section exists for it, docs declare the same number — but it cannot see the *previous*
-  version, so a user-visible change can ship completely unbumped and stay green. That is exactly
-  how the branch-field fix reached `main` while the live board still reported `2.3.5`. Answering
-  "has this changed since the base branch?" needs git history, so the rule now lives in the
-  workflow, at the gate that blocks the merge. The job checks out with `fetch-depth: 0` so the
-  merge base is reachable, and runs before dependency install so a missing bump fails fast.
-
-  Scope is deliberate: `server/**/*.js` (excluding `server/test/`) and `client/src/**`
-  (excluding tests) require a bump; docs-only, test-only, tooling-only and manifest-only changes
-  do not. A naive "any commit must bump" rule would fail most of this repo's history — most of
-  `v2.3.0`–`v2.3.6` were documentation syncs — and would be disabled within a week.
-
-- **`README.md` → Releasing** documents the guard, its scope, and how to run it locally
-  (`./scripts/check-version-bump.sh origin/main`).
-
-### Quality gates
-
-- Guard verified against 13 scenarios in a scratch clone: source-change-without-bump fails;
-  source-change-with-bump passes; docs-only, test-only (server and client), tooling-only,
-  manifest-only and no-change all pass; nested runtime dirs (`server/routes/`,
-  `server/middleware/`) and `server/utils/` correctly count as source; a missing base ref and a
-  missing argument each exit 2 with a clear message rather than a silent pass.
-- No runtime code changed in this release. Server suite 222 tests / 34 suites / 0 fail; client
-  68 / 0 fail; `make sec` clean; `tsc -b` and the production build clean.
 
 ## [2.3.9] — 2026-09-23
 
