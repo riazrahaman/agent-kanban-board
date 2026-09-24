@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,34 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.3.12] — 2026-09-24
+
+### Fixed
+
+- **`PATCH` was a side door around the dependency gate.** `claimTask` and
+  `nextClaim` refuse to start a task whose `depends_on` is not fully `DONE`
+  (409 `dependency_unsatisfied`), but `patchTask` never checked the gate, so a
+  caller could `PATCH {status:'BUILDING'}` a dependency-blocked card straight
+  into an active stage — reaching a state the claim path would never grant.
+  The transition is now gated inside `patchTask` for every move INTO an active
+  stage (BUILDING / IN_REVIEW / IN_TEST), after the state-machine (409) and
+  role (403) checks so those errors keep precedence, and the PATCH route
+  forwards the same `reason` + `unresolved_dependencies` payload the claim
+  route already emits. Transitions into DONE / BLOCKED / BACKLOG stay ungated:
+  completion and unblocking are lock-internal moves, and a worker must never
+  be trapped by its own dependency on the way out. Creating a task directly
+  in an active stage remains deliberately ungated (the bulk-import path and
+  the archive suite rely on it).
+
+### Quality gates
+
+- Server suite 230 tests / 37 suites / 0 fail (adds the KB-11b PATCH-gate
+  describe: blocked PATCH 409 with the unresolved list, unblocked PATCH after
+  the dependency is DONE, the ungated createTask path preserved, and the
+  dep-free regression). Gate proven load-bearing by falsification — neutralising
+  it turned exactly the blocked-PATCH test red. Client suite 77 / 0 fail.
+  `make sec` clean; `tsc -b` and the production build clean.
 
 ## [2.3.11] — 2026-09-24
 

@@ -293,7 +293,7 @@ flowchart TD
   - `POST /next-claim`: Claims the next available task (role from header, `?project=` scopes).
   - `GET /:id`: Retrieves single task or returns 404.
   - `DELETE /:id`: Deletes one task; privileged-role gated via `isPrivilegedRole`.
-  - `PATCH /:id`: Updates status or task attributes.
+  - `PATCH /:id`: Updates status or task attributes. A transition into an active stage is now dependency-gated like a claim (409 `dependency_unsatisfied` + `unresolved_dependencies`); DONE/BLOCKED/BACKLOG transitions stay ungated.
   - `POST /:id/claim`: Claims task for an agent ID.
   - `POST /:id/heartbeat`: Renews a task lease.
   - `POST /:id/logs`: Appends structured operational log.
@@ -353,7 +353,7 @@ flowchart TD
 
 #### `server/test/` (Node.js built-in test runner)
 - **Paths:** `server/test/kanban.*.test.js`
-- **Coverage:** The server suite (223 tests across 24 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), and Telegram reclaim notifications (`kanban.notify.test.js`).
+- **Coverage:** The server suite (230 tests across 24 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), and Telegram reclaim notifications (`kanban.notify.test.js`).
 
 #### `server/tasks.json`
 - **Path:** [`server/tasks.json`](../server/tasks.json)

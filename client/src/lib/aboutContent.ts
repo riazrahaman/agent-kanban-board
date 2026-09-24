@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '226',
+    value: '230',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },

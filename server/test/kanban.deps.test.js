@@ -261,6 +261,77 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
       });
 });
 
+describe('KB-11b dependency-gated PATCH (§2.5) — PATCH is not a side door around claim', () => {
+    let tmpDir;
+    let server;
+    let baseUrl;
+
+  before(async () => {
+      process.env.KANBAN_AUTH_TOKEN = TOKEN;
+     process.env.KANBAN_AUTO_PROMOTE = 'true';
+      process.env.KANBAN_REAP_ENABLED = 'false';
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_DEFAULT_PROJECT;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-deps-patch-'));
+    store.setStorage(null);
+    store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
+    await store.loadStore();
+      ({ server, baseUrl } = await startTestServer(createApp()));
+         });
+
+  after(async () => {
+      store.stopReaper();
+      await new Promise((resolve) => server.close(resolve));
+     await rm(tmpDir, { recursive: true, force: true });
+     delete process.env.KANBAN_AUTH_TOKEN;
+      delete process.env.KANBAN_AUTO_PROMOTE;
+      delete process.env.KANBAN_REAP_ENABLED;
+     store.setStorage(null);
+         });
+
+  it('11. PATCHing a dep-carrying BACKLOG task into an active stage is a tagged 409', async () => {
+      await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-dep', 'PG DEP') });
+      await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-child', 'PG CHILD', { depends_on: ['pg-dep'] }) });
+     const r = await jsonRequest(baseUrl, '/api/tasks/pg-child', {
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+          });
+      assert.equal(r.response.status, 409, 'the PATCH must be rejected like a claim would be');
+      assert.equal(r.body.reason, 'dependency_unsatisfied', 'the reason is the dependency gate, not contention');
+      assert.ok(Array.isArray(r.body.unresolved_dependencies), 'unresolved dependencies are listed for the caller');
+      assert.ok(r.body.unresolved_dependencies.includes('pg-dep'), 'the unfinished dependency is named');
+      assert.equal(store.getTask('pg-child').status, 'BACKLOG', 'the card stays BACKLOG');
+      });
+
+  it('12. the same PATCH succeeds once the dependency is DONE', async () => {
+      await driveToDone(baseUrl, 'pg-dep');
+     const r = await jsonRequest(baseUrl, '/api/tasks/pg-child', {
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+          });
+      assert.equal(r.response.status, 200, 'a satisfied dependency unblocks the PATCH');
+      assert.equal(store.getTask('pg-child').status, 'BUILDING');
+      });
+
+  it('13. createTask with an active status and an unmet dep is still ungated (deliberate)', async () => {
+     // Import paths may land a card straight in BUILDING; the orphan grace window
+     // handles the ownerless case. kanban.archive.test.js relies on this too.
+     const r = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers('admin'),
+        body: taskBody('pg-import', 'PG IMPORT', { status: 'BUILDING', depends_on: ['ghost-dep'] }),
+          });
+      assert.equal(r.response.status, 201, 'createTask is not the claim path — it stays ungated');
+      });
+
+  it('14. dep-free transitions are unaffected (regression)', async () => {
+      await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-free', 'PG FREE') });
+     const r = await jsonRequest(baseUrl, '/api/tasks/pg-free', {
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+          });
+      assert.equal(r.response.status, 200, 'a dep-free card moves into an active stage freely');
+      assert.equal(store.getTask('pg-free').status, 'BUILDING');
+      });
+});
+
 function startTestServer(app) {
   return new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => resolve({ server, baseUrl: `http://127.0.0.1:${server.address().port}` }));
