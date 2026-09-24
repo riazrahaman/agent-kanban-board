@@ -22,6 +22,12 @@ services:
         value: /data/tasks.json
       - key: KANBAN_DATA_DIR
         value: /data
+      - key: KANBAN_BACKUP_ENABLED
+        value: "1"
+      - key: KANBAN_BACKUP_INTERVAL_MS
+        value: "600000"
+      - key: KANBAN_BACKUP_KEEP
+        value: "10"
       - key: HOST
         value: 0.0.0.0
       - key: KANBAN_ALLOWED_ORIGIN

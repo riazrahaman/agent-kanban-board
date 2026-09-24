@@ -222,7 +222,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (268 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (270 tests, including the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -296,8 +296,10 @@ priority items:
    quarantine instead.
 4. **Optional read authentication (ENH-01)** — `KANBAN_READ_AUTH` to gate
    GETs/SSE, with single-use HMAC stream tickets for `EventSource`.
-5. **Backups in the deploy blueprint (ENH-02)** — enable `KANBAN_BACKUP_*` in
-   `render.yaml`/`railway.json` plus a restore runbook.
+5. ~~**Backups in the deploy blueprint (ENH-02)** — enable `KANBAN_BACKUP_*` in
+   `render.yaml`/`railway.json` plus a restore runbook.~~ **Shipped in v2.5.5**
+   (render.yaml defaults + `scripts/restore-backup.mjs` + `docs/RESTORE.md`
+   + `backup` block on `/api/health`).
 
 The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
 ENH-01..12) lives on the `kanbann` project of the live board.

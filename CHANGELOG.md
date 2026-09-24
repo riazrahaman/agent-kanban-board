@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,18 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.5] — 2026-09-24
+
+### Added
+
+- **Backups wired into the deploy blueprint (ENH-02).** `render.yaml` now sets `KANBAN_BACKUP_ENABLED=1`, `KANBAN_BACKUP_INTERVAL_MS=600000` (10 min) and `KANBAN_BACKUP_KEEP=10` so the Render deployment snapshots `/data` on a schedule (Railway users set the same three variables in the dashboard — `railway.json` cannot declare env vars).
+- **Backup status in `GET /api/health`** — a new `backup` block reports `{enabled, running, interval_ms, keep, backup_root, backup_count, last_backup_at}` so operators can see at a glance whether snapshots are being taken and how fresh the newest one is.
+- **Restore tooling + runbook** — new `scripts/restore-backup.mjs` (`<snapshot-dir> --into <data-dir> [--dry-run]`) copies a snapshot over the data tree (refusing empty/missing snapshots), and `docs/RESTORE.md` documents the full procedure: verify via the health `backup` block, copy snapshots off the volume nightly (same-volume snapshots protect against corruption, not volume loss), restore with the script, restart, verify.
+
+### Quality gates
+
+Server suite: 270 tests across 41 suites, 0 failures (adds backup-status and health-backup-block coverage to the existing backup suite). Client suite: 102. `tsc -b`, `vite build`, `make sec`, version lockstep, doc-mirror parity and markdown-table checks all green.
 
 ## [2.5.4] — 2026-09-24
 
