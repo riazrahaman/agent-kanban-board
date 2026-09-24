@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,40 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.0] — 2026-09-24
+
+### Added
+
+- **Custom column colors (per-project, server-persisted).** A new display-settings store
+  (`/api/settings`, GET public / PUT token-gated) persists a per-project `column_colors`
+  override, resolved as stock -> board default -> project override. The palette reuses the
+  design system's 8 accent tokens (muted/live/warn/test/fail/pass/block/line) — raw hex never
+  crosses the wire, so every choice keeps validated WCAG contrast. Both storage backends
+  round-trip settings (JSON sibling file / git `settings.yml`). A "Columns" control in the
+  filter toolbar opens a swatch popover with per-column picks and Reset-to-defaults; the SSE
+  stream gained an `event: settings` push so an operator's save applies live in every open
+  browser.
+- **Task comments / discussion thread.** A new `comments[]` field on every task, written only
+  through `POST /api/tasks/:id/comments` (mirrors `/logs`: agent_id + message required, §2.6 CAS
+  guard, escapeHtml on write, one version bump, KB-05 persist-first). Deliberately separate from
+  `agent_logs` — the machine audit trail stays clean. The task sheet now renders a Comments
+  thread (oldest-first, entities decoded for display) with its own composer that shares the
+  sheet's single Agent ID field. Comments are defaulted to `[]` on read for legacy records and
+  round-trip through git cards.
+
+### Changed
+
+- README roadmap: items 1 (Ticket Details Panel) and 3 (Custom Column Colors) are now shipped
+  and removed from the roadmap; the remaining opt-* backlog cards stay tracked.
+
+### Quality gates
+
+- Server suite: 250 tests across 39 suites (adds `kanban.comments.test.js` 7 tests and
+  `kanban.settings.test.js` 9 tests, both falsified).
+- Client suite: 102 tests (adds the column-colors contract, 8 tests).
+- `tsc -b` clean, `vite build` clean, `make sec` clean, banned-pattern grep clean,
+  version lockstep 5/5, mirror parity 3× identical, markdown tables clean.
 
 ## [2.4.0] — 2026-09-24
 

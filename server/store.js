@@ -309,6 +309,9 @@ function backfillLeaseFields(list) {
     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
     if (t.reclaim_count === undefined) t.reclaim_count = 0;
     if (t.branch !== undefined) t.branch = toBranch(t.branch);
+    // v2.5.0: every card carries a comments thread; legacy records default to
+    // an empty one so the read surface (and the client renderer) is total.
+    if (!Array.isArray(t.comments)) t.comments = [];
   }
   return list;
 }
@@ -322,6 +325,13 @@ export class JsonStorage {
     // Archive lives in a sibling `archive/` directory next to the tasks dir.
     const dir = path.dirname(filePath);
     this.archiveFile = path.join(dir, 'archive', `${this.project || defaultProjectName()}.json`);
+    // v2.5.0: per-project display settings sink, mirroring the archive sibling
+    // precedent. The default project anchors its settings next to the live
+    // tasks file (KANBAN_DATA_FILE / server/tasks.json) so a deploy without
+    // KANBAN_DATA_DIR never falls into the cross-repo jsonDataDir() fallback.
+    this.settingsFile = this.isDefault
+      ? path.join(dir, 'settings.json')
+      : path.join(jsonDataDir(), 'settings', `${this.project}.json`);
   }
 
   async load() {
@@ -381,6 +391,26 @@ export class JsonStorage {
       tasks,
     };
     await writeAtomic(this.archiveFile, JSON.stringify(payload, null, 2));
+  }
+
+  async loadSettings() {
+    try {
+      if (!existsSync(this.settingsFile)) return {};
+      const parsed = JSON.parse(await readFile(this.settingsFile, 'utf-8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (err) {
+      console.warn(`[kanban JsonStorage] loadSettings error: ${err.message} — using defaults`);
+      return {};
+    }
+  }
+
+  async saveSettings(settings) {
+    const payload = {
+      project: this.project || defaultProjectName(),
+      updated_at: new Date().toISOString(),
+      ...settings,
+    };
+    await writeAtomic(this.settingsFile, JSON.stringify(payload, null, 2));
   }
 }
 
@@ -505,6 +535,7 @@ export class GitYamlStorage {
       description: task.description || '',
       priority: task.priority || 'medium',
       agent_logs: task.agent_logs || [],
+      comments: Array.isArray(task.comments) ? task.comments : [],
       metadata: task.metadata || {},
         // §2.6: persist the CAS version; default to 1 for legacy cards.
       version: task.version ?? 1,
@@ -584,6 +615,46 @@ export class GitYamlStorage {
       throw new Error(`Git-backed persistence commit failed: ${err.message}`, { cause: err });
     }
   }
+
+  // v2.5.0: per-project display settings live in a `settings.yml` sibling of the
+  // task cards. The file carries no `id` key, so the card loader (which skips
+  // every parsed file without one) ignores it harmlessly.
+  settingsPath() {
+    return path.join(this.dir, 'settings.yml');
+  }
+
+  async loadSettings() {
+    try {
+      const raw = await readFile(this.settingsPath(), 'utf-8');
+      const parsed = yaml.parse(raw);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  async saveSettings(settings) {
+    await mkdir(this.dir, { recursive: true });
+    const payload = {
+      project: this.ownedProject,
+      updated_at: new Date().toISOString(),
+      ...settings,
+    };
+    await writeAtomic(this.settingsPath(), yaml.stringify(payload));
+    if (this.autoCommit) {
+      try {
+        await execFileAsync('git', ['add', 'settings.yml'], { cwd: this.dir });
+        const composite = this.isDefaultProject ? 'default' : this.ownedProject;
+        await execFileAsync(
+          'git',
+          ['commit', '-m', `ops(${composite}): kanban settings updated`],
+          { cwd: this.dir }
+        );
+      } catch (err) {
+        throw new Error(`Git-backed settings commit failed: ${err.message}`, { cause: err });
+      }
+    }
+  }
 }
 
 // ============================================================================
@@ -598,6 +669,12 @@ let listeners = [];
 const index = new Map();    // `${project}/${id}` -> Task   (O(1) composite lookup)
 const storageCache = new Map(); // project -> per-project storage instance
 let mutationQueue = Promise.resolve();
+
+// v2.5.0: per-project display settings (column colors). Maps project -> raw
+// saved settings object; resolution (board default -> project override) happens
+// at read time in getSettings().
+let projectSettings = new Map();
+let settingsListeners = [];
 
 export function withMutationLock(operation) {
   const run = mutationQueue.then(() => operation(), () => operation());
@@ -859,6 +936,18 @@ export async function loadStore() {
     }
   }
 
+  // v2.5.0: load per-project display settings (column colors) alongside the
+  // archives. A project with no saved settings simply has no override entry.
+  projectSettings = new Map();
+  for (const p of projectSet) {
+    try {
+      const s = await getStorage(p).loadSettings();
+      if (s && typeof s === 'object' && Object.keys(s).length) projectSettings.set(p, s);
+    } catch (err) {
+      console.warn(`[kanban] settings load error for ${p}: ${err.message}`);
+    }
+  }
+
   await runArchiveSweep();
   storeLoaded = true;
   notify();
@@ -1038,6 +1127,138 @@ export function onChange(listener) {
   return () => {
     listeners = listeners.filter((l) => l !== listener);
    };
+}
+
+// ---------------------------------------------------------------------------
+// v2.5.0 — Per-project display settings (column colors)
+// ---------------------------------------------------------------------------
+//
+// A board-wide default (the `default` project's saved settings) plus optional
+// per-project overrides. The palette is the client's existing accent token set
+// (muted/live/warn/test/fail/pass/block/line) — raw hex never crosses the wire,
+// so every choice keeps the validated WCAG contrast of the design system.
+
+export const COLUMN_COLOR_KEYS = [...VALID_STATUS_LIST, 'UNKNOWN', 'ISSUES'];
+
+export const COLUMN_COLOR_TOKENS = [
+  'muted',
+  'live',
+  'warn',
+  'test',
+  'fail',
+  'pass',
+  'block',
+  'line',
+];
+
+// The stock palette as shipped (mirrors Column.tsx COLUMN_ACCENTS).
+export const STOCK_COLUMN_COLORS = Object.freeze({
+  BACKLOG: 'muted',
+  BUILDING: 'live',
+  IN_REVIEW: 'warn',
+  IN_TEST: 'test',
+  BLOCKED: 'fail',
+  DONE: 'pass',
+  UNKNOWN: 'line',
+  ISSUES: 'warn',
+});
+
+export function onSettings(listener) {
+  settingsListeners.push(listener);
+  return () => {
+    settingsListeners = settingsListeners.filter((l) => l !== listener);
+  };
+}
+
+export function settingsListenerCount() {
+  return settingsListeners.length;
+}
+
+function emitSettings(project, settings) {
+  for (const listener of [...settingsListeners]) {
+    try {
+      listener({ project, settings });
+    } catch (err) {
+      console.error('[kanban] settings listener error:', err);
+    }
+  }
+}
+
+/**
+ * Resolved column colors for a project: stock -> board default (the `default`
+ * project's saved map) -> the project's own override. Unscoped resolution
+ * (project === undefined/null/'') applies the board default only.
+ */
+export function getSettings(project) {
+  const boardDefault = projectSettings.get(defaultProjectName())?.column_colors || {};
+  const own = project && project !== defaultProjectName()
+    ? projectSettings.get(project)?.column_colors || {}
+    : {};
+  return {
+    project: project || null,
+    column_colors: { ...STOCK_COLUMN_COLORS, ...boardDefault, ...own },
+  };
+}
+
+/**
+ * Validates a column_colors payload: every key must be a known column, every
+ * value a palette token. Returns { error, status } or { colors }.
+ */
+function validateColumnColors(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: 'column_colors must be an object mapping column -> color token', status: 400 };
+  }
+  const keys = Object.keys(raw);
+  if (keys.length > COLUMN_COLOR_KEYS.length) {
+    return { error: 'column_colors has too many keys', status: 400 };
+  }
+  const colors = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!COLUMN_COLOR_KEYS.includes(k)) {
+      return { error: `Unknown column: ${k}`, status: 400 };
+    }
+    if (!COLUMN_COLOR_TOKENS.includes(v)) {
+      return { error: `Invalid color token for ${k}: ${v}`, status: 400 };
+    }
+    colors[k] = v;
+  }
+  return { colors };
+}
+
+/**
+ * Persists a project's column_colors override (v2.5.0). Any authenticated
+ * token may update display settings. KB-05: persist first, then memory, then
+ * notify settings listeners. Under `withMutationLock` so concurrent saves
+ * serialize.
+ */
+export async function updateSettings(project, patch, { caller = {} } = {}) {
+  return withMutationLock(async () => {
+    let p;
+    if (project === undefined || project === null || project === '') {
+      p = defaultProjectName();
+    } else {
+      p = project;
+      if (!isValidProjectId(p)) {
+        return { error: `Invalid project id: ${p}`, status: 400 };
+      }
+    }
+
+    if (!caller || typeof caller !== 'object' || !caller.role) {
+      return { error: 'Caller role is required to update settings', status: 403 };
+    }
+
+    const raw = patch?.column_colors;
+    const check = validateColumnColors(raw);
+    if (check.error) return check;
+
+    await getStorage(p).saveSettings({ column_colors: check.colors });
+
+    const prev = projectSettings.get(p) || {};
+    const next = { ...prev, column_colors: check.colors };
+    projectSettings.set(p, next);
+    emitSettings(p, getSettings(p));
+    return { project: p, column_colors: check.colors, status: 200 };
+  });
 }
 
 /**
@@ -1468,6 +1689,7 @@ export async function createTask(data = {}, projectArg) {
       assigned_agent: data.assigned_agent !== undefined ? data.assigned_agent : null,
       stage_owners: data.stage_owners && typeof data.stage_owners === 'object' ? data.stage_owners : {},
       agent_logs: Array.isArray(data.agent_logs) ? data.agent_logs : [],
+      comments: Array.isArray(data.comments) ? data.comments : [],
       metadata: data.metadata || {},
       created_at: now,
       completed_at: status === STATUSES.DONE ? now : undefined,
@@ -2227,6 +2449,45 @@ export async function addIssue(id, issueId, project, { expected_version: expecte
     notify();
     return { issues: candidate.issues, status: 200 };
      });
+}
+
+/**
+ * v2.5.0 — Appends a human/agent comment to a task's discussion thread.
+ * Deliberately separate from `agent_logs` (the machine audit trail): comments
+ * are a discussion surface. Mirrors appendLog: §2.6 CAS guard, escapeHtml on
+ * both fields, exactly one version bump, KB-05 persist-first ordering. NOT in
+ * patchTask's allowlist — the only write path is this function.
+ */
+export async function addComment(id, agentId, message, project, { expected_version: expectedVersion } = {}) {
+  return withMutationLock(async () => {
+    const task = getTask(id, project);
+    if (!task) return { error: 'Task not found', status: 404 };
+
+    if (!agentId || !message || typeof message !== 'string') {
+      return { error: 'agent_id and message are required', status: 400 };
+    }
+
+    // §2.6: enforce the version guard before building the candidate.
+    const conflict = versionConflict(task, expectedVersion);
+    if (conflict) return conflict;
+
+    const candidate = structuredClone(task);
+    if (!Array.isArray(candidate.comments)) candidate.comments = [];
+    candidate.comments.push({
+      timestamp: new Date().toISOString(),
+      message: escapeHtml(message),
+      agent_id: escapeHtml(agentId),
+    });
+    candidate.updated = new Date().toISOString();
+    // §2.6: a committed comment advances version by exactly one (which also
+    // re-renders the memoized card / sheet via the id+version signature).
+    candidate.version = nextVersionFor(task);
+
+    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    updateInMemoryTask(candidate);
+    notify();
+    return { task: candidate, status: 200 };
+  });
 }
 
 // ---------------------------------------------------------------------------

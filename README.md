@@ -222,7 +222,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (234 tests, including the Telegram reclaim-notifier guard and the branch-integrity regression guard), the client status check, the client unit suite (86 tests, including the mobile-responsive, dashboard-metrics, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (250 tests, including the Telegram reclaim-notifier guard, the branch-integrity regression guard, and the v2.5.0 comments/settings suites), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -264,14 +264,15 @@ Ideas captured from community feedback (formerly `kanban_recommendations.md` /
 `kanban_handover.md`) that are deliberately **not** built yet. They are also
 tracked as `opt-*` backlog cards on the live board. Honest status per item:
 
-1. **Ticket Details Panel** — a click-out side panel with full description,
-   comments, and activity history. Largely exists today as the task inspector
-   (TaskSheet); the outstanding piece is a comment thread.
+1. ~~**Ticket Details Panel**~~ — **shipped in v2.5.0**: the task sheet now
+   carries a comments thread (server-persisted `comments[]`,
+   `POST /api/tasks/:id/comments`) beside the description and activity log.
 2. **Operator Assignment** — an admin/operator can already work around this by
    claiming on an agent's behalf, but there is no explicit "assign to agent"
    action beyond agent self-claim, and no avatars.
-3. **Custom Column Colors** — per-operator colour-coding of swimlanes (the
-   palette is fixed today; each stage does carry a distinct accent).
+3. ~~**Custom Column Colors**~~ — **shipped in v2.5.0**: per-column accent
+   overrides via `PUT /api/settings`, persisted per project and applied live
+   over SSE.
 4. **Milestones / Goals** — group tickets under a milestone banner and show
    per-milestone progress.
 5. **Integration Hooks** — outbound webhooks / API sync with GitHub, Jira, etc.

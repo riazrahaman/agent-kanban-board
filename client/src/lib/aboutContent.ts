@@ -11,12 +11,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '234',
+    value: '250',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '94',
+    value: '102',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -124,6 +124,8 @@ export const CAPABILITIES: Capability[] = [
   { name: 'WIP capacity guards & estimation badges', code: 'Column.tsx, TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
+  { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
+  { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
   { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
 ]

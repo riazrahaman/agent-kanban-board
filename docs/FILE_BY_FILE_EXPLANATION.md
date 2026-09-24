@@ -269,6 +269,14 @@ flowchart TD
   - CLI Auto-runner: Detects direct execution and launches the server.
 
 #### `server/store.js`
+
+v2.5.0 additions: the per-project settings store (`projectSettings` map,
+`COLUMN_COLOR_KEYS`/`COLUMN_COLOR_TOKENS`/`STOCK_COLUMN_COLORS`, `getSettings`
+resolution, `updateSettings` under the mutation lock, `onSettings` listeners,
+`loadSettings`/`saveSettings` on both storage classes) and the comments field
+(defaulted in `backfillLeaseFields`, seeded in `createTask`, round-tripped in
+`serializeCard`, written only through `addComment` — deliberately outside
+`patchTask`'s allowlist).
 - **Path:** [`server/store.js`](../server/store.js)
 - **Core Domain State & Engine:**
   - `STATUSES`: Dictionary of loop statuses (`BACKLOG`, `BUILDING`, `IN_REVIEW`, `IN_TEST`, `BLOCKED`, `DONE`).
@@ -320,6 +328,13 @@ flowchart TD
 #### `server/sessionAuth.js`
 - **Path:** [`server/sessionAuth.js`](../server/sessionAuth.js)
 - **Functions:** `authSecret()`, `createSessionToken()`, `verifySessionToken()` — stateless HMAC-SHA256 session tokens (24h expiry, role+project bound).
+
+#### `server/routes/settings.js`
+v2.5.0 per-project display settings. `GET /api/settings` returns the resolved
+column colors (stock -> board default -> project override; public read with the
+project-scope guard); `PUT /api/settings?project=X` persists a validated
+`column_colors` override (any authenticated token, per-project token isolation
+inherited from `referencedProjects`).
 
 #### `server/notifier.js`
 - **Path:** [`server/notifier.js`](../server/notifier.js)
@@ -429,6 +444,7 @@ flowchart TD
 #### Components (`client/src/components/`)
 - **`Board.tsx`:** Renders the horizontally snap-scrolling column container for all 8 columns including `UNKNOWN`, with edge-fade gradients and paging chevrons that appear when columns are off-screen. `COLUMNS` carries the workflow step numbers (`01`–`04`) and the advisory WIP limits (3 on Building / In Review) down to each `Column`.
 - **`BoardFilters.tsx`:** Filter/sort/export toolbar rendered above the board: live substring search, priority and assignee quick filters, the persisted column sort selector (`Priority | Recently Updated | Task ID`), a `Reset` action when any filter is active, one-click JSON export, and the metrics-dashboard toggle. Shows an `n of m tasks` counter.
+- **`ColumnColorsControl.tsx`:** v2.5.0 popover (mirrors HeaderHelp: outside-click + Escape) with one swatch row per swimlane and Reset-to-defaults; picks are saved optimistically via `PUT /api/settings` and applied live over SSE.
 - **`MetricsDashboard.tsx`:** Toggleable summary banner with 7 tiles (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the unfiltered task list by `lib/dashboardMetrics.ts`.
 - **`Column.tsx`:** Renders a column header with workflow step number, task count badge (including `n/limit` WIP badges and a violation banner when the advisory WIP limit is exceeded) and vertically scrolling card container. Each column carries a distinct top accent per stage (violet for In Test). Responsive: `85vw` with snap alignment below `md`, fixed `w-72` from `md` up. Memoized.
 - **`TaskCard.tsx`:** Renders card ID, status stripe, priority badge, effort/estimate chip (`⚡` from task metadata), title (double-click to inline-edit with optimistic CAS), project chip (unscoped board only), agent assignment, and issues badge. High-priority cards get a red right accent. Memoized.
@@ -445,6 +461,7 @@ flowchart TD
 - **`status.ts`:** `CANONICAL_STATUSES` and `ACTIVE_STATUSES` matching backend definitions.
 - **`filterTasks.ts`:** Pure filter predicate — live substring search (id/title/description/branch/assigned_agent), normalized-priority filter, and assignee filter including `unassigned`. Guarded by `filterTasks.test.mjs`.
 - **`boardSort.ts`:** Column ordering for the board — `sortTasks(tasks, sort)` over `priority | updated | id` (stable, non-mutating; priority reuses `PRIORITY_WEIGHT`), plus `readStoredSort`/`writeStoredSort` persisting the choice under `localStorage kanban.sort` so column order survives SSE snapshots and reloads. Guarded by `boardSort.test.mjs`.
+- **`columnColors.ts`:** v2.5.0 column-color palette module — token ids, literal `ACCENT_CLASS`/`SWATCH_CLASS` maps (Tailwind JIT requires literal class strings), `DEFAULT_COLUMN_COLORS` (mirrors the server stock palette), `resolveColumnAccent(status, colors)`, and `isStockPalette`. Guarded by `columnColors.test.mjs`.
 - **`dashboardMetrics.ts`:** Pure computations behind the metrics dashboard (total/backlog/wip/blocked/done counts, average cycle time, overdue/stalled). Guarded by `dashboardMetrics.test.mjs`.
 - **`signalStats.ts`:** `computeSignalStats(tasks)` calculating active/blocked/done counts.
 - **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.

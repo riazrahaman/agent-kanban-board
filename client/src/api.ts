@@ -153,6 +153,24 @@ export async function appendLog(
 }
 
 /**
+ * v2.5.0 — append a comment to a card's discussion thread (mirrors appendLog).
+ */
+export async function addComment(
+  id: string,
+  agentId: string,
+  message: string,
+  opts: MutationOptions = {},
+): Promise<Task> {
+  const project = opts.project
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}/comments`, project), {
+    method: 'POST',
+    headers: mutationHeaders(opts),
+    body: JSON.stringify({ agent_id: agentId, message, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
+   })
+  return handleVersionedResponse<Task>(res)
+}
+
+/**
  * §2.4 — renew the lease on a held task. The holder (or a privileged role)
  * extends `claim_expires_at` by the server's `KANBAN_CLAIM_TTL_MS`. A 409 with a
  * `reason` (`not_lease_holder` / `not_claimed`) signals a non-holder or an
@@ -257,6 +275,34 @@ export async function getArchivedTasks(project?: string): Promise<Task[]> {
   return handleResponse<Task[]>(res)
 }
 
+// ---------------------------------------------------------------------------
+// v2.5.0 — per-project display settings (column colors)
+// ---------------------------------------------------------------------------
+
+export type SettingsResponse = {
+  project: string | null
+  column_colors: Record<string, string>
+}
+
+/** Read the resolved column colors (stock -> board default -> project override). */
+export async function getSettings(project?: string): Promise<SettingsResponse> {
+  const res = await fetch(withProject(`${API_BASE}/settings`, project))
+  return handleResponse<SettingsResponse>(res)
+}
+
+/** Persist a project's column_colors override. Any authenticated token may. */
+export async function saveSettings(
+  project: string | undefined,
+  columnColors: Record<string, string>,
+): Promise<SettingsResponse> {
+  const res = await fetch(withProject(`${API_BASE}/settings`, project), {
+    method: 'PUT',
+    headers: mutationHeaders({ project }),
+    body: JSON.stringify({ column_colors: columnColors }),
+  })
+  return handleResponse<SettingsResponse>(res)
+}
+
 /**
  * Subscribes to the server's SSE task stream and invokes `onTasks` every time
  * the server broadcasts the full task array. Returns an unsubscribe function
@@ -297,6 +343,35 @@ export const DIFF_KINDS = [
 ] as const
 
 export type DiffKind = (typeof DIFF_KINDS)[number]
+
+/**
+ * v2.5.0 — subscribe to the SSE `settings` event (resolved column colors).
+ * Opens its own EventSource; returns an unsubscribe function.
+ */
+export function subscribeToSettings(
+  onSettings: (settings: SettingsResponse) => void,
+  { project }: { project?: string } = {},
+): () => void {
+  const source = new EventSource(withProject(`${API_BASE}/events`, project))
+
+  const handler = (evt: MessageEvent<string>) => {
+    try {
+      onSettings(JSON.parse(evt.data) as SettingsResponse)
+    } catch (err) {
+      console.error('Failed to parse SSE settings payload', err)
+    }
+  }
+
+  source.addEventListener('settings', handler as EventListener)
+  source.onerror = () => {
+    // EventSource auto-reconnects; settings are display-only so stay quiet.
+  }
+
+  return () => {
+    source.removeEventListener('settings', handler)
+    source.close()
+  }
+}
 
 export interface DiffEvent {
   kind: DiffKind

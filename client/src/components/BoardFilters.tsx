@@ -1,3 +1,5 @@
+import ColumnColorsControl from './ColumnColorsControl'
+
 type Props = {
   search: string
   onSearchChange: (search: string) => void
@@ -14,6 +16,10 @@ type Props = {
   onSortChange: (sort: 'priority' | 'updated' | 'id') => void
   showMetrics?: boolean
   onToggleMetrics?: () => void
+  /** v2.5.0: per-project column colors control. */
+  columnColors?: import('../lib/columnColors').ColumnColors | null
+  onColumnColorsChange?: (colors: import('../lib/columnColors').ColumnColors) => void
+  onColumnColorsReset?: () => void
 }
 
 export default function BoardFilters({
@@ -32,6 +38,9 @@ export default function BoardFilters({
   onSortChange,
   showMetrics,
   onToggleMetrics,
+  columnColors,
+  onColumnColorsChange,
+  onColumnColorsReset,
 }: Props) {
   const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all'
 
@@ -123,6 +132,14 @@ export default function BoardFilters({
           >
             Export
           </button>
+        )}
+
+        {onColumnColorsChange && onColumnColorsReset && (
+          <ColumnColorsControl
+            colors={columnColors ?? null}
+            onChange={onColumnColorsChange}
+            onReset={onColumnColorsReset}
+          />
         )}
 
         {onToggleMetrics && (

@@ -363,4 +363,31 @@ router.post('/:id/issues', asyncHandler(async (req, res) => {
   res.status(200).json(result);
 }));
 
+// v2.5.0: append a comment to a task's discussion thread. Mirrors /:id/logs —
+// agent_id + message required, §2.6 CAS guard, 409 details passthrough.
+router.post('/:id/comments', asyncHandler(async (req, res) => {
+  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  const message = req.body?.message;
+  if (!agentId || !message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'agent_id and message are required' });
+       }
+
+  const guard = resolveExpectedVersion(req);
+  const result = await store.addComment(
+        req.params.id, agentId, message, resolveProjectFromReq(req), guard || {},
+        );
+  if (result.error) {
+    if (result.status === 409 && result.details) {
+     return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+         });
+     }
+    return res.status(result.status).json({ error: result.error });
+       }
+  res.status(200).json(result.task);
+}));
+
 export default router;

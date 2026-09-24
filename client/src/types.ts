@@ -21,6 +21,13 @@ export type AgentLog = {
   agent_id: string
 }
 
+/** v2.5.0 — a human/agent comment on a card's discussion thread. */
+export type Comment = {
+  timestamp: string
+  message: string
+  agent_id: string
+}
+
 export type Task = {
   id: string
   project: string
@@ -32,6 +39,7 @@ export type Task = {
   assigned_agent: string | null
   stage_owners?: Record<string, string>
   agent_logs: AgentLog[]
+  comments?: Comment[]         // v2.5.0: discussion thread (separate from agent_logs)
   branch?: string
   depends_on?: string[]
   round?: number
