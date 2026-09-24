@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,23 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.3] — 2026-09-24
+
+### Changed
+
+- **Dark theme matched to riazrahaman.com.** The dark palette is now a
+  green-tinted charcoal (`--bg #1b211d`, `--surface #252d27`) with a brighter
+  sage `--muted #b4beaf` (8.5:1 on bg, up from 5.84:1) and fully visible
+  hairlines (`--line #445047`, previously an alpha-white that read as
+  invisible). Semantic state tokens (up/down/warn/block/live/test) are
+  unchanged and all clear WCAG AA on the new surface tones. The two sites now
+  read as one product family in dark mode.
+
+### Quality gates
+
+- Server suite: 258 tests across 41 suites, 0 fail (unchanged).
+- Client suite: 102 tests, 0 fail; `tsc -b` clean; production build clean.
 
 ## [2.5.2] — 2026-09-24
 
