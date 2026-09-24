@@ -93,12 +93,47 @@ router.post('/purge', asyncHandler(async (req, res) => {
     project: resolveProjectFromReq(req),
     ids: req.body?.ids,
     filter: req.body?.filter,
+    // v2.5.6: {hard:true} permanently deletes instead of parking in the trash sink.
+    hard: req.body?.hard === true,
   });
   if (result.error) {
     console.warn(`[kanban rejection] POST /api/tasks/purge: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(result.status).json({ deleted: result.deleted, count: result.count });
+}));
+
+// --- §2.9 trash sink (v2.5.6, ENH-03; MUST be declared before /:id so Express
+//     treats `trash` as a static segment, not an :id match) ----------------
+
+router.get('/trash', asyncHandler(async (req, res) => {
+  await store.runArchiveSweep();
+  res.json(store.getTrashedTasks(resolveProjectFromReq(req)));
+}));
+
+router.post('/trash/:id/restore', asyncHandler(async (req, res) => {
+  const result = await store.restoreFromTrash(req.params.id, {
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+    ...(({ expected_version: v }) => (v !== undefined && v !== null && v !== '' ? { expected_version: v } : {}))(req.body ?? {}),
+  });
+  if (result.error) {
+    console.warn(`[kanban rejection] POST /api/tasks/trash/${req.params.id}/restore: ${result.status} ${result.error}`);
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
+}));
+
+router.delete('/trash/:id', asyncHandler(async (req, res) => {
+  const result = await store.hardDeleteFromTrash(req.params.id, {
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+  });
+  if (result.error) {
+    console.warn(`[kanban rejection] DELETE /api/tasks/trash/${req.params.id}: ${result.status} ${result.error}`);
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
 }));
 
 // --- §2.7 fair claim queue (MUST be declared before /:id so Express treats

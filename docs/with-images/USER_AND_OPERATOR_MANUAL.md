@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.5.5
+**System:** Agent Kanban Board v2.5.6
 
 ---
 
@@ -110,6 +110,7 @@ The server and client are configured via environment variables.
 | `KANBAN_DATA_DIR` | *(None)* | Root for named projects (`tasks/<project>.json`) + archives. |
 | `KANBAN_DEFAULT_PROJECT` | `default` | Implicit single-project name. |
 | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
+| `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep). |
 | `KANBAN_GIT_DIR` | *(See ADR-001)* | Directory containing `.yml` cards when using `git` backend. |
 | `KANBAN_GIT_COMMIT` | `true` | Set `false` to disable auto-commits in git mode. |
 | `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. |

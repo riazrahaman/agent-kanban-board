@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '270',
+    value: '278',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -121,6 +121,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'HMAC session tokens', code: 'sessionAuth.js, routes/auth.js' },
   { name: 'Optimistic concurrency (version + If-Match)', code: 'store.js · nextVersionFor, versionConflict' },
   { name: 'Admin delete + bulk purge', code: 'store.js · deleteTask, purgeTasks' },
+  { name: 'Trash sink & restore', code: 'store.js · restoreFromTrash, hardDeleteFromTrash' },
   { name: 'Search & real-time quick filters', code: 'BoardFilters.tsx, lib/filterTasks.ts' },
   { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
