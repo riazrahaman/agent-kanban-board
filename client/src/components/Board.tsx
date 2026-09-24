@@ -3,10 +3,10 @@ import type { Task, TaskStatus } from '../types'
 import { groupTasks } from '../board-model.js'
 import Column from './Column'
 
-const COLUMNS: { status: TaskStatus; title: string; stepNumber?: string }[] = [
+const COLUMNS: { status: TaskStatus; title: string; stepNumber?: string; wipLimit?: number }[] = [
   { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
-  { status: 'BUILDING', title: 'Building', stepNumber: '02' },
-  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03' },
+  { status: 'BUILDING', title: 'Building', stepNumber: '02', wipLimit: 3 },
+  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03', wipLimit: 3 },
   { status: 'IN_TEST', title: 'In Test', stepNumber: '04' },
   { status: 'BLOCKED', title: 'Blocked' },
   { status: 'DONE', title: 'Done' },
@@ -87,6 +87,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
             status={col.status}
             title={col.title}
             stepNumber={col.stepNumber}
+            wipLimit={col.wipLimit}
             tasks={grouped[col.status] || []}
             onOpen={onOpen}
             showProject={showProject}

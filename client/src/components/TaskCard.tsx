@@ -29,6 +29,7 @@ function areEqual(prev: Props, next: Props): boolean {
 function TaskCard({ task, onOpen, showProject = false }: Props) {
   const stripe = statusStyle(task.status).stripe
   const isHigh = normalizePriority(task.priority) === 'high'
+  const estimate = (task.metadata?.estimate ?? task.metadata?.points ?? task.metadata?.size) as string | number | undefined
 
   return (
     <div
@@ -64,6 +65,14 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
               title={`Project: ${task.project}`}
             >
               {task.project}
+            </span>
+          )}
+          {estimate !== undefined && estimate !== '' && (
+            <span
+              className="border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted"
+              title={`Estimate / Effort: ${estimate}`}
+            >
+              ⚡ {String(estimate)}
             </span>
           )}
           <span
