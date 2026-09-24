@@ -53,6 +53,16 @@ function withProject(base: string, project?: string): string {
 }
 
 /**
+ * §2.3c (ENH-01) — headers for a READ. Reads are open by default, but when the
+ * server sets KANBAN_READ_AUTH=token every GET must present the bearer token.
+ * Sending it unconditionally is harmless (an open-read server ignores it), so
+ * the same header set is used whether or not the deployment gates reads.
+ */
+function readHeaders(): Record<string, string> {
+  return { ...authHeaders(readStoredToken()) }
+}
+
+/**
  * Headers for EVERY mutating request. Single choke point on purpose: the server
  * rejects a mutation without both a token (401) and a valid role (403), so a new
  * mutation that built its own headers would silently fail auth. Carries the
@@ -95,12 +105,12 @@ async function handleVersionedResponse<T>(res: Response): Promise<T> {
 }
 
 export async function getTasks(project?: string): Promise<Task[]> {
-  const res = await fetch(withProject(`${API_BASE}/tasks`, project))
+  const res = await fetch(withProject(`${API_BASE}/tasks`, project), { headers: readHeaders() })
   return handleResponse<Task[]>(res)
 }
 
 export async function getTask(id: string, project?: string): Promise<Task> {
-  const res = await fetch(withProject(`${API_BASE}/tasks/${id}`, project))
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}`, project), { headers: readHeaders() })
   return handleResponse<Task>(res)
 }
 
@@ -244,7 +254,7 @@ export async function nextClaim(
  * GET /health
  */
 export async function getHealth(): Promise<{ version: string; status: string }> {
-  const res = await fetch(`${API_BASE}/health`)
+  const res = await fetch(`${API_BASE}/health`, { headers: readHeaders() })
   return handleResponse<{ version: string; status: string }>(res)
 }
 
@@ -253,7 +263,7 @@ export async function getHealth(): Promise<{ version: string; status: string }> 
  * GET /projects
  */
 export async function getProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(`${API_BASE}/projects`)
+  const res = await fetch(`${API_BASE}/projects`, { headers: readHeaders() })
   return handleResponse<ProjectSummary[]>(res)
 }
 
@@ -262,7 +272,7 @@ export async function getProjects(): Promise<ProjectSummary[]> {
  * GET /metrics[?project=]
  */
 export async function getMetrics(project?: string): Promise<MetricsResponse> {
-  const res = await fetch(withProject(`${API_BASE}/metrics`, project))
+  const res = await fetch(withProject(`${API_BASE}/metrics`, project), { headers: readHeaders() })
   return handleResponse<MetricsResponse>(res)
 }
 
@@ -271,7 +281,7 @@ export async function getMetrics(project?: string): Promise<MetricsResponse> {
  * GET /tasks/archive[?project=]
  */
 export async function getArchivedTasks(project?: string): Promise<Task[]> {
-  const res = await fetch(withProject(`${API_BASE}/tasks/archive`, project))
+  const res = await fetch(withProject(`${API_BASE}/tasks/archive`, project), { headers: readHeaders() })
   return handleResponse<Task[]>(res)
 }
 
@@ -286,7 +296,7 @@ export type SettingsResponse = {
 
 /** Read the resolved column colors (stock -> board default -> project override). */
 export async function getSettings(project?: string): Promise<SettingsResponse> {
-  const res = await fetch(withProject(`${API_BASE}/settings`, project))
+  const res = await fetch(withProject(`${API_BASE}/settings`, project), { headers: readHeaders() })
   return handleResponse<SettingsResponse>(res)
 }
 
@@ -304,6 +314,36 @@ export async function saveSettings(
 }
 
 /**
+ * §2.3c (ENH-01) — mint a short-lived single-use stream ticket so an EventSource
+ * can authenticate (it cannot set request headers). Only attempted when a token
+ * is stored; a deployment with KANBAN_READ_AUTH off simply leaves the stream
+ * open and this resolves null.
+ */
+async function mintStreamTicket(project?: string): Promise<string | null> {
+  if (!readStoredToken()) return null
+  try {
+    const res = await fetch(`${API_BASE}/auth/stream-ticket`, {
+      method: 'POST',
+      headers: mutationHeaders({ project }),
+      body: JSON.stringify({ ...(project ? { project } : {}) }),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { ticket?: string }
+    return body.ticket ?? null
+  } catch {
+    return null
+  }
+}
+
+function streamUrl(path: string, project: string | undefined, ticket: string | null): string {
+  const params = new URLSearchParams()
+  if (project) params.set('project', project)
+  if (ticket) params.set('ticket', ticket)
+  const query = params.toString()
+  return `${API_BASE}${path}${query ? `?${query}` : ''}`
+}
+
+/**
  * Subscribes to the server's SSE task stream and invokes `onTasks` every time
  * the server broadcasts the full task array. Returns an unsubscribe function
  * that closes the underlying EventSource.
@@ -312,7 +352,19 @@ export function subscribeToEvents(
   onTasks: (tasks: Task[]) => void,
   { project }: { project?: string } = {},
 ): () => void {
-  const source = new EventSource(withProject(`${API_BASE}/events`, project))
+  let source: EventSource | null = null
+  let cancelled = false
+
+  const open = (ticket: string | null) => {
+    if (cancelled) return
+    source = new EventSource(streamUrl('/events', project, ticket))
+    source.addEventListener('tasks', handler as EventListener)
+    source.onerror = () => {
+      // EventSource auto-reconnects; a ticket is single-use so a reconnect to a
+      // read-gated stream would 401. Log only — the operator can refresh.
+      console.error('SSE connection error')
+    }
+  }
 
   const handler = (evt: MessageEvent<string>) => {
     try {
@@ -323,16 +375,14 @@ export function subscribeToEvents(
     }
   }
 
-  source.addEventListener('tasks', handler as EventListener)
-
-  source.onerror = (err) => {
-    // EventSource auto-reconnects on its own; just log for visibility.
-    console.error('SSE connection error', err)
-  }
+  mintStreamTicket(project).then((ticket) => open(ticket))
 
   return () => {
-    source.removeEventListener('tasks', handler)
-    source.close()
+    cancelled = true
+    if (source) {
+      source.removeEventListener('tasks', handler as EventListener)
+      source.close()
+    }
   }
 }
 
@@ -352,7 +402,8 @@ export function subscribeToSettings(
   onSettings: (settings: SettingsResponse) => void,
   { project }: { project?: string } = {},
 ): () => void {
-  const source = new EventSource(withProject(`${API_BASE}/events`, project))
+  let source: EventSource | null = null
+  let cancelled = false
 
   const handler = (evt: MessageEvent<string>) => {
     try {
@@ -362,14 +413,23 @@ export function subscribeToSettings(
     }
   }
 
-  source.addEventListener('settings', handler as EventListener)
-  source.onerror = () => {
-    // EventSource auto-reconnects; settings are display-only so stay quiet.
+  const open = (ticket: string | null) => {
+    if (cancelled) return
+    source = new EventSource(streamUrl('/events', project, ticket))
+    source.addEventListener('settings', handler as EventListener)
+    source.onerror = () => {
+      // EventSource auto-reconnects; settings are display-only so stay quiet.
+    }
   }
 
+  mintStreamTicket(project).then((ticket) => open(ticket))
+
   return () => {
-    source.removeEventListener('settings', handler)
-    source.close()
+    cancelled = true
+    if (source) {
+      source.removeEventListener('settings', handler as EventListener)
+      source.close()
+    }
   }
 }
 
@@ -395,31 +455,42 @@ export function subscribeToDiffs(
   onEvent: (event: DiffEvent) => void,
   { project }: { project?: string } = {},
 ): () => void {
-  const params = new URLSearchParams({ mode: 'diff' })
-  if (project) params.set('project', project)
-  const source = new EventSource(`${API_BASE}/events?${params.toString()}`)
+  let source: EventSource | null = null
+  let cancelled = false
+  let attached: Array<readonly [DiffKind, (evt: MessageEvent<string>) => void]> = []
 
-  const handlers = DIFF_KINDS.map((kind) => {
-    const handler = (evt: MessageEvent<string>) => {
-      try {
-        onEvent(JSON.parse(evt.data) as DiffEvent)
-      } catch (err) {
-        console.error(`Failed to parse SSE task.${kind} payload`, err)
+  const open = (ticket: string | null) => {
+    if (cancelled) return
+    const params = new URLSearchParams({ mode: 'diff' })
+    if (project) params.set('project', project)
+    if (ticket) params.set('ticket', ticket)
+    source = new EventSource(`${API_BASE}/events?${params.toString()}`)
+
+    attached = DIFF_KINDS.map((kind) => {
+      const handler = (evt: MessageEvent<string>) => {
+        try {
+          onEvent(JSON.parse(evt.data) as DiffEvent)
+        } catch (err) {
+          console.error(`Failed to parse SSE task.${kind} payload`, err)
+        }
       }
-    }
-    source.addEventListener(`task.${kind}`, handler as EventListener)
-    return [kind, handler] as const
-  })
+      source!.addEventListener(`task.${kind}`, handler as EventListener)
+      return [kind, handler] as const
+    })
 
-  source.onerror = (err) => {
-    // EventSource auto-reconnects on its own; just log for visibility.
-    console.error('SSE diff connection error', err)
+    source.onerror = (err) => {
+      // EventSource auto-reconnects on its own; just log for visibility.
+      console.error('SSE diff connection error', err)
+    }
   }
 
+  mintStreamTicket(project).then((ticket) => open(ticket))
+
   return () => {
-    for (const [kind, handler] of handlers) {
-      source.removeEventListener(`task.${kind}`, handler as EventListener)
+    cancelled = true
+    for (const [kind, handler] of attached) {
+      source?.removeEventListener(`task.${kind}`, handler as EventListener)
     }
-    source.close()
+    source?.close()
   }
 }

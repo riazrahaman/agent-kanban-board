@@ -323,7 +323,12 @@ resolution, `updateSettings` under the mutation lock, `onSettings` listeners,
 
 #### `server/routes/auth.js`
 - **Path:** [`server/routes/auth.js`](../server/routes/auth.js)
-- **Endpoint:** `POST /session` — HMAC session-token handshake (gated by `KANBAN_AUTH_SECRET`).
+- **Endpoints:** `POST /session` (HMAC session-token handshake, gated by `KANBAN_AUTH_SECRET`) and `POST /stream-ticket` (v2.5.7 — exchanges a bearer credential for a 60 s single-use ticket used by `EventSource` via `?ticket=`).
+
+#### `server/streamTicket.js`
+- **Path:** [`server/streamTicket.js`](../server/streamTicket.js)
+- **Functions:** `createStreamTicket()`, `verifyStreamTicket()`, `streamTicketTtlMs()`, `liveStreamTicketCount()`, `resetStreamTickets()`.
+- **Purpose:** v2.5.7 (ENH-01) short-lived single-use tickets for the SSE endpoint (EventSource cannot set headers). Format `<payload-base64url>.<mac-hex>`; the `jti` is recorded at mint time and deleted on first successful verification, so a replay is inert. Signed with `KANBAN_AUTH_SECRET` when set, else the global `KANBAN_AUTH_TOKEN`.
 
 #### `server/sessionAuth.js`
 - **Path:** [`server/sessionAuth.js`](../server/sessionAuth.js)
@@ -350,6 +355,7 @@ inherited from `referencedProjects`).
   - Tries HMAC session tokens first, then falls back to static tokens: per-project (`KANBAN_PROJECT_TOKENS`), admin (`KANBAN_ADMIN_TOKEN`, audited as `admin_write`), or global (`KANBAN_AUTH_TOKEN`). Returns 401 on mismatch.
   - Validates caller role against `VALID_ROLES`. Missing/unauthorized role returns 403.
   - v2.5.2: derives `req.caller.privileged` from the **credential** for destructive operations — the `KANBAN_ADMIN_TOKEN` bearer or a privileged session role confer it; per-project tokens do not (they are worker credentials); legacy single-token mode leaves the flag unset so the store falls back to the role check.
+  - v2.5.7 (ENH-01): `KANBAN_READ_AUTH=token` also gates reads — a GET/SSE must present the bearer token or a single-use stream ticket (`?ticket=`). `/api/health` + `/healthz` stay open. Unset/`off` keeps reads public.
   - Optional redacted auth-failure logging via `KANBAN_AUTH_LOG`.
 
 #### `server/middleware/projectScope.js`
@@ -370,7 +376,7 @@ inherited from `referencedProjects`).
 
 #### `server/test/` (Node.js built-in test runner)
 - **Paths:** `server/test/kanban.*.test.js`
-- **Coverage:** The server suite (278 tests across 28 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge incl. the v2.5.2 scope/privilege hardening (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), Telegram reclaim notifications (`kanban.notify.test.js`), task comments + column-color settings (`kanban.comments.test.js`, `kanban.settings.test.js`), and corrupt-file fail-closed loading (`kanban.corruptfile.test.js`), the v2.5.5 backup-status block (`kanban.backup.test.js`), and the soft-delete trash sink + restore (`kanban.trash.test.js`).
+- **Coverage:** The server suite (286 tests across 29 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge incl. the v2.5.2 scope/privilege hardening (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), Telegram reclaim notifications (`kanban.notify.test.js`), task comments + column-color settings (`kanban.comments.test.js`, `kanban.settings.test.js`), and corrupt-file fail-closed loading (`kanban.corruptfile.test.js`), the v2.5.5 backup-status block (`kanban.backup.test.js`), the soft-delete trash sink + restore (`kanban.trash.test.js`), and read-auth + stream tickets (`kanban.readauth.test.js`).
 
 #### `server/tasks.json`
 - **Path:** [`server/tasks.json`](../server/tasks.json)

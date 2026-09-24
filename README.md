@@ -123,6 +123,7 @@ The board features pluggable persistence:
    | `KANBAN_CLAIM_TTL_MS` | `600000` | Lease TTL (10 min); expired leases are auto-reclaimed. |
    | `KANBAN_ORPHAN_GRACE_MS` | `300000` | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to BACKLOG. Decoupled from the claim TTL (raising the TTL does not stretch this window). Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
+   | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open. Health probes stay open. |
 
    ---
 
@@ -226,7 +227,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (278 tests, including the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (286 tests, including the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -289,17 +290,19 @@ enhancement proposals. All are triaged and tracked as `rev-*` backlog cards on
 the live board (metadata `source: claude-external-review-2026-09-24`). Top
 priority items:
 
-1. **Purge cross-project scope bypass (SEC-01)** — a default-scoped token can
-   purge other projects via `filter.project` or bare `ids`; purge candidate
-   selection must be scoped to the caller's authorized projects.
-2. **Role self-assertion via `X-Agent-Role` (SEC-02)** — privileged roles
-   should be derived only from verified sources (admin token / session token),
-   never from the self-declared header.
-3. **Corrupt-store fail-closed (BUG-01)** — a corrupt `tasks.json` currently
-   loads as empty and is overwritten; the server should refuse to boot or
-   quarantine instead.
-4. **Optional read authentication (ENH-01)** — `KANBAN_READ_AUTH` to gate
-   GETs/SSE, with single-use HMAC stream tickets for `EventSource`.
+1. ~~**Purge cross-project scope bypass (SEC-01)**~~ / ~~**Role self-assertion
+   via `X-Agent-Role` (SEC-02)**~~ / ~~**Corrupt-store fail-closed (BUG-01)**~~
+   — **Shipped in v2.5.2** (purge scope clamped to the authorized project,
+   destructive privilege derived from the credential, corrupt store refuses to
+   boot rather than loading empty).
+2. ~~**Field-type validation (BUG-02)**~~ — **Shipped in v2.5.4** (non-string
+   title/priority/description rejected; priority normalised to low/medium/high).
+3. ~~**Soft-delete trash sink (ENH-03)**~~ — **Shipped in v2.5.6** (`DELETE`
+   parks tasks in a per-project trash sink; `GET/POST/DELETE /api/tasks/trash*`).
+4. ~~**Optional read authentication (ENH-01)** — `KANBAN_READ_AUTH` to gate
+   GETs/SSE, with single-use HMAC stream tickets for `EventSource`.~~
+   **Shipped in v2.5.7** (`KANBAN_READ_AUTH=token`, `POST /api/auth/stream-ticket`,
+   client re-mints on every SSE (re)connect).
 5. ~~**Backups in the deploy blueprint (ENH-02)** — enable `KANBAN_BACKUP_*` in
    `render.yaml`/`railway.json` plus a restore runbook.~~ **Shipped in v2.5.5**
    (render.yaml defaults + `scripts/restore-backup.mjs` + `docs/RESTORE.md`

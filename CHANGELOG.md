@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,18 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.7] — 2026-09-24
+
+### Added
+
+- **Optional read authentication (ENH-01).** `KANBAN_READ_AUTH=token` now gates every read (GET + SSE) behind a credential; unset/empty/`off`/`0`/`false` keeps reads open, so existing deployments are unchanged. When enabled, a read must present either the usual bearer token or a short-lived stream ticket. Liveness probes (`/api/health`, `/healthz`) stay open for platform healthchecks and the client's version chip.
+- **Single-use stream tickets for `EventSource`.** `EventSource` cannot set request headers (and the long-lived token must never go in a URL), so a new `POST /api/auth/stream-ticket` (token-gated) mints a 60-second, single-use HMAC ticket bound to a role + project. The SSE client presents it as `?ticket=` and re-mints on every (re)connect; a ticket's `jti` is recorded at mint time and deleted on first verification, so a replayed or leaked ticket is inert. Signed with `KANBAN_AUTH_SECRET` when set, else the global `KANBAN_AUTH_TOKEN`.
+- **Client support.** Read fetches now send the stored bearer token, and `subscribeToEvents`/`subscribeToSettings`/`subscribeToDiffs` mint a ticket before opening their `EventSource`.
+
+### Quality gates
+
+Server suite: 286 tests across 43 suites, 0 failures (new `kanban.readauth.test.js`: 8 tests covering open-by-default reads, gated reads, the always-open health probe, ticket issuance, single-use consumption, gated-vs-open SSE, ticket-bound bookkeeping and flag parsing; read gate falsified by neutralizing it — 3 red — then restored byte-exact). Client suite: 102. `tsc -b`, `vite build`, `make sec`, version lockstep, doc-mirror parity and markdown-table checks all green.
 
 ## [2.5.6] — 2026-09-24
 
