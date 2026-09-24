@@ -16,6 +16,29 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [2.4.0] — 2026-09-24
+
+### Added
+
+- **Search Bar & Quick Filters (`client/src/components/BoardFilters.tsx`, `client/src/lib/filterTasks.ts`)**:
+  - Live substring search matching across task titles, IDs, descriptions, and branch names with instant filtering.
+  - Multi-criteria quick filters: priority filter (`high`, `medium`, `low`), dynamic assignee selector populated from active/held tasks, and instant `Reset` action.
+- **Work-In-Progress (WIP) Capacity Limits & Effort Sizing (`client/src/components/Column.tsx`, `client/src/components/TaskCard.tsx`)**:
+  - Configurable WIP capacity limits on active columns (`BUILDING` cap 3, `IN_REVIEW` cap 3) with warning badges and limit violation banners.
+  - Sizing & effort indicator badge (`⚡ <estimate>`) dynamically rendered from task metadata (`estimate`, `points`, `size`).
+- **High-Impact Ticket Prioritisation & Clear Status Workflow Labels**:
+  - Prominent high-priority card right-accent (`border-r-2 border-r-fail`) and priority badge chips.
+  - Numbered workflow steps (`01 Backlog`, `02 Building`, `03 In Review`, `04 In Test`) for transparent visual flow.
+- **Live Metrics Dashboard Summary (`client/src/components/MetricsDashboard.tsx`, `client/src/lib/dashboardMetrics.ts`)**:
+  - Toggleable summary dashboard banner showing Total Tickets, Backlog, In-Flight WIP, Blocked, Completed, Average Cycle Time (derived from completed work), and Overdue/Stalled active tasks exceeding the freshness threshold.
+- **JSON Export & Import (`client/src/App.tsx`, `client/src/components/BoardFilters.tsx`)**:
+  - One-click JSON export with ISO datestamp for backing up and sharing board task states.
+  - JSON import with format validation and optimistic state reconciliation.
+- **In-Column Card Reordering & Prioritisation**:
+  - Accessible in-column move controls (`▲` and `▼`) allowing operators to reorder and prioritise tasks within any column while strictly preserving security and clone dependency boundaries.
+- **Double-Click Inline Title Editing**:
+  - Instant inline title editing directly on cards with Enter/Blur persistence and Escape cancellation, backed by optimistic CAS version verification.
+
 ## [2.3.13] — 2026-09-24
 
 ### Fixed
