@@ -13,6 +13,7 @@
 import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
+import { verifyStreamTicket } from '../streamTicket.js';
 
 export const VALID_ROLES = new Set([
   'builder',
@@ -98,6 +99,64 @@ function logAuthFailure(req, status, reason) {
   );
 }
 
+/**
+ * §2.3c (ENH-01) — optional read authentication.
+ *
+ * Reads (GET/SSE) are open by design: the board is a public-read observability
+ * viewport. `KANBAN_READ_AUTH=token` closes that: every read must then present
+ * either the usual bearer token OR a short-lived single-use stream ticket (the
+ * latter exists because EventSource cannot set headers). Unset/empty/"off"/"0"/
+ * "false" keeps reads open, so existing deployments are unaffected.
+ */
+export function readAuthEnabled(raw = process.env.KANBAN_READ_AUTH) {
+  if (raw === undefined || raw === null) return false;
+  const value = String(raw).trim().toLowerCase();
+  if (value === '' || value === 'off' || value === '0' || value === 'false') return false;
+  return true;
+}
+
+/**
+ * Paths that must stay readable even when KANBAN_READ_AUTH=token: liveness
+ * probes are consumed by the platform's healthcheck and by the client's version
+ * chip, neither of which can hold a write token. The auth handshake router is
+ * mounted before this middleware already.
+ */
+function isProbePath(req) {
+  const p = req.path || '';
+  return p === '/api/health' || p === '/healthz' ||
+    p.startsWith('/api/health/') || p.startsWith('/healthz/');
+}
+
+/**
+ * Authorizes a read when read-auth is on: either a valid bearer token (session,
+ * per-project, admin or global) or a single-use stream ticket in `?ticket=`.
+ */
+function authorizeRead(req) {
+  const ticket = typeof req.query?.ticket === 'string' ? req.query.ticket : null;
+  if (ticket) {
+    const scope = verifyStreamTicket(ticket);
+    if (scope) {
+      req.caller = { ...req.caller, role: scope.role ?? req.caller.role };
+      return true;
+    }
+  }
+  const providedToken = extractToken(req);
+  if (!providedToken) return false;
+  if (verifySessionToken(providedToken)) return true;
+
+  const projectTokens = parseProjectTokens();
+  if (projectTokens?.map) {
+    for (const token of projectTokens.map.values()) {
+      if (tokensMatch(providedToken, token)) return true;
+    }
+  }
+  const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+  if (adminToken && tokensMatch(providedToken, adminToken)) return true;
+  const requiredToken = process.env.KANBAN_AUTH_TOKEN;
+  if (requiredToken && tokensMatch(providedToken, requiredToken)) return true;
+  return false;
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // Extract caller identity
@@ -108,6 +167,13 @@ export function createAuthMiddleware() {
 
     const isMutation = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method);
     if (!isMutation) {
+      if (!readAuthEnabled() || isProbePath(req)) return next();
+      if (!authorizeRead(req)) {
+        logAuthFailure(req, 401, 'read-auth-required');
+        return res.status(401).json({
+          error: 'Unauthorized: read access requires a valid token or stream ticket',
+        });
+      }
       return next();
     }
 
