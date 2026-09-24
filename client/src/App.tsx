@@ -244,6 +244,38 @@ export default function App() {
     setAssigneeFilter('all')
   }, [])
 
+  const handleExport = useCallback(() => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(tasks, null, 2))
+    const downloadAnchor = document.createElement('a')
+    downloadAnchor.setAttribute('href', dataStr)
+    downloadAnchor.setAttribute(
+      'download',
+      `kanban-export-${project || 'all'}-${new Date().toISOString().slice(0, 10)}.json`,
+    )
+    document.body.appendChild(downloadAnchor)
+    downloadAnchor.click()
+    downloadAnchor.remove()
+  }, [tasks, project])
+
+  const handleImport = useCallback((jsonString: string) => {
+    try {
+      const parsed = JSON.parse(jsonString)
+      if (Array.isArray(parsed)) {
+        setTasks((prev) => {
+          const map = new Map(prev.map((t) => [t.id, t]))
+          for (const item of parsed) {
+            if (item && item.id && item.title) {
+              map.set(item.id, item)
+            }
+          }
+          return Array.from(map.values())
+        })
+      }
+    } catch {
+      // Ignore invalid JSON format
+    }
+  }, [])
+
   const openTask = useMemo(
      () => tasks.find((t) => t.id === openTaskId) ?? null,
      [tasks, openTaskId],
@@ -420,6 +452,8 @@ export default function App() {
                     totalCount={tasks.length}
                     filteredCount={filteredTasks.length}
                     onReset={resetFilters}
+                    onExport={handleExport}
+                    onImport={handleImport}
                   />
                   <div className="min-w-0 flex-1 overflow-hidden">
                     <Board tasks={filteredTasks} onOpen={handleOpen} showProject={!project} />
