@@ -14,6 +14,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
+import { normalizePriority, PRIORITY_WEIGHT } from './priority'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
 const ALL_PROJECTS = ''
@@ -225,10 +226,15 @@ export default function App() {
   }, [tasks])
 
   const filteredTasks = useMemo(() => {
-    return filterTasks(tasks, {
+    const list = filterTasks(tasks, {
       search: searchQuery,
       priority: priorityFilter,
       assignee: assigneeFilter,
+    })
+    return [...list].sort((a, b) => {
+      const wa = PRIORITY_WEIGHT[normalizePriority(a.priority)] ?? 1
+      const wb = PRIORITY_WEIGHT[normalizePriority(b.priority)] ?? 1
+      return wa - wb
     })
   }, [tasks, searchQuery, priorityFilter, assigneeFilter])
 

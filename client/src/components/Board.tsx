@@ -3,11 +3,11 @@ import type { Task, TaskStatus } from '../types'
 import { groupTasks } from '../board-model.js'
 import Column from './Column'
 
-const COLUMNS: { status: TaskStatus; title: string }[] = [
-  { status: 'BACKLOG', title: 'Backlog' },
-  { status: 'BUILDING', title: 'Building' },
-  { status: 'IN_REVIEW', title: 'In Review' },
-  { status: 'IN_TEST', title: 'In Test' },
+const COLUMNS: { status: TaskStatus; title: string; stepNumber?: string }[] = [
+  { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
+  { status: 'BUILDING', title: 'Building', stepNumber: '02' },
+  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03' },
+  { status: 'IN_TEST', title: 'In Test', stepNumber: '04' },
   { status: 'BLOCKED', title: 'Blocked' },
   { status: 'DONE', title: 'Done' },
   { status: 'UNKNOWN', title: 'Unknown' },
@@ -86,6 +86,7 @@ export default function Board({ tasks, onOpen, showProject = false }: Props) {
             key={col.status}
             status={col.status}
             title={col.title}
+            stepNumber={col.stepNumber}
             tasks={grouped[col.status] || []}
             onOpen={onOpen}
             showProject={showProject}

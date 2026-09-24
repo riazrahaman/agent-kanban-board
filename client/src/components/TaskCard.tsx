@@ -4,6 +4,7 @@ import StatusBadge from './StatusBadge'
 import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
+import { normalizePriority, priorityBadgeClass } from '../priority'
 
 type Props = {
   task: Task
@@ -27,6 +28,7 @@ function areEqual(prev: Props, next: Props): boolean {
 
 function TaskCard({ task, onOpen, showProject = false }: Props) {
   const stripe = statusStyle(task.status).stripe
+  const isHigh = normalizePriority(task.priority) === 'high'
 
   return (
     <div
@@ -37,6 +39,7 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
         'hover:bg-muted-bg/50',
         'border-l-[3px]',
         stripe,
+        isHigh ? 'border-r-2 border-r-fail' : '',
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -63,6 +66,12 @@ function TaskCard({ task, onOpen, showProject = false }: Props) {
               {task.project}
             </span>
           )}
+          <span
+            className={`border px-1 py-0.5 font-mono text-[10px] uppercase tracking-wider ${priorityBadgeClass(task.priority)}`}
+            title={`Priority: ${task.priority}`}
+          >
+            {task.priority}
+          </span>
           <StatusBadge status={task.status} />
         </div>
       </div>
