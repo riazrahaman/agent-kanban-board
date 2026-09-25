@@ -307,11 +307,11 @@ export default function App() {
 
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
-       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2.5 sm:px-4">
+       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
          <div className="flex shrink-0 items-center gap-3">
            <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
            <div className="flex items-baseline gap-2">
-            <h1 className="whitespace-nowrap font-serif text-lg font-normal tracking-tight text-ink">
+            <h1 className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
               Agent Kanban Board
             </h1>
             {version && (
@@ -342,7 +342,7 @@ export default function App() {
                   onClick={() => setView(value)}
                   aria-pressed={view === value}
                   title={hint}
-                  className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] ${
+                  className={`px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] sm:py-1 ${
                     view === value ? 'bg-muted-bg text-ink' : 'text-muted hover:bg-muted-bg hover:text-ink'
                   }`}
                 >
@@ -361,7 +361,7 @@ export default function App() {
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             className="w-32 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-40"
+             className="w-24 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-40 sm:py-1"
             />
             <input
              type="password"
@@ -376,7 +376,7 @@ export default function App() {
              title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
              autoComplete="off"
              spellCheck={false}
-             className="w-28 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
+             className="w-20 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-28 sm:py-1"
            />
             <HeaderHelp />
             {!tokenSaved && (
@@ -407,14 +407,14 @@ export default function App() {
             aria-pressed={railOpen}
             aria-label="Toggle signal rail"
             title="Show/hide the signal overview + activity rail"
-            className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] md:hidden"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 md:hidden"
            >
              Signal
            </button>
            <button
             type="button"
              onClick={() => setTheme(nextTheme)}
-            className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1"
             aria-label="Toggle theme"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
            >

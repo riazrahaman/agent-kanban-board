@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.5.8
+**System:** Agent Kanban Board v2.5.9
 
 ---
 
@@ -369,11 +369,13 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - **App shell:** The header wraps onto multiple rows instead of forcing a single wide row, so the page never scrolls horizontally.
 - **Board columns:** Below the `md` breakpoint each column is `85vw` wide with horizontal snap scrolling (one column per swipe); from `md` up columns are a fixed 288px (`w-72`).
 - **Signal Rail:** Docked as a right-hand sidebar at `md` and above; below `md` it collapses into a slide-over **drawer** opened by the header's signal-rail toggle button (with a dimmed backdrop, closable by tapping the backdrop).
-- **Touch targets:** Interactive header controls are enlarged on small screens.
+- **Touch targets:** Interactive header controls are enlarged on small screens (every header and toolbar control is `py-1.5` tall on phones, ≥30px).
+- **Header rhythm:** On phones the header uses tighter padding (`py-2`) and the title scales down (`text-base`), so it folds to roughly 118px on a 390px viewport instead of a four-row 158px stack.
+- **Filter toolbar:** The toolbar row wraps on phones and every control group may shrink (`min-w-0`), so `Sort`, `Export`, column colours and `Metrics` stay reachable at 360px and up. Each select clamps to `max-w-full`. (Before v2.5.9 the control group was a rigid 720px row clipped by the board column, which made those four controls untappable.)
 - **Viewport height:** Uses `100dvh` where supported so the layout is not clipped by mobile browser URL bars.
 - Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available.
 
-A regression guard (`client/src/lib/responsive.test.mjs`) locks these invariants in CI.
+Two regression guards lock these invariants in CI: `client/src/lib/responsive.test.mjs` (shell, columns, rail, viewport) and `client/src/lib/mobileToolbar.test.mjs` (the toolbar's shrink-and-wrap contract and phone tap targets, added in v2.5.9).
 
 ### 5.7 About View
 The header's segmented switcher (**Board / Portfolio / About**) opens a third top-level view: an in-app product overview aimed at new adopters and contributors.
