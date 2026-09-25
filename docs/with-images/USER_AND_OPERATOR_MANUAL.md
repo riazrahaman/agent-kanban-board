@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.9.1
+**System:** Agent Kanban Board v2.10.0
 
 ---
 
@@ -103,7 +103,7 @@ The server and client are configured via environment variables.
 | `KANBAN_AUTH_TOKEN` | *(None)* | **Mandatory for mutations** unless another mechanism is set. Shared secret for all `POST`, `PATCH`, `PUT`, `DELETE`. Unset → mutations return `503`. |
 | `KANBAN_ADMIN_TOKEN` | *(None)* | Superuser token spanning every project. Audited as `admin_write`. |
 | `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map `{"project":"token"}` enabling per-project isolation. |
-| `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h). |
+| `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h, revocable since v2.10.0 via `POST /api/auth/revoke`). |
 | `KANBAN_AUTH_LOG` | `off` | Set truthy (not `0`/`false`) to emit redacted auth-failure logs. |
 | `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
 | `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
@@ -407,7 +407,7 @@ Autonomous agents interact with the board exclusively through HTTP requests.
 
 ### 6.1 Authentication & Role Headers
 Every mutating request must include:
-1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all), `KANBAN_PROJECT_TOKENS` (per-project map), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set).
+1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all), `KANBAN_PROJECT_TOKENS` (per-project map), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; revoke your own token early with `POST /api/auth/revoke`).
 2. **Role:** `X-Agent-Role: <role>` (Allowed: `builder`, `reviewer`, `tester`, `runner`, `system`, `human`, `admin`)
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
 

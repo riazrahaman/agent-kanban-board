@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.9.1        
+**System Version:** 2.10.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -350,7 +350,8 @@ flowchart TD
 |---|---|---|
 | **Unauthenticated Mutation** | A07: Identification and Authentication Failures | All mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require a token. No mechanism configured (`KANBAN_AUTH_TOKEN`, `KANBAN_PROJECT_TOKENS`, or `KANBAN_AUTH_SECRET`) → fail-closed `503`. Invalid token returns `401`. |
 | **Cross-Project Privilege Escalation** | A01: Broken Access Control | `KANBAN_PROJECT_TOKENS` (JSON map `project→token`) isolates writes per project; `referencedProjects` authorizes *every* project a request touches (body/query/header/composite path). `KANBAN_ADMIN_TOKEN` spans all but is audited as `admin_write`. |
-| **Long-Lived Secret Exposure** | A07: Identification and Authentication Failures | HMAC session tokens via `POST /api/auth/session` (stateless, 24h, role+project bound) let clients hold a short-lived token instead of a static secret. Raw secret is never transmitted. |
+| **Long-Lived Secret Exposure** | A07: Identification and Authentication Failures | HMAC session tokens via `POST /api/auth/session` (stateless, 24h, role+project bound) let clients hold a short-lived token instead of a static secret. Raw secret is never transmitted. v2.10.0: tokens carry a `jti` and can be revoked before expiry through `POST /api/auth/revoke` (ENH-12). |
+| **Module Boundaries** | A04: Insecure Design | v2.10.0 (ENH-11) split `store.js` into `state-machine.js` (pure lifecycle), `task-identity.js` (ids/paths/`writeAtomic`), `task-fields.js` (pure validation), and `storage.js` (persistence backends); `store.js` re-exports every symbol so importers are unchanged. |
 | **Unauthenticated Reads** | A01: Broken Access Control | Reads are open by default, but `KANBAN_READ_AUTH=token` requires a credential on every GET/SSE. `EventSource` cannot set headers, so browsers exchange their token for a 60 s **single-use** HMAC ticket via `POST /api/auth/stream-ticket` and present `?ticket=`; the `jti` is consumed on first use. Liveness probes stay open. |
 | **Unauthorized State Hijacking** | A01: Broken Access Control | Role ownership matrix enforced in `server/store.js`. Missing role returns `403 Forbidden`. Unauthorized transitions blocked. `next-claim` role is read from the authenticated caller, not the URL. |
 | **Stored Cross-Site Scripting (XSS)** | A03: Injection | All agent-authored titles, descriptions, agent IDs, issue IDs, and log messages are sanitized with `escapeHtml` before persistence. Client renders exclusively via React JSX text nodes; `dangerouslySetInnerHTML` is explicitly banned in CI. |
