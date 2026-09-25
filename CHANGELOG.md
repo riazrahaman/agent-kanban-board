@@ -16,6 +16,27 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [Unreleased]
+
+### Added
+- **`DESIGN.md`** — the visual contract now exists as a real document. It
+  consolidates the design system that had only lived in code and prose:
+  the full colour-token tables (`client/src/index.css`), typography stacks
+  (`client/tailwind.config.js`), geometry, status/priority encoding
+  (`client/src/status.js`, `client/src/priority.ts`), the component vocabulary,
+  theming, motion, responsive rules, accessibility targets, the enforced
+  anti-pattern bans, and instructions for changing any of it. The name was
+  already referenced by `client/src/lib/responsive.test.mjs` and the
+  `DESIGN.md visual contract` test in `server/test/kanban.test.js`; this makes
+  that reference real. Docs-only — no version bump.
+- **`DESIGN_SYSTEM.md`** — a portable, project-agnostic edition of the same
+  contract, intended to be handed to a build agent for a *different* project.
+  It contains no references to this codebase: the kanban-specific status set is
+  generalised into a state-role mapping method, file-path pointers become
+  "your theme layer", and a new new-project quick-start checklist is added. All
+  token values, contrast targets, font stacks, geometry rules, and the
+  anti-pattern bans are preserved verbatim. Docs-only — no version bump.
+
 ## [2.13.0] — 2026-09-25
 
 Post-release correctness pass on v2.12.0's lease-window work, from a deep-dive

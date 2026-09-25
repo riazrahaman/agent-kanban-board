@@ -17,6 +17,7 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 .
 ├── client/           Vite + React + Tailwind frontend (editorial-minimalist design system)
 │   └── public/landing/  Screenshots served to the in-app About view
+├── DESIGN.md         The visual contract: tokens, typography, components, bans
 ├── server/           Node/Express API with atomic JSON & git-backed YAML storage
 ├── docs/             System design, architecture, file reference, and operator manual
 ├── scripts/          test-agents.js — headless multi-agent workflow demo
@@ -157,7 +158,9 @@ The board features pluggable persistence:
 
 ## Design System
 
-The visual interface follows an editorial-minimalist design system:
+The visual interface follows an editorial-minimalist design system. The full
+contract — every colour token, type stack, geometry rule, status encoding and
+enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **Hairlines**: Depth is achieved solely through 1px hairlines (`border-line`); shadows and heavy gradients are banned.
 - **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps.
 - **Form + Colour**: Status is encoded in form as well as colour: left 3px severity stripe, text badge, status glyphs (`▲` for review), and active pulsing indicators.
