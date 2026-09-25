@@ -56,7 +56,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
         aria-haspopup="dialog"
         aria-label="Customize column colors"
         title="Per-column accent colors (saved for this project)"
-        className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98]"
+        className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1"
       >
         Columns
       </button>
@@ -101,7 +101,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
                 setOpen(false)
               }}
               disabled={isStockPalette(colors)}
-              className="w-full border border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+              className="w-full border border-line px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 sm:py-1"
             >
               Reset to defaults
             </button>

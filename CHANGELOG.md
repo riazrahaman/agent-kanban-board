@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,22 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.9] — 2026-09-25
+
+### Fixed
+
+- **Mobile: the filter toolbar controls were unreachable on a phone.** At a 390px viewport the toolbar's inner control group (`Sort`, `Export`, column colours, `Metrics`) laid out 720px wide, did not wrap, and was clipped by the parent `overflow-hidden` board column. `elementFromPoint` at each control's centre returned `null`, so the controls could not be tapped at all — the board looked functional but those four controls were dead. Each of them was below the fold of a horizontally-scrolling row with nothing to scroll it, which is why the screenshot showed a toolbar that simply stopped after "All Assignees". The control group is now allowed to shrink (`min-w-0`) and wrap, selects clamp to `max-w-full`, and the toolbar is usable at every width from 360px up.
+- **Mobile: the header consumed a fifth of the viewport.** The header wrapped to four rows (158px on a 390x844 phone) with a trailing row holding only the theme toggle. Padding and row gaps are tightened on phones (`py-2`, `gap-y-1.5`), the title scales down (`text-base sm:text-lg`), and narrower phone input widths let the theme toggle join the input row. The header now folds to ~118px on a 390px phone (and 49px on desktop, unchanged).
+- **Tap targets in the toolbar and header were below the 30px touch floor.** Every bordered toolbar control and header button/input now carries `py-1.5` on phones (≥30px tall) while `sm:py-1` preserves the denser desktop rhythm.
+
+### Added
+
+- `client/src/lib/mobileToolbar.test.mjs` — a 5-test source-contract guard asserting the shrink-and-wrap contract (no rigid non-shrinking control row, `min-w-0` + `flex-wrap` on the control group and root, `py-1.5` touch padding on every bordered control, `max-w-full` on each select, compact header rhythm + scaled title). All five assertions were falsified against the pre-fix code before being accepted.
+
+### Quality gates
+
+Server suite: 300 tests across 43 suites. Client suite: 107 tests. `tsc -b`, `vite build`, `make sec`, the version lockstep test and the doc-mirror parity check all pass.
 
 ## [2.5.8] — 2026-09-24
 

@@ -68,13 +68,13 @@ export default function BoardFilters({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <select
           value={priority}
           onChange={(e) => onPriorityChange(e.target.value)}
           aria-label="Filter tasks by priority"
           title="Filter by priority"
-          className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
         >
           <option value="all">All Priorities</option>
           <option value="high">High (P0 / P1)</option>
@@ -87,7 +87,7 @@ export default function BoardFilters({
           onChange={(e) => onAssigneeChange(e.target.value)}
           aria-label="Filter tasks by assignee"
           title="Filter by assignee"
-          className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
         >
           <option value="all">All Assignees</option>
           <option value="unassigned">Unassigned</option>
@@ -103,7 +103,7 @@ export default function BoardFilters({
           onChange={(e) => onSortChange(e.target.value as 'priority' | 'updated' | 'id')}
           aria-label="Sort tasks within columns"
           title="Column ordering (persisted for this browser)"
-          className="border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
         >
           <option value="priority">Sort: Priority</option>
           <option value="updated">Sort: Recently Updated</option>
@@ -116,7 +116,7 @@ export default function BoardFilters({
             onClick={onReset}
             aria-label="Reset all filters"
             title="Clear all active filters"
-            className="border border-line bg-surface px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98]"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1"
           >
             Reset
           </button>
@@ -128,7 +128,7 @@ export default function BoardFilters({
             onClick={onExport}
             aria-label="Export tasks as JSON"
             title="Export tasks to JSON"
-            className="border border-line bg-surface px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98]"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1"
           >
             Export
           </button>
@@ -150,7 +150,7 @@ export default function BoardFilters({
             aria-label="Toggle metrics dashboard"
             title="Toggle summary metrics dashboard"
             className={[
-              'border px-2 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98]',
+              'border px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] sm:py-1',
               showMetrics
                 ? 'border-ink bg-muted-bg text-ink font-semibold'
                 : 'border-line bg-surface text-muted hover:bg-muted-bg hover:text-ink',
@@ -161,7 +161,7 @@ export default function BoardFilters({
         )}
       </div>
 
-      <div className="ml-auto font-mono text-[10px] uppercase tracking-wider text-muted">
+      <div className="ml-auto w-full text-right font-mono text-[10px] uppercase tracking-wider text-muted sm:w-auto">
         {isFiltered ? (
           <span>
             {filteredCount} of {totalCount} tasks
