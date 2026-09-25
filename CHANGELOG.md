@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,24 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.8.0] — 2026-09-25
+
+### Changed
+
+- **Diff events are now the default SSE mode (PERF-01).** `GET /api/events` previously re-sent the entire board on every mutation (a full snapshot per change — ~18 MB per event at 3000 tasks). It now streams per-task `task.<kind>` diff events by default; `?mode=snapshot` selects the legacy whole-board path and `?mode=diff` remains a no-op alias. A priming `event: tasks` snapshot is sent only when `?prime=1` (the client primes from its own `GET /api/tasks`). The `event: settings` stream now rides the same connection in **both** modes, so the client opens a single stream instead of two.
+- **Client subscribes once, applies events locally.** `client/src/App.tsx` replaces `subscribeToEvents` + `subscribeToSettings` with a single `subscribeToBoard(applyDiff, applySettings)`: `applyDiff` upserts the local `tasks` array by `(project, id)` and drops a row on `removed`/`archived`, instead of replacing the whole array.
+
+### Added
+
+- **Optional append-only journal for JSON storage (PERF-02).** Set `KANBAN_STORAGE_JOURNAL=1` to append each mutation as a single line to `<partition>.journal.jsonl` instead of rewriting the whole project partition; the journal is replayed on load and compacted into the canonical file once it exceeds `KANBAN_JOURNAL_COMPACT_BYTES` (default 1 MB). Off by default — with the flag unset the on-disk layout is byte-identical to before.
+- **Bounded inline logs/comments with sidecar spill (ENH-08).** `agent_logs` and `comments` now keep at most the newest `KANBAN_INLINE_LOG_CAP` / `KANBAN_INLINE_COMMENT_CAP` entries (default 50 each; `0` disables) inline, spilling older overflow to a per-task JSONL sidecar under `spill/<project>/`. A new `GET /api/tasks/:id/logs` returns `{inline, spilled_count, entries}` with `?offset=`/`?limit=`/`?include_spilled=1` paging.
+
+### Quality gates
+
+- Server suite: **371 tests** across **59 suites** (was 354/56; adds `kanban.performance280.test.js`, 17 tests).
+- Client suite: **107 tests**; `tsc -b` and the production Vite build are clean.
+- All three fixes falsified (neutralised → tests red → restored byte-exact).
 
 ## [2.7.0] — 2026-09-25
 

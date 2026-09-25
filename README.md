@@ -112,6 +112,10 @@ The board features pluggable persistence:
    | `KANBAN_DATA_DIR` | `server/data` | Root for `tasks/<project>.json` and `tasks/archive/<project>.json`. When unset, defaults to an in-repo `server/data` (with a one-time warning) — never a sibling checkout. |
    | `KANBAN_GIT_DIR` | `server/data` | Git root; `<project>/<id>.yml`, flat root used for default. Same in-repo default as `KANBAN_DATA_DIR`. |
    | `KANBAN_GIT_COMMIT` | `true` | `false` disables auto-commit. |
+   | `KANBAN_STORAGE_JOURNAL` | *(off)* | Set `1` to append each JSON mutation to `<partition>.journal.jsonl` instead of rewriting the whole partition. Replayed on load; compacted into the canonical file past `KANBAN_JOURNAL_COMPACT_BYTES`. Off → on-disk layout unchanged. |
+   | `KANBAN_JOURNAL_COMPACT_BYTES` | `1048576` | Journal size (bytes) that triggers a compaction into the canonical partition file. |
+   | `KANBAN_INLINE_LOG_CAP` | `50` | Newest `agent_logs` entries kept inline per task; older ones spill to a sidecar JSONL under `spill/<project>/`. `0` = unbounded. |
+   | `KANBAN_INLINE_COMMENT_CAP` | `50` | Newest `comments` kept inline per task; older ones spill to the sidecar. `0` = unbounded. |
    | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
    | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
    | `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep; trash rows persist until then). |
@@ -190,13 +194,14 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
 | `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease | Auth required |
 | `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
+| `GET` | `/api/tasks/:id/logs` | Page a task's logs (`?offset=`/`?limit=`/`?include_spilled=1`); returns `{inline, spilled_count, entries}` | Public |
 | `GET` | `/api/tasks/:id/issues` | List task issue IDs | Public |
 | `POST` | `/api/tasks/:id/issues` | Append a task issue ID | Auth required |
 | `POST` | `/api/tasks/next-claim` | Claim next available task (`?project=` scopes; role from header) | Auth required |
 | `GET` | `/api/projects` | Per-project summary (`task_count`, `done_count`, `live_count`, `archived_count`, `updated`) | Public |
 | `GET` | `/api/tasks/archive` | List archived tasks (`?project=` scopes to one project) | Public |
 | `POST` | `/api/tasks/archive/sweep` | Run the archive sweep now (returns `{ moved, projects }`) | Auth required |
-| `GET` | `/api/events` | Server-Sent Events stream of task snapshots | Public |
+| `GET` | `/api/events` | Server-Sent Events stream of per-task diff events (default); `?mode=snapshot` for whole-board snapshots, `?prime=1` to get an initial `event: tasks` snapshot, `?project=` scopes | Public |
 | `GET` | `/api/metrics` | Cross-project metrics (`?project=` scopes; cycle time, `by_status`, contention) | Public |
 | `GET` | `/api/health`, `/healthz` | Read-only liveness probe (always 200) | Public |
 | `GET` | `/api/health/ready` | Readiness probe — 200 once the store has loaded, 503 before (used by the deploy healthcheck) | Public |
@@ -230,7 +235,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (354 tests, including the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (371 tests, including the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -338,6 +343,14 @@ priority items:
 
 The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
 ENH-01..12) lives on the `kanbann` project of the live board.
+
+9. ~~**Performance batch (PERF-01/02, ENH-08)** — SSE re-sent the whole board
+   per mutation, every JSON write rewrote the whole partition under the global
+   lock, and `agent_logs`/`comments` grew unbounded.~~ **Shipped in v2.8.0**
+   (diff events by default + one combined board/settings stream, optional
+   `KANBAN_STORAGE_JOURNAL` append-only JSON journal, `KANBAN_INLINE_LOG_CAP` /
+   `KANBAN_INLINE_COMMENT_CAP` inline caps with sidecar spill and
+   `GET /api/tasks/:id/logs` paging).
 
 ---
 

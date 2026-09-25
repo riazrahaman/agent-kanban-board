@@ -132,7 +132,8 @@ describe('§2.2 scoped + diff SSE', () => {
    });
 
   it('1. legacy path still emits a full `tasks` snapshot on connect and on mutation', async () => {
-    const stream = await openStream(baseUrl, '/api/events');
+    // PERF-01: snapshot is no longer the default; pass ?mode=snapshot explicitly.
+    const stream = await openStream(baseUrl, '/api/events?mode=snapshot');
     try {
       const [initial] = await stream.waitFor((e) => e.event === 'tasks');
       assert.ok(Array.isArray(initial.data), 'initial frame is the full task array');
@@ -156,7 +157,8 @@ describe('§2.2 scoped + diff SSE', () => {
     });
 
   it('2. a project-scoped snapshot sub sees only its own project', async () => {
-    const stream = await openStream(baseUrl, '/api/events?project=alpha');
+    // PERF-01: snapshot is no longer the default; pass ?mode=snapshot explicitly.
+    const stream = await openStream(baseUrl, '/api/events?project=alpha&mode=snapshot');
     try {
       await stream.waitFor((e) => e.event === 'tasks');
 
@@ -194,9 +196,19 @@ describe('§2.2 scoped + diff SSE', () => {
     const stream = await openStream(baseUrl, '/api/events?project=gamma&mode=diff');
     try {
       await settle();
+      // PERF-01c: diff mode now carries `event: settings` on connect, so the
+      // stream is not empty — but it must still send NO `tasks` or `task.*`
+      // priming (only per-task events on mutation).
+      const primingTaskEvents = stream.events.filter(
+        (e) => e.event === 'tasks' || e.event.startsWith('task.'),
+      );
       assert.equal(
-        stream.events.length, 0,
-        'diff mode sends no priming snapshot — only per-task events',
+        primingTaskEvents.length, 0,
+        'diff mode sends no priming tasks/task.* events — only per-task events on mutation',
+        );
+      assert.ok(
+        stream.events.some((e) => e.event === 'settings'),
+        'diff mode carries a settings event on connect (PERF-01c)',
         );
 
       await jsonRequest(baseUrl, '/api/tasks?project=gamma', {
@@ -384,7 +396,8 @@ describe('§2.2 scoped + diff SSE', () => {
     const base = store.listenerCounts();
 
     for (let i = 0; i < 3; i += 1) {
-      const snap = await openStream(baseUrl, `/api/events?project=churn${i}`);
+      // PERF-01: snapshot is no longer the default; pass ?mode=snapshot explicitly.
+      const snap = await openStream(baseUrl, `/api/events?project=churn${i}&mode=snapshot`);
       const diff = await openStream(baseUrl, `/api/events?project=churn${i}&mode=diff`);
       try {
         await settleTo((c) => c.snapshot === base.snapshot + 1 && c.diff === base.diff + 1);

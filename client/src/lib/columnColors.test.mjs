@@ -85,7 +85,7 @@ describe('v2.5.0 column colors', () => {
 
   it('App wires settings load, SSE, and the Board/BoardFilters props', () => {
     const app = readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8')
-    assert.match(app, /subscribeToSettings/)
+    assert.match(app, /subscribeToBoard/)
     assert.match(app, /getSettings\(project \|\| undefined\)/)
     assert.match(app, /saveSettings\(project \|\| undefined, colors\)/)
     assert.match(app, /columnColors=\{columnColors\}/)

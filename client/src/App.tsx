@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
-import { getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToEvents, subscribeToSettings } from './api'
+import { getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
+import type { DiffEvent } from './api'
 import type { ColumnColors } from './lib/columnColors'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
@@ -129,30 +130,56 @@ export default function App() {
      // Re-runs on project change: the fetch AND the SSE subscription are both
     // scoped server-side (§2.2), so a scoped board never receives another
     // project's tasks in the first place.
+    // PERF-01: the SSE stream is now diff+settings combined (ONE EventSource).
+    // The client primes via GET /api/tasks, then applies per-task `task.<kind>`
+    // events by upsert on the local tasks array, and receives `event: settings`
+    // on the same stream.
     useEffect(() => {
     let cancelled = false
     const scope = project || undefined
     setLoading(true)
-    // Clear the previous failure too: without this, one failed load left the
-    // board showing a stale error forever, because the render guard is
-    // `!loading && error` and nothing else ever reset it — so a later
-    // successful fetch loaded tasks that were never displayed.
     setError(null)
 
     getTasks(scope)
        .then((data) => {
         if (!cancelled) setTasks(data)
-        })
+       })
        .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load tasks')
-        })
+       })
        .finally(() => {
         if (!cancelled) setLoading(false)
-        })
+       })
 
-    const unsubscribe = subscribeToEvents((nextTasks) => {
-      setTasks(nextTasks)
-      }, { project: scope })
+    // Apply a single diff event to the local tasks array by upsert.
+    // Match on project + id; on removed/archived, drop it.
+    const applyDiff = (evt: DiffEvent) => {
+      if (cancelled) return
+      setTasks((prev) => {
+        const kind = evt.kind
+        if (kind === 'removed' || kind === 'archived') {
+          return prev.filter(
+            (t) => !(t.id === evt.task.id && (t.project ?? '') === (evt.project ?? '')),
+          )
+        }
+        // Upsert: replace if present (match project + id), else append.
+        const idx = prev.findIndex(
+          (t) => t.id === evt.task.id && (t.project ?? '') === (evt.project ?? ''),
+        )
+        if (idx >= 0) {
+          const next = prev.slice()
+          next[idx] = evt.task
+          return next
+        }
+        return [...prev, evt.task]
+      })
+    }
+
+    const applySettings = (s: { column_colors: Record<string, string> }) => {
+      if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
+    }
+
+    const unsubscribe = subscribeToBoard(applyDiff, applySettings, { project: scope })
 
     return () => {
       cancelled = true
@@ -270,9 +297,11 @@ export default function App() {
   )
 
   const [showMetrics, setShowMetrics] = useState(false)
-  // v2.5.0: per-project column colors, resolved server-side. Loaded on mount
-  // and on project change; live-updated via the SSE `settings` event; saved
-  // optimistically through PUT /api/settings.
+  // v2.5.0: per-project column colors, resolved server-side. The initial fetch
+  // loads the current palette on project change; live updates now arrive via
+  // the combined diff+settings SSE stream (PERF-01) wired in the task effect
+  // above, so no separate settings EventSource is opened. Saved optimistically
+  // through PUT /api/settings.
   const [columnColors, setColumnColors] = useState<ColumnColors | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -283,12 +312,8 @@ export default function App() {
       .catch(() => {
         // Display-only: leave the stock palette on failure.
       })
-    const unsub = subscribeToSettings((s) => {
-      if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
-    }, { project: project || undefined })
     return () => {
       cancelled = true
-      unsub()
     }
   }, [project])
   const handleColumnColorsChange = useCallback((colors: ColumnColors) => {

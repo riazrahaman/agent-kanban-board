@@ -332,10 +332,32 @@ export class JsonStorage {
     this.settingsFile = this.isDefault
       ? path.join(dir, 'settings.json')
       : path.join(jsonDataDir(), 'settings', `${this.project}.json`);
+    // PERF-02: append-only journal path (sibling of the main file).
+    this.journalFile = `${filePath}.journal.jsonl`;
+  }
+
+  // PERF-02: journal env-var helpers. When KANBAN_STORAGE_JOURNAL is not '1',
+  // the journal is OFF and behavior is byte-identical to the pre-2.8 path.
+  _journalEnabled() {
+    return process.env.KANBAN_STORAGE_JOURNAL === '1';
+  }
+  _journalCompactBytes() {
+    const raw = process.env.KANBAN_JOURNAL_COMPACT_BYTES;
+    if (raw === undefined || raw === '') return 1024 * 1024;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 1024 * 1024;
   }
 
   async load() {
     if (!existsSync(this.filePath)) {
+      // PERF-02: absent base file but journal may have entries (first boot
+      // with journaling ON — saveTask only appends to the journal until
+      // compaction). Replay the journal over an empty list.
+      if (this._journalEnabled() && existsSync(this.journalFile)) {
+        const list = [];
+        await this._replayJournal(list);
+        return list;
+      }
       return []; // absent file: normal first boot
     }
     try {
@@ -345,6 +367,10 @@ export class JsonStorage {
        // so the first patch bumps a well-defined baseline.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
       backfillLeaseFields(list);
+      // PERF-02: replay the journal over the base file if journaling is enabled.
+      if (this._journalEnabled() && existsSync(this.journalFile)) {
+        await this._replayJournal(list);
+      }
       return list;
     } catch (err) {
       // BUG-01 (v2.5.2): the file EXISTS but is corrupt (parse failure, wrong
@@ -358,7 +384,67 @@ export class JsonStorage {
     }
   }
 
+  /**
+   * PERF-02 — replay the append-only journal over the base task list.
+   * Each journal line is `{op:'upsert'|'remove', id, task?}`. An `upsert`
+   * replaces or appends the task by id; a `remove` drops it. After replay,
+   * if the journal exceeds the compact threshold, compact it into the base
+   * file and truncate the journal.
+   */
+  async _replayJournal(baseList) {
+    const journalRaw = await readFile(this.journalFile, 'utf-8');
+    const lines = journalRaw.split('\n').filter((l) => l.trim());
+    const byId = new Map(baseList.map((t) => [t.id, t]));
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.op === 'upsert' && entry.task) {
+          byId.set(entry.task.id, entry.task);
+        } else if (entry.op === 'remove' && entry.id) {
+          byId.delete(entry.id);
+        }
+      } catch (err) {
+        console.warn(`[kanban JsonStorage] journal replay skip bad line: ${err.message}`);
+      }
+    }
+    const replayed = [...byId.values()];
+    backfillLeaseFields(replayed);
+
+    // Compact if the journal is large: write the replayed list to the base
+    // file (writeAtomic) and truncate the journal. This keeps the journal
+    // bounded while the base file stays the canonical source.
+    const journalBytes = Buffer.byteLength(journalRaw, 'utf8');
+    if (journalBytes >= this._journalCompactBytes()) {
+      await this._writeCanonical(replayed);
+      await writeFile(this.journalFile, '', 'utf-8');
+    }
+    // Mutate baseList in place so the caller sees the replayed state.
+    baseList.length = 0;
+    for (const t of replayed) baseList.push(t);
+  }
+
+  /**
+   * Writes the canonical base file (the full `{tasks:[...]}` or
+   * `{project, tasks:[...]}` shape). Used by both `save()` and journal
+   * compaction so the on-disk format stays byte-compatible.
+   */
+  async _writeCanonical(tasks) {
+    const payload = this.isDefault
+      ? { tasks }
+      : { project: this.project, tasks };
+    await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
+  }
+
   async save(tasks) {
+    // PERF-02: when journaling is ON, `save` is a full canonical rewrite
+    // (used by archive sweep / delete / purge — the partition must reflect the
+    // surviving set). The journal is truncated because the base file is now
+    // authoritative for the full set.
+    if (this._journalEnabled()) {
+      await this._writeCanonical(tasks);
+      await writeFile(this.journalFile, '', 'utf-8');
+      return;
+    }
     // Default project keeps the legacy `{ tasks: [...] }` shape so an existing
     // single-project file is byte-for-byte compatible. Named partitions embed
     // the project name so the partition is self-describing.
@@ -368,11 +454,51 @@ export class JsonStorage {
     await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
   }
 
+  /**
+   * PERF-02 — single-task save with an append-only journal fast path.
+   * When the journal is enabled, append one JSON line `{op:'upsert', task}`
+   * instead of rewriting the entire partition file. This reduces write
+   * amplification from O(partition) to O(1) per mutation. The journal is
+   * replayed on `load()` and compacted when it exceeds the threshold.
+   *
+   * With the journal OFF (default), this delegates to the original
+   * whole-partition rewrite — byte-identical to the pre-2.8 behavior.
+   */
   async saveTask(task, allTasks) {
+    if (this._journalEnabled()) {
+      const entry = JSON.stringify({ op: 'upsert', id: task.id, task }) + '\n';
+      await mkdir(path.dirname(this.journalFile), { recursive: true });
+      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
+      // Compact if the journal has grown past the threshold.
+      if (existsSync(this.journalFile)) {
+        const stat = await import('node:fs/promises').then((m) => m.stat);
+        try {
+          const st = await stat(this.journalFile);
+          if (st.size >= this._journalCompactBytes()) {
+            // Compact: write the full partition and truncate the journal.
+            await this._writeCanonical(allTasks);
+            await writeFile(this.journalFile, '', 'utf-8');
+          }
+        } catch {
+          // stat failure: fall through — the journal is advisory, not authoritative.
+        }
+      }
+      return;
+    }
     await this.save(allTasks);
   }
 
   async deleteTask(task, survivors) {
+    if (this._journalEnabled()) {
+      // Record the removal in the journal, then rewrite the canonical file
+      // (a delete changes the partition set, so the base file must reflect it).
+      const entry = JSON.stringify({ op: 'remove', id: task.id }) + '\n';
+      await mkdir(path.dirname(this.journalFile), { recursive: true });
+      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
+      await this._writeCanonical(survivors);
+      await writeFile(this.journalFile, '', 'utf-8');
+      return;
+    }
     await this.save(survivors);
   }
 
@@ -2730,6 +2856,146 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        }
 
 
+// ---------------------------------------------------------------------------
+// ENH-08 (v2.8.0) — bounded inline log/comment growth with sidecar spill.
+// ---------------------------------------------------------------------------
+// `agent_logs` and `comments` grew forever on the card, bloating every
+// partition rewrite and every SSE snapshot. A cap keeps the inline array
+// bounded; overflow entries spill to a JSONL sidecar file under
+// <datadir>/spill/<project>/<task-id>.jsonl (one JSON object per line).
+// The inline array keeps the NEWEST entries (the tail); the spill file
+// holds the OLDER overflow (appended in order). A paging endpoint reads
+// both.
+
+function getInlineLogCap() {
+  const raw = process.env.KANBAN_INLINE_LOG_CAP;
+  if (raw === undefined || raw === '') return 50;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 50;
+}
+
+function getInlineCommentCap() {
+  const raw = process.env.KANBAN_INLINE_COMMENT_CAP;
+  if (raw === undefined || raw === '') return 50;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 50;
+}
+
+/**
+ * Resolves the spill directory for a project. Lives under the same data root
+ * as the task partitions, in a `spill/<project>/` subdirectory.
+ */
+function spillDir(project) {
+  return path.join(jsonDataDir(), 'spill', project || defaultProjectName());
+}
+
+function spillFile(project, taskId) {
+  return path.join(spillDir(project), `${taskId}.jsonl`);
+}
+
+/**
+ * Appends one JSON line to the spill file for a task. Creates the directory
+ * if needed. One JSON object per line: `{type:'log'|'comment', ...entry}`.
+ */
+async function appendSpill(project, taskId, type, entry) {
+  const dir = spillDir(project);
+  await mkdir(dir, { recursive: true });
+  const line = JSON.stringify({ type, ...entry }) + '\n';
+  await writeFile(spillFile(project, taskId), line, { encoding: 'utf-8', flag: 'a' });
+}
+
+/**
+ * Reads the spill file for a task, returning an array of entries (oldest-first,
+ * matching the order they were appended). Returns [] if no spill file exists.
+ */
+async function readSpill(project, taskId) {
+  const fp = spillFile(project, taskId);
+  if (!existsSync(fp)) return [];
+  try {
+    const raw = await readFile(fp, 'utf-8');
+    return raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+  } catch (err) {
+    console.warn(`[kanban spill] read error for ${project}/${taskId}: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Counts the number of lines in the spill file for a task without loading
+ * the full content (fast for paging). Returns 0 if no spill file exists.
+ */
+async function countSpill(project, taskId) {
+  const fp = spillFile(project, taskId);
+  if (!existsSync(fp)) return 0;
+  try {
+    const raw = await readFile(fp, 'utf-8');
+    return raw.split('\n').filter((l) => l.trim()).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * ENH-08 — trims an inline array to `cap` entries, spilling the overflow
+ * (the OLDEST entries at the head of the array) to the sidecar JSONL file.
+ * Returns the trimmed inline array. Spill writes happen BEFORE the inline
+ * trim is persisted (the caller persists `candidate` after this runs).
+ *
+ * If the array is already within the cap, returns it unchanged. If a task
+ * already has >cap entries (e.g. the cap was lowered), trims on the next
+ * append only — this function is called only when a new entry was just
+ * pushed, so the cap is enforced incrementally.
+ *
+ * @param {string} type   'log' | 'comment'
+ * @param {string} project
+ * @param {string} taskId
+ * @param {Array}  arr    The inline array (newest at the tail)
+ * @param {number} cap    Max inline entries (0 = unbounded)
+ * @returns {Array}       The trimmed inline array
+ */
+async function spillOverflow(type, project, taskId, arr, cap) {
+  if (cap <= 0 || arr.length <= cap) return arr;
+  // Keep the NEWEST `cap` entries inline; spill the OLDER overflow.
+  const overflow = arr.slice(0, arr.length - cap);
+  const trimmed = arr.slice(arr.length - cap);
+  for (const entry of overflow) {
+    await appendSpill(project, taskId, type, entry);
+  }
+  return trimmed;
+}
+
+/**
+ * ENH-08 — paging read for a task's log/comment history. Returns:
+ *   { inline: [...], spilled_count, entries: [...] }
+ * `inline` is the current inline array (newest-first for logs, oldest-first
+ * for comments — matching how the card renders them). `entries` is the
+ * spilled slice requested by offset/limit (oldest-first, matching the order
+ * they were appended to the spill file). `spilled_count` is the total number
+ * of spilled entries. When `include_spilled` is true, `entries` contains ALL
+ * spilled entries (offset/limit are ignored for the spilled slice).
+ *
+ * For logs, the inline array is returned newest-first (the card shows the
+ * most recent log at the top). The spill is oldest-first (append order).
+ */
+export async function getTaskLogs(id, project, { offset = 0, limit = 50, include_spilled = false } = {}) {
+  const task = getTask(id, project);
+  if (!task) return { error: 'Task not found', status: 404 };
+  const logs = Array.isArray(task.agent_logs) ? task.agent_logs : [];
+  // Inline logs: newest-first (reverse of append order).
+  const inline = [...logs].reverse();
+  const spilled_count = await countSpill(task.project, id);
+  let entries = [];
+  if (include_spilled) {
+    const allSpilled = await readSpill(task.project, id);
+    entries = allSpilled;
+  } else {
+    const allSpilled = await readSpill(task.project, id);
+    entries = allSpilled.slice(offset, offset + limit);
+  }
+  return { inline, spilled_count, entries, status: 200 };
+}
+
+
 /**
  * Appends log to task. `options.expected_version` (or the `If-Match` header
  * the route injects) adds a §2.6 CAS guard and bumps version on the write.
@@ -2778,6 +3044,12 @@ export async function appendLog(id, agentId, message, project, { expected_versio
       message: escapeHtml(message),
       agent_id: escapeHtml(agentId),
     });
+
+    // ENH-08: spill the oldest overflow log entries to the sidecar JSONL file
+    // BEFORE persisting, so the inline array stays bounded at the cap.
+    candidate.agent_logs = await spillOverflow(
+      'log', candidate.project, candidate.id, candidate.agent_logs, getInlineLogCap(),
+    );
 
     await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
@@ -2860,6 +3132,12 @@ export async function addComment(id, agentId, message, project, { expected_versi
     // §2.6: a committed comment advances version by exactly one (which also
     // re-renders the memoized card / sheet via the id+version signature).
     candidate.version = nextVersionFor(task);
+
+    // ENH-08: spill the oldest overflow comments to the sidecar JSONL file
+    // BEFORE persisting, so the inline array stays bounded at the cap.
+    candidate.comments = await spillOverflow(
+      'comment', candidate.project, candidate.id, candidate.comments, getInlineCommentCap(),
+    );
 
     await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);

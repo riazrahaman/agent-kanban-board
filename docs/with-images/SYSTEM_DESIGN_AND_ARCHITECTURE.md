@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.7.0        
+**System Version:** 2.8.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -61,7 +61,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Project Deep Link** | URL query + local storage | Browser Native | On load the client reads `?project=` (as sent in reclaim alerts), scopes the board to that project, persists the choice, and removes the one-time query parameter. |
 | **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
-| **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. |
+| **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. **Diff events are the default** (one `task.<kind>` per changed task); `?mode=snapshot` restores whole-board snapshots and `?prime=1` sends an initial `event: tasks` snapshot. A single client stream carries both diffs and `event: settings` (v2.8.0). |
 | **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `BACKLOG` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
 
@@ -342,8 +342,10 @@ flowchart TD
         JSON_File["Target: server/tasks.json or KANBAN_DATA_FILE"]
         JSON_Format["Payload: JSON.stringify({ tasks }, null, 2)"]
         JSON_Write["writeAtomic(jsonFile, payload)"]
+        JSON_Journal["Optional: append one {op,id,task} line to .journal.jsonl
+(KANBAN_STORAGE_JOURNAL=1); compact past KANBAN_JOURNAL_COMPACT_BYTES"]
         JSON_Done["State updated in-memory"]
-        JSON_File --> JSON_Format --> JSON_Write --> JSON_Done
+        JSON_File --> JSON_Format --> JSON_Write --> JSON_Journal --> JSON_Done
     end
 
     subgraph Git_Mode_Details ["Git-Backed Persistence"]
