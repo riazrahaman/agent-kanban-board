@@ -110,7 +110,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
           onClick={() => scrollBy(-1)}
           aria-label="Scroll columns left"
           title="Scroll columns left"
-          className="absolute left-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96]"
+          className="absolute left-2 top-1/2 z-20 hidden h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96] md:flex"
         >
           ‹
         </button>
@@ -121,7 +121,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
           onClick={() => scrollBy(1)}
           aria-label="Scroll columns right"
           title="Scroll columns right"
-          className="absolute right-2 top-1/2 z-20 flex h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96]"
+          className="absolute right-2 top-1/2 z-20 hidden h-9 w-6 -translate-y-1/2 items-center justify-center border border-ink/40 bg-surface font-mono text-sm text-ink transition-colors hover:bg-muted-bg active:scale-[0.96] md:flex"
         >
           ›
         </button>

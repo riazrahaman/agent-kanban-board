@@ -16,7 +16,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '107',
+    value: '114',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -126,6 +126,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
+  { name: 'Anonymous visit counter', code: 'lib/useVisitCount.ts' },
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
@@ -149,7 +150,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'Does it phone home?',
-    a: 'No. It is local-first and zero-telemetry: no accounts, no SaaS, no analytics. Run it on localhost or self-host it.',
+    a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous visit counter (no per-visitor data) shown on this page.',
   },
   {
     q: 'How do I host it?',

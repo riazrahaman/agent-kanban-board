@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import ColumnColorsControl from './ColumnColorsControl'
 
 type Props = {
@@ -43,6 +44,12 @@ export default function BoardFilters({
   onColumnColorsReset,
 }: Props) {
   const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all'
+  // v2.9.1: below sm the priority/assignee/sort/export/colors/metrics controls
+  // collapse behind a Filters disclosure. Left to free-wrap they stacked into
+  // ~5 rows and squeezed the board to a sliver (mobile-rendering-issues.md
+  // Issue 1). Search + the task count stay visible because they are the
+  // highest-frequency controls.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4">
@@ -53,7 +60,7 @@ export default function BoardFilters({
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Filter by title, desc, id…"
           aria-label="Filter tasks by search term"
-          className="w-full border border-line bg-surface px-2.5 py-1 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none"
+          className="w-full border border-line bg-surface px-2.5 py-1.5 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1"
         />
         {search && (
           <button
@@ -68,7 +75,25 @@ export default function BoardFilters({
         )}
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
+      {/* phone-only disclosure for the secondary filter/action controls */}
+      <button
+        type="button"
+        onClick={() => setFiltersOpen((v) => !v)}
+        aria-pressed={filtersOpen}
+        aria-expanded={filtersOpen}
+        aria-label="Toggle filters and actions"
+        title="Show/hide filters and actions"
+        className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:hidden"
+      >
+        {isFiltered ? 'Filters •' : 'Filters'}
+      </button>
+
+      <div
+        data-testid="filter-controls"
+        className={`min-w-0 flex-wrap items-center gap-2 sm:flex ${
+          filtersOpen ? 'flex w-full basis-full' : 'hidden'
+        }`}
+      >
         <select
           value={priority}
           onChange={(e) => onPriorityChange(e.target.value)}

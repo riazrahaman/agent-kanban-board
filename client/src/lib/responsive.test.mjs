@@ -157,10 +157,22 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
       /title=\{task\.id\}/,
       'the task id <span> must expose the full value via `title` since it can be ellipsised',
     )
+    // v2.9.1: the badge group is pinned (`shrink-0`) so it can never squeeze
+    // the id, and on phones it takes its own full-width line (`w-full
+    // sm:w-auto`) so it stops competing with the id on an 85vw column.
+    const badgeGroup = taskCardSource.match(
+      /<div className="([^"]*shrink-0[^"]*items-center gap-1\.5[^"]*)"/,
+    )?.[1]
+    assert.ok(badgeGroup, 'the card header must render a badge group')
     assert.match(
-      taskCardSource,
-      /flex shrink-0 items-center gap-1\.5/,
+      badgeGroup,
+      /\bshrink-0\b/,
       'the header badge group must carry `shrink-0` so it cannot squeeze the id',
+    )
+    assert.match(
+      badgeGroup,
+      /\bw-full\b[^"]*\bsm:w-auto\b/,
+      'the header badge group must stack full-width on phones (`w-full sm:w-auto`) so it does not compete with the id',
     )
 
     assert.doesNotMatch(

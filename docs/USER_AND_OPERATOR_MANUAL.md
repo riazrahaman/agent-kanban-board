@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.9.0
+**System:** Agent Kanban Board v2.9.1
 
 ---
 
@@ -365,9 +365,12 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - **Header rhythm:** On phones the header uses tighter padding (`py-2`) and the title scales down (`text-base`), so it folds to roughly 118px on a 390px viewport instead of a four-row 158px stack.
 - **Filter toolbar:** The toolbar row wraps on phones and every control group may shrink (`min-w-0`), so `Sort`, `Export`, column colours and `Metrics` stay reachable at 360px and up. Each select clamps to `max-w-full`. (Before v2.5.9 the control group was a rigid 720px row clipped by the board column, which made those four controls untappable.)
 - **Viewport height:** Uses `100dvh` where supported so the layout is not clipped by mobile browser URL bars.
-- Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available.
+- **Phone disclosure (v2.9.1):** below `md`/`sm` the secondary header and toolbar controls (agent id, token, help, Signal, theme, project picker, priority/assignee/sort, export, column colours, metrics) collapse behind a single `⋯` / `Filters` disclosure button; only the title, the Board/Portfolio/About switch, the search box and the task count stay visible. This keeps the chrome to roughly three rows — measured at 390px, chrome went from 299px to ~155px so the board keeps ~82% of the viewport.
+- **Column paging arrows (v2.9.1):** the `‹ / ›` scroll-columns buttons are hidden below `md`; touch devices use the native horizontal swipe + snap instead.
+- **Task-card header (v2.9.1):** on phones the card header wraps and the badge group (project/estimate/priority/status) takes its own full-width line, so the task id keeps a readable width instead of collapsing to 1–2 characters.
+- Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available behind the disclosure.
 
-Two regression guards lock these invariants in CI: `client/src/lib/responsive.test.mjs` (shell, columns, rail, viewport) and `client/src/lib/mobileToolbar.test.mjs` (the toolbar's shrink-and-wrap contract and phone tap targets, added in v2.5.9).
+Three regression guards lock these invariants in CI: `client/src/lib/responsive.test.mjs` (shell, columns, rail, viewport, card header stacking), `client/src/lib/mobileToolbar.test.mjs` (the toolbar's shrink-and-wrap contract, the phone disclosures, the mobile paging-arrow rule, and phone tap targets — v2.5.9/v2.9.1), and `client/src/lib/useVisitCount.test.mjs` (the About visit counter).
 
 ### 5.7 About View
 The header's segmented switcher (**Board / Portfolio / About**) opens a third top-level view: an in-app product overview aimed at new adopters and contributors.

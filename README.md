@@ -236,7 +236,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (382 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (382 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (114 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 ### Releasing
 
@@ -359,6 +359,14 @@ ENH-01..12) lives on the `kanbann` project of the live board.
     v2.9.0** (`KANBAN_AUDIT_LOG` + `GET /api/audit`, `npm audit` + Dependabot in
     CI, `scripts/check-browser-smoke.mjs`, `docs/CONFIGURATION.md` +
     `.env.example` + drift guard, Vite 5 → 7).
+
+11. ~~**Mobile rendering (board unusable on phone-width viewports)** — the
+    header + filter chrome free-wrapped into ~10 rows, the column scroll-arrow
+    buttons overlaid card content, and task-card IDs collapsed to 1–2
+    characters behind the badge row.~~ **Shipped in v2.9.1** (phone-only
+    `⋯` / `Filters` disclosures collapse the secondary controls, the paging
+    arrows are `hidden … md:flex`, and the card badge group wraps full-width on
+    phones; chrome measured 299px → 155px at 390px).
 
 ---
 

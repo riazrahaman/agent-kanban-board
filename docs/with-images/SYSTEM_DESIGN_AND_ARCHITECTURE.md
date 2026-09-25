@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.9.0        
+**System Version:** 2.9.1        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -51,7 +51,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Language** | TypeScript | ^5.5.3 | Strict type definitions (`types.ts`, `status.ts`, component props). |
 | **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
 | **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / green-charcoal dark palettes (matching riazrahaman.com); explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
-| **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. The filter toolbar wraps and every control group may shrink, so Sort/Export/colors/Metrics stay reachable from 360px; phone controls carry `py-1.5` touch padding. |
+| **Responsive Layout** | Tailwind breakpoints + `100dvh` | Browser Native | Wrapping app shell, `85vw` snap-scroll columns below `md` (`w-72` from `md` up), Signal Rail collapses into a slide-over drawer below `md`. Below `md`/`sm` the secondary header and toolbar controls collapse behind a `⋯` / `Filters` disclosure (v2.9.1), the column paging arrows are `hidden … md:flex`, and the task-card badge group wraps full-width so the id stays readable. Phone controls carry `py-1.5` touch padding. |
 | **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' \| 'portfolio' \| 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server `version` prop so it can never go stale. |
 | **Board Filters & Sorting** | `components/BoardFilters.tsx`, `lib/filterTasks.ts`, `lib/boardSort.ts` | Browser Native | Live substring search (id/title/description/branch/agent), priority + assignee quick filters, and a persisted column sort (`priority \| updated \| id`, stable, re-applied on every SSE snapshot under `localStorage kanban.sort`). |
 | **Metrics Dashboard** | `components/MetricsDashboard.tsx`, `lib/dashboardMetrics.ts` | Browser Native | Toggleable 7-tile summary (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the **unfiltered** task list so totals stay stable while filters narrow the board. |
@@ -72,7 +72,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 - **Body Sans-Serif:** System UI stack (`system-ui`, `-apple-system`, `Segoe UI`, `Helvetica`, `Arial`).
 - **Surface & Hairlines:** 1px borders (`border-line`), 0px radius on cards, 3px vertical severity stripe on cards; dropshadows and heavy gradients are banished.
 - **Theme Support:** Dynamic CSS custom properties with an explicit Light/Dark toggle; the operator's stored choice wins over the OS `prefers-color-scheme`, and `color-scheme` keeps native form controls in sync.
-- **Responsive Behaviour:** The app shell wraps rather than overflowing horizontally; board columns snap-scroll at `85vw` on mobile; the Signal Rail is a docked sidebar at `md`+ and a slide-over drawer below `md`; the board filter toolbar wraps and its control groups shrink (`min-w-0`) so no toolbar control is clipped on a phone (v2.5.9).
+- **Responsive Behaviour:** The app shell wraps rather than overflowing horizontally; board columns snap-scroll at `85vw` on mobile; the Signal Rail is a docked sidebar at `md`+ and a slide-over drawer below `md`. On phones the secondary header/toolbar controls sit behind a `⋯` / `Filters` disclosure, the column paging arrows are hidden below `md`, and the task-card badge group wraps full-width under the id — so the board keeps most of the viewport and cards stay readable (v2.5.9 toolbar reachability, v2.9.1 chrome budget + card header).
 
 ---
 
