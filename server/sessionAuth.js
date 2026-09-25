@@ -15,6 +15,7 @@
  * in constant time. Expiry is an integer epoch-ms compared against `Date.now()`.
  */
 import crypto from 'node:crypto';
+import { tokensMatch } from './utils/constantTime.js';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
@@ -38,18 +39,6 @@ function b64url(input) {
 
 function b64urlDecode(input) {
   return Buffer.from(input, 'base64url').toString('utf8');
-}
-
-/**
- * Constant-time comparison over two ASCII strings. Rejects on length mismatch
- * without leaking which index diverged.
- */
-function tokensMatch(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 /**

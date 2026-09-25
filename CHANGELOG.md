@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,26 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.6.0] — 2026-09-25
+
+### Fixed
+
+- **Empty or unrecognized purge filter no longer wipes the board (BUG-07).** `POST /api/tasks/purge` with `{filter:{}}` or a filter object containing only unrecognized keys previously matched every task in scope — an accidental "delete all". A filter must now include at least one recognized key (`status`, `project`, `assigned_agent`, `older_than_days`) or the request is a 400.
+- **HMAC session proof is bound to role and project (SEC-03).** `POST /api/auth/session` previously verified the proof over the client nonce alone, so one captured proof could be replayed to mint a session for any role or project. The proof input is now `client_nonce:role:project`; role (403) and project are resolved before the proof check, so a proof minted for `(builder, alpha)` cannot be reused as `(admin, alpha)` or `(builder, beta)`.
+- **Concurrent SSE streams are capped (SEC-05).** `/api/events` had no upper bound on long-lived streams. A module-level counter now caps concurrent connections via `KANBAN_MAX_SSE_STREAMS` (default 100; negative disables). Over-cap requests receive a 503 before any SSE headers are written.
+- **Auth failures are rate-limited (ENH-09).** Failed authentication (401/403) on the mutation middleware and on the `/api/auth/session` + `/api/auth/stream-ticket` handshakes is now throttled per client IP via `KANBAN_AUTH_RATE_LIMIT_PER_MIN` (falls back to `KANBAN_RATE_LIMIT_PER_MIN`; inert when both are unset → existing deployments unaffected). Exceeding the budget returns 429 with `retry_after_ms`.
+- **Log and comment inputs are validated.** `appendLog` and `addComment` now reject a non-string or whitespace-only `message` / `agent_id` with a 400 instead of silently storing an empty string.
+
+### Changed
+
+- **Constant-time token comparison consolidated (SEC-07).** The four per-module `tokensMatch` copies early-returned on length mismatch, leaking the secret's length. They are replaced by one shared `server/utils/constantTime.js` that folds the length difference into the accumulator and always iterates the longer input. `auth.js` re-exports it so existing importers are unchanged.
+
+### Quality gates
+
+- Server suite: **329 tests across 49 suites**, 0 failures (`node --test`).
+- Client suite: **107 tests**, 0 failures; `tsc -b` + `vite build` clean.
+- All four new guards falsified (each gate neutralized → its tests red → restored byte-exact).
 
 ## [2.5.10] — 2026-09-25
 

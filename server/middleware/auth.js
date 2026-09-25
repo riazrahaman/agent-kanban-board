@@ -14,6 +14,7 @@ import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
+import { authFailuresExceeded, recordAuthFailure } from './rateLimit.js';
 
 export const VALID_ROLES = new Set([
   'builder',
@@ -64,17 +65,8 @@ function extractToken(req) {
   return null;
 }
 
-/**
- * Constant-time-ish comparison. Token values here are short shared secrets, not
- * password hashes, but avoiding an early-exit compare costs nothing.
- */
-function tokensMatch(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
+export { tokensMatch } from '../utils/constantTime.js';
+import { tokensMatch } from '../utils/constantTime.js';
 
 /**
  * Truthy `KANBAN_AUTH_LOG` enables redacted auth-failure logging. Unset/empty
@@ -159,6 +151,18 @@ function authorizeRead(req) {
 
 export function createAuthMiddleware() {
   return (req, res, next) => {
+    // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a
+    // flood of bad tokens never reaches the token-comparison logic. Inert by
+    // default (no env => authFailuresExceeded returns null).
+    const retryAfter = authFailuresExceeded(req);
+    if (retryAfter !== null) {
+      recordAuthFailure(req);
+      return res.status(429).json({
+        error: 'Too many failed authentication attempts',
+        retry_after_ms: retryAfter,
+      });
+    }
+
     // Extract caller identity
     const agentId = req.headers['x-agent-id'] || req.body?.agent_id || null;
     const rawRole = req.headers['x-agent-role'] || req.body?.role || null;
@@ -170,6 +174,7 @@ export function createAuthMiddleware() {
       if (!readAuthEnabled() || isProbePath(req)) return next();
       if (!authorizeRead(req)) {
         logAuthFailure(req, 401, 'read-auth-required');
+        recordAuthFailure(req);
         return res.status(401).json({
           error: 'Unauthorized: read access requires a valid token or stream ticket',
         });
@@ -197,6 +202,7 @@ export function createAuthMiddleware() {
     const providedToken = extractToken(req);
     const unauthorized = () => {
       logAuthFailure(req, 401, 'invalid-token');
+      recordAuthFailure(req);
       return res.status(401).json({
         error: 'Unauthorized: valid token required for mutating operations',
       });
@@ -230,6 +236,7 @@ export function createAuthMiddleware() {
       for (const scope of scopes) {
         if (scope !== session.project) {
           logAuthFailure(req, 403, `session-token not valid for project '${scope}'`);
+          recordAuthFailure(req);
           return res.status(403).json({
             error: `Forbidden: token is not authorized for project '${scope}'`,
           });
@@ -254,6 +261,7 @@ export function createAuthMiddleware() {
           const expected = projectTokens.map.get(scope);
           if (!expected || !tokensMatch(providedToken, expected)) {
             logAuthFailure(req, 403, `token not valid for project '${scope}'`);
+            recordAuthFailure(req);
             return res.status(403).json({
               error: `Forbidden: token is not authorized for project '${scope}'`,
             });
@@ -287,6 +295,7 @@ export function createAuthMiddleware() {
 
     if (!role || !VALID_ROLES.has(role)) {
       logAuthFailure(req, 403, `invalid-role (role: ${role || 'missing'})`);
+      recordAuthFailure(req);
       return res.status(403).json({
         error: 'A valid agent role is required for mutating operations',
       });

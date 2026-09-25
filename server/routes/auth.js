@@ -1,19 +1,12 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { authSecret, createSessionToken, verifySessionToken } from '../sessionAuth.js';
-import { VALID_ROLES, parseProjectTokens } from '../middleware/auth.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
+import { authFailuresExceeded, recordAuthFailure } from '../middleware/rateLimit.js';
 
 const router = Router();
-
-function tokensMatch(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 function extractToken(req) {
   const authHeader = req.headers['authorization'];
@@ -52,7 +45,18 @@ function hasValidCredential(req) {
  * cannot set request headers (and the long-lived token must not go in a URL).
  */
 router.post('/stream-ticket', (req, res) => {
+  // ENH-09: rate-limit failed auth (these routes run before the main middleware).
+  const retryAfter = authFailuresExceeded(req);
+  if (retryAfter !== null) {
+    recordAuthFailure(req);
+    return res.status(429).json({
+      error: 'Too many failed authentication attempts',
+      retry_after_ms: retryAfter,
+    });
+  }
+
   if (hasValidCredential(req) !== true) {
+    recordAuthFailure(req);
     return res.status(401).json({ error: 'Unauthorized: valid token required' });
   }
 
@@ -60,6 +64,7 @@ router.post('/stream-ticket', (req, res) => {
   const rawRole = body.role;
   const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
   if (!role || !VALID_ROLES.has(role)) {
+    recordAuthFailure(req);
     return res.status(403).json({ error: 'A valid agent role is required' });
   }
   const rawProject = body.project;
@@ -81,12 +86,33 @@ router.post('/stream-ticket', (req, res) => {
 });
 
 /**
+ * SEC-03 (v2.6.0) — the proof is now bound to the caller's asserted role and
+ * project, not just the nonce. The input string `clientNonce:role:project`
+ * means a proof minted for (builder, alpha) cannot be replayed to obtain an
+ * (admin, alpha) or (builder, beta) session token. Exported so tests can build
+ * the expected proof without duplicating the format.
+ */
+export function proofInput(clientNonce, role, project) {
+  return `${clientNonce}:${role}:${project}`;
+}
+
+/**
  * POST /api/auth/session — phase-1 of the HMAC handshake. Gated by proof-of-
  * secret (the caller must HMAC their own nonce with KANBAN_AUTH_SECRET), not by
  * a pre-existing session token. Issues a stateless session token bound to the
  * caller's role + project.
  */
 router.post('/session', (req, res) => {
+  // ENH-09: rate-limit failed auth (these routes run before the main middleware).
+  const retryAfter = authFailuresExceeded(req);
+  if (retryAfter !== null) {
+    recordAuthFailure(req);
+    return res.status(429).json({
+      error: 'Too many failed authentication attempts',
+      retry_after_ms: retryAfter,
+    });
+  }
+
   const secret = authSecret();
   if (!secret) {
     return res.status(503).json({
@@ -105,23 +131,14 @@ router.post('/session', (req, res) => {
     return res.status(400).json({ error: 'proof must be a non-empty string' });
   }
 
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(clientNonce)
-    .digest('hex');
-
-  const expectedBuf = Buffer.from(expected, 'hex');
-  const proofBuf = Buffer.from(proof.toLowerCase(), 'hex');
-  if (expectedBuf.length !== proofBuf.length) {
-    return res.status(401).json({ error: 'Unauthorized: invalid proof' });
-  }
-  if (!crypto.timingSafeEqual(expectedBuf, proofBuf)) {
-    return res.status(401).json({ error: 'Unauthorized: invalid proof' });
-  }
-
+  // SEC-03: validate role (403) and resolve project BEFORE the proof check so
+  // the proof input is bound to a concrete role + project. A proof minted for
+  // (builder, alpha) will not match (admin, alpha) and cannot be replayed to
+  // escalate privileges.
   const rawRole = body.role;
   const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
   if (!role || !VALID_ROLES.has(role)) {
+    recordAuthFailure(req);
     return res.status(403).json({ error: 'A valid agent role is required' });
   }
 
@@ -130,6 +147,16 @@ router.post('/session', (req, res) => {
     typeof rawProject === 'string' && isValidProjectId(rawProject)
       ? rawProject
       : defaultProjectName();
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(proofInput(clientNonce, role, project))
+    .digest('hex');
+
+  if (!tokensMatch(expected, proof.toLowerCase())) {
+    recordAuthFailure(req);
+    return res.status(401).json({ error: 'Unauthorized: invalid proof' });
+  }
 
   const serverNonce = crypto.randomBytes(16).toString('hex');
   const { token, expiresAt } = createSessionToken({
