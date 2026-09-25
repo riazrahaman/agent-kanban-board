@@ -176,7 +176,7 @@ describe('§2.8 archiving & storage hygiene', () => {
     await freshJsonStore('nondone');
     process.env.KANBAN_ARCHIVE_AFTER_DAYS = '1';
     const created = await jsonRequest(baseUrl, '/api/tasks?project=box', {
-      method: 'POST', headers: headers(), body: taskBody('box-build', 'In progress', { status: 'BUILDING' }),
+      method: 'POST', headers: headers('admin'), body: taskBody('box-build', 'In progress', { status: 'BUILDING' }),
        });
     assert.equal(created.response.status, 201);
        // make it look ancient but keep it non-DONE
@@ -366,7 +366,7 @@ describe('§2.8 git archive layout + commit', () => {
     store.setStorage(null);
     await store.loadStore();
 
-    const r = await store.createTask({ id: 'arch-1', title: 'Arch', status: 'DONE', round: 1, project: 'box' });
+    const r = await store.createTask({ id: 'arch-1', title: 'Arch', status: 'DONE', round: 1, project: 'box' }, undefined, { caller: { role: 'admin' } });
     assert.equal(r.status, 201);
         // Backdate the completion anchor so it is eligible under the 7-day window.
     const t = store.getTask('arch-1', 'box');

@@ -227,7 +227,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (286 tests, including the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (300 tests, including the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (102 tests, including the mobile-responsive, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -307,6 +307,12 @@ priority items:
    `render.yaml`/`railway.json` plus a restore runbook.~~ **Shipped in v2.5.5**
    (render.yaml defaults + `scripts/restore-backup.mjs` + `docs/RESTORE.md`
    + `backup` block on `/api/health`).
+6. ~~**`createTask` input hardening (BUG-03/04/05 + SEC-04)** — direct creation
+   in a work state bypassed the claim contract, a body-supplied owner created
+   unclaimable orphans, audit fields were forgeable, and several shapes/lengths
+   were unbounded.~~ **Shipped in v2.5.8** (privileged-only non-`BACKLOG`
+   creation, owner always from `/claim`, empty audit fields, validated
+   `depends_on`/`metadata` + length caps).
 
 The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
 ENH-01..12) lives on the `kanbann` project of the live board.

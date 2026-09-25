@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.5.7
+**System:** Agent Kanban Board v2.5.8
 
 ---
 
@@ -340,6 +340,15 @@ Clicking any card opens the Inspector Sheet:
 - **Operator Notes (Human Form):** Human operators can enter manual notes directly into the card timeline.
 
 Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-clean selected/filtered tasks with `POST /api/tasks/purge`. Both operations require a privileged role and are audited; they are not available to ordinary lifecycle roles.
+
+Creating a task normally lands it in `BACKLOG` and any lifecycle role may do
+that. Creating one **directly** in an active or terminal work state
+(`BUILDING`, `IN_REVIEW`, `IN_TEST`, `DONE`) requires a privileged credential,
+because those states are otherwise only reachable through the claim/transition
+contract. A body-supplied `assigned_agent` is ignored at create time — ownership
+is written only by `POST /api/tasks/:id/claim` (or `next-claim`) — and the
+`stage_owners`, `agent_logs` and `comments` fields always start empty so the
+audit trail records only real transitions and real log/comment calls.
 
 > [!NOTE]
 > The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials. Operators should append manual logs using authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token.

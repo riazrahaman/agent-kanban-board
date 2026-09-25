@@ -48,7 +48,7 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('1. createTask with an active status and no owner stays ownerless-active', async () => {
-    await store.createTask({ id: 'orph-1', title: 'Orphan build', status: 'BUILDING', round: 1 });
+    await store.createTask({ id: 'orph-1', title: 'Orphan build', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
     const t = store.getTask('orph-1');
     assert.equal(t.status, 'BUILDING', 'active status preserved');
     assert.equal(t.assigned_agent, null, 'no owner');
@@ -56,7 +56,7 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('2. reapExpiredClaims moves an ownerless BUILDING task to BACKLOG', async () => {
-    await store.createTask({ id: 'orph-1', title: 'Orphan build', status: 'BUILDING', round: 1 });
+    await store.createTask({ id: 'orph-1', title: 'Orphan build', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
     // Past the orphan grace window: an untouched ownerless active card is stuck.
     const res = await store.reapExpiredClaims({ now: Date.now() + ORPHAN_GRACE_MS });
     assert.ok(res.reclaimed.includes('default/orph-1'), 'ownerless BUILDING task reclaimed');
@@ -69,8 +69,8 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('3. IN_REVIEW and IN_TEST ownerless tasks are normalized too', async () => {
-    await store.createTask({ id: 'orph-ir', title: 'Orphan review', status: 'IN_REVIEW', round: 1 });
-    await store.createTask({ id: 'orph-it', title: 'Orphan test', status: 'IN_TEST', round: 1 });
+    await store.createTask({ id: 'orph-ir', title: 'Orphan review', status: 'IN_REVIEW', round: 1 }, undefined, { caller: { role: 'admin' } });
+    await store.createTask({ id: 'orph-it', title: 'Orphan test', status: 'IN_TEST', round: 1 }, undefined, { caller: { role: 'admin' } });
     const res = await store.reapExpiredClaims({ now: Date.now() + ORPHAN_GRACE_MS });
     assert.ok(res.reclaimed.includes('default/orph-ir'), 'IN_REVIEW orphan reclaimed');
     assert.ok(res.reclaimed.includes('default/orph-it'), 'IN_TEST orphan reclaimed');
@@ -89,7 +89,7 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('5. an ownerless DONE task is untouched by the sweep', async () => {
-    await store.createTask({ id: 'orph-done', title: 'Done no-op', status: 'DONE', round: 1 });
+    await store.createTask({ id: 'orph-done', title: 'Done no-op', status: 'DONE', round: 1 }, undefined, { caller: { role: 'admin' } });
     const res = await store.reapExpiredClaims({ now: Date.now() });
     assert.ok(!res.reclaimed.includes('default/orph-done'), 'DONE orphan not reclaimed');
     assert.equal(store.getTask('orph-done').status, 'DONE', 'still DONE');
@@ -105,7 +105,7 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('7. the reclaim log records reason orphan_normalized + reclaimed_from null', async () => {
-    await store.createTask({ id: 'orph-log', title: 'Log orphan', status: 'BUILDING', round: 1 });
+    await store.createTask({ id: 'orph-log', title: 'Log orphan', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
     await store.reapExpiredClaims({ now: Date.now() + ORPHAN_GRACE_MS });
     const log = store.getTask('orph-log').agent_logs.at(-1);
     assert.ok(log, 'a log entry was appended');
@@ -132,14 +132,14 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
      });
 
   it('9. the same card IS reclaimed once the grace window elapses', async () => {
-    await store.createTask({ id: 'grace-2', title: 'Grace build two', status: 'BUILDING', round: 1 });
+    await store.createTask({ id: 'grace-2', title: 'Grace build two', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
     const res = await store.reapExpiredClaims({ now: Date.now() + ORPHAN_GRACE_MS });
     assert.ok(res.reclaimed.includes('default/grace-2'), 'stale ownerless active card is reclaimed');
     assert.equal(store.getTask('grace-2').status, 'BACKLOG');
      });
 
   it('10. a later write resets the grace clock', async () => {
-    await store.createTask({ id: 'grace-3', title: 'Grace build three', status: 'BUILDING', round: 1 });
+    await store.createTask({ id: 'grace-3', title: 'Grace build three', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
     // Half a window later a log lands (any agent may log) — the card is alive.
     const mid = Date.now() + Math.floor(ORPHAN_GRACE_MS / 2);
     await store.appendLog('grace-3', 'someone', 'still working', undefined, {});
@@ -151,7 +151,7 @@ describe('KB-orphan: ownerless active-task normalization (§2.4 reaper)', () => 
   it('11. KANBAN_ORPHAN_GRACE_MS=0 preserves the immediate-reap behavior', async () => {
     process.env.KANBAN_ORPHAN_GRACE_MS = '0';
     try {
-      await store.createTask({ id: 'grace-0', title: 'Grace off', status: 'BUILDING', round: 1 });
+      await store.createTask({ id: 'grace-0', title: 'Grace off', status: 'BUILDING', round: 1 }, undefined, { caller: { role: 'admin' } });
       const res = await store.reapExpiredClaims({ now: Date.now() });
       assert.ok(res.reclaimed.includes('default/grace-0'), 'grace 0 reaps immediately');
      } finally {

@@ -1757,7 +1757,7 @@ function versionConflict(task, rawExpected) {
  * Creates a task (spec Sec 9.4.3 + §2.1 namespacing).
  * Uniqueness is composite (project/id); storage write is partition-scoped.
  */
-export async function createTask(data = {}, projectArg) {
+export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
   return withMutationLock(async () => {
     if (!data.id || !data.title) {
       return { error: 'id and title are required', status: 400 };
@@ -1776,6 +1776,24 @@ export async function createTask(data = {}, projectArg) {
     const priorityError = validatePriority(data.priority);
     if (priorityError) {
       return { error: priorityError, status: 400 };
+    }
+    // BUG-05 (v2.5.8): bound the prose fields. Live data tops out near a
+    // 100-char title and a 2.5k description; these caps leave generous
+    // headroom while refusing a 90k-char title that would bloat every
+    // partition rewrite and every SSE snapshot.
+    if (data.title.length > MAX_TITLE_LEN) {
+      return { error: `title must be at most ${MAX_TITLE_LEN} characters`, status: 400 };
+    }
+    if (typeof data.description === 'string' && data.description.length > MAX_DESCRIPTION_LEN) {
+      return { error: `description must be at most ${MAX_DESCRIPTION_LEN} characters`, status: 400 };
+    }
+    const dependsOnError = validateDependsOn(data.depends_on);
+    if (dependsOnError) {
+      return { error: dependsOnError, status: 400 };
+    }
+    const metadataError = validateMetadata(data.metadata);
+    if (metadataError) {
+      return { error: metadataError, status: 400 };
     }
 
     // Project resolution: body.project > body.workspace_id (alias) > query/header arg.
@@ -1809,6 +1827,19 @@ export async function createTask(data = {}, projectArg) {
     if (!status) {
       return { error: `Invalid status: ${data.status}`, status: 400 };
     }
+    // BUG-03 (v2.5.8): creating a task DIRECTLY in a work state (BUILDING /
+    // IN_REVIEW / IN_TEST / DONE) skips the claim contract entirely — no owner,
+    // no lease, no role gate, no dependency gate. Any token holder could mint a
+    // DONE card (fabricated completed work) or a floating IN_TEST card. Require
+    // a privileged credential for those; BACKLOG and BLOCKED stay open because
+    // they are parking states (BLOCKED is an ordinary backlog fixture in tests
+    // and a legitimate bulk-import state).
+    if (IMPORT_GATED_STATUSES.has(status) && !destructivePrivilege(caller)) {
+      return {
+        error: `Forbidden: creating a task in ${status} requires a privileged role`,
+        status: 403,
+      };
+    }
     if (!Number.isInteger(data.round) || data.round < 1) {
       return { error: 'round must be a positive integer', status: 400 };
     }
@@ -1831,10 +1862,19 @@ export async function createTask(data = {}, projectArg) {
       depends_on: Array.isArray(data.depends_on) ? data.depends_on : [],
       round: data.round,
       issues: Array.isArray(data.issues) ? data.issues : [],
-      assigned_agent: data.assigned_agent !== undefined ? data.assigned_agent : null,
-      stage_owners: data.stage_owners && typeof data.stage_owners === 'object' ? data.stage_owners : {},
-      agent_logs: Array.isArray(data.agent_logs) ? data.agent_logs : [],
-      comments: Array.isArray(data.comments) ? data.comments : [],
+      // BUG-04 (v2.5.8): an owner is only ever written by a claim. A
+      // caller-supplied `assigned_agent` at create time used to stick to a
+      // BACKLOG card with NO lease, which made it unclaimable forever (the
+      // contention check rejects every other agent with 409) while looking
+      // assigned. Ignore it; ownership comes from POST /claim.
+      assigned_agent: null,
+      // SEC-04 (v2.5.8): `stage_owners`, `agent_logs` and `comments` are audit
+      // provenance. Accepting them from the request body let a caller forge a
+      // review history for work nobody did. Start them empty; real transitions
+      // and real endpoints are the only writers.
+      stage_owners: {},
+      agent_logs: [],
+      comments: [],
       metadata: data.metadata || {},
       created_at: now,
       completed_at: status === STATUSES.DONE ? now : undefined,
@@ -1976,10 +2016,16 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           if (typeof patch[key] !== 'string' || patch[key].trim() === '') {
             return { error: 'title must be a non-empty string', status: 400 };
           }
+          if (patch[key].length > MAX_TITLE_LEN) {
+            return { error: `title must be at most ${MAX_TITLE_LEN} characters`, status: 400 };
+          }
           candidate[key] = escapeHtml(patch[key]);
         } else if (key === 'description') {
           if (patch[key] !== null && typeof patch[key] !== 'string') {
             return { error: 'description must be a string', status: 400 };
+          }
+          if (typeof patch[key] === 'string' && patch[key].length > MAX_DESCRIPTION_LEN) {
+            return { error: `description must be at most ${MAX_DESCRIPTION_LEN} characters`, status: 400 };
           }
           candidate[key] = typeof patch[key] === 'string' ? escapeHtml(patch[key]) : '';
         } else if (key === 'priority') {
@@ -1997,6 +2043,18 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           // deliberately NOT applied here — a branch is a ref, not prose, and
           // has never been HTML-escaped on any path.
           candidate[key] = toBranch(patch[key]);
+        } else if (key === 'depends_on') {
+          // BUG-05 (v2.5.8): same shape rule as createTask — a bare string is
+          // rejected rather than silently dropped.
+          const dependsOnError = validateDependsOn(patch[key]);
+          if (dependsOnError) return { error: dependsOnError, status: 400 };
+          candidate[key] = Array.isArray(patch[key]) ? patch[key] : [];
+        } else if (key === 'metadata') {
+          // BUG-05 (v2.5.8): metadata must be a bounded plain object, not a
+          // string/array silently swallowed into `{}`.
+          const metadataError = validateMetadata(patch[key]);
+          if (metadataError) return { error: metadataError, status: 400 };
+          candidate[key] = patch[key] === undefined || patch[key] === null ? {} : patch[key];
         } else {
           candidate[key] = patch[key];
         }
@@ -2091,6 +2149,67 @@ function validatePriority(priority) {
   if (typeof priority !== 'string') return 'priority must be a string (low, medium, or high)';
   if (!['low', 'medium', 'high'].includes(priority.toLowerCase())) {
     return 'priority must be one of: low, medium, high';
+  }
+  return null;
+}
+
+// BUG-05 (v2.5.8) input bounds. Live data peaks at ~108-char titles and
+// ~2.5k descriptions, and a metadata blob under 1 KB; these caps are generous
+// yet stop an unbounded payload from being copied into every partition rewrite
+// and every SSE snapshot.
+const MAX_TITLE_LEN = 200;
+const MAX_DESCRIPTION_LEN = 20000;
+const MAX_METADATA_BYTES = 8000;
+
+/**
+ * BUG-03 (v2.5.8): statuses a client may NOT create directly. These are work
+ * states whose only legitimate entry is a claim (BUILDING) or a role-gated
+ * transition. BACKLOG is the normal create status and BLOCKED is a parking
+ * state, so both stay open to unprivileged creation.
+ */
+const IMPORT_GATED_STATUSES = new Set([
+  STATUSES.BUILDING,
+  STATUSES.IN_REVIEW,
+  STATUSES.IN_TEST,
+  STATUSES.DONE,
+]);
+
+/**
+ * BUG-05 (v2.5.8): `depends_on` must be an array of non-empty strings. A bare
+ * string (a common typo) used to be silently coerced to `[]`, hiding the
+ * caller's intent; reject it instead. Returns an error message or null.
+ */
+function validateDependsOn(dependsOn) {
+  if (dependsOn === undefined || dependsOn === null) return null;
+  if (!Array.isArray(dependsOn)) return 'depends_on must be an array of task ids';
+  for (const dep of dependsOn) {
+    if (typeof dep !== 'string' || dep.trim() === '') {
+      return 'depends_on must contain only non-empty task ids';
+    }
+  }
+  return null;
+}
+
+/**
+ * BUG-05 (v2.5.8): `metadata` must be a plain object small enough to persist.
+ * A string/array/number silently became `{}` before, discarding the caller's
+ * data without a word; a huge blob bloated every rewrite. Returns an error
+ * message or null.
+ */
+function validateMetadata(metadata) {
+  if (metadata === undefined || metadata === null) return null;
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return 'metadata must be a JSON object';
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(metadata);
+  } catch {
+    return 'metadata must be JSON-serializable';
+  }
+  if (serialized === undefined) return 'metadata must be a JSON object';
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_METADATA_BYTES) {
+    return `metadata must be at most ${MAX_METADATA_BYTES} bytes`;
   }
   return null;
 }

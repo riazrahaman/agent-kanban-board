@@ -281,10 +281,11 @@ describe('§2.9 cross-project metrics', () => {
     assert.ok(m.claim_contention.since, 'reported as a since-boot window, not a durable total');
     });
   it('10. an assignment with no lease is never counted as an active agent', async () => {
-    // createTask passes a body `assigned_agent` straight through and never sets
-    // claim_expires_at, and the reaper skips records whose expiry is null — so
-    // treating "no usable lease" as active reported a phantom agent forever,
-    // with nothing in the system able to clear it.
+    // Since v2.5.8 createTask IGNORES a body-supplied assigned_agent (an owner
+    // is only ever written by a claim), so a create can no longer produce the
+    // phantom-agent shape at all. The metrics invariant still matters for
+    // legacy/imported records, so seed one directly and assert it is not
+    // counted as an agent at work.
     const r = await jsonRequest(baseUrl, '/api/tasks?project=mghost', {
       method: 'POST', headers: headers(),
       body: JSON.stringify({
@@ -292,6 +293,10 @@ describe('§2.9 cross-project metrics', () => {
         }),
       });
     assert.equal(r.response.status, 201);
+    // The body-supplied owner is dropped — prove it, then re-seed it by hand to
+    // exercise the metrics invariant.
+    assert.equal(store.getTask('ghost-1', 'mghost').assigned_agent, null);
+    store.getTask('ghost-1', 'mghost').assigned_agent = 'phantom';
     assert.ok(
       !store.getTask('ghost-1', 'mghost').claim_expires_at,
       'no lease was issued alongside the assignment',
