@@ -204,7 +204,7 @@ export async function startServer(
       '[kanban warning] KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).'
     );
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = app.listen(port, host, () => {
        // §2.4: schedule the lease reaper only on a real boot (not in createApp),
        // so the HTTP-contract tests never spawn a timer.
@@ -230,6 +230,12 @@ export async function startServer(
       }
       resolve({ server, stopReaper: stop || stopReaper });
       });
+    // IMPL-01 (v2.7.0): handle a bind failure (EADDRINUSE, EADDRNOTAVAIL, …)
+    // so an unhandled 'error' event does not crash the process/restart-loop.
+    server.on('error', (err) => {
+      console.error('[kanban server] listen error:', err);
+      reject(err);
+    });
     });
 }
 

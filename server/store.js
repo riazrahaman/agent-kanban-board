@@ -828,20 +828,34 @@ function invalidateAggregates() {
 // Storage factory (per-project, cached)
 // ---------------------------------------------------------------------------
 
-function gitRoot() {
-  return (
-    process.env.KANBAN_GIT_DIR ||
-    process.env.KANBAN_DATA_DIR ||
-    path.resolve(__dirname, '../../agent-based-investment/ops/kanban')
-  );
+// IMPL-02 (v2.7.0): in-repo default for storage roots. The previous fallback
+// pointed at a stale cross-project path (`../../agent-based-investment/ops/kanban`)
+// which does not exist in a standalone clone. The new default is `server/data`.
+// A one-time warning is logged when the fallback is actually used, nudging
+// operators to set KANBAN_DATA_DIR/KANBAN_GIT_DIR explicitly in production.
+let gitRootFallbackWarned = false;
+let jsonDataDirFallbackWarned = false;
+
+export function gitRoot() {
+  const env = process.env.KANBAN_GIT_DIR || process.env.KANBAN_DATA_DIR;
+  if (env) return env;
+  const fallback = path.resolve(__dirname, 'data');
+  if (!gitRootFallbackWarned) {
+    gitRootFallbackWarned = true;
+    console.warn(`[kanban storage] KANBAN_DATA_DIR/KANBAN_GIT_DIR are unset; defaulting data storage to ${fallback}. Set one explicitly in production.`);
+  }
+  return fallback;
 }
 
-function jsonDataDir() {
-  return (
-    process.env.KANBAN_DATA_DIR ||
-    process.env.KANBAN_GIT_DIR ||
-    path.resolve(__dirname, '../../agent-based-investment/ops/kanban')
-  );
+export function jsonDataDir() {
+  const env = process.env.KANBAN_DATA_DIR || process.env.KANBAN_GIT_DIR;
+  if (env) return env;
+  const fallback = path.resolve(__dirname, 'data');
+  if (!jsonDataDirFallbackWarned) {
+    jsonDataDirFallbackWarned = true;
+    console.warn(`[kanban storage] KANBAN_DATA_DIR/KANBAN_GIT_DIR are unset; defaulting data storage to ${fallback}. Set one explicitly in production.`);
+  }
+  return fallback;
 }
 
 export function getStorage(project) {
@@ -908,7 +922,7 @@ async function listJsonProjects() {
     .map((f) => f.slice(0, -5));
 }
 
-async function listGitProjects(root) {
+export async function listGitProjects(root) {
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -918,7 +932,12 @@ async function listGitProjects(root) {
   const projects = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.') || entry.name === 'archive') continue;
+    // BUG-06 (v2.7.0): a blanket `entry.name === 'archive'` skip made a real
+    // git project literally named `archive` invisible after restart. The
+    // archive SINK dir (`<root>/archive/`) holds only per-project SUBDIRECTORIES
+    // and no direct `.yml`, so the `files.some(yml)` check below already
+    // excludes it. Only dotfiles are skipped here.
+    if (entry.name.startsWith('.')) continue;
     let files;
     try {
       files = await readdir(path.join(root, entry.name));
@@ -1823,6 +1842,13 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
       return { error: `Task ${compositeKey(project, data.id)} already exists`, status: 409 };
     }
 
+    // BUG-08 (v2.7.0): reject self-references and dependency cycles. Placed
+    // after the validateDependsOn shape check and after project/id resolution.
+    const cycleError = validateDependencyGraph(project, data.id, data.depends_on);
+    if (cycleError) {
+      return { error: cycleError, status: 400 };
+    }
+
     const status = normalizeStatus(data.status);
     if (!status) {
       return { error: `Invalid status: ${data.status}`, status: 400 };
@@ -2048,6 +2074,9 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           // rejected rather than silently dropped.
           const dependsOnError = validateDependsOn(patch[key]);
           if (dependsOnError) return { error: dependsOnError, status: 400 };
+          // BUG-08 (v2.7.0): reject self-references and dependency cycles.
+          const cycleError = validateDependencyGraph(candidate.project, candidate.id, patch[key]);
+          if (cycleError) return { error: cycleError, status: 400 };
           candidate[key] = Array.isArray(patch[key]) ? patch[key] : [];
         } else if (key === 'metadata') {
           // BUG-05 (v2.5.8): metadata must be a bounded plain object, not a
@@ -2185,6 +2214,45 @@ function validateDependsOn(dependsOn) {
   for (const dep of dependsOn) {
     if (typeof dep !== 'string' || dep.trim() === '') {
       return 'depends_on must contain only non-empty task ids';
+    }
+  }
+  return null;
+}
+
+/**
+ * BUG-08 (v2.7.0): bounded dependency-graph validator. Rejects a self-reference
+ * and any depends_on set that would introduce a cycle, by transitively walking
+ * each dep via `getTask(dep, project)`. A visited Set + depth cap (1000) keep a
+ * pathological graph from hanging. Only EXISTING tasks are walked — a dangling
+ * dep is not a cycle. Returns an error string or null.
+ */
+function validateDependencyGraph(project, id, dependsOn) {
+  if (!Array.isArray(dependsOn) || dependsOn.length === 0) return null;
+  if (dependsOn.includes(id)) {
+    return 'depends_on cannot reference the task itself';
+  }
+  const DEPTH_CAP = 1000;
+  for (const dep of dependsOn) {
+    const visited = new Set();
+    const stack = [dep];
+    let depth = 0;
+    while (stack.length && depth < DEPTH_CAP) {
+      const current = stack.pop();
+      if (current === id) {
+        return 'depends_on would create a dependency cycle';
+      }
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const t = getTask(current, project);
+      if (!t) continue;
+      const nextDeps = Array.isArray(t.depends_on) ? t.depends_on : [];
+      for (const d of nextDeps) {
+        if (d === id) {
+          return 'depends_on would create a dependency cycle';
+        }
+        if (!visited.has(d)) stack.push(d);
+      }
+      depth += 1;
     }
   }
   return null;

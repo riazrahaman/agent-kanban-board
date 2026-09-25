@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.6.0
+**System:** Agent Kanban Board v2.7.0
 
 ---
 
@@ -107,11 +107,11 @@ The server and client are configured via environment variables.
 | `KANBAN_AUTH_LOG` | `off` | Set truthy (not `0`/`false`) to emit redacted auth-failure logs. |
 | `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
 | `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
-| `KANBAN_DATA_DIR` | *(None)* | Root for named projects (`tasks/<project>.json`) + archives. |
+| `KANBAN_DATA_DIR` | `server/data` | Root for named projects (`tasks/<project>.json`) + archives. Unset falls back to an in-repo `server/data` (one-time warning) — never a sibling checkout. |
 | `KANBAN_DEFAULT_PROJECT` | `default` | Implicit single-project name. |
 | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
 | `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep). |
-| `KANBAN_GIT_DIR` | *(See ADR-001)* | Directory containing `.yml` cards when using `git` backend. |
+| `KANBAN_GIT_DIR` | `server/data` | Directory containing `.yml` cards when using `git` backend. Same in-repo default as `KANBAN_DATA_DIR` (ADR-001). |
 | `KANBAN_GIT_COMMIT` | `true` | Set `false` to disable auto-commits in git mode. |
 | `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. |
 | `KANBAN_CLAIM_TTL_MS` | `600000` | Lease TTL (10 min); expired leases are auto-reclaimed. |
@@ -214,7 +214,7 @@ Both rely on the server's own `startCommand` / `npm start` and the fact that it 
 | `KANBAN_ALLOWED_ORIGIN` | *(public URL)* | Comma-separated CORS allow-list. |
 | `HOST` | `0.0.0.0` | Bind all interfaces (auto when `PORT` is set). |
 
-Generate secrets with `openssl rand -hex 32`. Health probes can target `GET /api/health` (or `/healthz`), which reports store-load state and reaper status.
+Generate secrets with `openssl rand -hex 32`. Liveness probes can target `GET /api/health` (or `/healthz`), which always answers 200 and reports store-load state and reaper status. Readiness probes should target `GET /api/health/ready`, which returns 503 until the store has finished loading — `render.yaml` health-checks this path so a platform does not route traffic to a half-booted instance.
 
 ---
 
