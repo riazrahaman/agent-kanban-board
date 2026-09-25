@@ -20,6 +20,7 @@ import {
   isValidProjectId,
   isValidTaskId,
   toBranch,
+  toMilestone,
   defaultProjectName,
   normalizeProject,
   resolveProjectScope,
@@ -52,6 +53,7 @@ export {
   isValidProjectId,
   isValidTaskId,
   toBranch,
+  toMilestone,
   defaultProjectName,
   normalizeProject,
   resolveProjectScope,
@@ -1241,6 +1243,9 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
       // orchestrator path, so it must read data.branch only — never a
       // neighbouring task's branch.
       branch: toBranch(data.branch),
+      // v2.11.0 (opt-milestones): nullable grouping label; same shared shape
+      // rule as `branch`. Absent on legacy cards (backfilled to null on read).
+      milestone: toMilestone(data.milestone),
       depends_on: Array.isArray(data.depends_on) ? data.depends_on : [],
       round: data.round,
       issues: Array.isArray(data.issues) ? data.issues : [],
@@ -1382,6 +1387,7 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       'description',
       'priority',
       'branch',
+      'milestone',
       'depends_on',
       'round',
       'issues',
@@ -1425,6 +1431,11 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           // deliberately NOT applied here — a branch is a ref, not prose, and
           // has never been HTML-escaped on any path.
           candidate[key] = toBranch(patch[key]);
+        } else if (key === 'milestone') {
+          // v2.11.0 (opt-milestones): same shared rule as branch — a non-empty
+          // string is kept verbatim, `milestone: null` clears it, and anything
+          // else (number/object/blank) becomes null rather than a bogus label.
+          candidate[key] = toMilestone(patch[key]);
         } else if (key === 'depends_on') {
           // BUG-05 (v2.5.8): same shape rule as createTask — a bare string is
           // rejected rather than silently dropped.
@@ -1835,6 +1846,120 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
        return applyClaim(task, agentId, caller, nowFn(), { renew: true });
        });
        }
+
+/**
+ * §2.3b operator assignment (opt-operator-assignment, v2.11.0). Lets a
+ * PRIVILEGED caller (runner/system/human/admin) hand a task to a named agent
+ * without that agent having to self-claim. This is the documented "assign on
+ * an agent's behalf" escape hatch that the roadmap called out; it is a
+ * deliberate override of the usual "owner is written only by a claim" rule, so
+ * it is privilege-gated exactly like the destructive operations:
+ *   - `destructivePrivilege(caller)` must hold (admin token / privileged session
+ *     / legacy single-token mode), else 403.
+ *   - The target agent id must be a non-empty string, else 400.
+ * It sets `assigned_agent`, arms a fresh lease, records `stage_owners` for the
+ * stage it lands in, and — like a claim — lifts a BACKLOG card to BUILDING so
+ * the assignment is actionable. It does NOT run the dependency gate or the
+ * contention check: an operator explicitly overriding ownership is the point.
+ * `agent_id: null` releases the assignment (clears owner + lease, returns an
+ * active card to BACKLOG) so an operator can unstick work.
+ */
+export async function assignTask(id, agentId, { caller = {}, project: projectArg, expected_version: expectedVersion } = {}) {
+  return withMutationLock(async () => {
+    if (!destructivePrivilege(caller)) {
+      return { error: 'Forbidden: admin role required to assign tasks', status: 403 };
+    }
+    const task = getTask(id, projectArg);
+    if (!task) return { error: 'Task not found', status: 404 };
+
+    const conflict = versionConflict(task, expectedVersion);
+    if (conflict) return conflict;
+
+    const release = agentId === null || agentId === undefined;
+    if (!release && (typeof agentId !== 'string' || agentId.trim() === '')) {
+      return { error: 'agent_id must be a non-empty string', status: 400 };
+    }
+
+    const candidate = structuredClone(task);
+    const nowMs = nowFn();
+    if (release) {
+      candidate.assigned_agent = null;
+      candidate.claim_expires_at = null;
+      // An ownerless card may not stay in an active stage (the reaper would
+      // normalise it anyway) — return it to BACKLOG so it is claimable again.
+      if (
+        candidate.status === STATUSES.BUILDING ||
+        candidate.status === STATUSES.IN_REVIEW ||
+        candidate.status === STATUSES.IN_TEST
+      ) {
+        candidate.status = STATUSES.BACKLOG;
+      }
+    } else {
+      candidate.assigned_agent = agentId;
+      candidate.claim_expires_at = isoFromMs(nowMs + getClaimTtlMs());
+      if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
+      if (candidate.status === STATUSES.BACKLOG) {
+        candidate.status = STATUSES.BUILDING;
+        const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
+          ? candidate.stage_owners
+          : {};
+        candidate.stage_owners = { ...owners, BUILDING: agentId };
+      }
+    }
+    candidate.updated = isoFromMs(nowMs);
+    candidate.version = nextVersionFor(task);
+    if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
+    const actor = caller?.agent_id || caller?.agentId || 'operator';
+    candidate.agent_logs.push({
+      timestamp: candidate.updated,
+      message: release
+        ? `Assignment cleared by ${actor} (released to BACKLOG).`
+        : `${agentId} was assigned this task by ${actor}.`,
+      agent_id: escapeHtml(actor),
+    });
+
+    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    updateInMemoryTask(candidate);
+    notify({
+      actor: actor,
+      reason: release ? 'unassigned' : 'assigned',
+      semantic: new Map([[`${candidate.project}/${candidate.id}`, {
+        kind: release ? 'updated' : 'claimed',
+        actor: actor,
+        reason: release ? 'unassigned' : 'assigned',
+        prevTask: task,
+      }]]),
+    });
+    return { task: candidate, status: 200 };
+  });
+}
+
+/**
+ * Milestone rollup (opt-milestones, v2.11.0). Groups the (live) cards of a
+ * project — or every project when `project` is undefined — by their `milestone`
+ * label and reports progress per group. Cards with no milestone are omitted so
+ * the caller renders only real goals. Archived cards are out of scope: a
+ * milestone view is about in-flight work, and the archive is already exposed
+ * separately. Pure read; no lock needed.
+ */
+export function getMilestones(project) {
+  const scoped = project ? tasks.filter((t) => t.project === project) : tasks.slice();
+  const groups = new Map();
+  for (const t of scoped) {
+    if (typeof t.milestone !== 'string' || t.milestone === '') continue;
+    let g = groups.get(t.milestone);
+    if (!g) {
+      g = { milestone: t.milestone, project: t.project, total: 0, done: 0, by_status: {} };
+      groups.set(t.milestone, g);
+    }
+    g.total += 1;
+    g.by_status[t.status] = (g.by_status[t.status] || 0) + 1;
+    if (t.status === STATUSES.DONE) g.done += 1;
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, progress: g.total ? Math.round((g.done / g.total) * 100) : 0 }))
+    .sort((a, b) => a.milestone.localeCompare(b.milestone));
+}
 
        // ---------------------------------------------------------------------------
        // §2.4 stale-task reaper

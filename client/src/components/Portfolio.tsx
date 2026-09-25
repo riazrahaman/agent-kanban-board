@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { MetricsResponse } from '../types'
-import { getMetrics } from '../api'
+import type { MetricsResponse, MilestoneSummary } from '../types'
+import { getMetrics, getMilestones } from '../api'
 import { backlogOf, blockedOf, formatDuration, wipOf } from '../lib/portfolioMetrics'
 
 type Props = {
@@ -14,6 +14,7 @@ type Props = {
 
 export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 }: Props) {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null)
+  const [milestones, setMilestones] = useState<MilestoneSummary[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // This view is cross-project but the task stream feeding `refreshKey` is
@@ -34,6 +35,25 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
           if (cancelled) return
           setError(err instanceof Error ? err.message : 'Failed to load metrics')
         })
+    }
+    load()
+    const timer = setInterval(load, pollMs)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [refreshKey, pollMs])
+
+  // v2.11.0 (opt-milestones): milestone rollups load alongside the metrics and
+  // share the same poll cadence. Failure is silent — milestones are optional.
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      getMilestones()
+        .then((m) => {
+          if (!cancelled) setMilestones(m)
+        })
+        .catch(() => undefined)
     }
     load()
     const timer = setInterval(load, pollMs)

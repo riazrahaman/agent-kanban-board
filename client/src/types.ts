@@ -41,6 +41,7 @@ export type Task = {
   agent_logs: AgentLog[]
   comments?: Comment[]         // v2.5.0: discussion thread (separate from agent_logs)
   branch?: string
+  milestone?: string | null    // v2.11.0: optional grouping label (opt-milestones)
   depends_on?: string[]
   round?: number
   issues?: string[]
@@ -99,4 +100,14 @@ export type MetricsResponse = {
   scope: string | null
   projects: ProjectMetrics[]
   aggregate: ProjectMetrics & { project_count: number }
+}
+
+/** v2.11.0 (opt-milestones) — a per-goal rollup from GET /api/milestones. */
+export type MilestoneSummary = {
+  milestone: string
+  project: string
+  total: number
+  done: number
+  progress: number
+  by_status: Record<string, number>
 }

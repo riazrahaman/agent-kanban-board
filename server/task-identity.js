@@ -69,6 +69,16 @@ export function toBranch(value) {
 }
 
 /**
+ * Milestone (ENH: opt-milestones, v2.11.0). A nullable free-text label used to
+ * group cards under a goal. Same shape rule as `toBranch`: a non-empty string
+ * is kept verbatim (untrimmed), everything else is `null`. Never HTML-escaped
+ * on any path — it is a grouping key, matched server-side, not prose.
+ */
+export function toMilestone(value) {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/**
  * The implicit project that single-project deployments live in. Its storage
  * reuses the legacy location (KANBAN_DATA_FILE / flat git root) so a single
  * project deployment is byte-for-byte unchanged.
@@ -170,6 +180,9 @@ export function backfillLeaseFields(list) {
     // v2.5.0: every card carries a comments thread; legacy records default to
     // an empty one so the read surface (and the client renderer) is total.
     if (!Array.isArray(t.comments)) t.comments = [];
+    // v2.11.0: milestone grouping label; legacy records default to null and a
+    // dirty value is nulled on READ exactly like `branch`.
+    if (t.milestone !== undefined) t.milestone = toMilestone(t.milestone);
   }
   return list;
 }

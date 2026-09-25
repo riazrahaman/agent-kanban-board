@@ -19,6 +19,7 @@ import yaml from 'yaml';
 import {
   writeAtomic,
   toBranch,
+  toMilestone,
   defaultProjectName,
   jsonDataDir,
   backfillLeaseFields,
@@ -402,6 +403,7 @@ export class GitYamlStorage {
       // non-string values are treated as absent — see `toBranch`, the single
       // shared rule used by all three write paths.
       branch: toBranch(task.branch),
+      milestone: toMilestone(task.milestone),
       depends_on: task.depends_on || [],
       round: task.round,
       issues: task.issues || [],
