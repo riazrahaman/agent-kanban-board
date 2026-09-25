@@ -110,10 +110,21 @@ export function leaseWindowFor(task) {
 }
 
 function resolveLeaseMs(requested) {
-  if (requested === undefined || requested === null) {
-    // No explicit request: the lease keeps the global default, and we do NOT pin
-    // it — the caller stores `null` so a later config change still applies.
+  if (requested === undefined || requested === null || requested === '') {
+    // No explicit request (including an empty `?lease_ms=`): the lease keeps
+    // the global default, and we do NOT pin it — the caller stores `null` so a
+    // later config change still applies.
     return { ok: true, ms: getClaimTtlMs(), explicit: false };
+  }
+  // v2.12.1 (I-8): accept only an actual number or a numeric string. Before
+  // this guard, `Number(requested)` coerced `true` -> 1 and `[5]` -> 5, so a
+  // malformed request silently got clamped up to the SHORTEST possible lease
+  // (KANBAN_MIN_LEASE_MS) instead of being rejected — the exact failure mode
+  // this feature exists to prevent.
+  const isNumericType = typeof requested === 'number';
+  const isNumericString = typeof requested === 'string' && /^\d+(\.\d+)?$/.test(requested.trim());
+  if (!isNumericType && !isNumericString) {
+    return { ok: false, status: 400, error: 'lease_ms must be a positive number of milliseconds' };
   }
   const n = Number(requested);
   if (!Number.isFinite(n) || n <= 0) {
@@ -122,6 +133,31 @@ function resolveLeaseMs(requested) {
   const min = getMinLeaseMs();
   const max = getMaxLeaseMs();
   return { ok: true, ms: Math.min(Math.max(n, min), max), explicit: true };
+}
+
+// E-2: cap how many active leases one agent may hold at once. 0/unset =
+// unlimited (unchanged default behavior). Privileged roles are exempt (they
+// administer the board, e.g. an orchestrator batch-assigning via /assign).
+function getMaxClaimsPerAgent() {
+  const raw = process.env.KANBAN_MAX_CLAIMS_PER_AGENT;
+  if (raw === undefined || raw === '') return 0;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function countActiveClaims(agentId) {
+  let count = 0;
+  for (const t of tasks) {
+    if (t.assigned_agent !== agentId) continue;
+    if (
+      t.status === STATUSES.BUILDING ||
+      t.status === STATUSES.IN_REVIEW ||
+      t.status === STATUSES.IN_TEST
+    ) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 /**
@@ -1508,6 +1544,10 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     candidate.version = nextVersionFor(task);
       // expected_version is a request-time guard only; never persist it.
     delete candidate.expected_version;
+    // E-1: a PATCH always changes this specific card's content — record it as
+    // progress, distinct from the lease-window renewal below (which only
+    // proves the agent is alive, not that THIS card moved forward).
+    candidate.last_progress_at = candidate.updated;
 
     // §2.4: ANY committed write by the lease HOLDER is proof of life, so extend
     // the lease — not only POST /logs. A holder that PATCHes a status transition
@@ -1526,19 +1566,32 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     const storage = getStorage(candidate.project);
     await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
-    notify();
-    // §2.4b Fix 3: a HOLDER that PATCHes any one card renews all its leases.
-    // Gate on the *caller* being the card's holder (a non-holder's write must
-    // never extend the real holder's leases), and exclude the card just written
-    // (it already had its own lease bumped above — re-renewing it would double
-    // its version bump).
+    // §2.4b Fix 3: a HOLDER that PATCHes any one card renews all its OTHER
+    // active leases. Gate on the *caller* being the card's holder (a
+    // non-holder's write must never extend the real holder's leases), and
+    // exclude the card just written above (already renewed).
+    //
+    // v2.12.1 fixups (I-2/I-5/I-7): scoped to the SAME project as this write
+    // (a per-project credential must never renew a lease in a project it
+    // cannot write), tagged as a distinct 'renewed' event, and folded into the
+    // SAME notify() call below rather than a separate no-op broadcast — so
+    // siblings' new expiries reach clients in this tick instead of only on
+    // some later, unrelated mutation.
+    const semantic = new Map();
     if (
       holderWriteRenewsAll() &&
       caller.agent_id &&
       caller.agent_id === candidate.assigned_agent
     ) {
-      await renewAllLeasesInner(caller.agent_id, nowFn(), compositeKey(candidate.project, candidate.id));
+      const siblingKeys = await renewAllLeasesInner(caller.agent_id, nowFn(), {
+        excludeKey: compositeKey(candidate.project, candidate.id),
+        project: candidate.project,
+      });
+      for (const key of siblingKeys) {
+        semantic.set(key, { kind: 'renewed', actor: caller.agent_id, reason: 'lease_renewed_holder_write' });
+      }
     }
+    notify(semantic.size > 0 ? { semantic } : undefined);
 
     // §2.5 optional event-driven auto-promote: on a *transition into DONE*,
     // unlock any BLOCKED dependents whose last remaining dependency just
@@ -1678,9 +1731,24 @@ function validateDependencyGraph(project, id, dependsOn) {
  * privileged (they may renew any lease), skip the dependency gate (the lease was
  * earned at a satisfied gate), do not move status, and push no log (no spam).
  */
-async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs = null } = {}) {
+async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs = null, leaseExplicit = false } = {}) {
   const role = caller?.role || null;
   const isPriv = isPrivilegedRole(role);
+
+  // E-2: a fresh claim is capped per agent (KANBAN_MAX_CLAIMS_PER_AGENT, 0 =
+  // unlimited). This runs before contention so a caller at their cap gets a
+  // clear `claim_limit` 409 rather than racing straight into the write.
+  // Privileged callers are exempt (board administration, /assign, etc).
+  if (!renew && !isPriv) {
+    const cap = getMaxClaimsPerAgent();
+    if (cap > 0 && countActiveClaims(agentId) >= cap) {
+      return {
+        error: `Agent ${agentId} already holds ${cap} active claim(s) (KANBAN_MAX_CLAIMS_PER_AGENT)`,
+        status: 409,
+        reason: 'claim_limit',
+      };
+    }
+  }
 
   // (1) contention — first, so held tasks win the ordering over the dep gate.
   if (!(renew && isPriv)) {
@@ -1720,11 +1788,14 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   // task's owner from the real holder. So `assigned_agent` is set only on claim.
   if (!renew) candidate.assigned_agent = agentId;
   // Persist the window chosen at claim time. A fresh claim PINS the resolved
-  // window (explicit `lease_ms`, else the global default); a renewal keeps the
-  // stored window unless the caller passes an explicit `leaseMs`. Legacy cards
-  // that predate the field load `null` (see backfillLeaseFields) and fall back
-  // to the global TTL via leaseWindowFor.
-  if (!renew) candidate.claim_lease_ms = leaseMs ?? getClaimTtlMs();
+  // window ONLY when the caller made an explicit request (v2.12.1, C-1) — an
+  // unpinned `null` keeps tracking the global TTL live, so a later
+  // KANBAN_CLAIM_TTL_MS change still applies to a claim that never asked for a
+  // specific window. A renewal keeps the stored window unless the caller
+  // passes an explicit `leaseMs`. Legacy cards that predate the field load
+  // `null` (see backfillLeaseFields) and fall back to the global TTL the same
+  // way via leaseWindowFor.
+  if (!renew) candidate.claim_lease_ms = leaseExplicit ? leaseMs : null;
   else if (leaseMs !== null) candidate.claim_lease_ms = leaseMs;
   candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
   if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
@@ -1739,6 +1810,12 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   }
   candidate.updated = isoFromMs(nowMs);
   candidate.version = nextVersionFor(task);
+  if (!renew) {
+    // E-1: a fresh claim is progress on THIS card specifically — distinct from
+    // the lease-window renewal above, which only proves the AGENT is alive.
+    // Never set by a sibling renewal (renewAllLeasesInner does not touch it).
+    candidate.last_progress_at = candidate.updated;
+  }
   if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
   if (!renew) {
     candidate.agent_logs.push({
@@ -1751,23 +1828,35 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   // KB-05: persist first, then mutate memory, then notify.
   await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
   updateInMemoryTask(candidate);
-  // §2.4b Fix 3: claiming/renewing one card also re-arms the holder's OTHER
-  // leases. Exclude the card just written above (already renewed).
-  if (holderWriteRenewsAll()) {
-    await renewAllLeasesInner(agentId, nowMs, compositeKey(candidate.project, candidate.id));
-  }
    // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
    // The auth middleware populates req.caller as { agent_id, role } — reading
    // `caller.agentId` was always undefined, which attributed every renewal by a
    // real agent to 'system' in the very audit substrate §2.9 reads from.
   const actor = (renew ? caller?.agent_id : null) || agentId || 'system';
+  const semantic = new Map([[
+    compositeKey(candidate.project, candidate.id),
+    { kind: renew ? 'renewed' : 'claimed', actor, reason: renew ? 'lease_renewed' : 'claimed' },
+    ]]);
+  // §2.4b Fix 3: claiming/renewing one card also re-arms the holder's OTHER
+  // leases. Exclude the card just written above (already renewed). v2.12.1
+  // fixups: scoped to the SAME project as the write (I-2 — a per-project
+  // credential must never renew a lease in a project it cannot write), tagged
+  // as a distinct 'renewed' event in the SAME notify call (I-5/I-7 — the
+  // sibling's new expiry reaches clients in this tick, not some later,
+  // unrelated mutation, and does not masquerade as a plain 'updated').
+  if (holderWriteRenewsAll()) {
+    const siblingKeys = await renewAllLeasesInner(agentId, nowMs, {
+      excludeKey: compositeKey(candidate.project, candidate.id),
+      project: candidate.project,
+    });
+    for (const key of siblingKeys) {
+      semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
+    }
+  }
   notify({
     actor,
     reason: renew ? 'lease_renewed' : 'claimed',
-    semantic: new Map([[
-      compositeKey(candidate.project, candidate.id),
-      { kind: renew ? 'renewed' : 'claimed', actor, reason: renew ? 'lease_renewed' : 'claimed' },
-      ]]),
+    semantic,
    });
   return { task: candidate, status: 200 };
 }
@@ -1873,8 +1962,17 @@ export async function maybeUnlockDependents(completedRef, { now } = {}) {
  * route injects) adds a §2.6 CAS guard: a stale claim is rejected with a
  * "Version mismatch" 409, distinct from the "… already claimed by …" contention
  * 409 and the `dependency_unsatisfied` 409.
+ *
+ * v2.13.0: `options.caller` (the authenticated `{ agent_id, role, privileged }`)
+ * is threaded through to `applyClaim` so a privileged caller is recognized for
+ * the E-2 per-agent claim cap the same way `nextClaim` already does — this was
+ * previously silently dropped (`applyClaim(task, agentId, {}, ...)`), so a
+ * fresh claim via `POST /:id/claim` could never be exempt from the cap even
+ * for an admin/runner/system/human role. Optional and additive: every existing
+ * caller that omits it keeps today's behavior (an absent caller = ordinary,
+ * non-privileged claim).
  */
-export async function claimTask(id, agentId, project, { expected_version: expectedVersion, lease_ms: requestedLease } = {}) {
+export async function claimTask(id, agentId, project, { expected_version: expectedVersion, lease_ms: requestedLease, caller = {} } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
@@ -1891,7 +1989,7 @@ export async function claimTask(id, agentId, project, { expected_version: expect
     if (conflict) return conflict;
 
        // Contention + dep gate + write via the shared core.
-    return applyClaim(task, agentId, {}, nowFn(), { leaseMs: lease.ms });
+    return applyClaim(task, agentId, caller, nowFn(), { leaseMs: lease.ms, leaseExplicit: lease.explicit });
    });
 }
 
@@ -1931,17 +2029,28 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
  * card owned by `agentId` in an active stage whose lease has NOT already lapsed,
  * push `claim_expires_at` out by that card's own window. Lapsed leases are
  * deliberately NOT revived — a late bulk call must not race the reaper back into
- * ownership. Bumps each renewed card's version, persists each, then emits ONE
- * notify for the whole batch. Privilege is enforced at the route layer.
+ * ownership. Privilege is enforced at the route layer.
+ *
+ * v2.12.1 fixups (post-release review):
+ *   I-1 — a lease-only renewal does NOT bump `version`. Version is the
+ *         content CAS guard (§2.6); bumping it on a sibling the caller never
+ *         touched invalidated concurrent `expected_version` PATCHes on cards
+ *         nobody was editing.
+ *   I-2 — an optional `project` scope restricts the sweep to one project, so a
+ *         write authorized for project A can never renew a lease in project B.
+ *   I-6 — each card is renewed independently (try/catch); one failing save
+ *         must never abort the whole sweep or the caller's own write.
  */
 // Unlocked worker for §2.4b Fix 3: renews every NON-lapsed active lease owned by
-// `agentId`, persisting each. Caller MUST already hold withMutationLock. Returns
-// the composite keys renewed. Never emits notify (the outer write does).
-async function renewAllLeasesInner(agentId, nowMs, excludeKey = null) {
+// `agentId` (optionally scoped to one `project`), persisting each. Caller MUST
+// already hold withMutationLock. Returns the composite keys renewed. Never
+// emits notify (the caller folds these into its own semantic event).
+async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project = null } = {}) {
   if (!agentId || typeof agentId !== 'string') return [];
   const renewed = [];
   for (const t of tasks.slice()) {
     if (excludeKey !== null && compositeKey(t.project, t.id) === excludeKey) continue;
+    if (project !== null && t.project !== project) continue;
     if (t.assigned_agent !== agentId) continue;
     if (
       t.status !== STATUSES.BUILDING &&
@@ -1952,14 +2061,21 @@ async function renewAllLeasesInner(agentId, nowMs, excludeKey = null) {
     }
     const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
     if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
-    const candidate = structuredClone(t);
-    candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
-    candidate.updated = isoFromMs(nowMs);
-    candidate.version = nextVersionFor(t);
-    const storage = getStorage(candidate.project);
-    await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
-    updateInMemoryTask(candidate);
-    renewed.push(compositeKey(candidate.project, candidate.id));
+    try {
+      const candidate = structuredClone(t);
+      candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
+      candidate.updated = isoFromMs(nowMs);
+      const storage = getStorage(candidate.project);
+      await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
+      updateInMemoryTask(candidate);
+      renewed.push(compositeKey(candidate.project, candidate.id));
+    } catch (err) {
+      // I-6: never let a sibling's save failure fail the caller's real write.
+      console.error(
+        `[kanban] sibling lease renewal failed for ${compositeKey(t.project, t.id)}:`,
+        err && err.message,
+      );
+    }
   }
   return renewed;
 }
@@ -1974,30 +2090,16 @@ export async function renewAllLeases(agentId, { project: projectArg, caller = {}
       return { error: `Invalid project scope: ${String(projectArg)}`, status: 400 };
     }
     const nowMs = nowFn();
-    const renewed = [];
-    for (const t of tasks.slice()) {
-      if (t.assigned_agent !== agentId) continue;
-      if (hasScope && t.project !== projectArg) continue;
-      if (
-        t.status !== STATUSES.BUILDING &&
-        t.status !== STATUSES.IN_REVIEW &&
-        t.status !== STATUSES.IN_TEST
-      ) {
-        continue;
-      }
-      const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
-      if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
-      const candidate = structuredClone(t);
-      candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
-      candidate.updated = isoFromMs(nowMs);
-      candidate.version = nextVersionFor(t);
-      const storage = getStorage(candidate.project);
-      await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
-      updateInMemoryTask(candidate);
-      renewed.push(compositeKey(candidate.project, candidate.id));
-    }
+    // C-2: reuse the single sibling-renewal implementation instead of a
+    // hand-duplicated copy of the same loop.
+    const renewed = await renewAllLeasesInner(agentId, nowMs, {
+      project: hasScope ? projectArg : null,
+    });
     if (renewed.length > 0) {
-      notify({ actor: agentId, reason: 'lease_renewed_bulk' });
+      const semantic = new Map(
+        renewed.map((key) => [key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_bulk' }]),
+      );
+      notify({ actor: agentId, reason: 'lease_renewed_bulk', semantic });
     }
     return { renewed, count: renewed.length, status: 200 };
   });
@@ -2312,7 +2414,7 @@ export function getMilestones(project) {
          // serializes, but this keeps the shared core total).
        const lease = resolveLeaseMs(requestedLease);
        if (!lease.ok) return { error: lease.error, status: lease.status };
-       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs, { leaseMs: lease.ms });
+       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs, { leaseMs: lease.ms, leaseExplicit: lease.explicit });
         if (r.error) return r;
         return { task: r.task, status: 200 };
         });
@@ -2486,6 +2588,8 @@ export async function appendLog(id, agentId, message, project, { expected_versio
     candidate.updated = new Date().toISOString();
         // §2.6: a committed log append advances version by exactly one.
     candidate.version = nextVersionFor(task);
+    // E-1: a log is progress on THIS card specifically.
+    candidate.last_progress_at = candidate.updated;
     // §2.4: a progress log from the lease HOLDER is proof of life, so extend the
     // lease. Headless workers report progress with POST /logs and never call
     // /heartbeat (the browser client heartbeats every 5s), so without this a
@@ -2514,12 +2618,24 @@ export async function appendLog(id, agentId, message, project, { expected_versio
       'log', candidate.project, candidate.id, candidate.agent_logs, getInlineLogCap(),
     );
 
+    // KB-05 (I-6 fixup): persist the PRIMARY write, update memory, THEN
+    // attempt sibling renewals. A sibling save failure must never leave this
+    // log persisted-but-not-in-memory, nor fail the caller's own request —
+    // renewAllLeasesInner already isolates per-card failures internally.
     await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-    if (holderWriteRenewsAll() && agentId && agentId === candidate.assigned_agent) {
-      await renewAllLeasesInner(agentId, nowFn(), compositeKey(candidate.project, candidate.id));
-    }
     updateInMemoryTask(candidate);
-    notify();
+    const semantic = new Map();
+    if (holderWriteRenewsAll() && agentId && agentId === candidate.assigned_agent) {
+      // v2.12.1 (I-2): scoped to the SAME project as this write.
+      const siblingKeys = await renewAllLeasesInner(agentId, nowFn(), {
+        excludeKey: compositeKey(candidate.project, candidate.id),
+        project: candidate.project,
+      });
+      for (const key of siblingKeys) {
+        semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
+      }
+    }
+    notify(semantic.size > 0 ? { semantic } : undefined);
     return { task: candidate, status: 200 };
   });
 }
@@ -2756,6 +2872,19 @@ export async function runArchiveSweep() {
  * check so single-token deployments keep their historical semantics.
  */
 function destructivePrivilege(caller) {
+  return callerIsPrivileged(caller);
+}
+
+/**
+ * v2.12.1 (I-4): shared credential-derived privilege check, extracted from
+ * `destructivePrivilege` so the bulk-heartbeat route (and any other caller)
+ * can use the SAME rule instead of trusting the self-asserted `X-Agent-Role`
+ * header directly. A per-project token cannot send itself `X-Agent-Role:
+ * admin` and pass this check — the auth middleware sets `caller.privileged`
+ * from the credential itself (see middleware/auth.js), and that flag wins
+ * whenever it is present.
+ */
+export function callerIsPrivileged(caller) {
   return caller.privileged === undefined || caller.privileged === null
     ? isPrivilegedRole(caller.role)
     : caller.privileged === true;

@@ -24,6 +24,7 @@ const DESCRIPTIONS = {
   'KANBAN_BOARD_URL': 'Board base URL used in Telegram reclaim alerts',
   'KANBAN_CLAIM_TTL_MS': 'Lease TTL for a claimed task (default 600000)',
   'KANBAN_HOLDER_WRITE_RENEWS_ALL': 'Set falsy to disable renewing all sibling leases on a holder write (default 1)',
+  'KANBAN_MAX_CLAIMS_PER_AGENT': 'Cap on active claims one agent may hold at once (0/unset = unlimited; privileged roles exempt)',
   'KANBAN_MAX_LEASE_MS': 'Upper bound for a per-task lease window in ms (default 7200000)',
   'KANBAN_MIN_LEASE_MS': 'Lower bound for a per-task lease window in ms (default 60000)',
   'KANBAN_DATA_DIR': 'Directory for named-project JSON data and archives',
