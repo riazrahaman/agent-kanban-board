@@ -67,7 +67,7 @@ function TaskCard({
         isHigh ? 'border-r-2 border-r-fail' : '',
       ].join(' ')}
     >
-      <div className="flex items-center justify-between gap-2 mb-1.5">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         {/* The id is an identifier, not prose: it must stay on ONE line. Wrapping
             it (overflow-wrap:anywhere) was a regression — `anywhere` lowers the
             element's min-content size, and with `min-width:auto` in this flex row
@@ -75,14 +75,19 @@ function TaskCard({
             a ~30px sliver wrapped character-by-character over 11 lines. `min-w-0
             flex-1 truncate` lets it claim the row and ellipsise instead, with the
             full value in the tooltip. The badge group is pinned so it cannot be
-            squeezed either. */}
+            squeezed either.
+            v2.9.1: the badge group now takes its own full-width line on phones
+            (`w-full sm:w-auto`), so the id gets the whole row instead of
+            competing with it on an 85vw column (mobile-rendering-issues.md
+            Issue 3). `min-w-0` is kept so desktop keeps ellipsising rather than
+            wrapping. */}
         <span
           className="min-w-0 flex-1 truncate font-mono text-xs tabular-nums text-ink tracking-wider"
           title={task.id}
         >
           {task.id}
         </span>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:flex-nowrap">
           {showProject && task.project && (
             <span
               className="max-w-[10rem] truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"

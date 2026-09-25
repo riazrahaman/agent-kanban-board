@@ -17,6 +17,7 @@ import {
   TOUR_SHOTS,
   WHY_CARDS,
 } from '../lib/aboutContent'
+import { formatVisitCount, useVisitCount } from '../lib/useVisitCount'
 
 type Props = {
   version: string | null
@@ -66,6 +67,7 @@ function FlowRow({
 }
 
 export default function About({ version }: Props) {
+  const { count: visitCount, counted: visitCounted } = useVisitCount()
   return (
     <div className="h-full min-w-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-10">
@@ -335,7 +337,7 @@ export default function About({ version }: Props) {
             <Cta href={ABOUT_LIVE_URL}>Open live demo</Cta>
           </div>
           <p className="mt-4 font-mono text-[10px] text-muted">
-            Local-first · headless-first · zero telemetry ·{' '}
+            Local-first · headless-first · no accounts · no tracking ·{' '}
             <a
               href={ABOUT_GITHUB_URL}
               target="_blank"
@@ -345,6 +347,15 @@ export default function About({ version }: Props) {
               {ABOUT_GITHUB_URL}
             </a>
           </p>
+          {visitCount !== null && (
+            <p
+              className="mt-1 font-mono text-[10px] tabular-nums text-muted"
+              title={visitCounted ? 'This visit was counted' : 'Visit count so far'}
+            >
+              {formatVisitCount(visitCount)}
+              <span className="text-muted/70"> · one anonymous counter, no per-visitor data</span>
+            </p>
+          )}
         </section>
       </div>
     </div>

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,23 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.9.1] — 2026-09-25
+
+### Fixed
+
+- **Mobile layout: the board is usable on phone-width viewports.** An external review of the live board on iPhone/Safari found three rendering defects, all fixed:
+  - **Header + filter chrome no longer crush the board (Issue 1, high).** Both the header (`App.tsx`) and the filter bar (`BoardFilters.tsx`) previously let every control free-wrap, producing ~10 chrome rows that left the board only ~150px tall. Below `md`/`sm` the secondary controls (agent id, token, help, Signal, theme, project picker, priority/assignee/sort, export, columns, metrics) now collapse behind a single `⋯` / `Filters` disclosure; only the title, the Board/Portfolio/About switch, the search box and the task count stay visible. Measured at 390px: chrome went **299px → 155px** and the board grew from 545px to **690px of an 844px viewport (~82%)**. Desktop is unchanged (controls inline, disclosure hidden from `md`).
+  - **Column scroll-arrow buttons no longer overlap cards (Issue 2, medium).** The `‹ / ›` paging buttons were absolutely centred over the whole scroller and sat on top of card content in an `85vw` mobile column. They are now `hidden … md:flex`, so touch devices keep the native horizontal swipe + scroll-snap instead.
+  - **Task-card IDs no longer collapse to 1–2 characters (Issue 3, medium).** The card header row now wraps and the badge group goes full-width on phones (`w-full … sm:w-auto`), so the id keeps a readable width (measured 285px for a real card id) instead of competing with the project/estimate/priority/status badges on one line.
+
+### Added
+
+- **Anonymous visit counter on the About page.** The hosted demo now shows a single visit count at the bottom of the About view (`client/src/lib/useVisitCount.ts`, counts the first page-view per browser session via the public `abacus.jasoncameron.dev` counter under its **own** namespace `agent-kanban.riazrahaman.com`). It is deliberately **not** per-visitor tracking: no cookies, no identifiers, no data beyond a counter. The About copy was updated to say so honestly — "local-first · headless-first · no accounts · no tracking · one anonymous counter" — replacing the previous absolute "zero telemetry" claim, and the FAQ answer was rewritten to match.
+
+### Quality gates
+
+- Server suite: **382 tests across 61 suites**, 0 fail. Client suite: **114 tests** (adds the mobile-disclosure / badge-stacking guards and the visit-counter guard). `npx tsc -b` clean; `vite build` clean; `make sec` clean; version lockstep (both manifests, both doc mirrors, this section) enforced by `kanban.version.test.js`.
 
 ## [2.9.0] — 2026-09-25
 

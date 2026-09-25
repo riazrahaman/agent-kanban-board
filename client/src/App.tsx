@@ -57,6 +57,11 @@ export default function App() {
     // lets it slide in as an overlay on demand. Desktop ignores it (rail is
     // always docked from md up).
     const [railOpen, setRailOpen] = useState(false)
+  // v2.9.1: on phones the header's secondary controls collapse behind a "⋯"
+  // disclosure. Left expanded they wrapped to ~8 rows and ate most of the
+  // viewport, squeezing the board to an unusable sliver (see
+  // mobile-rendering-issues.md Issue 1).
+  const [headerOpen, setHeaderOpen] = useState(false)
     // Deployed server version, shown in the header so operators can tell at a
     // glance which build is live. Sourced from /api/health (server/package.json).
     const [version, setVersion] = useState<string | null>(null)
@@ -332,29 +337,42 @@ export default function App() {
 
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
-       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
-         <div className="flex shrink-0 items-center gap-3">
-           <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
-           <div className="flex items-baseline gap-2">
-            <h1 className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
-              Agent Kanban Board
-            </h1>
-            {version && (
-              <span
-                className="font-mono text-[10px] text-muted"
-                title={`Deployed server version (${version})`}
-              >
-                v{version}
-              </span>
-            )}
-           </div>
-         </div>
-         <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 md:gap-3">
-            <ProjectPicker value={project} projects={projects} onChange={selectProject} />
-            <div
-             role="group"
-             aria-label="Switch between the board, the portfolio and the about page"
-             className="flex items-stretch border border-line bg-surface"
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
+            <div className="flex items-baseline gap-2">
+             <h1 className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
+               Agent Kanban Board
+             </h1>
+             {version && (
+               <span
+                 className="font-mono text-[10px] text-muted"
+                 title={`Deployed server version (${version})`}
+               >
+                 v{version}
+               </span>
+             )}
+            </div>
+          </div>
+          {/* v2.9.1: phone-only disclosure. Collapses the header's secondary
+              controls so they cannot wrap the board into a sliver. The view
+              switcher below stays visible because navigation is primary. */}
+          <button
+            type="button"
+            onClick={() => setHeaderOpen((v) => !v)}
+            aria-pressed={headerOpen}
+            aria-expanded={headerOpen}
+            aria-label="Toggle board controls"
+            title="Show/hide the board controls (project, identity, theme)"
+            className="ml-auto border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 md:hidden"
+          >
+            {headerOpen ? 'Close' : '⋯'}
+          </button>
+          <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-2 md:order-none md:ml-auto md:w-auto md:flex-nowrap md:gap-3">
+             <div
+              role="group"
+              aria-label="Switch between the board, the portfolio and the about page"
+              className="flex items-stretch border border-line bg-surface"
             >
               {([
                 ['board', 'Board', 'Show the task board'],
@@ -375,6 +393,13 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <div
+              data-testid="header-controls"
+              className={`min-w-0 flex-wrap items-center gap-2 md:flex md:gap-3 ${
+                headerOpen ? 'flex w-full basis-full' : 'hidden'
+              }`}
+            >
+             <ProjectPicker value={project} projects={projects} onChange={selectProject} />
             <input
              type="text"
              value={agentDraft}
@@ -402,7 +427,7 @@ export default function App() {
              autoComplete="off"
              spellCheck={false}
              className="w-20 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-28 sm:py-1"
-           />
+            />
             <HeaderHelp />
             {!tokenSaved && (
              <span
@@ -445,8 +470,9 @@ export default function App() {
            >
              {theme === 'dark' ? 'Light' : 'Dark'}
            </button>
-         </div>
-       </header>
+            </div>
+          </div>
+        </header>
 
         <main className="flex flex-1 overflow-hidden">
           <ErrorBoundary>

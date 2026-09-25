@@ -45,17 +45,18 @@ test('the filter toolbar never pins a rigid, non-shrinking control row', () => {
   )
 })
 
-test('the toolbar root wraps and every control group can shrink', () => {
+test('the toolbar root wraps and the secondary controls can shrink', () => {
   const root = filtersSource.match(/<div className="([^"]*flex flex-wrap[^"]*)"/)?.[1]
   assert.ok(root, 'BoardFilters must render a wrapping root row')
   assert.match(root, /\bflex-wrap\b/, 'the toolbar root must wrap')
 
-  // The control group (the container holding the selects/buttons) must carry
-  // min-w-0 so flex is allowed to shrink it below its content width.
+  // v2.9.1: the secondary filter controls collapse behind a phone disclosure
+  // (class `min-w-0 flex-wrap ... sm:flex`) and must carry min-w-0 so flex is
+  // allowed to shrink them below their content width.
   assert.match(
     filtersSource,
-    /className="flex min-w-0 flex-wrap items-center gap-2"/,
-    'the toolbar control group must be `flex min-w-0 flex-wrap items-center gap-2`',
+    /className=\{`min-w-0 flex-wrap items-center gap-2 sm:flex/,
+    'the filter control group must keep `min-w-0` and be `sm:flex` so it can shrink and only shows inline from sm up',
   )
 })
 
@@ -112,4 +113,86 @@ test('the header keeps a compact phone rhythm and does not force a tall stack', 
     'the header must use a tighter phone padding (exactly py-2) so it does not eat a fifth of the viewport',
   )
   assert.match(appSource, /text-base[^"]*sm:text-lg/, 'the title must scale down on phones')
+})
+
+// ---------------------------------------------------------------------------
+// v2.9.1 mobile-rendering guards (mobile-rendering-issues.md).
+// ---------------------------------------------------------------------------
+
+test('the header collapses secondary controls behind a phone disclosure', () => {
+  // Issue 1: the header's secondary controls must NOT all be visible on phones.
+  // A `⋯` disclosure (md:hidden) toggles them; the identity/token/theme block
+  // lives inside a `hidden`-when-closed container that only goes inline at md.
+  assert.match(
+    appSource,
+    /aria-label="Toggle board controls"/,
+    'the header must expose a phone-only controls disclosure button',
+  )
+  assert.match(
+    appSource,
+    /className="ml-auto border border-line bg-surface px-2\.5 py-1\.5[^"]*md:hidden"/,
+    'the controls disclosure must be phone-only (md:hidden)',
+  )
+  assert.match(
+    appSource,
+    /data-testid="header-controls"/,
+    'the collapsible header control block must be identifiable',
+  )
+  // The block is `hidden` unless the disclosure is open, and always `md:flex`.
+  assert.match(
+    appSource,
+    /headerOpen \? 'flex w-full basis-full' : 'hidden'/,
+    'the header control block must be hidden when the disclosure is closed',
+  )
+  assert.match(
+    appSource,
+    /items-center gap-2 md:flex md:gap-3/,
+    'the header control block must always show inline from md up',
+  )
+})
+
+test('the filter bar collapses secondary controls behind a phone disclosure', () => {
+  // Issue 1: the filter bar must not free-wrap into ~5 rows on phones.
+  assert.match(
+    filtersSource,
+    /aria-label="Toggle filters and actions"/,
+    'BoardFilters must expose a phone-only filters disclosure',
+  )
+  assert.match(
+    filtersSource,
+    /className="[^"]*sm:hidden"/,
+    'the filters disclosure must be phone-only (sm:hidden)',
+  )
+  assert.match(
+    filtersSource,
+    /data-testid="filter-controls"/,
+    'the collapsible filter control block must be identifiable',
+  )
+  assert.match(
+    filtersSource,
+    /sm:flex \$\{/,
+    'the filter control block must always show inline from sm up',
+  )
+})
+
+test('the column scroll-arrow buttons never overlay card content on phones', () => {
+  // Issue 2: the absolute arrows sat on top of cards in an 85vw column.
+  const boardSource = readFileSync(join(CLIENT_SRC, 'components', 'Board.tsx'), 'utf8')
+  const arrows = [...boardSource.matchAll(/aria-label="Scroll columns[^"]*"[\s\S]*?className="([^"]*)"/g)]
+  assert.equal(arrows.length, 2, 'Board.tsx must render both scroll-arrow buttons')
+  for (const [, cls] of arrows) {
+    assert.match(cls, /\bhidden\b/, 'each scroll arrow must be hidden by default')
+    assert.match(cls, /\bmd:flex\b/, 'each scroll arrow may only reappear from md up')
+  }
+})
+
+test('the card header stacks the badge group so the id keeps real width', () => {
+  // Issue 3: the id collapsed to a sliver against a wide badge row on mobile.
+  const cardSource = readFileSync(join(CLIENT_SRC, 'components', 'TaskCard.tsx'), 'utf8')
+  const badgeGroup = cardSource.match(
+    /<div className="([^"]*shrink-0[^"]*items-center gap-1\.5[^"]*)"/,
+  )?.[1]
+  assert.ok(badgeGroup, 'the card header must render a badge group')
+  assert.match(badgeGroup, /\bw-full\b/, 'the badge group must take a full row on phones')
+  assert.match(badgeGroup, /\bsm:w-auto\b/, 'the badge group returns inline from sm up')
 })
