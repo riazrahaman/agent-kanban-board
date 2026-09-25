@@ -208,6 +208,8 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/health/ready` | Readiness probe — 200 once the store has loaded, 503 before (used by the deploy healthcheck) | Public |
 | `POST` | `/api/auth/session` | HMAC session-token handshake (requires `KANBAN_AUTH_SECRET`) | Proof-of-secret |
 | `POST` | `/api/auth/revoke` | Revoke the caller's own HMAC session token immediately (jti deny-list) | Bearer session token |
+| `POST` | `/api/tasks/:id/assign` | v2.11.0 — privileged assign-to-agent (or `agent_id: null` to release) | Bearer + role |
+| `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
 
 ---
 
@@ -237,7 +239,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (394 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (114 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (403 tests, including the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (120 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 ### Releasing
 
@@ -282,16 +284,20 @@ tracked as `opt-*` backlog cards on the live board. Honest status per item:
 1. ~~**Ticket Details Panel**~~ — **shipped in v2.5.0**: the task sheet now
    carries a comments thread (server-persisted `comments[]`,
    `POST /api/tasks/:id/comments`) beside the description and activity log.
-2. **Operator Assignment** — an admin/operator can already work around this by
-   claiming on an agent's behalf, but there is no explicit "assign to agent"
-   action beyond agent self-claim, and no avatars.
+2. ~~**Operator Assignment**~~ — **shipped in v2.11.0**: a privileged caller
+   can assign a task to a named agent (or release it) with
+   `POST /api/tasks/:id/assign`; a plain assignment sets the owner + lease and
+   lifts a BACKLOG card to BUILDING.
 3. ~~**Custom Column Colors**~~ — **shipped in v2.5.0**: per-column accent
    overrides via `PUT /api/settings`, persisted per project and applied live
    over SSE.
-4. **Milestones / Goals** — group tickets under a milestone banner and show
-   per-milestone progress.
-5. **Integration Hooks** — outbound webhooks / API sync with GitHub, Jira, etc.
-   (the Telegram reclaim notifier is the only outbound hook today).
+4. ~~**Milestones / Goals**~~ — **shipped in v2.11.0**: cards carry an optional
+   `milestone` label and `GET /api/milestones` rolls them up per goal (total /
+   done / %) for the portfolio view.
+5. ~~**Integration Hooks**~~ — **shipped in v2.11.0**: signed outbound JSON
+   webhooks (`KANBAN_WEBHOOK_URLS`, HMAC-SHA256 `x-kanban-signature`) deliver
+   task diff events to GitHub/Jira/any HTTP sink, alongside the Telegram
+   reclaim notifier.
 
 ### From the external security & quality review (Sep 2024)
 

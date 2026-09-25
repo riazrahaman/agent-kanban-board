@@ -351,7 +351,8 @@ export default function TaskSheet({ task, onClose }: Props) {
                 type="text"
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
-                placeholder="Agent ID / assignment target"
+                placeholder="Agent ID"
+                title="Also the target for Assign / Release"
                 className="w-full border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
               />
               <textarea

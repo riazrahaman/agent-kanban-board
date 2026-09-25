@@ -157,6 +157,39 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
           </tr>
         </tfoot>
       </table>
+      {milestones.length > 0 && (
+        <section className="border-t border-line p-4">
+          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+            Milestones
+          </h3>
+          <ul className="mt-3 space-y-2">
+            {milestones.map((m) => (
+              <li
+                key={`${m.project}/${m.milestone}`}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-l-2 border-live pl-3"
+              >
+                <span className="font-mono text-xs text-live" title={`Milestone: ${m.milestone}`}>
+                  ◇ {m.milestone}
+                </span>
+                {m.project && (
+                  <span
+                    className="max-w-[12rem] truncate border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] text-muted"
+                    title={`Project: ${m.project}`}
+                  >
+                    {m.project}
+                  </span>
+                )}
+                <span className="font-mono text-[11px] tabular-nums text-ink">
+                  {m.done}/{m.total}
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-muted" title={`${m.progress}% complete`}>
+                  {m.progress}%
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }
