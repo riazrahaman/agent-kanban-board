@@ -9,6 +9,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
+import { proofInput } from '../routes/auth.js';
 import * as store from '../store.js';
 
 const SECRET = 'test-session-secret';
@@ -33,8 +34,8 @@ async function jsonRequest(baseUrl, route, options = {}) {
   return { response, body };
 }
 
-function proofFor(secret, clientNonce) {
-  return crypto.createHmac('sha256', secret).update(clientNonce).digest('hex');
+function proofFor(secret, clientNonce, role, project) {
+  return crypto.createHmac('sha256', secret).update(proofInput(clientNonce, role, project)).digest('hex');
 }
 
 describe('HMAC session-token auth (variant B)', () => {
@@ -84,7 +85,7 @@ describe('HMAC session-token auth (variant B)', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_nonce: clientNonce,
-        proof: proofFor(SECRET, clientNonce),
+        proof: proofFor(SECRET, clientNonce, role, project),
         role,
         project,
       }),
@@ -106,7 +107,7 @@ describe('HMAC session-token auth (variant B)', () => {
     const r = await jsonRequest(baseUrl, '/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_nonce: 'n', proof: 'deadbeef' }),
+      body: JSON.stringify({ client_nonce: 'n', proof: 'deadbeef', role: 'builder', project: 'alpha' }),
     });
     assert.equal(r.response.status, 401);
   });

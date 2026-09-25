@@ -13,6 +13,33 @@ import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 
+// ---------------------------------------------------------------------------
+// SEC-05 (v2.6.0) — cap concurrent SSE streams.
+// ---------------------------------------------------------------------------
+// An unbounded /api/events fan-out is a DoS vector: each long-lived stream
+// holds a listener + open socket indefinitely. A module-level counter caps
+// concurrent connections; `KANBAN_MAX_SSE_STREAMS` sets the ceiling (default
+// 100; a negative value disables the cap entirely so a test or operator can
+// turn it off). Over-cap requests get 503 BEFORE any SSE headers are set so a
+// client does not mistake a rejection for an open stream.
+let activeSseStreams = 0;
+
+function maxSseStreams() {
+  const raw = process.env.KANBAN_MAX_SSE_STREAMS;
+  if (raw === undefined || raw === '') return 100;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 100;
+  return n; // negative => unlimited (checked at call site)
+}
+
+export function liveSseStreamCount() {
+  return activeSseStreams;
+}
+
+export function resetSseStreams() {
+  activeSseStreams = 0;
+}
+
 /**
  * Resolve the interface to bind.
  *
@@ -57,6 +84,13 @@ export function createApp() {
    * The legacy path is kept byte-compatible so the existing client is unaffected.
    */
   app.get('/api/events', (req, res) => {
+    // SEC-05: cap concurrent SSE streams BEFORE setting headers.
+    const cap = maxSseStreams();
+    if (cap >= 0 && activeSseStreams >= cap) {
+      return res.status(503).json({ error: 'Too many concurrent event streams' });
+    }
+    activeSseStreams += 1;
+
     const rawProject = typeof req.query.project === 'string' ? req.query.project.trim() : '';
     const project = rawProject || null;
     const isDiffMode = req.query.mode === 'diff';
@@ -116,6 +150,7 @@ export function createApp() {
       req.on('close', () => {
         closed = true;
         unsubscribe();
+        activeSseStreams = Math.max(0, activeSseStreams - 1);
       });
     });
 

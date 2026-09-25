@@ -106,3 +106,93 @@ export function createRateLimitMiddleware() {
     return next();
   };
 }
+
+// ---------------------------------------------------------------------------
+// ENH-09 (v2.6.0) — rate-limit FAILED AUTH attempts per client IP.
+// ---------------------------------------------------------------------------
+// A second fixed-window bucket map keyed by client IP, separate from the
+// per-project mutation budget. This exists so a brute-force attack on the auth
+// token (401 spam) or the session proof (401/403 spam) is throttled even when
+// the per-project mutation rate limit is not configured — the mutation limiter
+// only counts requests that PASS auth, so it never sees the failures.
+//
+// Disabled by default (no env => disabled) so existing tests and deployments
+// are unaffected. `KANBAN_AUTH_RATE_LIMIT_PER_MIN` sets the per-IP ceiling; when
+// unset it falls back to `KANBAN_RATE_LIMIT_PER_MIN`, and if BOTH are unset the
+// whole subsystem is inert.
+const authBuckets = new Map(); // ip -> { count, windowStartMs }
+
+export function resetAuthLimits() {
+  authBuckets.clear();
+}
+
+export function trackedAuthIpCount() {
+  return authBuckets.size;
+}
+
+function authLimitPerWindow() {
+  const raw = process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN;
+  if (raw === undefined || raw === '') {
+    // Fall back to the mutation limit; if that is also unset, disabled.
+    return limitPerWindow();
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n;
+}
+
+function clientIp(req) {
+  // Trust X-Forwarded-For when present (common behind a reverse proxy); fall
+  // back to the raw socket address. Only the first hop is used.
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.trim() !== '') {
+    return fwd.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || req.ip || 'unknown';
+}
+
+function pruneAuthExpired(now, span) {
+  for (const [ip, bucket] of authBuckets) {
+    if (now - bucket.windowStartMs >= span) authBuckets.delete(ip);
+  }
+}
+
+/**
+ * Records a failed auth attempt for the request's client IP. Called on every
+ * 401/403 the auth middleware (or the handshake routes) return. Inert when the
+ * auth rate limit is disabled.
+ */
+export function recordAuthFailure(req) {
+  const limit = authLimitPerWindow();
+  if (limit === 0) return;
+  const span = windowMs();
+  const now = Date.now();
+  const ip = clientIp(req);
+  pruneAuthExpired(now, span);
+  let bucket = authBuckets.get(ip);
+  if (!bucket || now - bucket.windowStartMs >= span) {
+    bucket = { count: 0, windowStartMs: now };
+    authBuckets.set(ip, bucket);
+  }
+  bucket.count += 1;
+}
+
+/**
+ * Returns the retry-after in ms when the client IP has exceeded the auth-failure
+ * budget, or null when it is within budget (or the subsystem is disabled).
+ */
+export function authFailuresExceeded(req) {
+  const limit = authLimitPerWindow();
+  if (limit === 0) return null;
+  const span = windowMs();
+  const now = Date.now();
+  const ip = clientIp(req);
+  pruneAuthExpired(now, span);
+  const bucket = authBuckets.get(ip);
+  if (!bucket) return null;
+  if (now - bucket.windowStartMs >= span) return null;
+  if (bucket.count >= limit) {
+    return Math.max(0, bucket.windowStartMs + span - now);
+  }
+  return null;
+}

@@ -124,6 +124,8 @@ The board features pluggable persistence:
    | `KANBAN_ORPHAN_GRACE_MS` | `300000` | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to BACKLOG. Decoupled from the claim TTL (raising the TTL does not stretch this window). Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
    | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open. Health probes stay open. |
+   | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |
+   | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | *(falls back to `KANBAN_RATE_LIMIT_PER_MIN`)* | Per-IP ceiling on FAILED auth attempts (401/403) on mutations and the session/ticket handshakes; exceeding it returns 429 with `retry_after_ms`. Inert when both this and `KANBAN_RATE_LIMIT_PER_MIN` are unset. |
 
    ---
 
@@ -227,7 +229,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (300 tests, including the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (329 tests, including the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -313,6 +315,14 @@ priority items:
    were unbounded.~~ **Shipped in v2.5.8** (privileged-only non-`BACKLOG`
    creation, owner always from `/claim`, empty audit fields, validated
    `depends_on`/`metadata` + length caps).
+
+7. ~~**Security hardening batch (BUG-07, SEC-03, SEC-05, SEC-07, ENH-09)** —
+   empty/typo'd purge filters wiped the board, the HMAC session proof was
+   only nonce-bound (replayable across roles/projects), SSE streams were
+   uncapped, token comparison leaked length, and failed auth was unthrottled.~~
+   **Shipped in v2.6.0** (recognized-key purge guard, `client_nonce:role:project`
+   proof binding, `KANBAN_MAX_SSE_STREAMS`, shared constant-time
+   `server/utils/constantTime.js`, `KANBAN_AUTH_RATE_LIMIT_PER_MIN`).
 
 The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
 ENH-01..12) lives on the `kanbann` project of the live board.

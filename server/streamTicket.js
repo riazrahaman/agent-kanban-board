@@ -23,6 +23,7 @@
  */
 import crypto from 'node:crypto';
 import { authSecret } from './sessionAuth.js';
+import { tokensMatch } from './utils/constantTime.js';
 
 const TICKET_TTL_MS = 60 * 1000;
 
@@ -44,14 +45,6 @@ function ticketSecret() {
 
 function macHex(secret, payload) {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
-}
-
-function tokensMatch(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 function prune(now = Date.now()) {

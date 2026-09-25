@@ -2673,7 +2673,13 @@ export async function appendLog(id, agentId, message, project, { expected_versio
 
     if (!agentId || !message) {
       return { error: 'agent_id and message are required', status: 400 };
-       }
+    }
+    if (typeof message !== 'string' || message.trim() === '') {
+      return { error: 'message must be a non-empty string', status: 400 };
+    }
+    if (typeof agentId !== 'string' || agentId.trim() === '') {
+      return { error: 'agent_id must be a non-empty string', status: 400 };
+    }
 
         // §2.6: enforce the version guard before building the candidate.
     const conflict = versionConflict(task, expectedVersion);
@@ -2763,6 +2769,12 @@ export async function addComment(id, agentId, message, project, { expected_versi
 
     if (!agentId || !message || typeof message !== 'string') {
       return { error: 'agent_id and message are required', status: 400 };
+    }
+    if (message.trim() === '') {
+      return { error: 'message must be a non-empty string', status: 400 };
+    }
+    if (typeof agentId !== 'string' || agentId.trim() === '') {
+      return { error: 'agent_id must be a non-empty string', status: 400 };
     }
 
     // §2.6: enforce the version guard before building the candidate.
@@ -3041,6 +3053,14 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
         return idSet.has(compositeKey(t.project, t.id));
       });
     } else if (filter && typeof filter === 'object') {
+      // BUG-07 (v2.6.0): a filter with no recognized key (e.g. {} or {foo:1})
+      // previously matched EVERY task in scope — an accidental "delete all".
+      // Require at least one recognized key so an empty/typo'd filter is a 400
+      // instead of a board-wipe.
+      const RECOGNIZED = ['status', 'project', 'assigned_agent', 'older_than_days'];
+      if (!RECOGNIZED.some((k) => k in filter)) {
+        return { error: 'purge filter must include at least one of: status, project, assigned_agent, older_than_days', status: 400 };
+      }
       const status = filter.status !== undefined ? normalizeStatus(filter.status) : undefined;
       const fp = filter.project;
       // A filter.project that disagrees with the authorized scope widens the
