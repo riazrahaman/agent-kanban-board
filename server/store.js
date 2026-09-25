@@ -6,106 +6,61 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import yaml from 'yaml';
 import { escapeHtml } from './utils/sanitize.js';
+import {
+  STATUSES,
+  VALID_STATUS_LIST,
+  normalizeStatus,
+  isValidStatus,
+  VALID_TRANSITIONS,
+  canTransition,
+  canRoleTransition,
+} from './state-machine.js';
+import {
+  writeAtomic,
+  isValidProjectId,
+  isValidTaskId,
+  toBranch,
+  defaultProjectName,
+  normalizeProject,
+  resolveProjectScope,
+  gitRoot,
+  jsonDataDir,
+  backfillLeaseFields,
+} from './task-identity.js';
+import { JsonStorage, GitYamlStorage } from './storage.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ============================================================================
-// Loop Statuses (KB-08) & State Machine (KB-01, KB-02)
-// ============================================================================
-
-export const STATUSES = {
-  BACKLOG: 'BACKLOG',
-  BUILDING: 'BUILDING',
-  IN_REVIEW: 'IN_REVIEW',
-  IN_TEST: 'IN_TEST',
-  BLOCKED: 'BLOCKED',
-  DONE: 'DONE',
+// ENH-11 (v2.10.0): the loop state machine (statuses + transition graph + role
+// matrix) lives in ./state-machine.js. Re-exported here so every existing
+// `../store.js` importer keeps working unchanged.
+export {
+  STATUSES,
+  VALID_STATUS_LIST,
+  normalizeStatus,
+  isValidStatus,
+  VALID_TRANSITIONS,
+  canTransition,
+  canRoleTransition,
 };
 
-export const VALID_STATUS_LIST = Object.values(STATUSES);
-
-/**
- * Normalizes any status string (including legacy lowercase or aliases)
- * to canonical uppercase loop status.
- */
-export function normalizeStatus(status) {
-  if (!status || typeof status !== 'string') return null;
-  const s = status.trim().toUpperCase();
-  if (s === 'TODO') return STATUSES.BACKLOG;
-  if (s === 'IN_PROGRESS') return STATUSES.BUILDING;
-  if (VALID_STATUS_LIST.includes(s)) return s;
-  return null;
-}
-
-export function isValidStatus(status) {
-  return normalizeStatus(status) !== null;
-}
-
-/**
- * Valid transitions per loop protocol (spec Sec 2, Sec 9.4.3 KB-01):
- * BACKLOG -> BUILDING
- * BUILDING -> IN_REVIEW, BLOCKED
- * IN_REVIEW -> IN_TEST, BUILDING, BLOCKED
- * IN_TEST -> DONE, BUILDING, BLOCKED
- * BLOCKED -> BUILDING, IN_REVIEW, IN_TEST, BACKLOG
- * DONE -> terminal
- */
-export const VALID_TRANSITIONS = {
-  [STATUSES.BACKLOG]: [STATUSES.BUILDING, STATUSES.BLOCKED],
-  [STATUSES.BUILDING]: [STATUSES.IN_REVIEW, STATUSES.BLOCKED],
-  [STATUSES.IN_REVIEW]: [STATUSES.IN_TEST, STATUSES.BUILDING, STATUSES.BLOCKED],
-  [STATUSES.IN_TEST]: [STATUSES.DONE, STATUSES.BUILDING, STATUSES.BLOCKED],
-  [STATUSES.BLOCKED]: [STATUSES.BUILDING, STATUSES.IN_REVIEW, STATUSES.IN_TEST, STATUSES.BACKLOG],
-  [STATUSES.DONE]: [],
+// ENH-11 (v2.10.0): task identity + project namespacing + writeAtomic live in
+// ./task-identity.js. Re-exported here so existing importers are unaffected.
+export {
+  writeAtomic,
+  isValidProjectId,
+  isValidTaskId,
+  toBranch,
+  defaultProjectName,
+  normalizeProject,
+  resolveProjectScope,
+  gitRoot,
+  jsonDataDir,
 };
 
-export function canTransition(fromStatus, toStatus) {
-  const from = normalizeStatus(fromStatus);
-  const to = normalizeStatus(toStatus);
-  if (!from || !to) return false;
-  if (from === to) return true;
-  const allowed = VALID_TRANSITIONS[from] || [];
-  return allowed.includes(to);
-}
-
-/**
- * Role ownership rules (spec Sec 1, Sec 3.2, Sec 9.4.3 KB-02):
- * - builder: may set BUILDING, IN_REVIEW
- * - reviewer: may set IN_TEST or return to BUILDING
- * - tester: may set DONE or return to BUILDING
- * - runner / system / human: may set/clear BLOCKED and administer transitions
- */
-export function canRoleTransition(role, fromStatus, toStatus) {
-  const from = normalizeStatus(fromStatus);
-  const to = normalizeStatus(toStatus);
-  if (!from || !to) return false;
-  if (from === to) return true;
-
-  const r = typeof role === 'string' ? role.toLowerCase() : null;
-  if (['runner', 'system', 'human', 'admin'].includes(r)) {
-    return true;
-  }
-
-  // BLOCKED transition is runner-only (spec Sec 3.2), no active role sets it manually
-  if (to === STATUSES.BLOCKED) {
-    return false;
-  }
-
-  if (r === 'builder') {
-    return [STATUSES.BUILDING, STATUSES.IN_REVIEW].includes(to);
-  }
-
-  if (r === 'reviewer') {
-    return [STATUSES.IN_TEST, STATUSES.BUILDING].includes(to);
-  }
-
-  if (r === 'tester') {
-    return [STATUSES.DONE, STATUSES.BUILDING].includes(to);
-  }
-
-  return false;
-}
+// ENH-11 (v2.10.0): the pluggable storage backends live in ./storage.js.
+export { JsonStorage, GitYamlStorage };
 
 // ============================================================================
 // Injectable clock (§2.4) — all lease math goes through nowFn() so tests can
@@ -182,709 +137,11 @@ function isoFromMs(ms) {
   return new Date(ms).toISOString();
 }
 
-// ============================================================================
-// Atomic File Operations (KB-05)
-// ============================================================================
-
-export async function writeAtomic(filePath, content) {
-  const dir = path.dirname(filePath);
-  await mkdir(dir, { recursive: true });
-  const tmpPath = path.join(
-    dir,
-    `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`
-  );
-  await writeFile(tmpPath, content, 'utf-8');
-  await rename(tmpPath, filePath);
-}
-
-// ============================================================================
-// Project / Workspace namespacing (§2.1)
-// ============================================================================
-
-// Project ids are confined to a strict charset so they cannot introduce path
-// traversal into `<project>.json` or `<project>/<id>.yml` filenames.
-const PROJECT_ID_RE = /^[A-Za-z0-9_-]+$/;
-const TASK_ID_RE = /^[A-Za-z0-9_-]+$/;
-
-export function isValidProjectId(id) {
-  return typeof id === 'string' && PROJECT_ID_RE.test(id);
-}
-
-export function isValidTaskId(id) {
-  return typeof id === 'string' && TASK_ID_RE.test(id);
-}
-
-/**
- * Canonical normaliser for `task.branch` — the ONE definition of the rule,
- * shared by all three write paths (GitYamlStorage.serializeCard, createTask and
- * the patchTask allow-list). Before this existed the two create/serialize sites
- * coerced blanks to `null` while the PATCH path assigned verbatim, so the same
- * task could report `"   "` / `123` over REST and persist it, yet read back as
- * `null` from the git YAML card.
- *
- * A branch is a *claim about a real git ref* that the reclaim notifier renders
- * to a human, so an unusable value must round-trip as `null` rather than being
- * invented (`task/<id>`) or served back raw. The rule:
- *
- *   - a string with non-whitespace content is kept **verbatim, untrimmed**: a
- *     ref is the caller's exact claim, so `'  fix/padded  '` stays byte-for-byte
- *     as sent. Decided deliberately — trimming here would silently rewrite real
- *     caller data, and all three paths already agreed on preserving padding;
- *     collapsing the *blank* cases to `null` is the essential invariant.
- *   - everything else — absent, `null`, `''`, whitespace-only, and non-strings
- *     (`123` also violates the client's declared `branch?: string`) — is
- *     `null`.
- */
-export function toBranch(value) {
-  return typeof value === 'string' && value.trim() ? value : null;
-}
-
-/**
- * The implicit project that single-project deployments live in. Its storage
- * reuses the legacy location (KANBAN_DATA_FILE / flat git root) so a single
- * project deployment is byte-for-byte unchanged.
- */
-export function defaultProjectName() {
-  const p = process.env.KANBAN_DEFAULT_PROJECT;
-  return isValidProjectId(p) ? p : 'default';
-}
-
-/**
- * Coerces an input to a canonical project name. Invalid / empty input falls
- * back to the default project so lookups are total.
- */
-export function normalizeProject(project, fallback) {
-  const fb = fallback || defaultProjectName();
-  if (project === undefined || project === null || project === '') return fb;
-  if (isValidProjectId(project)) return project;
-  return fb;
-}
-
-/**
- * Resolves the {project, shortId} pair for a lookup. Accepts three forms:
- *   getTask('foo')            -> default/foo
- *   getTask('foo', 'atlas')   -> atlas/foo
- *   getTask('atlas:foo')      -> atlas/foo  (composite, project wins on first ':')
- */
-export function resolveProjectScope(id, projectArg) {
-  let project = projectArg;
-  let shortId = id;
-  if (typeof id === 'string' && id.includes(':')) {
-    const idx = id.indexOf(':');
-    const maybeProject = id.slice(0, idx);
-    const rest = id.slice(idx + 1);
-    if (isValidProjectId(maybeProject) && rest.length > 0) {
-      project = maybeProject;
-      shortId = rest;
-    }
-  }
-  project = normalizeProject(project);
-  return { project, shortId };
-}
+// ENH-11 (v2.10.0): Atomic File Operations + Project/Workspace namespacing
+// moved to ./task-identity.js and re-exported at the top of this file.
 
 function compositeKey(project, id) {
   return `${project}/${id}`;
-}
-
-// ============================================================================
-// Pluggable Storage Backends (KB-09) — partitioned per project (§2.1/§2.8)
-// ============================================================================
-
-/**
- * Backfills the lease fields (§2.4) + CAS version (§2.6) on records loaded from
- * a JSON sink that predates them: `claim_expires_at` -> null, `reclaim_count` ->
- * 0, `version` -> 1. Additive so legacy data is total without a migration step.
- *
- * `branch` is normalised through the shared `toBranch` normaliser so legacy
- * dirty values (whitespace-only strings, empty strings, non-strings like 123,
- * stale `task/<id>` fabrications) are nulled on READ exactly as the write paths
- * (serializeCard / createTask / patchTask) normalise them on WRITE. Without
- * this a legacy dirty branch persisted by an older build re-emerges verbatim in
- * every API response and on git-backend cards (they re-serialise from memory on
- * each save), so read and write would disagree forever.
- */
-function backfillLeaseFields(list) {
-  for (const t of list) {
-    if (!Number.isInteger(t.version)) t.version = 1;
-    if (t.claim_expires_at === undefined) t.claim_expires_at = null;
-    if (t.reclaim_count === undefined) t.reclaim_count = 0;
-    if (t.branch !== undefined) t.branch = toBranch(t.branch);
-    // v2.5.0: every card carries a comments thread; legacy records default to
-    // an empty one so the read surface (and the client renderer) is total.
-    if (!Array.isArray(t.comments)) t.comments = [];
-  }
-  return list;
-}
-
-export class JsonStorage {
-  constructor(filePath, options = {}) {
-    this.filePath = filePath;
-    // project may be undefined (legacy default), 'default', or a named project.
-    this.project = options.project;
-    this.isDefault = options.isDefault === true || !this.project || this.project === defaultProjectName();
-    // Archive lives in a sibling `archive/` directory next to the tasks dir.
-    const dir = path.dirname(filePath);
-    this.archiveFile = path.join(dir, 'archive', `${this.project || defaultProjectName()}.json`);
-    // v2.5.0: per-project display settings sink, mirroring the archive sibling
-    // precedent. The default project anchors its settings next to the live
-    // tasks file (KANBAN_DATA_FILE / server/tasks.json) so a deploy without
-    // KANBAN_DATA_DIR never falls into the cross-repo jsonDataDir() fallback.
-    this.settingsFile = this.isDefault
-      ? path.join(dir, 'settings.json')
-      : path.join(jsonDataDir(), 'settings', `${this.project}.json`);
-    // PERF-02: append-only journal path (sibling of the main file).
-    this.journalFile = `${filePath}.journal.jsonl`;
-  }
-
-  // PERF-02: journal env-var helpers. When KANBAN_STORAGE_JOURNAL is not '1',
-  // the journal is OFF and behavior is byte-identical to the pre-2.8 path.
-  _journalEnabled() {
-    return process.env.KANBAN_STORAGE_JOURNAL === '1';
-  }
-  _journalCompactBytes() {
-    const raw = process.env.KANBAN_JOURNAL_COMPACT_BYTES;
-    if (raw === undefined || raw === '') return 1024 * 1024;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 1024 * 1024;
-  }
-
-  async load() {
-    if (!existsSync(this.filePath)) {
-      // PERF-02: absent base file but journal may have entries (first boot
-      // with journaling ON — saveTask only appends to the journal until
-      // compaction). Replay the journal over an empty list.
-      if (this._journalEnabled() && existsSync(this.journalFile)) {
-        const list = [];
-        await this._replayJournal(list);
-        return list;
-      }
-      return []; // absent file: normal first boot
-    }
-    try {
-      const raw = await readFile(this.filePath, 'utf-8');
-      const parsed = JSON.parse(raw);
-       // §2.6: legacy JSON records predate the CAS version field; backfill to 1
-       // so the first patch bumps a well-defined baseline.
-      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      backfillLeaseFields(list);
-      // PERF-02: replay the journal over the base file if journaling is enabled.
-      if (this._journalEnabled() && existsSync(this.journalFile)) {
-        await this._replayJournal(list);
-      }
-      return list;
-    } catch (err) {
-      // BUG-01 (v2.5.2): the file EXISTS but is corrupt (parse failure, wrong
-      // shape, unreadable). Fail closed — loading an empty list here would let
-      // the next save overwrite the corrupt file and destroy the board's
-      // data. startServer awaits loadStore(), so the throw refuses to boot.
-      console.error(
-        `[kanban JsonStorage] corrupt data file ${this.filePath}: ${err.message} — refusing to start (fix or remove the file; a backup may be recoverable)`
-      );
-      throw err;
-    }
-  }
-
-  /**
-   * PERF-02 — replay the append-only journal over the base task list.
-   * Each journal line is `{op:'upsert'|'remove', id, task?}`. An `upsert`
-   * replaces or appends the task by id; a `remove` drops it. After replay,
-   * if the journal exceeds the compact threshold, compact it into the base
-   * file and truncate the journal.
-   */
-  async _replayJournal(baseList) {
-    const journalRaw = await readFile(this.journalFile, 'utf-8');
-    const lines = journalRaw.split('\n').filter((l) => l.trim());
-    const byId = new Map(baseList.map((t) => [t.id, t]));
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.op === 'upsert' && entry.task) {
-          byId.set(entry.task.id, entry.task);
-        } else if (entry.op === 'remove' && entry.id) {
-          byId.delete(entry.id);
-        }
-      } catch (err) {
-        console.warn(`[kanban JsonStorage] journal replay skip bad line: ${err.message}`);
-      }
-    }
-    const replayed = [...byId.values()];
-    backfillLeaseFields(replayed);
-
-    // Compact if the journal is large: write the replayed list to the base
-    // file (writeAtomic) and truncate the journal. This keeps the journal
-    // bounded while the base file stays the canonical source.
-    const journalBytes = Buffer.byteLength(journalRaw, 'utf8');
-    if (journalBytes >= this._journalCompactBytes()) {
-      await this._writeCanonical(replayed);
-      await writeFile(this.journalFile, '', 'utf-8');
-    }
-    // Mutate baseList in place so the caller sees the replayed state.
-    baseList.length = 0;
-    for (const t of replayed) baseList.push(t);
-  }
-
-  /**
-   * Writes the canonical base file (the full `{tasks:[...]}` or
-   * `{project, tasks:[...]}` shape). Used by both `save()` and journal
-   * compaction so the on-disk format stays byte-compatible.
-   */
-  async _writeCanonical(tasks) {
-    const payload = this.isDefault
-      ? { tasks }
-      : { project: this.project, tasks };
-    await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
-  }
-
-  async save(tasks) {
-    // PERF-02: when journaling is ON, `save` is a full canonical rewrite
-    // (used by archive sweep / delete / purge — the partition must reflect the
-    // surviving set). The journal is truncated because the base file is now
-    // authoritative for the full set.
-    if (this._journalEnabled()) {
-      await this._writeCanonical(tasks);
-      await writeFile(this.journalFile, '', 'utf-8');
-      return;
-    }
-    // Default project keeps the legacy `{ tasks: [...] }` shape so an existing
-    // single-project file is byte-for-byte compatible. Named partitions embed
-    // the project name so the partition is self-describing.
-    const payload = this.isDefault
-      ? { tasks }
-      : { project: this.project, tasks };
-    await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
-  }
-
-  /**
-   * PERF-02 — single-task save with an append-only journal fast path.
-   * When the journal is enabled, append one JSON line `{op:'upsert', task}`
-   * instead of rewriting the entire partition file. This reduces write
-   * amplification from O(partition) to O(1) per mutation. The journal is
-   * replayed on `load()` and compacted when it exceeds the threshold.
-   *
-   * With the journal OFF (default), this delegates to the original
-   * whole-partition rewrite — byte-identical to the pre-2.8 behavior.
-   */
-  async saveTask(task, allTasks) {
-    if (this._journalEnabled()) {
-      const entry = JSON.stringify({ op: 'upsert', id: task.id, task }) + '\n';
-      await mkdir(path.dirname(this.journalFile), { recursive: true });
-      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
-      // Compact if the journal has grown past the threshold.
-      if (existsSync(this.journalFile)) {
-        const stat = await import('node:fs/promises').then((m) => m.stat);
-        try {
-          const st = await stat(this.journalFile);
-          if (st.size >= this._journalCompactBytes()) {
-            // Compact: write the full partition and truncate the journal.
-            await this._writeCanonical(allTasks);
-            await writeFile(this.journalFile, '', 'utf-8');
-          }
-        } catch {
-          // stat failure: fall through — the journal is advisory, not authoritative.
-        }
-      }
-      return;
-    }
-    await this.save(allTasks);
-  }
-
-  async deleteTask(task, survivors) {
-    if (this._journalEnabled()) {
-      // Record the removal in the journal, then rewrite the canonical file
-      // (a delete changes the partition set, so the base file must reflect it).
-      const entry = JSON.stringify({ op: 'remove', id: task.id }) + '\n';
-      await mkdir(path.dirname(this.journalFile), { recursive: true });
-      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
-      await this._writeCanonical(survivors);
-      await writeFile(this.journalFile, '', 'utf-8');
-      return;
-    }
-    await this.save(survivors);
-  }
-
-  async loadArchive() {
-    try {
-      if (!existsSync(this.archiveFile)) return [];
-      const parsed = JSON.parse(await readFile(this.archiveFile, 'utf-8'));
-       // §2.6: backfill version 1 on legacy archived JSON records.
-      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      backfillLeaseFields(list);
-      return list;
-    } catch (err) {
-      console.warn(`[kanban JsonStorage] loadArchive error: ${err.message} — starting empty`);
-      return [];
-    }
-  }
-
-  async saveArchive(tasks) {
-    const payload = {
-      project: this.project || defaultProjectName(),
-      archived_at: new Date().toISOString(),
-      tasks,
-    };
-    await writeAtomic(this.archiveFile, JSON.stringify(payload, null, 2));
-  }
-
-  // v2.5.6: trash sink, mirroring the archive sibling. Deleted tasks land here
-  // (stamped deleted_at/deleted_by) so an admin can restore or hard-purge them.
-  get trashFile() {
-    const dir = path.dirname(this.filePath);
-    return path.join(dir, 'trash', `${this.project || defaultProjectName()}.json`);
-  }
-
-  async loadTrash() {
-    try {
-      if (!existsSync(this.trashFile)) return [];
-      const parsed = JSON.parse(await readFile(this.trashFile, 'utf-8'));
-      const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      backfillLeaseFields(list);
-      return list;
-    } catch (err) {
-      console.warn(`[kanban JsonStorage] loadTrash error: ${err.message} — starting empty`);
-      return [];
-    }
-  }
-
-  async saveTrash(tasks) {
-    const payload = {
-      project: this.project || defaultProjectName(),
-      updated_at: new Date().toISOString(),
-      tasks,
-    };
-    await writeAtomic(this.trashFile, JSON.stringify(payload, null, 2));
-  }
-
-  async loadSettings() {
-    try {
-      if (!existsSync(this.settingsFile)) return {};
-      const parsed = JSON.parse(await readFile(this.settingsFile, 'utf-8'));
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch (err) {
-      console.warn(`[kanban JsonStorage] loadSettings error: ${err.message} — using defaults`);
-      return {};
-    }
-  }
-
-  async saveSettings(settings) {
-    const payload = {
-      project: this.project || defaultProjectName(),
-      updated_at: new Date().toISOString(),
-      ...settings,
-    };
-    await writeAtomic(this.settingsFile, JSON.stringify(payload, null, 2));
-  }
-}
-
-export class GitYamlStorage {
-  constructor(dirPath, options = {}) {
-    this.dir = dirPath;
-    this.root = options.rootPath || dirPath;
-    // this.project is the owning project; undefined means "write flat at root"
-    // (the legacy / default behaviour).
-    this.project = options.project;
-    this.autoCommit = options.autoCommit !== false;
-  }
-
-  get ownedProject() {
-    return this.project || defaultProjectName();
-  }
-
-  get isDefaultProject() {
-    return !this.project || this.project === defaultProjectName();
-  }
-
-  async load() {
-    try {
-      await mkdir(this.dir, { recursive: true });
-      const entries = await readdir(this.dir);
-      const yamlFiles = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
-
-      const tasks = [];
-      for (const file of yamlFiles) {
-        try {
-          const raw = await readFile(path.join(this.dir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-           }
-        } catch (err) {
-          console.warn(`[kanban GitYamlStorage] error reading ${file}: ${err.message}`);
-        }
-      }
-      return tasks;
-    } catch (err) {
-      // BUG-01 (v2.5.2): a readdir/environmental failure is not "no data" —
-      // fail closed rather than starting empty (the JSON backend's corrupt
-      // file does not apply here: cards are independent files, and the
-      // per-file loop above already warns + skips bad cards).
-      console.error(
-        `[kanban GitYamlStorage] cannot read card dir ${this.dir}: ${err.message} — refusing to start`
-      );
-      throw err;
-    }
-  }
-
-  async loadArchive() {
-    const archDir = path.join(this.root, 'archive', this.ownedProject);
-    try {
-      await mkdir(archDir, { recursive: true });
-      const entries = await readdir(archDir);
-      const files = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
-      const tasks = [];
-      for (const file of files) {
-        try {
-          const raw = await readFile(path.join(archDir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-            }
-         } catch (err) {
-          console.warn(`[kanban GitYamlStorage] archive read ${file}: ${err.message}`);
-         }
-       }
-      return tasks;
-     } catch (err) {
-      console.warn(`[kanban GitYamlStorage] loadArchive error: ${err.message}`);
-      return [];
-     }
-   }
-
-  async saveTask(task) {
-    await mkdir(this.dir, { recursive: true });
-    if (!Number.isInteger(task.round) || task.round < 1) {
-      throw new Error('Git-backed task persistence requires a positive integer round');
-    }
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(this.dir, filename);
-    // Traversal guard, extended to the intermediate `<project>` directory level:
-    // the resolved path must remain inside the git root.
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
-    }
-
-    const status = task.status;
-    const cardData = this.serializeCard(task, status);
-    const ymlContent = yaml.stringify(cardData);
-    await writeAtomic(filePath, ymlContent);
-
-    if (this.autoCommit) {
-      await this._tryGitCommit(task, filename);
-    }
-  }
-
-  serializeCard(task, status) {
-    const cardData = {
-      id: task.id,
-      project: this.ownedProject,
-      title: task.title,
-      status: task.status,
-      // No fabrication: a branch is a *claim about a real git ref*, so an
-      // absent value must round-trip as null rather than being invented here
-      // (the notifier renders this field to a human). Blank/whitespace-only and
-      // non-string values are treated as absent — see `toBranch`, the single
-      // shared rule used by all three write paths.
-      branch: toBranch(task.branch),
-      depends_on: task.depends_on || [],
-      round: task.round,
-      issues: task.issues || [],
-      assigned_agent: task.assigned_agent ?? null,
-      stage_owners: task.stage_owners || {},
-      created_at: task.created_at || task.updated || new Date().toISOString(),
-      completed_at: task.completed_at,
-      updated: task.updated || new Date().toISOString(),
-      description: task.description || '',
-      priority: task.priority || 'medium',
-      agent_logs: task.agent_logs || [],
-      comments: Array.isArray(task.comments) ? task.comments : [],
-      metadata: task.metadata || {},
-        // §2.6: persist the CAS version; default to 1 for legacy cards.
-      version: task.version ?? 1,
-       // §2.4: persist lease + reclaim observability so a git card round-trips
-      // them; default to null/0 for legacy cards.
-      claim_expires_at: task.claim_expires_at ?? null,
-      reclaim_count: task.reclaim_count ?? 0,
-       };
-    if (task.archived_at) cardData.archived_at = task.archived_at;
-    return cardData;
-  }
-
-  async saveArchiveTask(task) {
-    const p = this.ownedProject;
-    const archDir = path.join(this.root, 'archive', p);
-    await mkdir(archDir, { recursive: true });
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(archDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in archive task id: ${task.id}`);
-    }
-    const archived = Object.assign({}, task, { archived_at: task.archived_at || new Date().toISOString() });
-    const ymlContent = yaml.stringify(this.serializeCard(archived, STATUSES.DONE));
-    await writeAtomic(filePath, ymlContent);
-
-    if (this.autoCommit) {
-      // git rm the live card if it is tracked; the archive entry replaces it.
-      try {
-        if (existsSync(path.join(this.dir, filename))) {
-          await execFileAsync('git', ['rm', '-f', '--ignore-unmatch', filename], { cwd: this.dir });
-        }
-      } catch {
-        // Untracked / already removed: ignore, the archive write is authoritative.
-      }
-      const relativeArchive = path.join('archive', p, filename);
-      await execFileAsync('git', ['add', relativeArchive], { cwd: this.root });
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(archive): ${composite} DONE at ${archived.archived_at}`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.root });
-    }
-  }
-
-  async save(tasks) {
-    for (const task of tasks) {
-      await this.saveTask(task);
-    }
-  }
-
-  // v2.5.6: trash sink for the git backend. Cards are parked as plain YAML
-  // under <root>/trash/<project>/ (NOT git-tracked — the trash is an operator
-  // safety net, not history); restore re-writes the live card via saveTask,
-  // which resumes normal git commits.
-  async trashTask(task) {
-    const p = this.ownedProject;
-    const trashDir = path.join(this.root, 'trash', p);
-    await mkdir(trashDir, { recursive: true });
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(trashDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
-    }
-    const trashed = Object.assign({}, task, {
-      deleted_at: task.deleted_at || new Date().toISOString(),
-    });
-    await writeAtomic(filePath, yaml.stringify(this.serializeCard(trashed, task.status)));
-    // Remove the live card file (untracked removal — no commit; the trash
-    // write is authoritative and git status stays clean).
-    if (existsSync(path.join(this.dir, filename))) {
-      await rm(path.join(this.dir, filename), { force: true });
-    }
-  }
-
-  async loadTrash() {
-    const trashDir = path.join(this.root, 'trash', this.ownedProject);
-    try {
-      const entries = await readdir(trashDir);
-      const files = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
-      const tasks = [];
-      for (const file of files) {
-        try {
-          const raw = await readFile(path.join(trashDir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-          }
-        } catch (err) {
-          console.warn(`[kanban GitYamlStorage] trash read ${file}: ${err.message}`);
-        }
-      }
-      return tasks;
-    } catch (err) {
-      return []; // absent trash dir is the normal first-boot case
-    }
-  }
-
-  async trashRemove(task) {
-    const p = this.ownedProject;
-    const filename = `${task.id}.yml`;
-    const trashDir = path.join(this.root, 'trash', p);
-    const trashPath = path.resolve(trashDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!trashPath.startsWith(targetDir + path.sep) && trashPath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
-    }
-    await rm(trashPath, { force: true });
-  }
-
-  async deleteTask(task) {
-    await mkdir(this.dir, { recursive: true });
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(this.dir, filename);
-    // Traversal guard, mirroring saveTask/saveArchiveTask: the resolved path
-    // must remain inside the git root.
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
-    }
-    if (existsSync(filePath)) {
-      await execFileAsync('git', ['rm', '-f', '--ignore-unmatch', filename], { cwd: this.dir });
-    }
-    if (this.autoCommit) {
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(${composite}): kanban deleted`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.root });
-    }
-  }
-
-  async _tryGitCommit(task, filename) {
-    try {
-      await execFileAsync('git', ['add', filename], { cwd: this.dir });
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(${composite}): kanban ${task.status}`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.dir });
-    } catch (err) {
-      throw new Error(`Git-backed persistence commit failed: ${err.message}`, { cause: err });
-    }
-  }
-
-  // v2.5.0: per-project display settings live in a `settings.yml` sibling of the
-  // task cards. The file carries no `id` key, so the card loader (which skips
-  // every parsed file without one) ignores it harmlessly.
-  settingsPath() {
-    return path.join(this.dir, 'settings.yml');
-  }
-
-  async loadSettings() {
-    try {
-      const raw = await readFile(this.settingsPath(), 'utf-8');
-      const parsed = yaml.parse(raw);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
-  async saveSettings(settings) {
-    await mkdir(this.dir, { recursive: true });
-    const payload = {
-      project: this.ownedProject,
-      updated_at: new Date().toISOString(),
-      ...settings,
-    };
-    await writeAtomic(this.settingsPath(), yaml.stringify(payload));
-    if (this.autoCommit) {
-      try {
-        await execFileAsync('git', ['add', 'settings.yml'], { cwd: this.dir });
-        const composite = this.isDefaultProject ? 'default' : this.ownedProject;
-        await execFileAsync(
-          'git',
-          ['commit', '-m', `ops(${composite}): kanban settings updated`],
-          { cwd: this.dir }
-        );
-      } catch (err) {
-        throw new Error(`Git-backed settings commit failed: ${err.message}`, { cause: err });
-      }
-    }
-  }
 }
 
 // ============================================================================
@@ -954,35 +211,8 @@ function invalidateAggregates() {
 // Storage factory (per-project, cached)
 // ---------------------------------------------------------------------------
 
-// IMPL-02 (v2.7.0): in-repo default for storage roots. The previous fallback
-// pointed at a stale cross-project path (`../../agent-based-investment/ops/kanban`)
-// which does not exist in a standalone clone. The new default is `server/data`.
-// A one-time warning is logged when the fallback is actually used, nudging
-// operators to set KANBAN_DATA_DIR/KANBAN_GIT_DIR explicitly in production.
-let gitRootFallbackWarned = false;
-let jsonDataDirFallbackWarned = false;
-
-export function gitRoot() {
-  const env = process.env.KANBAN_GIT_DIR || process.env.KANBAN_DATA_DIR;
-  if (env) return env;
-  const fallback = path.resolve(__dirname, 'data');
-  if (!gitRootFallbackWarned) {
-    gitRootFallbackWarned = true;
-    console.warn(`[kanban storage] KANBAN_DATA_DIR/KANBAN_GIT_DIR are unset; defaulting data storage to ${fallback}. Set one explicitly in production.`);
-  }
-  return fallback;
-}
-
-export function jsonDataDir() {
-  const env = process.env.KANBAN_DATA_DIR || process.env.KANBAN_GIT_DIR;
-  if (env) return env;
-  const fallback = path.resolve(__dirname, 'data');
-  if (!jsonDataDirFallbackWarned) {
-    jsonDataDirFallbackWarned = true;
-    console.warn(`[kanban storage] KANBAN_DATA_DIR/KANBAN_GIT_DIR are unset; defaulting data storage to ${fallback}. Set one explicitly in production.`);
-  }
-  return fallback;
-}
+// ENH-11 (v2.10.0): gitRoot() / jsonDataDir() moved to ./task-identity.js
+// (re-exported at the top of this file).
 
 export function getStorage(project) {
   const p = project === undefined ? defaultProjectName() : normalizeProject(project);
@@ -2271,50 +1501,30 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 
 // Roles that may renew *any* task's lease (they administer the board), beyond
 // the holder. builder/reviewer/tester are holders when they own the task.
-const PRIVILEGED_ROLE_SET = new Set(['runner', 'system', 'human', 'admin']);
-
-function isPrivilegedRole(role) {
-  return typeof role === 'string' && PRIVILEGED_ROLE_SET.has(role.toLowerCase());
-}
-export { isPrivilegedRole };
-
-/**
- * §2.5 dependency gate. A dep is *satisfied* iff it resolves to a live task that
- * is DONE. A dangling dep id fails closed (treated as unresolved). Empty
- * `depends_on` ⇒ { ok: true }.
- */
-export function dependencyGate(task) {
-  const deps = Array.isArray(task.depends_on) ? task.depends_on : [];
-  if (deps.length === 0) return { ok: true, unresolved: [] };
-  const unresolved = [];
-  for (const dep of deps) {
-    const depTask = getTask(dep, task.project);
-    if (!depTask || depTask.status !== STATUSES.DONE) unresolved.push(dep);
-  }
-  return { ok: unresolved.length === 0, unresolved };
-}
-
-/**
- * BUG-02 (v2.5.4): priority must be a string in {low, medium, high}
- * (case-insensitive). Absent/null defaults to medium; anything else is a 400.
- * Returns an error message or null when valid.
- */
-function validatePriority(priority) {
-  if (priority === undefined || priority === null || priority === '') return null;
-  if (typeof priority !== 'string') return 'priority must be a string (low, medium, or high)';
-  if (!['low', 'medium', 'high'].includes(priority.toLowerCase())) {
-    return 'priority must be one of: low, medium, high';
-  }
-  return null;
-}
-
-// BUG-05 (v2.5.8) input bounds. Live data peaks at ~108-char titles and
-// ~2.5k descriptions, and a metadata blob under 1 KB; these caps are generous
-// yet stop an unbounded payload from being copied into every partition rewrite
-// and every SSE snapshot.
-const MAX_TITLE_LEN = 200;
-const MAX_DESCRIPTION_LEN = 20000;
-const MAX_METADATA_BYTES = 8000;
+// ENH-11 (v2.10.0): pure field validation + priority ranking live in
+// ./task-fields.js. Re-exported so existing importers are unaffected.
+import {
+  PRIVILEGED_ROLE_SET,
+  isPrivilegedRole,
+  validatePriority,
+  MAX_TITLE_LEN,
+  MAX_DESCRIPTION_LEN,
+  MAX_METADATA_BYTES,
+  validateDependsOn,
+  validateMetadata,
+  priorityRank,
+} from './task-fields.js';
+export {
+  PRIVILEGED_ROLE_SET,
+  isPrivilegedRole,
+  validatePriority,
+  MAX_TITLE_LEN,
+  MAX_DESCRIPTION_LEN,
+  MAX_METADATA_BYTES,
+  validateDependsOn,
+  validateMetadata,
+  priorityRank,
+};
 
 /**
  * BUG-03 (v2.5.8): statuses a client may NOT create directly. These are work
@@ -2330,19 +1540,19 @@ const IMPORT_GATED_STATUSES = new Set([
 ]);
 
 /**
- * BUG-05 (v2.5.8): `depends_on` must be an array of non-empty strings. A bare
- * string (a common typo) used to be silently coerced to `[]`, hiding the
- * caller's intent; reject it instead. Returns an error message or null.
+ * §2.5 dependency gate. A dep is *satisfied* iff it resolves to a live task that
+ * is DONE. A dangling dep id fails closed (treated as unresolved). Empty
+ * `depends_on` ⇒ { ok: true }.
  */
-function validateDependsOn(dependsOn) {
-  if (dependsOn === undefined || dependsOn === null) return null;
-  if (!Array.isArray(dependsOn)) return 'depends_on must be an array of task ids';
-  for (const dep of dependsOn) {
-    if (typeof dep !== 'string' || dep.trim() === '') {
-      return 'depends_on must contain only non-empty task ids';
-    }
+export function dependencyGate(task) {
+  const deps = Array.isArray(task.depends_on) ? task.depends_on : [];
+  if (deps.length === 0) return { ok: true, unresolved: [] };
+  const unresolved = [];
+  for (const dep of deps) {
+    const depTask = getTask(dep, task.project);
+    if (!depTask || depTask.status !== STATUSES.DONE) unresolved.push(dep);
   }
-  return null;
+  return { ok: unresolved.length === 0, unresolved };
 }
 
 /**
@@ -2382,40 +1592,6 @@ function validateDependencyGraph(project, id, dependsOn) {
     }
   }
   return null;
-}
-
-/**
- * BUG-05 (v2.5.8): `metadata` must be a plain object small enough to persist.
- * A string/array/number silently became `{}` before, discarding the caller's
- * data without a word; a huge blob bloated every rewrite. Returns an error
- * message or null.
- */
-function validateMetadata(metadata) {
-  if (metadata === undefined || metadata === null) return null;
-  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return 'metadata must be a JSON object';
-  }
-  let serialized;
-  try {
-    serialized = JSON.stringify(metadata);
-  } catch {
-    return 'metadata must be JSON-serializable';
-  }
-  if (serialized === undefined) return 'metadata must be a JSON object';
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_METADATA_BYTES) {
-    return `metadata must be at most ${MAX_METADATA_BYTES} bytes`;
-  }
-  return null;
-}
-
-/**
- * §2.7 priority rank for the fair claim queue: high < medium < low (ascending).
- * Unknown / absent priority defaults to medium (matching create-time default).
- */
-export function priorityRank(priority) {
-  if (priority === 'high' || priority === 'HIGH') return 0;
-  if (priority === 'low' || priority === 'LOW') return 2;
-  return 1;
 }
 
 /**

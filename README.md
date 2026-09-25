@@ -207,6 +207,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/health`, `/healthz` | Read-only liveness probe (always 200) | Public |
 | `GET` | `/api/health/ready` | Readiness probe — 200 once the store has loaded, 503 before (used by the deploy healthcheck) | Public |
 | `POST` | `/api/auth/session` | HMAC session-token handshake (requires `KANBAN_AUTH_SECRET`) | Proof-of-secret |
+| `POST` | `/api/auth/revoke` | Revoke the caller's own HMAC session token immediately (jti deny-list) | Bearer session token |
 
 ---
 
@@ -236,7 +237,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (382 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (114 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (394 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (114 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 ### Releasing
 
@@ -367,6 +368,13 @@ ENH-01..12) lives on the `kanbann` project of the live board.
     `⋯` / `Filters` disclosures collapse the secondary controls, the paging
     arrows are `hidden … md:flex`, and the card badge group wraps full-width on
     phones; chrome measured 299px → 155px at 390px).
+
+12. ~~**Revocable sessions + a modular store**~~ — **shipped in v2.10.0**:
+    HMAC session tokens now carry a `jti` and can be revoked instantly via
+    `POST /api/auth/revoke` (ENH-12), and the ~3.9k-line `server/store.js`
+    monolith was split into `state-machine.js` / `task-identity.js` /
+    `task-fields.js` / `storage.js` with `store.js` re-exporting every symbol so
+    all importers are unchanged (ENH-11).
 
 ---
 

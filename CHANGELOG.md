@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,29 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.10.0] — 2026-09-25
+
+### Added
+
+- **HMAC session tokens are now revocable (ENH-12).** Session tokens are stateless HMACs, so before this release a leaked or retired token stayed valid until its 24h expiry. Each token now carries a random `jti` (16 bytes hex) in its signed payload, and a new `POST /api/auth/revoke` endpoint lets the **holder** of a token revoke it immediately:
+  - `server/sessionAuth.js` mints `jti` in `createSessionToken` (returned alongside `token`/`expiresAt`), checks a module-level `revoked` deny-list in `verifySessionToken` (an expired deny entry is pruned rather than rejected), and exposes `revokeSessionToken(token)`, `revokedSessionCount()`, `resetRevokedSessions()`.
+  - `POST /api/auth/revoke` is auth-failure rate-limited, requires a valid session token (401 otherwise), and returns `{revoked: true, jti}` on success — or `400` for a legacy token that predates `jti` (those remain valid but irrevocable, preserving backwards compatibility).
+  - Only the holder can revoke their own token; a static/project/admin token cannot be revoked this way (401).
+
+### Changed
+
+- **`server/store.js` split into focused modules (ENH-11).** The ~3.9k-line monolith is now a thin stateful core that re-exports from four new modules, so every existing importer keeps working unchanged:
+  - `server/state-machine.js` — pure lifecycle: `STATUSES`, `VALID_STATUS_LIST`, `normalizeStatus`, `isValidStatus`, `VALID_TRANSITIONS`, `canTransition`, `canRoleTransition` (zero imports).
+  - `server/task-identity.js` — `writeAtomic`, project/task id validation, `toBranch`, `defaultProjectName`, `normalizeProject`, `resolveProjectScope`, `gitRoot`, `jsonDataDir`, `backfillLeaseFields`.
+  - `server/task-fields.js` — `PRIVILEGED_ROLE_SET`, `isPrivilegedRole`, `validatePriority`/`validateDependsOn`/`validateMetadata`, the length/byte caps, `priorityRank`.
+  - `server/storage.js` — the `JsonStorage` and `GitYamlStorage` backends.
+  - `store.js` re-exports every extracted symbol, so `store.X === module.X` identity holds (asserted by the new guard).
+
+### Quality gates
+
+- Server suite: **394 tests across 63 suites** (was 382/61; `kanban.revocation.test.js` +7, `kanban.modulesplit.test.js` +5).
+- Client suite: **114 tests**. Both new server gates were falsified (revocation check neutralized → 2 red; a DONE→BUILDING transition added → 1 red) then restored byte-exact.
 
 ## [2.9.1] — 2026-09-25
 

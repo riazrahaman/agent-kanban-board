@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import { authSecret, createSessionToken, verifySessionToken } from '../sessionAuth.js';
+import { authSecret, createSessionToken, verifySessionToken, revokeSessionToken } from '../sessionAuth.js';
 import { VALID_ROLES, parseProjectTokens, tokensMatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
@@ -173,6 +173,35 @@ router.post('/session', (req, res) => {
     role,
     project,
   });
+});
+
+/**
+ * POST /api/auth/revoke — ENH-12 (v2.10.0). Voluntarily revoke a session token
+ * before its natural expiry. The caller must present the very token they wish
+ * to revoke (Bearer) — you can only kill a session you already hold, so this
+ * endpoint cannot be used to disable someone else's credential.
+ */
+router.post('/revoke', (req, res) => {
+  const retryAfter = authFailuresExceeded(req);
+  if (retryAfter !== null) {
+    recordAuthFailure(req);
+    return res.status(429).json({
+      error: 'Too many failed authentication attempts',
+      retry_after_ms: retryAfter,
+    });
+  }
+
+  const provided = extractToken(req);
+  if (!provided || !verifySessionToken(provided)) {
+    recordAuthFailure(req);
+    return res.status(401).json({ error: 'Unauthorized: a valid session token is required' });
+  }
+
+  const jti = revokeSessionToken(provided);
+  if (!jti) {
+    return res.status(400).json({ error: 'Token cannot be revoked (no jti — legacy token)' });
+  }
+  return res.status(200).json({ revoked: true, jti });
 });
 
 export default router;
