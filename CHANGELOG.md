@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,23 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.9.0] — 2026-09-25
+
+### Added
+
+- **Persisted audit stream (ENH-04).** Set `KANBAN_AUDIT_LOG` truthy and every committed mutation appends one compact JSON line (`ts`, `kind`, `project`, `task_id`, `actor`, `reason` — never the whole task payload) to `<data-dir>/audit.jsonl`. New `GET /api/audit` reads it back newest-first with `limit` (capped 1000), `since`, `project` and `kind` filters, returning `{entries, count, enabled}`. Best-effort writes never break a mutation; reads are open like the other GETs.
+- **Dependency auditing in CI (ENH-06).** The workflow now runs `npm audit --audit-level=high` for both server and client, and `.github/dependabot.yml` opens weekly npm + GitHub-Actions update PRs.
+- **Browser smoke test (ENH-07).** `scripts/check-browser-smoke.mjs` seeds a worst-case fixture project (long unicode title, an unbreakable long id, many log entries) and drives a real headless Chrome over CDP to assert the board renders with cards, no page-level horizontal overflow and zero uncaught page errors. Runs on the 22.x CI leg beside the card-layout guard; a missing browser is a skip, not a failure.
+- **Generated configuration reference (ENH-10).** `scripts/gen-config-reference.mjs` scans the source for `process.env.KANBAN_*` (plus `PORT`/`HOST`/`VITE_*`), fails if any var lacks a description, and writes `docs/CONFIGURATION.md`. A tracked root `.env.example` lists every variable. `server/test/kanban.config.test.js` guards the docs + example against drift.
+
+### Changed
+
+- **Vite 5 → 7 (SEC-06).** `client` now builds on Vite `^7.3.6` + `@vitejs/plugin-react` `^5.2.0`, resolving the dev-server advisories (both `npm audit` runs are now clean).
+
+### Quality gates
+
+- Server suite: 382 tests across 61 suites (adds `kanban.audit.test.js` and `kanban.config.test.js`). Client suite: 107 tests. `tsc -b`, `vite build`, `make sec`, the version test and the doc-mirror/table checks are green.
 
 ## [2.8.0] — 2026-09-25
 

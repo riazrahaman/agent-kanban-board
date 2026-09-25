@@ -116,6 +116,7 @@ The board features pluggable persistence:
    | `KANBAN_JOURNAL_COMPACT_BYTES` | `1048576` | Journal size (bytes) that triggers a compaction into the canonical partition file. |
    | `KANBAN_INLINE_LOG_CAP` | `50` | Newest `agent_logs` entries kept inline per task; older ones spill to a sidecar JSONL under `spill/<project>/`. `0` = unbounded. |
    | `KANBAN_INLINE_COMMENT_CAP` | `50` | Newest `comments` kept inline per task; older ones spill to the sidecar. `0` = unbounded. |
+   | `KANBAN_AUDIT_LOG` | *(off)* | Set truthy to append every committed mutation as one JSON line to `<data-dir>/audit.jsonl`, readable via `GET /api/audit`. |
    | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
    | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
    | `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep; trash rows persist until then). |
@@ -235,7 +236,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (371 tests, including the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (382 tests, including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -351,6 +352,13 @@ ENH-01..12) lives on the `kanbann` project of the live board.
    `KANBAN_STORAGE_JOURNAL` append-only JSON journal, `KANBAN_INLINE_LOG_CAP` /
    `KANBAN_INLINE_COMMENT_CAP` inline caps with sidecar spill and
    `GET /api/tasks/:id/logs` paging).
+
+10. ~~**Ops / tooling batch (ENH-04/06/07/10, SEC-06)** — no persisted audit
+    log, no dependency auditing in CI, no browser-level smoke test, no
+    generated config reference, and a Vite dev-server advisory.~~ **Shipped in
+    v2.9.0** (`KANBAN_AUDIT_LOG` + `GET /api/audit`, `npm audit` + Dependabot in
+    CI, `scripts/check-browser-smoke.mjs`, `docs/CONFIGURATION.md` +
+    `.env.example` + drift guard, Vite 5 → 7).
 
 ---
 

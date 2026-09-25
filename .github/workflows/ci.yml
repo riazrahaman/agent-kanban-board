@@ -41,6 +41,11 @@ jobs:
           npm --prefix server ci
           npm --prefix client ci
 
+      - name: Audit Dependencies
+        run: |
+          npm --prefix server audit --audit-level=high
+          npm --prefix client audit --audit-level=high
+
       - name: Security Checks
         run: make sec
 
@@ -144,6 +149,15 @@ jobs:
 
           STATUS=0
           node scripts/check-card-layout.mjs "http://127.0.0.1:4000" 9222 || STATUS=$?
+
+          # Browser smoke test: seeds its own worst-case fixture project (long
+          # unicode title, an unbreakable long id, many log entries) and asserts
+          # the board renders with no page overflow and zero uncaught errors.
+          # Exit 2 is an environmental skip (no target) and must not fail CI;
+          # only a rendered defect (exit 1) does.
+          SMOKE=0
+          node scripts/check-browser-smoke.mjs "http://127.0.0.1:4000" 9222 || SMOKE=$?
+          if [ "$SMOKE" = "1" ]; then STATUS=1; fi
 
           kill $CHROME_PID $SERVER_PID 2>/dev/null || true
           exit $STATUS
