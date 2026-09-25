@@ -446,23 +446,25 @@ export interface DiffEvent {
 }
 
 /**
- * Subscribes to the server's per-task diff stream (§2.2 `mode=diff`), optionally
- * scoped to one project. Unlike `subscribeToEvents` — which re-broadcasts the
- * whole task array on every mutation — this delivers exactly one event per
- * changed task. Returns an unsubscribe that closes the EventSource.
+ * Subscribes to the server's per-task diff stream (§2.2, now the DEFAULT mode
+ * via PERF-01), optionally scoped to one project. Unlike `subscribeToEvents` —
+ * which re-broadcasts the whole task array on every mutation — this delivers
+ * exactly one event per changed task. An optional `onSettings` callback
+ * receives the `event: settings` frames the combined stream now carries
+ * (PERF-01c). Returns an unsubscribe that closes the EventSource.
  */
 export function subscribeToDiffs(
   onEvent: (event: DiffEvent) => void,
-  { project }: { project?: string } = {},
+  opts: { project?: string; onSettings?: (settings: SettingsResponse) => void } = {},
 ): () => void {
   let source: EventSource | null = null
   let cancelled = false
-  let attached: Array<readonly [DiffKind, (evt: MessageEvent<string>) => void]> = []
+  let attached: Array<readonly [string, (evt: MessageEvent<string>) => void]> = []
 
   const open = (ticket: string | null) => {
     if (cancelled) return
     const params = new URLSearchParams({ mode: 'diff' })
-    if (project) params.set('project', project)
+    if (opts.project) params.set('project', opts.project)
     if (ticket) params.set('ticket', ticket)
     source = new EventSource(`${API_BASE}/events?${params.toString()}`)
 
@@ -475,8 +477,20 @@ export function subscribeToDiffs(
         }
       }
       source!.addEventListener(`task.${kind}`, handler as EventListener)
-      return [kind, handler] as const
+      return [`task.${kind}`, handler] as const
     })
+
+    if (opts.onSettings) {
+      const settingsHandler = (evt: MessageEvent<string>) => {
+        try {
+          opts.onSettings!(JSON.parse(evt.data) as SettingsResponse)
+        } catch (err) {
+          console.error('Failed to parse SSE settings payload', err)
+        }
+      }
+      source.addEventListener('settings', settingsHandler as EventListener)
+      attached = [...attached, ['settings', settingsHandler] as const]
+    }
 
     source.onerror = (err) => {
       // EventSource auto-reconnects on its own; just log for visibility.
@@ -484,13 +498,29 @@ export function subscribeToDiffs(
     }
   }
 
-  mintStreamTicket(project).then((ticket) => open(ticket))
+  mintStreamTicket(opts.project).then((ticket) => open(ticket))
 
   return () => {
     cancelled = true
-    for (const [kind, handler] of attached) {
-      source?.removeEventListener(`task.${kind}`, handler as EventListener)
+    for (const [name, handler] of attached) {
+      source?.removeEventListener(name, handler as EventListener)
     }
     source?.close()
   }
+}
+
+/**
+ * PERF-01 — combined diff + settings board subscription. The default SSE mode
+ * is now `diff` (no `?mode=snapshot`), and the server carries `event: settings`
+ * on the same stream. This opens ONE EventSource that (i) applies `task.<kind>`
+ * events to the local tasks array via `onDiffEvent`, and (ii) receives
+ * `event: settings` via `onSettings`. The client relies on its own
+ * `getTasks()` fetch for initial priming (no `?prime=1`).
+ */
+export function subscribeToBoard(
+  onDiffEvent: (event: DiffEvent) => void,
+  onSettings: (settings: SettingsResponse) => void,
+  { project }: { project?: string } = {},
+): () => void {
+  return subscribeToDiffs(onDiffEvent, { project, onSettings })
 }

@@ -343,6 +343,30 @@ router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
      return res.status(200).json(result.task);
       }));
 
+// ENH-08 (v2.8.0): paging read for a task's log/comment history.
+// GET /api/tasks/:id/logs?project=X&offset=&limit=&include_spilled=1
+// Returns { inline:[...], spilled_count, entries:[...] }.
+// Inline logs are newest-first; spilled entries are oldest-first (append order).
+router.get('/:id/logs', asyncHandler(async (req, res) => {
+  const project = resolveProjectFromReq(req);
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.max(0, Number(req.query.limit) || 50);
+  const includeSpilled = req.query.include_spilled === '1';
+  const result = await store.getTaskLogs(req.params.id, project, {
+    offset,
+    limit,
+    include_spilled: includeSpilled,
+  });
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json({
+    inline: result.inline,
+    spilled_count: result.spilled_count,
+    entries: result.entries,
+  });
+}));
+
 router.post('/:id/logs', asyncHandler(async (req, res) => {
   const agentId = req.body?.agent_id || req.caller?.agent_id;
   const message = req.body?.message;
