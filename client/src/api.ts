@@ -1,4 +1,4 @@
-import type { Task, ProjectSummary, MetricsResponse } from './types'
+import type { Task, ProjectSummary, MetricsResponse, MilestoneSummary } from './types'
 import { authHeaders, readStoredToken } from './lib/authToken'
 
 // Same-origin `/api`: the deployed server serves the client bundle AND the API
@@ -147,6 +147,24 @@ export async function claimTask(
   return handleVersionedResponse<Task>(res)
 }
 
+/**
+ * v2.11.0 (opt-operator-assignment) — a privileged caller assigns a task to a
+ * named agent (or releases it with `agentId: null`). Mirrors claimTask.
+ */
+export async function assignTask(
+  id: string,
+  agentId: string | null,
+  opts: MutationOptions = {},
+): Promise<Task> {
+  const project = opts.project
+  const res = await fetch(withProject(`${API_BASE}/tasks/${id}/assign`, project), {
+    method: 'POST',
+    headers: mutationHeaders(opts),
+    body: JSON.stringify({ agent_id: agentId, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
+  })
+  return handleVersionedResponse<Task>(res)
+}
+
 export async function appendLog(
   id: string,
   agentId: string,
@@ -280,6 +298,13 @@ export async function getMetrics(project?: string): Promise<MetricsResponse> {
  * §2.8 — archived (DONE, aged-out) tasks. Open GET.
  * GET /tasks/archive[?project=]
  */
+/** v2.11.0 (opt-milestones) — per-goal rollups (scoped or all projects). */
+export async function getMilestones(project?: string): Promise<MilestoneSummary[]> {
+  const res = await fetch(withProject(`${API_BASE}/milestones`, project), { headers: readHeaders() })
+  const body = await handleResponse<{ milestones: MilestoneSummary[] }>(res)
+  return body.milestones
+}
+
 export async function getArchivedTasks(project?: string): Promise<Task[]> {
   const res = await fetch(withProject(`${API_BASE}/tasks/archive`, project), { headers: readHeaders() })
   return handleResponse<Task[]>(res)

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Task } from '../types'
-import { addComment, appendLog } from '../api'
+import { addComment, appendLog, assignTask } from '../api'
 import { normalizePriority } from '../priority'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
@@ -31,8 +31,26 @@ export default function TaskSheet({ task, onClose }: Props) {
   const [commenting, setCommenting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [commentError, setCommentError] = useState<string | null>(null)
+  const [assigning, setAssigning] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
 
   const open = !!task
+
+  // v2.11.0 (opt-operator-assignment): a privileged token can assign a card to a
+  // named agent (or release it). Reuses the sheet's Agent ID field as the target.
+  async function handleAssign(release: boolean) {
+    if (!task) return
+    setAssigning(true)
+    setAssignError(null)
+    try {
+      const target = release ? null : agentId.trim() || 'Human'
+      await assignTask(task.id, target, { project: task.project, expected_version: task.version })
+    } catch (err) {
+      setAssignError(err instanceof Error ? err.message : 'Failed to assign')
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -116,6 +134,14 @@ export default function TaskSheet({ task, onClose }: Props) {
                       {task.project}
                     </span>
                   )}
+                  {task.milestone && (
+                    <span
+                      className="min-w-0 max-w-[12rem] truncate border border-live bg-live-bg px-1.5 py-0.5 text-live"
+                      title={`Milestone: ${task.milestone}`}
+                    >
+                      ◇ {task.milestone}
+                    </span>
+                  )}
                   {task.assigned_agent && (
                     <span
                       className="min-w-0 max-w-[14rem] truncate border border-line bg-muted-bg px-1.5 py-0.5 text-ink tabular-nums"
@@ -158,6 +184,40 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </p>
                 </section>
               )}
+
+              {/* v2.11.0 (opt-operator-assignment): operator assignment. The
+                  target agent is the sheet's single Agent ID field below. */}
+              <section>
+                <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                  Assignment
+                </h3>
+                <p className="mt-1.5 text-[11px] leading-snug text-muted">
+                  A privileged token can assign this card to the Agent ID below, or release it.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAssign(false)}
+                    disabled={assigning}
+                    className="border border-line bg-muted-bg px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-line/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {assigning ? 'Assigning…' : 'Assign'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAssign(true)}
+                    disabled={assigning || !task.assigned_agent}
+                    className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Release
+                  </button>
+                </div>
+                {assignError && (
+                  <p className="mt-1.5 font-mono text-[11px] text-fail break-words [overflow-wrap:anywhere]">
+                    {assignError}
+                  </p>
+                )}
+              </section>
 
               {task.metadata && Object.keys(task.metadata).length > 0 && (
                 <section>
@@ -292,6 +352,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
                 placeholder="Agent ID"
+                title="Also the target for Assign / Release"
                 className="w-full border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
               />
               <textarea

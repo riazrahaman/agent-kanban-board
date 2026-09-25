@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,28 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.11.0] — 2026-09-25
+
+### Added
+
+- **Milestones / goals (opt-milestones).** Tasks carry an optional `milestone` grouping label.
+  - `milestone` is a free-text label normalised by the shared `toMilestone()` helper in `server/task-identity.js` (a non-empty string is kept verbatim, everything else becomes `null`), settable at creation and via `PATCH` (so `{milestone: null}` clears it).
+  - `GET /api/milestones` (project-scoped via `?project=`) rolls live cards up per goal as `{milestone, project, total, done, by_status, progress}` sorted by name. `client/src/components/Portfolio.tsx` renders a Milestones section and `TaskCard`/`TaskSheet` show a milestone chip.
+- **Operator assignment (opt-operator-assignment).** A privileged caller can assign a task to a named agent, or release it, with `POST /api/tasks/:id/assign`.
+  - Gate: `destructivePrivilege(caller)` → `403`; `404` for a missing task; the usual optimistic-concurrency guard.
+  - Assign sets `assigned_agent` + a fresh lease and lifts a BACKLOG card to BUILDING (stamping `stage_owners.BUILDING`); `agent_id: null` releases the card back to BACKLOG; a non-string/blank id is a `400`. It appends an agent-log entry and persists before updating memory (KB-05). It deliberately bypasses the dependency gate and claim-contention check — an operator override is the point.
+- **Outbound integration webhooks (opt-integration-hooks).** `server/webhooks.js` is a pure `store.onDiff` subscriber that POSTs a flat JSON envelope (`{event, kind, project, task_id, status, priority, milestone, actor, reason, timestamp}`) to every URL in `KANBAN_WEBHOOK_URLS`.
+  - Optional HMAC-SHA256 signing (`KANBAN_WEBHOOK_SECRET`) sends `x-kanban-signature: sha256=<hex>`, `x-kanban-event` and `x-kanban-timestamp` headers. `KANBAN_WEBHOOK_EVENTS` filters by diff kind.
+  - Delivery is fire-and-forget and fail-silent: a webhook outage is logged but never breaks a task mutation. No new dependency (global `fetch`).
+
+### Changed
+
+- `server/store.js` re-exports `toMilestone`; the `patchTask` allow-list and `serializeCard` carry `milestone`; `backfillLeaseFields` normalises it on read.
+
+### Quality gates
+
+- Server suite: **403 tests across 64 suites** (adds `kanban.optfeatures211.test.js`, 9 tests). Client suite: **120 tests** (adds the opt-features source-contract guard, 6 tests). Both new gates falsified and restored byte-exact.
 
 ## [2.10.0] — 2026-09-25
 

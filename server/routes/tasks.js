@@ -304,8 +304,38 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
   res.status(200).json(result.task);
 }));
 
-// --- §2.4 lease heartbeat ------------------------------------------------
+/**
+ * opt-operator-assignment (v2.11.0) — POST /api/tasks/:id/assign.
+ * A PRIVILEGED caller (runner/system/human/admin, derived from the credential)
+ * hands a task to a named agent without that agent self-claiming. `agent_id:
+ * null` releases the assignment. Mirrors the claim route's 409 passthroughs.
+ */
+router.post('/:id/assign', asyncHandler(async (req, res) => {
+  const agentId = 'agent_id' in (req.body || {}) ? req.body.agent_id : undefined;
+  const guard = resolveExpectedVersion(req);
+  const result = await store.assignTask(req.params.id, agentId === undefined ? null : agentId, {
+    caller: req.caller || {},
+    project: resolveProjectFromReq(req),
+    ...(guard || {}),
+  });
+  if (result.error) {
+    if (result.status === 409 && result.details) {
+      return res.status(409).json({
+        error: result.error,
+        details: result.details,
+        currentVersion: result.details.expected,
+        status: 409,
+      });
+    }
+    console.warn(
+      `[kanban rejection] POST /api/tasks/${req.params.id}/assign: ${result.status} ${result.error}`
+    );
+    return res.status(result.status).json({ error: result.error });
+  }
+  res.status(200).json(result.task);
+}));
 
+// --- §2.4 lease heartbeat ------------------------------------------------
 /**
  * §2.4 POST /api/tasks/:id/heartbeat — renew the lease on a held task. The
  * HOLDER (the builder/reviewer/tester that owns it) or a PRIVILEGED role

@@ -96,6 +96,14 @@ function TaskCard({
               {task.project}
             </span>
           )}
+          {task.milestone && (
+            <span
+              className="max-w-[10rem] truncate border border-live bg-live-bg px-1 py-0.5 font-mono text-[10px] text-live"
+              title={`Milestone: ${task.milestone}`}
+            >
+              ◇ {task.milestone}
+            </span>
+          )}
           {estimate !== undefined && estimate !== '' && (
             <span
               className="border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted"

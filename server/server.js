@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
+import { startWebhooks, stopWebhooks } from './webhooks.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
@@ -10,6 +11,7 @@ import auditRouter from './routes/audit.js';
 import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import settingsRouter from './routes/settings.js';
+import milestonesRouter from './routes/milestones.js';
 import { onAudit } from './store.js';
 import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
@@ -79,6 +81,7 @@ export function createApp() {
   app.use('/healthz', healthRouter);
   // v2.5.0: per-project display settings (column colors).
   app.use('/api/settings', settingsRouter);
+  app.use('/api/milestones', milestonesRouter);
 
   /**
    * §2.2 — SSE stream modes (PERF-01 rev-snapshot-to-diff):
@@ -251,6 +254,10 @@ export async function startServer(
           );
         }
       }
+      // v2.11.0 (opt-integration-hooks): outbound JSON webhooks. Off unless one
+      // or more KANBAN_WEBHOOK_URLS are configured.
+      startWebhooks();
+      server.on('close', () => stopWebhooks());
       resolve({ server, stopReaper: stop || stopReaper });
       });
     // IMPL-01 (v2.7.0): handle a bind failure (EADDRINUSE, EADDRNOTAVAIL, …)

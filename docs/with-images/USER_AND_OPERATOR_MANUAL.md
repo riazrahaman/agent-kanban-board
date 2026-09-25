@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.10.0
+**System:** Agent Kanban Board v2.11.0
 
 ---
 
@@ -124,6 +124,9 @@ The server and client are configured via environment variables.
 | `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` (enabled by default in `render.yaml` since v2.5.5) | Periodic snapshot of task data into `backups/`, rotated to a bounded count. Status is surfaced in the `backup` block of `GET /api/health`; restore with `scripts/restore-backup.mjs` per `docs/RESTORE.md`. |
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
 | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET + SSE). `EventSource` cannot set headers, so browsers mint a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open; `/api/health` and `/healthz` stay open for healthchecks. |
+| `KANBAN_WEBHOOK_URLS` | *(unset)* | v2.11.0 — comma-separated URLs that receive signed outbound JSON webhooks on every task diff event. Off when unset. |
+| `KANBAN_WEBHOOK_SECRET` | *(unset)* | v2.11.0 — optional HMAC-SHA256 key; when set each webhook carries `x-kanban-signature: sha256=<hex>` over `${timestamp}.${body}`. |
+| `KANBAN_WEBHOOK_EVENTS` | *(all)* | v2.11.0 — optional comma-separated diff-kind allow-list (`created`, `updated`, `removed`, `claimed`, `renewed`, `unblocked`, `reclaimed`, `archived`). |
 
 ### 3.1.1 Telegram Reclaim Notifications
 

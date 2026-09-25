@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { MetricsResponse } from '../types'
-import { getMetrics } from '../api'
+import type { MetricsResponse, MilestoneSummary } from '../types'
+import { getMetrics, getMilestones } from '../api'
 import { backlogOf, blockedOf, formatDuration, wipOf } from '../lib/portfolioMetrics'
 
 type Props = {
@@ -14,6 +14,7 @@ type Props = {
 
 export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 }: Props) {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null)
+  const [milestones, setMilestones] = useState<MilestoneSummary[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // This view is cross-project but the task stream feeding `refreshKey` is
@@ -34,6 +35,25 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
           if (cancelled) return
           setError(err instanceof Error ? err.message : 'Failed to load metrics')
         })
+    }
+    load()
+    const timer = setInterval(load, pollMs)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [refreshKey, pollMs])
+
+  // v2.11.0 (opt-milestones): milestone rollups load alongside the metrics and
+  // share the same poll cadence. Failure is silent — milestones are optional.
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      getMilestones()
+        .then((m) => {
+          if (!cancelled) setMilestones(m)
+        })
+        .catch(() => undefined)
     }
     load()
     const timer = setInterval(load, pollMs)
@@ -137,6 +157,39 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
           </tr>
         </tfoot>
       </table>
+      {milestones.length > 0 && (
+        <section className="border-t border-line p-4">
+          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+            Milestones
+          </h3>
+          <ul className="mt-3 space-y-2">
+            {milestones.map((m) => (
+              <li
+                key={`${m.project}/${m.milestone}`}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-l-2 border-live pl-3"
+              >
+                <span className="font-mono text-xs text-live" title={`Milestone: ${m.milestone}`}>
+                  ◇ {m.milestone}
+                </span>
+                {m.project && (
+                  <span
+                    className="max-w-[12rem] truncate border border-line bg-muted-bg px-1.5 py-0.5 font-mono text-[10px] text-muted"
+                    title={`Project: ${m.project}`}
+                  >
+                    {m.project}
+                  </span>
+                )}
+                <span className="font-mono text-[11px] tabular-nums text-ink">
+                  {m.done}/{m.total}
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-muted" title={`${m.progress}% complete`}>
+                  {m.progress}%
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }
