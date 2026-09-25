@@ -11,7 +11,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '371',
+    value: '382',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -116,7 +116,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Atomic writes + git audit trail', code: 'store.js · writeAtomic, serializeCard' },
   { name: 'Real-time push over SSE', code: 'server.js · GET /api/events' },
   { name: 'Periodic data backups', code: 'store.js · runBackup, backupStatus' },
-      { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
+  { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
   { name: 'Per-project token isolation', code: 'middleware/auth.js, projectScope.js' },
   { name: 'HMAC session tokens', code: 'sessionAuth.js, routes/auth.js' },
   { name: 'Optimistic concurrency (version + If-Match)', code: 'store.js · nextVersionFor, versionConflict' },
@@ -130,6 +130,11 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
   { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
+  { name: 'Persisted audit stream', code: 'auditLog.js · appendAudit, GET /api/audit' },
+  { name: 'Optional read auth + stream tickets', code: 'middleware/auth.js · KANBAN_READ_AUTH, streamTicket.js' },
+  { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph, validateMetadata' },
+  { name: 'Fail-closed corrupt-store load', code: 'store.js · JsonStorage.load' },
+  { name: 'Readiness probe', code: 'routes/health.js · GET /api/health/ready' },
 ]
 
 export type FaqItem = {

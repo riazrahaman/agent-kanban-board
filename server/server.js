@@ -6,9 +6,12 @@ import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
 import metricsRouter from './routes/metrics.js';
+import auditRouter from './routes/audit.js';
 import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import settingsRouter from './routes/settings.js';
+import { onAudit } from './store.js';
+import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
@@ -71,6 +74,7 @@ export function createApp() {
   app.use('/api/tasks', tasksRouter);
   app.use('/api/projects', projectsRouter);
   app.use('/api/metrics', metricsRouter);
+  app.use('/api/audit', auditRouter);
   app.use('/api/health', healthRouter);
   app.use('/healthz', healthRouter);
   // v2.5.0: per-project display settings (column colors).
@@ -230,6 +234,9 @@ export async function startServer(
         // Clean shutdown: stop the sweep when the server closes.
         server.on('close', () => stopReaper());
         }
+      // §2.9 (v2.9.0): persist audit entries to JSONL when enabled.
+      const unsubAudit = onAudit(appendAudit);
+      server.on('close', () => unsubAudit());
       startBackup();
       server.on('close', () => stopBackup());
       // §2.11: outbound Telegram alerts for reclaims. Off unless a bot token +
