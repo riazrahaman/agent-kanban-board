@@ -176,6 +176,10 @@ export function backfillLeaseFields(list) {
     if (!Number.isInteger(t.version)) t.version = 1;
     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
     if (t.claim_lease_ms === undefined) t.claim_lease_ms = null;
+    // v2.12.1 (E-1): last time THIS card's own content changed (claim, log,
+    // PATCH) — distinct from `claim_expires_at`, which a sibling renewal can
+    // push out without this card itself having moved forward at all.
+    if (t.last_progress_at === undefined) t.last_progress_at = null;
     if (t.reclaim_count === undefined) t.reclaim_count = 0;
     if (t.branch !== undefined) t.branch = toBranch(t.branch);
     // v2.5.0: every card carries a comments thread; legacy records default to

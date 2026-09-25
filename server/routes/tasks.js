@@ -271,7 +271,7 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
   const guard = resolveExpectedVersion(req);
   const result = await store.claimTask(
         req.params.id, agentId, resolveProjectFromReq(req),
-        { ...(guard || {}), lease_ms: req.body?.lease_ms },
+        { ...(guard || {}), lease_ms: req.body?.lease_ms, caller: req.caller || {} },
        );
   if (result.error) {
     if (result.status === 400) {

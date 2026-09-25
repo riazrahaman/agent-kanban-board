@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,89 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.13.0] — 2026-09-25
+
+Post-release correctness pass on v2.12.0's lease-window work, from a deep-dive
+code review (findings I-1 through I-8, cleanups C-1 through C-3) plus two of
+the review's suggested enhancements. v2.12.0's core mechanism (a lease window
+chosen at claim time, a bulk heartbeat, holder-write renewal) was sound; the
+bugs were all in the *side effects* of renewal — version churn, cross-project
+reach, event timing, and validation.
+
+### Fixed
+- **I-1 — a lease-only renewal no longer bumps `version`.** Renewing a sibling
+  card's lease is not a content change; it was bumping `version` on every card
+  a busy holder touched indirectly, which invalidated concurrent
+  `expected_version`/CAS PATCHes on cards nobody was actually editing. Identity
+  swap (already how the diff stream detects change) is enough of a signal.
+- **I-2 — sibling renewal stays inside the writing project.** A write in
+  project `alpha` could previously renew the same holder's lease in project
+  `beta`, bypassing per-project token isolation. Every sibling-renewal call
+  site now passes the writer's own project.
+- **I-3 — the bulk heartbeat (`POST /api/agents/:agent_id/heartbeat`) now
+  requires `?project=` for a non-privileged (self) caller.** Without a scope it
+  previously swept every project on the board; only a privileged credential may
+  omit it for the intentional all-projects sweep.
+- **I-4 — bulk-heartbeat privilege is derived from the credential, not the
+  self-asserted `X-Agent-Role` header.** A per-project worker token could send
+  `X-Agent-Role: admin` and pass the old check; it now uses the same
+  credential-derived `caller.privileged` flag destructive ops already use
+  (exported as `store.callerIsPrivileged`).
+- **I-5 — a holder PATCH's sibling renewals broadcast in the same tick.** They
+  previously landed after `notify()` had already fired, so the sibling's new
+  expiry only reached SSE clients on some later, unrelated mutation.
+- **I-6 — a sibling-renewal failure can no longer fail (or half-commit) the
+  caller's real write.** Each sibling is now renewed in its own try/catch
+  inside `renewAllLeasesInner`; a failed save is logged and skipped, never
+  thrown back through `appendLog`/`patchTask`/`applyClaim`.
+- **I-7 — sibling renewals are tagged `renewed`, not a bare `updated`,** in the
+  diff/audit/webhook stream (`lease_renewed_holder_write` / `lease_renewed_bulk`
+  reasons), so they no longer masquerade as ordinary content edits.
+- **I-8 — `lease_ms` validation rejects non-numeric-looking input** (a boolean,
+  an array, a non-numeric string) with a 400 instead of silently coercing it —
+  `lease_ms: true` previously coerced to `1` and clamped UP to the shortest
+  possible lease, the opposite of what a malformed request should do. An empty
+  `?lease_ms=` is now treated as absent rather than rejected.
+
+### Added
+- **`KANBAN_MAX_CLAIMS_PER_AGENT`** (E-2): caps how many active claims one
+  agent may hold at once (0/unset = unlimited, unchanged default). A claim past
+  the cap gets `409 { reason: 'claim_limit' }`. Privileged roles are exempt.
+  `store.claimTask` now threads the authenticated `caller` through to
+  `applyClaim` (previously silently dropped) so the cap-exemption check works
+  the same way for `POST /:id/claim` as it already did for `next-claim`.
+- **`last_progress_at`** (E-1): a new persisted field, set only by a write that
+  targets that specific card (claim, log, PATCH) — never by a sibling-lease
+  renewal. Answers "is this card actually moving" as a question distinct from
+  "is the lease alive", which holder-write renewal otherwise conflates. Not
+  yet surfaced in the UI or `/api/metrics` — see Follow-ups.
+
+### Changed
+- `renewAllLeases` (the bulk-heartbeat store function) now reuses
+  `renewAllLeasesInner` instead of a duplicated copy of the same loop (C-2).
+- `server/routes/agents.js` resolves its project scope through the shared
+  `rawProjectScope` helper instead of re-implementing it inline (C-3).
+
+### Follow-ups (reviewed, deliberately deferred)
+- **E-3** — `assignTask` (operator assignment) does not yet accept `lease_ms`.
+- **E-4** — the browser `useClaimCoordinator` hook still heartbeats one card at
+  a time instead of adopting the bulk endpoint; its cancellation/lost-lease
+  handling is delicate enough that this needs its own dedicated pass rather
+  than folding into this fix.
+- **E-5** — claim/next-claim responses don't yet report whether a requested
+  `lease_ms` was clamped.
+- `store.renewLease`'s non-holder check (`POST /:id/heartbeat`) still reads
+  the self-asserted role header, the same pattern fixed in I-4 for the bulk
+  endpoint — it predates v2.12.0 and is out of scope for this pass.
+- `last_progress_at` has no UI treatment yet (a "no progress for Xm" hint).
+
+### Quality gates
+Server suite: 447 tests (67 suites) — 14 new tests in
+`server/test/kanban.leasewindow2.test.js` covering I-1 through I-8 and E-1/E-2,
+plus two `kanban.leasewindow.test.js` assertions updated for the new (correct)
+unpinned-default and project-scope-required behavior. Client suite unchanged
+(120 tests; no client logic changed beyond an additive `last_progress_at` type).
 
 ## [2.12.0] — 2026-09-25
 

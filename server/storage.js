@@ -423,6 +423,7 @@ export class GitYamlStorage {
       // them; default to null/0 for legacy cards.
       claim_expires_at: task.claim_expires_at ?? null,
       claim_lease_ms: task.claim_lease_ms ?? null,
+      last_progress_at: task.last_progress_at ?? null,
       reclaim_count: task.reclaim_count ?? 0,
        };
     if (task.archived_at) cardData.archived_at = task.archived_at;

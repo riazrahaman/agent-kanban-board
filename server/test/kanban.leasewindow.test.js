@@ -110,7 +110,11 @@ describe('v2.12.0 lease window (§2.4b)', () => {
     );
   });
 
-  it('2. claim without lease_ms uses the server default (claim_lease_ms = default TTL)', async () => {
+  it('2. claim without lease_ms is UNPINNED (claim_lease_ms null) but the deadline uses the live default TTL', async () => {
+    // v2.13.0 (C-1): an implicit claim no longer PINS the resolved TTL onto the
+    // card — it stores `null`, so a later KANBAN_CLAIM_TTL_MS change still
+    // applies on the next renewal. `leaseWindowFor` resolves the live default
+    // for the deadline math either way, so the deadline itself is unchanged.
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST', headers: headers(), body: taskBody('lw-2', 'Lease window two'),
     });
@@ -120,11 +124,11 @@ describe('v2.12.0 lease window (§2.4b)', () => {
       body: JSON.stringify({ agent_id: 'beta' }),
     });
     assert.equal(claim.response.status, 200);
-    assert.equal(claim.body.claim_lease_ms, TTL_MS, 'claim_lease_ms defaults to KANBAN_CLAIM_TTL_MS');
+    assert.equal(claim.body.claim_lease_ms, null, 'claim_lease_ms stays unpinned on an implicit claim');
     const expected = t0 + TTL_MS;
     assert.ok(
       Math.abs(Date.parse(claim.body.claim_expires_at) - expected) < 5000,
-      'lease deadline is ~now + TTL_MS',
+      'lease deadline is still ~now + TTL_MS',
     );
   });
 
@@ -341,7 +345,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
       Date.parse(store.getTask(id).claim_expires_at),
     );
     await new Promise((r) => setTimeout(r, 20));
-    const beat = await jsonRequest(baseUrl, '/api/agents/bulk-agent/heartbeat', {
+    // v2.13.0 (I-3): a non-privileged (self) caller must supply ?project=.
+    const beat = await jsonRequest(baseUrl, '/api/agents/bulk-agent/heartbeat?project=default', {
       method: 'POST', headers: headers('builder', 'bulk-agent'),
       body: JSON.stringify({}),
     });
