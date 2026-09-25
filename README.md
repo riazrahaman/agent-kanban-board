@@ -109,8 +109,8 @@ The board features pluggable persistence:
    |---|---|---|
    | `KANBAN_STORAGE_BACKEND` | `json` | `json` or `git`. |
    | `KANBAN_DATA_FILE` | `server/tasks.json` | Default-project JSON file. |
-   | `KANBAN_DATA_DIR` | — | Root for `tasks/<project>.json` and `tasks/archive/<project>.json`. |
-   | `KANBAN_GIT_DIR` | — | Git root; `<project>/<id>.yml`, flat root used for default. |
+   | `KANBAN_DATA_DIR` | `server/data` | Root for `tasks/<project>.json` and `tasks/archive/<project>.json`. When unset, defaults to an in-repo `server/data` (with a one-time warning) — never a sibling checkout. |
+   | `KANBAN_GIT_DIR` | `server/data` | Git root; `<project>/<id>.yml`, flat root used for default. Same in-repo default as `KANBAN_DATA_DIR`. |
    | `KANBAN_GIT_COMMIT` | `true` | `false` disables auto-commit. |
    | `KANBAN_DEFAULT_PROJECT` | `default` | Name of the implicit single-project. |
    | `KANBAN_ARCHIVE_AFTER_DAYS` | `30` | Age after which `DONE` tasks archive (`0` disables). |
@@ -198,7 +198,8 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/tasks/archive/sweep` | Run the archive sweep now (returns `{ moved, projects }`) | Auth required |
 | `GET` | `/api/events` | Server-Sent Events stream of task snapshots | Public |
 | `GET` | `/api/metrics` | Cross-project metrics (`?project=` scopes; cycle time, `by_status`, contention) | Public |
-| `GET` | `/api/health`, `/healthz` | Read-only liveness/readiness probe | Public |
+| `GET` | `/api/health`, `/healthz` | Read-only liveness probe (always 200) | Public |
+| `GET` | `/api/health/ready` | Readiness probe — 200 once the store has loaded, 503 before (used by the deploy healthcheck) | Public |
 | `POST` | `/api/auth/session` | HMAC session-token handshake (requires `KANBAN_AUTH_SECRET`) | Proof-of-secret |
 
 ---
@@ -207,7 +208,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 
 The server is a stateful long-running process (in-memory store, background lease reaper, open SSE connections), so it needs a host that runs a persistent process — **not** a serverless/FaaS platform. Two deploy blueprints ship in the repo:
 
-- **Render** — [`render.yaml`](render.yaml): a single Node web service that builds the client and serves API + SPA on one port, with a persistent disk at `/data`.
+- **Render** — [`render.yaml`](render.yaml): a single Node web service that builds the client and serves API + SPA on one port, with a persistent disk at `/data`. The healthcheck probes `GET /api/health/ready`, which returns 503 until the store has loaded, so the platform will not route traffic to a half-booted instance.
 - **Railway** — [`railway.json`](railway.json): Railpack build, `npm --prefix server start`, healthcheck at `/api/health`. The production instance lives at **<https://agent-kanban.riazrahaman.com>** (custom domain on Railway).
 
 For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth token (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS`), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
@@ -229,7 +230,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (329 tests, including the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
+`npm test` runs the server suite (354 tests, including the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (107 tests, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, and About-page regression guards), and compiles the production bundle.
 
 ### Releasing
 
@@ -323,6 +324,17 @@ priority items:
    **Shipped in v2.6.0** (recognized-key purge guard, `client_nonce:role:project`
    proof binding, `KANBAN_MAX_SSE_STREAMS`, shared constant-time
    `server/utils/constantTime.js`, `KANBAN_AUTH_RATE_LIMIT_PER_MIN`).
+
+8. ~~**Server robustness batch (BUG-06, BUG-08, BUG-10, BUG-11, IMPL-01, IMPL-02,
+   ENH-05)** — an `archive`-named project disappeared on restart, dependency
+   cycles were accepted, a port-bind failure crashed the process, a stale
+   sibling-repo storage path could be used when unconfigured, the deploy
+   healthcheck hit an always-200 endpoint, Telegram alerts lost their critical
+   rows under truncation, and the deploy CORS origin lost its scheme.~~
+   **Shipped in v2.7.0** (archive skip removed, depth-capped dependency-cycle
+   DFS, `server.on('error')` in `startServer`, in-repo `server/data` default,
+   `GET /api/health/ready` + `render.yaml` healthcheck, protected-row Telegram
+   truncation, `RENDER_EXTERNAL_URL` + scheme-normalising CORS).
 
 The full list (SEC-01..07, BUG-01..11, PERF-01/02, IMPL-01/02,
 ENH-01..12) lives on the `kanbann` project of the live board.

@@ -42,4 +42,31 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * ENH-05 (v2.7.0): GET /api/health/ready — readiness probe.
+ *
+ * Returns HTTP 200 `{ready:true, store_loaded:true, ...}` when the store is
+ * loaded, else HTTP 503 `{ready:false, store_loaded:false, ...}`. Read-only and
+ * unauthenticated, same contract as the liveness endpoint. Mounted before the
+ * SPA catch-all. The liveness `GET /` and the `/healthz` alias are unchanged.
+ */
+router.get('/ready', asyncHandler(async (req, res) => {
+  const loaded = store.isStoreLoaded();
+  if (loaded) {
+    return res.status(200).json({
+      ready: true,
+      store_loaded: true,
+      uptime_seconds: Math.round(process.uptime()),
+      version: APP_VERSION,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return res.status(503).json({
+    ready: false,
+    store_loaded: false,
+    version: APP_VERSION,
+    timestamp: new Date().toISOString(),
+  });
+}));
+
 export default router;

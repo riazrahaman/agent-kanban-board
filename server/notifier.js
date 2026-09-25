@@ -202,17 +202,36 @@ export function formatReclaimMessage(event, cfg = notifierConfig(), opts = {}) {
   const leaseEnded = fmtUtc(prev.claim_expires_at);
   const leaseAgo = ago(prev.claim_expires_at, now);
 
-  const rows = [
+  // BUG-10 (v2.7.0): guarantee the critical rows survive truncation. The header
+  // + identity rows (Project, Task, Title) and the critical tail rows (Reason,
+  // Held by, Board) must always be present. Optional rows are dropped/shortened
+  // first, in this order, before any hard truncation; the Board line is NEVER
+  // truncated (it is appended last, unconditionally).
+  const headerRows = [
     `🔻 <b>Task reclaimed to BACKLOG</b>`,
     '',
     line('Project', `<b>${safe(project)}</b>`),
     line('Task', `<b>${safe(task.id || prev.id)}</b>`),
     line('Title', safe(task.title || prev.title)),
-    line('Work', workContext),
-    line('Branch', safe(task.branch || prev.branch)),
+  ].filter((r) => r !== null);
+
+  const boardLine = `<b>Board:</b> ${htmlEscape(`${cfg.boardUrl}/?project=${encodeURIComponent(project)}`)}`;
+
+  // Optional rows, in drop order (first dropped first when over the limit).
+  const optionalRows = [
+    line('Description', cfg.includeDesc ? safe(truncate(decodeStored(task.description || prev.description), DESCRIPTION_LIMIT)) : null),
+    line('Last log', lastLog
+      ? `"${safe(truncate(lastLog.message, 200))}" — ${safe(lastLog.agent_id || 'system')}`
+      : null),
     line('Depends on', joined(task.depends_on || prev.depends_on)),
     line('Issues', joined(task.issues || prev.issues)),
-    line('Description', cfg.includeDesc ? safe(truncate(decodeStored(task.description || prev.description), DESCRIPTION_LIMIT)) : null),
+    line('Stage owners', stageOwners),
+  ];
+
+  // Mid rows (kept unless still over the limit after dropping all optionals).
+  const midRows = [
+    line('Work', workContext),
+    line('Branch', safe(task.branch || prev.branch)),
     '',
     line('Reason', `<b>${htmlEscape(reasonLabel(reason))}</b>`),
     line('Held by', prev.assigned_agent ? safe(prev.assigned_agent) : 'none — active with no owner'),
@@ -225,17 +244,71 @@ export function formatReclaimMessage(event, cfg = notifierConfig(), opts = {}) {
     })()),
     line('Created', fmtUtc(task.created_at || prev.created_at)),
     line('Reclaim count', reclaims === null ? null : String(reclaims)),
-    line('Stage owners', stageOwners),
-    line('Last log', lastLog
-      ? `"${safe(truncate(lastLog.message, 200))}" — ${safe(lastLog.agent_id || 'system')}`
-      : null),
-    '',
-    `<b>Board:</b> ${htmlEscape(`${cfg.boardUrl}/?project=${encodeURIComponent(project)}`)}`,
   ].filter((r) => r !== null);
 
-  let text = rows.join('\n');
+  function buildText(optCount, midCount) {
+    const parts = [
+      ...headerRows,
+      ...optionalRows.slice(0, optCount),
+      ...midRows.slice(0, midCount),
+      '',
+      boardLine,
+    ];
+    return parts.join('\n');
+  }
+
+  // Variant WITHOUT the trailing Board line, so the hard-truncation path can
+  // truncate the head and append the Board line unconditionally afterwards.
+  function buildHead(optCount, midCount) {
+    const parts = [
+      ...headerRows,
+      ...optionalRows.slice(0, optCount),
+      ...midRows.slice(0, midCount),
+    ];
+    return parts.join('\n');
+  }
+
+  let text = buildText(optionalRows.length, midRows.length);
   if (text.length > TELEGRAM_TEXT_LIMIT) {
-    text = `${text.slice(0, TELEGRAM_TEXT_LIMIT - 1)}…`;
+    // Drop optional rows one at a time (in the defined drop order) until under
+    // the limit or all optionals are gone.
+    for (let optCount = optionalRows.length - 1; optCount >= 0 && text.length > TELEGRAM_TEXT_LIMIT; optCount--) {
+      text = buildText(optCount, midRows.length);
+    }
+    // Still over: drop mid rows from the end (least-critical first), but never
+    // the Reason/Held by rows (indices 3 and 4 in midRows) — keep at minimum
+    // through Held by. Mid rows layout:
+    //   [Work, Branch, '', Reason, Held by, Lease ended, Last activity, Created, Reclaim count]
+    const CRITICAL_MID_FLOOR = 5; // indices 0..4 => Work..Held by (incl. the '' separator + Reason + Held by)
+    for (let midCount = midRows.length - 1; midCount >= CRITICAL_MID_FLOOR && text.length > TELEGRAM_TEXT_LIMIT; midCount--) {
+      text = buildText(0, midCount);
+    }
+    // Last resort: the head is still over the limit even with all optional and
+    // non-critical mid rows dropped. The remaining overflow is in the header
+    // (typically a huge Title). Truncate the Title so the critical tail rows
+    // (Reason, Held by, Board) always survive in full. Build the minimal set:
+    //   header (title truncated) + Reason + Held by + Board.
+    if (text.length > TELEGRAM_TEXT_LIMIT) {
+      const boardWithSep = `\n${boardLine}`;
+      const reasonLine = line('Reason', `<b>${htmlEscape(reasonLabel(reason))}</b>`) || '';
+      const heldLine = line('Held by', prev.assigned_agent ? safe(prev.assigned_agent) : 'none — active with no owner') || '';
+      const tail = `\n${reasonLine}\n${heldLine}${boardWithSep}`;
+      const reserve = tail.length + 1; // +1 for ellipsis
+      const headRoom = TELEGRAM_TEXT_LIMIT - reserve;
+      // Rebuild the header with the title truncated to fit.
+      const projectLine = line('Project', `<b>${safe(project)}</b>`) || '';
+      const taskLine = line('Task', `<b>${safe(task.id || prev.id)}</b>`) || '';
+      const titleRaw = safe(task.title || prev.title);
+      // header = banner + '' + Project + Task + Title(truncated)
+      const banner = `🔻 <b>Task reclaimed to BACKLOG</b>`;
+      const headPrefix = `${banner}\n\n${projectLine}\n${taskLine}\n`;
+      const titlePrefix = `<b>Title:</b> `;
+      const titleBudget = Math.max(0, headRoom - headPrefix.length - titlePrefix.length);
+      const truncTitle = titleRaw.length > titleBudget
+        ? `${titleRaw.slice(0, Math.max(0, titleBudget - 1))}…`
+        : titleRaw;
+      text = `${headPrefix}${titlePrefix}${truncTitle}${tail}`;
+    }
   }
   return text;
 }

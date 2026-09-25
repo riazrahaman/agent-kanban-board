@@ -6,7 +6,7 @@ services:
     region: oregon
     buildCommand: npm ci --prefix client && npm run build --prefix client && npm ci --prefix server
     startCommand: npm --prefix server start
-    healthCheckPath: /
+    healthCheckPath: /api/health/ready
     disk:
       name: kanban-data
       mountPath: /data
@@ -34,4 +34,4 @@ services:
         fromService:
           name: agent-kanban-board
           type: web
-          envVarKey: RENDER_EXTERNAL_HOSTNAME
+          envVarKey: RENDER_EXTERNAL_URL

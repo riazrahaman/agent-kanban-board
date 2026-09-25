@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,26 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.7.0] — 2026-09-25
+
+### Fixed
+
+- **A project named `archive` is no longer invisible (BUG-06).** `listGitProjects` skipped any top-level directory literally named `archive`, which made a real git-backed project with that id vanish after a restart. The skip is removed; the archive sink never held a direct card file, so it is still excluded by the per-directory `.yml` check.
+- **Dependency cycles and self-references are rejected (BUG-08).** `createTask` and `PATCH /api/tasks/:id` accepted a `depends_on` that referenced the task itself or closed a cycle, which could leave tasks permanently unclaimable. A depth-capped DFS now rejects self-references and transitive cycles with a 400 (dangling dependencies are still allowed — they simply never satisfy the gate).
+- **A failed port bind no longer crashes the process (IMPL-01).** `startServer` attaches a `server.on('error')` handler, so `EADDRINUSE`/`EADDRNOTAVAIL` is logged and the boot promise rejects cleanly instead of surfacing as an unhandled `'error'` event and a restart loop.
+- **Telegram alerts keep their critical rows under truncation (BUG-10).** A reclaim alert longer than Telegram's 4096-character limit previously had its tail chopped, dropping the reason, the holder, and the board deep link. The formatter now drops low-value rows first, protects the reason/holder rows, and always appends the board link last.
+
+### Changed
+
+- **Stale cross-repo storage fallback removed (IMPL-02).** `gitRoot()` and `jsonDataDir()` no longer default to a sibling `../../agent-based-investment/ops/kanban` path; unset `KANBAN_GIT_DIR`/`KANBAN_DATA_DIR` now resolve to an in-repo `server/data` with a one-time warning, so an unconfigured instance can never write into (or read from) another checkout.
+- **Readiness endpoint added and wired into the deploy blueprint (ENH-05).** `GET /api/health/ready` returns 200 `{ready:true}` once the store is loaded and 503 otherwise; `render.yaml` now health-checks that path, so a platform won't route traffic to an instance that has not finished loading its store.
+- **Deploy CORS origin now carries a scheme (BUG-11).** `render.yaml` references `RENDER_EXTERNAL_URL` rather than the bare `RENDER_EXTERNAL_HOSTNAME`, and `configureCors` normalises a scheme-less origin by prefixing `https://`; the `*`/empty rejections run against the raw value first.
+
+### Quality gates
+
+- Server suite: **354 tests across 56 suites** (adds `kanban.robustness270.test.js`, 25 tests; IPv6-less hosts skip the bind test instead of failing).
+- Client suite: 107 tests. `tsc -b`, `vite build`, `make sec`, the version lockstep guard, and the doc-mirror parity check all pass.
 
 ## [2.6.0] — 2026-09-25
 

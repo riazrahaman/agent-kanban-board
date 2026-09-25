@@ -57,7 +57,9 @@ Configured via `KANBAN_STORAGE_BACKEND`:
 - **`git`**: Writes individual YAML task cards to `KANBAN_GIT_DIR` or `ops/kanban/<ID>.yml` matching spec Sec 3.2 schema. When inside a git repository, each state transition creates an atomic git commit: `ops(<ID>): kanban <STATUS>`.
 
 This desk checkout selects `git` by default and resolves its sibling desk cards
-at `../../agent-based-investment/ops/kanban`; a reusable clone selects `json`
+at `KANBAN_GIT_DIR` (or `KANBAN_DATA_DIR`). When neither env var is set, storage
+defaults to an in-repo `server/data` directory (with a one-time warning nudging
+operators to set one explicitly in production); a reusable clone selects `json`
 explicitly or supplies its own `KANBAN_GIT_DIR`.
 
 ## Consequences

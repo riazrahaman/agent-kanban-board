@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.6.0        
+**System Version:** 2.7.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -39,6 +39,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Cross-Origin Control** | `cors` | ^2.8.5 | Restricts browser access strictly to the configured frontend origin. |
 | **Version Control Integration** | `child_process.execFile` (promisified) | Native | Direct execution of `git add` and `git commit` without external Git wrapper overhead. |
 | **Test Suite** | `node:test` + `node:assert/strict` | Native | Zero-dependency, native Node test runner with suite lifecycle hooks (`before`, `after`, `describe`, `it`). |
+| **Health & Readiness** | `server/routes/health.js` | Native | `GET /api/health` (+ `/healthz`) is a liveness probe that always returns 200 with store/reaper/backup state; `GET /api/health/ready` returns 503 until the store has loaded, and `render.yaml` health-checks that path. |
 
 ### 2.2 Frontend Client
 
@@ -61,7 +62,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. |
-| **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `BACKLOG` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. |
+| **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `BACKLOG` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
 
 ### 2.3 Typography & Design System
@@ -317,7 +318,7 @@ flowchart TD
     end
 
     subgraph Git_Mode_Details ["Git-Backed Persistence"]
-        Git_Dir["Target: ops/kanban/<ID>.yml"]
+        Git_Dir["Target: KANBAN_GIT_DIR/<project>/<ID>.yml\n(default: in-repo server/data)"]
         PathCheck{"Path Traversal Check:\nDoes filePath stay inside target dir?"}
         RoundCheck{"Round Validation:\nIs round a positive integer?"}
         YAML_Format["Serialize card to YAML conforming to spec Sec 3.2"]
