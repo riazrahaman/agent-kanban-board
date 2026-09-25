@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,42 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.12.0] — 2026-09-25
+
+Lease-window root-cause fix. Claimed tasks were being reclaimed to BACKLOG as
+false alarms because (RC-1) every lease window was pinned to the one fixed global
+TTL, and (RC-2) renewal was per-task, so an orchestrator holding N cards had to
+make N heartbeat calls and any job longer than the TTL lost its lease.
+
+### Added
+- **Per-task lease windows.** `POST /api/tasks/:id/claim`, `/next-claim`, and
+  `/:id/heartbeat` accept an optional `lease_ms`; the chosen window is persisted
+  on the task as `claim_lease_ms` and every later renewal keeps it, so a 30-minute
+  lease is no longer shrunk back to the 10-minute default by the next heartbeat.
+  `KANBAN_MIN_LEASE_MS` (default 60000) and `KANBAN_MAX_LEASE_MS` (default
+  7200000) clamp the request; a non-numeric/negative value is a 400.
+- **Bulk lease renewal.** `POST /api/agents/:agent_id/heartbeat` renews EVERY
+  active lease that agent holds in one call. A non-privileged caller may only
+  heartbeat its own id (`403` otherwise); a privileged role may renew on another
+  agent's behalf; `?project=` narrows the sweep. Lapsed leases are deliberately
+  not revived.
+- **Holder-write renews all.** A holder's `appendLog`, `patchTask`, or `applyClaim`
+  also re-arms that holder's other leases (excluding the card just written), so
+  ordinary progress keeps every held card alive. Disable with
+  `KANBAN_HOLDER_WRITE_RENEWS_ALL` (default on).
+- Notifier reclaim alerts gained a **Lease window** row.
+
+### Changed
+- `client/src/lib/claimCoordinator.ts` heartbeat scheduling now honours a task's
+  own `claim_lease_ms`, falling back to the observed/configured window (stale
+  300000 default corrected to 600000).
+
+### Quality gates
+Server suite: 433 tests (66 suites). Client suite: 120 tests. New coverage in
+`server/test/kanban.leasewindow.test.js` (25 tests) plus `kanban.lease.test.js`
+additions; the per-task window, bulk renewal, and holder-write gates were each
+falsified (6/3/3 red) then restored byte-exact.
 
 ## [2.11.0] — 2026-09-25
 

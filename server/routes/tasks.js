@@ -176,6 +176,7 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
       agentId,
       role: rawRole ? String(rawRole).toLowerCase() : undefined,
       project,
+      lease_ms: req.query?.lease_ms ?? req.body?.lease_ms,
      });
 
      if (result.unavailable) {
@@ -269,9 +270,13 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
 
   const guard = resolveExpectedVersion(req);
   const result = await store.claimTask(
-        req.params.id, agentId, resolveProjectFromReq(req), guard || {},
+        req.params.id, agentId, resolveProjectFromReq(req),
+        { ...(guard || {}), lease_ms: req.body?.lease_ms },
        );
   if (result.error) {
+    if (result.status === 400) {
+      return res.status(400).json({ error: result.error });
+    }
         // §2.6: distinguish a version-conflict 409 from contention 409. A stale
         // claim ("Version mismatch") carries the current version for retry; a
         // contention 409 ("… already claimed by …") carries no version.
@@ -352,6 +357,7 @@ router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
    const result = await store.renewLease(req.params.id, agentId, {
     caller: req.caller || {},
     project: resolveProjectFromReq(req),
+    lease_ms: req.body?.lease_ms,
     });
 
      if (result.error) {

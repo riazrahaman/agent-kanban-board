@@ -91,6 +91,52 @@ function getClaimTtlMs() {
   return Number.isFinite(n) && n > 0 ? n : 600000;
 }
 
+export function getMinLeaseMs() {
+  const raw = process.env.KANBAN_MIN_LEASE_MS;
+  if (raw === undefined || raw === '') return 60000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 60000;
+}
+
+export function getMaxLeaseMs() {
+  const raw = process.env.KANBAN_MAX_LEASE_MS;
+  if (raw === undefined || raw === '') return 7200000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 7200000;
+}
+
+export function leaseWindowFor(task) {
+  return task.claim_lease_ms ?? getClaimTtlMs();
+}
+
+function resolveLeaseMs(requested) {
+  if (requested === undefined || requested === null) {
+    // No explicit request: the lease keeps the global default, and we do NOT pin
+    // it — the caller stores `null` so a later config change still applies.
+    return { ok: true, ms: getClaimTtlMs(), explicit: false };
+  }
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) {
+    return { ok: false, status: 400, error: 'lease_ms must be a positive number of milliseconds' };
+  }
+  const min = getMinLeaseMs();
+  const max = getMaxLeaseMs();
+  return { ok: true, ms: Math.min(Math.max(n, min), max), explicit: true };
+}
+
+/**
+ * §2.4b Fix 3 (v2.12.0). When a task holder writes to any one card, renew the
+ * leases on every OTHER card they also hold, in the same lock — otherwise an
+ * orchestrator busy on one card silently loses its siblings to the reaper even
+ * though it was demonstrably active. Default ON; set KANBAN_HOLDER_WRITE_RENEWS_ALL=0
+ * (or false) to disable.
+ */
+function holderWriteRenewsAll() {
+  const raw = process.env.KANBAN_HOLDER_WRITE_RENEWS_ALL;
+  if (raw === undefined || raw === '') return true;
+  return raw !== '0' && raw.toLowerCase() !== 'false';
+}
+
 function getReapIntervalMs() {
   const raw = process.env.KANBAN_REAP_INTERVAL_MS;
   if (raw === undefined || raw === '') return 30000;
@@ -1474,13 +1520,25 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       candidate.assigned_agent === caller.agent_id &&
       candidate.claim_expires_at
     ) {
-      candidate.claim_expires_at = isoFromMs(nowFn() + getClaimTtlMs());
+      candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
     }
 
     const storage = getStorage(candidate.project);
     await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
     updateInMemoryTask(candidate);
     notify();
+    // §2.4b Fix 3: a HOLDER that PATCHes any one card renews all its leases.
+    // Gate on the *caller* being the card's holder (a non-holder's write must
+    // never extend the real holder's leases), and exclude the card just written
+    // (it already had its own lease bumped above — re-renewing it would double
+    // its version bump).
+    if (
+      holderWriteRenewsAll() &&
+      caller.agent_id &&
+      caller.agent_id === candidate.assigned_agent
+    ) {
+      await renewAllLeasesInner(caller.agent_id, nowFn(), compositeKey(candidate.project, candidate.id));
+    }
 
     // §2.5 optional event-driven auto-promote: on a *transition into DONE*,
     // unlock any BLOCKED dependents whose last remaining dependency just
@@ -1620,7 +1678,7 @@ function validateDependencyGraph(project, id, dependsOn) {
  * privileged (they may renew any lease), skip the dependency gate (the lease was
  * earned at a satisfied gate), do not move status, and push no log (no spam).
  */
-async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) {
+async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs = null } = {}) {
   const role = caller?.role || null;
   const isPriv = isPrivilegedRole(role);
 
@@ -1661,7 +1719,14 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   // lease and MUST NEVER reassign — a privileged heartbeat must not take the
   // task's owner from the real holder. So `assigned_agent` is set only on claim.
   if (!renew) candidate.assigned_agent = agentId;
-  candidate.claim_expires_at = isoFromMs(nowMs + getClaimTtlMs());
+  // Persist the window chosen at claim time. A fresh claim PINS the resolved
+  // window (explicit `lease_ms`, else the global default); a renewal keeps the
+  // stored window unless the caller passes an explicit `leaseMs`. Legacy cards
+  // that predate the field load `null` (see backfillLeaseFields) and fall back
+  // to the global TTL via leaseWindowFor.
+  if (!renew) candidate.claim_lease_ms = leaseMs ?? getClaimTtlMs();
+  else if (leaseMs !== null) candidate.claim_lease_ms = leaseMs;
+  candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
   if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
   if (!renew && candidate.status === STATUSES.BACKLOG) {
     candidate.status = STATUSES.BUILDING;
@@ -1686,6 +1751,11 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false } = {}) 
   // KB-05: persist first, then mutate memory, then notify.
   await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
   updateInMemoryTask(candidate);
+  // §2.4b Fix 3: claiming/renewing one card also re-arms the holder's OTHER
+  // leases. Exclude the card just written above (already renewed).
+  if (holderWriteRenewsAll()) {
+    await renewAllLeasesInner(agentId, nowMs, compositeKey(candidate.project, candidate.id));
+  }
    // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
    // The auth middleware populates req.caller as { agent_id, role } — reading
    // `caller.agentId` was always undefined, which attributed every renewal by a
@@ -1741,6 +1811,7 @@ async function unlockTaskInner(task, nowMs, completedRef) {
   candidate.status = STATUSES.BACKLOG;
   candidate.assigned_agent = null;
   candidate.claim_expires_at = null;
+  candidate.claim_lease_ms = null;
   candidate.updated = isoFromMs(nowMs);
   candidate.version = nextVersionFor(task);
   if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
@@ -1803,7 +1874,7 @@ export async function maybeUnlockDependents(completedRef, { now } = {}) {
  * "Version mismatch" 409, distinct from the "… already claimed by …" contention
  * 409 and the `dependency_unsatisfied` 409.
  */
-export async function claimTask(id, agentId, project, { expected_version: expectedVersion } = {}) {
+export async function claimTask(id, agentId, project, { expected_version: expectedVersion, lease_ms: requestedLease } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, project);
     if (!task) return { error: 'Task not found', status: 404 };
@@ -1812,12 +1883,15 @@ export async function claimTask(id, agentId, project, { expected_version: expect
       return { error: 'agent_id is required', status: 400 };
       }
 
+    const lease = resolveLeaseMs(requestedLease);
+    if (!lease.ok) return { error: lease.error, status: lease.status };
+
        // §2.6: enforce the version guard before building the candidate.
     const conflict = versionConflict(task, expectedVersion);
     if (conflict) return conflict;
 
        // Contention + dep gate + write via the shared core.
-    return applyClaim(task, agentId, {}, nowFn());
+    return applyClaim(task, agentId, {}, nowFn(), { leaseMs: lease.ms });
    });
 }
 
@@ -1827,7 +1901,7 @@ export async function claimTask(id, agentId, project, { expected_version: expect
  * (runner/system/human/admin) may renew; a non-privileged non-holder gets a
  * `not_lease_holder` 409. An unclaimed task yields a `not_claimed` 409.
  */
-export async function renewLease(id, agentId, { caller = {}, project: projectArg } = {}) {
+export async function renewLease(id, agentId, { caller = {}, project: projectArg, lease_ms: requestedLease } = {}) {
   return withMutationLock(async () => {
     const task = getTask(id, projectArg);
     if (!task) return { error: 'Task not found', status: 404 };
@@ -1843,9 +1917,91 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
      }
 
        // Shared core in renew mode: extends the lease, no status move, no log.
-       return applyClaim(task, agentId, caller, nowFn(), { renew: true });
+    const lease = resolveLeaseMs(requestedLease);
+    if (!lease.ok) return { error: lease.error, status: lease.status };
+    return applyClaim(task, agentId, caller, nowFn(), { renew: true, leaseMs: requestedLease === undefined || requestedLease === null ? null : lease.ms });
        });
        }
+
+/**
+ * §2.4b bulk lease renewal (v2.12.0, RC-2). An orchestrator that holds N tasks
+ * previously had to make N heartbeat calls, one per card; missing even one while
+ * a long job ran let the reaper return that card to BACKLOG as a false alarm.
+ * This renews EVERY lease the given agent holds in ONE locked pass: for each
+ * card owned by `agentId` in an active stage whose lease has NOT already lapsed,
+ * push `claim_expires_at` out by that card's own window. Lapsed leases are
+ * deliberately NOT revived — a late bulk call must not race the reaper back into
+ * ownership. Bumps each renewed card's version, persists each, then emits ONE
+ * notify for the whole batch. Privilege is enforced at the route layer.
+ */
+// Unlocked worker for §2.4b Fix 3: renews every NON-lapsed active lease owned by
+// `agentId`, persisting each. Caller MUST already hold withMutationLock. Returns
+// the composite keys renewed. Never emits notify (the outer write does).
+async function renewAllLeasesInner(agentId, nowMs, excludeKey = null) {
+  if (!agentId || typeof agentId !== 'string') return [];
+  const renewed = [];
+  for (const t of tasks.slice()) {
+    if (excludeKey !== null && compositeKey(t.project, t.id) === excludeKey) continue;
+    if (t.assigned_agent !== agentId) continue;
+    if (
+      t.status !== STATUSES.BUILDING &&
+      t.status !== STATUSES.IN_REVIEW &&
+      t.status !== STATUSES.IN_TEST
+    ) {
+      continue;
+    }
+    const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
+    if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
+    const candidate = structuredClone(t);
+    candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
+    candidate.updated = isoFromMs(nowMs);
+    candidate.version = nextVersionFor(t);
+    const storage = getStorage(candidate.project);
+    await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
+    updateInMemoryTask(candidate);
+    renewed.push(compositeKey(candidate.project, candidate.id));
+  }
+  return renewed;
+}
+
+export async function renewAllLeases(agentId, { project: projectArg, caller = {} } = {}) {
+  return withMutationLock(async () => {
+    if (!agentId || typeof agentId !== 'string') {
+      return { error: 'agent_id is required', status: 400 };
+    }
+    const hasScope = projectArg !== undefined && projectArg !== null && projectArg !== '';
+    if (hasScope && !isValidProjectId(projectArg)) {
+      return { error: `Invalid project scope: ${String(projectArg)}`, status: 400 };
+    }
+    const nowMs = nowFn();
+    const renewed = [];
+    for (const t of tasks.slice()) {
+      if (t.assigned_agent !== agentId) continue;
+      if (hasScope && t.project !== projectArg) continue;
+      if (
+        t.status !== STATUSES.BUILDING &&
+        t.status !== STATUSES.IN_REVIEW &&
+        t.status !== STATUSES.IN_TEST
+      ) {
+        continue;
+      }
+      const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
+      if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
+      const candidate = structuredClone(t);
+      candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
+      candidate.updated = isoFromMs(nowMs);
+      candidate.version = nextVersionFor(t);
+      const storage = getStorage(candidate.project);
+      await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
+      updateInMemoryTask(candidate);
+      renewed.push(compositeKey(candidate.project, candidate.id));
+    }
+    if (renewed.length > 0) {
+      notify({ actor: agentId, reason: 'lease_renewed_bulk' });
+    }
+    return { renewed, count: renewed.length, status: 200 };
+  });
+}
 
 /**
  * §2.3b operator assignment (opt-operator-assignment, v2.11.0). Lets a
@@ -1885,6 +2041,7 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
     if (release) {
       candidate.assigned_agent = null;
       candidate.claim_expires_at = null;
+      candidate.claim_lease_ms = null;
       // An ownerless card may not stay in an active stage (the reaper would
       // normalise it anyway) — return it to BACKLOG so it is claimable again.
       if (
@@ -1896,7 +2053,9 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       }
     } else {
       candidate.assigned_agent = agentId;
-      candidate.claim_expires_at = isoFromMs(nowMs + getClaimTtlMs());
+      // Keep the card's own window if it had one; otherwise pin the global TTL.
+      candidate.claim_lease_ms = leaseWindowFor(candidate);
+      candidate.claim_expires_at = isoFromMs(nowMs + candidate.claim_lease_ms);
       if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
       if (candidate.status === STATUSES.BACKLOG) {
         candidate.status = STATUSES.BUILDING;
@@ -1981,25 +2140,26 @@ export function getMilestones(project) {
        * kept out of withMutationLock and the public reclaimTask wrapper supplies the
        * one lock.
        */
-       async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
-       const activeStatus = task.status === STATUSES.BUILDING
-        || task.status === STATUSES.IN_REVIEW
-        || task.status === STATUSES.IN_TEST;
-       if (!task.assigned_agent && !activeStatus) {
-        // Not currently held and not active — nothing to reclaim. Idempotent.
-         return { task, status: 200, reclaimed: false };
-         }
-       const fromAgent = task.assigned_agent;
-       const candidate = structuredClone(task);
-       candidate.status = STATUSES.BACKLOG;
-       candidate.assigned_agent = null;
-       candidate.claim_expires_at = null;
-       candidate.reclaim_count = (Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0) + 1;
-       candidate.updated = isoFromMs(nowMs);
-       candidate.version = nextVersionFor(task);
-       if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
-       candidate.agent_logs.push({
-        timestamp: candidate.updated,
+  async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
+    const activeStatus = task.status === STATUSES.BUILDING
+      || task.status === STATUSES.IN_REVIEW
+      || task.status === STATUSES.IN_TEST;
+    if (!task.assigned_agent && !activeStatus) {
+      // Not currently held and not active — nothing to reclaim. Idempotent.
+      return { task, status: 200, reclaimed: false };
+    }
+    const fromAgent = task.assigned_agent;
+    const candidate = structuredClone(task);
+    candidate.status = STATUSES.BACKLOG;
+    candidate.assigned_agent = null;
+    candidate.claim_expires_at = null;
+    candidate.claim_lease_ms = null;
+    candidate.reclaim_count = (Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0) + 1;
+    candidate.updated = isoFromMs(nowMs);
+    candidate.version = nextVersionFor(task);
+    if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
+    candidate.agent_logs.push({
+      timestamp: candidate.updated,
          message: !fromAgent
           ? 'Task had no owner — reclaimed to BACKLOG by system normalizer.'
           : (reason === 'lease_expired'
@@ -2104,7 +2264,7 @@ export function getMilestones(project) {
        * Returns `{ task, status: 200 }` on a claim, or `{ unavailable: true,
        * status: 204 }` when nothing is claimable (a cheap poll target for agents).
        */
-       export async function nextClaim({ agentId, role, project, now } = {}) {
+       export async function nextClaim({ agentId, role, project, now, lease_ms: requestedLease } = {}) {
        return withMutationLock(async () => {
        if (!agentId || typeof agentId !== 'string') {
          return { error: 'agent_id is required', status: 400 };
@@ -2150,7 +2310,9 @@ export function getMilestones(project) {
 
           // Re-gate at the instant of claim as defense-in-depth (the lock already
          // serializes, but this keeps the shared core total).
-       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs);
+       const lease = resolveLeaseMs(requestedLease);
+       if (!lease.ok) return { error: lease.error, status: lease.status };
+       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs, { leaseMs: lease.ms });
         if (r.error) return r;
         return { task: r.task, status: 200 };
         });
@@ -2335,7 +2497,7 @@ export async function appendLog(id, agentId, message, project, { expected_versio
       candidate.assigned_agent === agentId &&
       candidate.claim_expires_at
     ) {
-      candidate.claim_expires_at = isoFromMs(nowFn() + getClaimTtlMs());
+      candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
     }
     if (!Array.isArray(candidate.agent_logs)) {
       candidate.agent_logs = [];
@@ -2353,6 +2515,9 @@ export async function appendLog(id, agentId, message, project, { expected_versio
     );
 
     await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    if (holderWriteRenewsAll() && agentId && agentId === candidate.assigned_agent) {
+      await renewAllLeasesInner(agentId, nowFn(), compositeKey(candidate.project, candidate.id));
+    }
     updateInMemoryTask(candidate);
     notify();
     return { task: candidate, status: 200 };
@@ -2885,6 +3050,7 @@ export async function restoreFromTrash(id, { caller = {}, project } = {}) {
     restored.status = STATUSES.BACKLOG;
     restored.assigned_agent = null;
     restored.claim_expires_at = null;
+    restored.claim_lease_ms = null;
     restored.stage_owners = {};
     restored.deleted_at = undefined;
     restored.deleted_by = undefined;

@@ -12,6 +12,7 @@ const DESCRIPTIONS = {
   'KANBAN_ALLOWED_ORIGIN': 'Comma-separated CORS origin allow-list',
   'KANBAN_ARCHIVE_AFTER_DAYS': 'Days a DONE task waits before the archive sweep moves it',
   'KANBAN_ARCHIVING_DISABLED': 'Set truthy to disable the automatic archive sweep',
+  'KANBAN_AUDIT_LOG': 'Set truthy to persist the audit stream as JSONL',
   'KANBAN_AUTH_LOG': 'Set truthy to log redacted auth failures',
   'KANBAN_AUTH_RATE_LIMIT_PER_MIN': 'Per-IP limit for failed auth/handshake attempts',
   'KANBAN_AUTH_SECRET': 'HMAC secret enabling stateless session tokens',
@@ -22,6 +23,9 @@ const DESCRIPTIONS = {
   'KANBAN_BACKUP_KEEP': 'How many backup snapshots to retain (default 10)',
   'KANBAN_BOARD_URL': 'Board base URL used in Telegram reclaim alerts',
   'KANBAN_CLAIM_TTL_MS': 'Lease TTL for a claimed task (default 600000)',
+  'KANBAN_HOLDER_WRITE_RENEWS_ALL': 'Set falsy to disable renewing all sibling leases on a holder write (default 1)',
+  'KANBAN_MAX_LEASE_MS': 'Upper bound for a per-task lease window in ms (default 7200000)',
+  'KANBAN_MIN_LEASE_MS': 'Lower bound for a per-task lease window in ms (default 60000)',
   'KANBAN_DATA_DIR': 'Directory for named-project JSON data and archives',
   'KANBAN_DATA_FILE': 'Path to the default-project tasks file',
   'KANBAN_DEFAULT_PROJECT': 'Project id used when none is supplied (default "default")',
@@ -61,7 +65,7 @@ const findEnvVars = (dir, prefix) => {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist') {
         walk(fullPath);
-      } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name === 'vite.config.ts')) {
+      } else if (entry.isFile() && !/\.test\./.test(entry.name) && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name === 'vite.config.ts')) {
         const content = fs.readFileSync(fullPath, 'utf8');
         const regex = new RegExp(`${prefix}(\\w+)`, 'g');
         let match;

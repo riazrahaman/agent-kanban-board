@@ -53,6 +53,7 @@ export type Task = {
   version: number               // §2.6: monotonically increasing CAS guard, starts at 1
   expected_version?: number     // input guard only; supplied to mutations, never persisted
   claim_expires_at?: string | null  // §2.4: ISO-8601 lease deadline; null/absent = unclaimed
+  claim_lease_ms?: number | null    // v2.12.0: this card's lease window (ms); null = server default
   reclaim_count?: number        // §2.4: reaper reclaim count, seeds 0
 }
 

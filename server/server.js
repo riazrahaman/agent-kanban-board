@@ -12,6 +12,7 @@ import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import settingsRouter from './routes/settings.js';
 import milestonesRouter from './routes/milestones.js';
+import agentsRouter from './routes/agents.js';
 import { onAudit } from './store.js';
 import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
@@ -82,6 +83,7 @@ export function createApp() {
   // v2.5.0: per-project display settings (column colors).
   app.use('/api/settings', settingsRouter);
   app.use('/api/milestones', milestonesRouter);
+  app.use('/api/agents', agentsRouter);
 
   /**
    * §2.2 — SSE stream modes (PERF-01 rev-snapshot-to-diff):

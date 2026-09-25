@@ -32,7 +32,8 @@ export type CoordinatorConfig = {
   renewAtFraction?: number
      /**
      * Total lease window requested on every heartbeat / new claim, in ms.
-     * Should match the server's `KANBAN_CLAIM_TTL_MS` (default 300000 = 5 min).
+     * Fallback when a card has no per-task `claim_lease_ms`; should match the
+     * server's `KANBAN_CLAIM_TTL_MS` (default 600000 = 10 min).
      */
   leaseMs?: number
      /**
@@ -88,7 +89,10 @@ export function needsHeartbeat(
   if (remaining === null) return false
 
   const fraction = config.renewAtFraction ?? 0.5
-  const windowMs = config.leaseMs ?? 300000
+  // v2.12.0: a card may carry its own lease window (`claim_lease_ms`), chosen at
+  // claim time; prefer it over the configured global default so a long-window
+  // claim is not under-heartbeated.
+  const windowMs = task.claim_lease_ms ?? config.leaseMs ?? 600000
   return remaining <= fraction * windowMs
 }
 

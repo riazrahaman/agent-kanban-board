@@ -236,6 +236,7 @@ export function formatReclaimMessage(event, cfg = notifierConfig(), opts = {}) {
     line('Reason', `<b>${htmlEscape(reasonLabel(reason))}</b>`),
     line('Held by', prev.assigned_agent ? safe(prev.assigned_agent) : 'none — active with no owner'),
     line('Lease ended', leaseEnded ? `${htmlEscape(leaseEnded)}${leaseAgo ? ` (${htmlEscape(leaseAgo)})` : ''}` : null),
+    line('Lease window', Number.isFinite(prev.claim_lease_ms) ? `${Math.round(prev.claim_lease_ms / 60000)}m` : null),
     line('Last activity', (() => {
       const at = fmtUtc(prev.updated);
       if (!at) return null;

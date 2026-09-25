@@ -98,6 +98,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
     store.setNowFn(realNow);
     await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_AUTH_TOKEN;
     delete process.env.KANBAN_CLAIM_TTL_MS;
     delete process.env.KANBAN_REAP_ENABLED;
@@ -469,5 +470,131 @@ describe('lease hardening (v2.3.11)', () => {
     const t = store.getTask('lease-patch-2');
     assert.equal(t.claim_expires_at, before, 'non-holder PATCH leaves the lease untouched');
     assert.equal(t.assigned_agent, 'worker-d', 'ownership unchanged');
+  });
+});
+
+// --- v2.12.0 lease_ms HTTP contract (claim / heartbeat / next-claim routes) ---
+describe('lease_ms HTTP contract (v2.12.0)', () => {
+  let tmpDir;
+  let server;
+  let baseUrl;
+  let realNow;
+
+  before(async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_CLAIM_TTL_MS = String(TTL_MS);
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_DEFAULT_PROJECT;
+    process.env.KANBAN_REAP_ENABLED = 'false';
+    realNow = () => Date.now();
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-lease-http-'));
+    // NAMED projects resolve via jsonDataDir() (KANBAN_DATA_DIR), which
+    // setStorage() does NOT redirect; point it at tmpDir so the project-scoped
+    // next-claim test never writes into the repo's server/data fallback.
+    process.env.KANBAN_DATA_DIR = tmpDir;
+    store.setStorage(null);
+    store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
+    await store.loadStore();
+    ({ server, baseUrl } = await startTestServer(createApp()));
+  });
+
+  after(async () => {
+    store.stopReaper();
+    store.setNowFn(realNow);
+    await new Promise((resolve) => server.close(resolve));
+    await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_CLAIM_TTL_MS;
+    delete process.env.KANBAN_REAP_ENABLED;
+    store.setStorage(null);
+  });
+
+  it('18. POST /claim accepts lease_ms in the body and persists claim_lease_ms', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('http-lease-1', 'HTTP lease'),
+    });
+    const t0 = Date.now();
+    const claim = await jsonRequest(baseUrl, '/api/tasks/http-lease-1/claim', {
+      method: 'POST', headers: headers(undefined, 'http-alpha'),
+      body: JSON.stringify({ agent_id: 'http-alpha', lease_ms: 300000 }),
+    });
+    assert.equal(claim.response.status, 200);
+    assert.equal(claim.body.claim_lease_ms, 300000);
+    const expected = t0 + 300000;
+    assert.ok(
+      Math.abs(Date.parse(claim.body.claim_expires_at) - expected) < 5000,
+      'HTTP claim deadline uses the requested lease_ms',
+    );
+  });
+
+  it('19. POST /claim rejects an invalid lease_ms with 400', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('http-lease-2', 'HTTP bad'),
+    });
+    const claim = await jsonRequest(baseUrl, '/api/tasks/http-lease-2/claim', {
+      method: 'POST', headers: headers(undefined, 'http-beta'),
+      body: JSON.stringify({ agent_id: 'http-beta', lease_ms: 'not-a-number' }),
+    });
+    assert.equal(claim.response.status, 400);
+    assert.match(claim.body.error, /positive number of milliseconds/);
+  });
+
+  it('20. POST /heartbeat accepts lease_ms and extends by that window', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('http-lease-3', 'HTTP beat'),
+    });
+    await jsonRequest(baseUrl, '/api/tasks/http-lease-3/claim', {
+      method: 'POST', headers: headers(undefined, 'http-gamma'),
+      body: JSON.stringify({ agent_id: 'http-gamma', lease_ms: 120000 }),
+    });
+    const t0 = Date.now();
+    const beat = await jsonRequest(baseUrl, '/api/tasks/http-lease-3/heartbeat', {
+      method: 'POST', headers: headers('builder', 'http-gamma'),
+      body: JSON.stringify({ agent_id: 'http-gamma', lease_ms: 300000 }),
+    });
+    assert.equal(beat.response.status, 200);
+    const expected = t0 + 300000;
+    assert.ok(
+      Math.abs(Date.parse(beat.body.claim_expires_at) - expected) < 5000,
+      'HTTP heartbeat uses the provided lease_ms for the new deadline',
+    );
+  });
+
+  it('21. POST /next-claim accepts lease_ms (query or body) and persists it', async () => {
+    // Claim the leftover BACKLOG card from test 19 so only our new card is
+    // eligible for next-claim (FIFO order would otherwise pick the older one).
+    await jsonRequest(baseUrl, '/api/tasks/http-lease-2/claim', {
+      method: 'POST', headers: headers(undefined, 'cleanup'),
+      body: JSON.stringify({ agent_id: 'cleanup' }),
+    });
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('http-lease-4', 'HTTP next'),
+    });
+    const t0 = Date.now();
+    const r = await jsonRequest(baseUrl, '/api/tasks/next-claim?lease_ms=300000&role=builder&agent_id=http-delta', {
+      method: 'POST', headers: headers('builder', 'http-delta'),
+      body: JSON.stringify({}),
+    });
+    assert.equal(r.response.status, 200);
+    assert.equal(r.body.id, 'http-lease-4', 'next-claim picked the only available BACKLOG card');
+    assert.equal(r.body.claim_lease_ms, 300000, 'next-claim persisted claim_lease_ms from query');
+    assert.equal(r.body.assigned_agent, 'http-delta', 'next-claim assigned to the requesting agent');
+    const expected = t0 + 300000;
+    assert.ok(
+      Math.abs(Date.parse(r.body.claim_expires_at) - expected) < 5000,
+      'next-claim deadline uses the query lease_ms',
+    );
+  });
+
+  it('22. POST /next-claim rejects an invalid lease_ms with 400', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('http-lease-5', 'HTTP next bad'),
+    });
+    const r = await jsonRequest(baseUrl, '/api/tasks/next-claim?lease_ms=-1&role=builder&agent_id=http-epsilon', {
+      method: 'POST', headers: headers('builder', 'http-epsilon'),
+      body: JSON.stringify({}),
+    });
+    assert.equal(r.response.status, 400);
+    assert.match(r.body.error, /positive number of milliseconds/);
   });
 });

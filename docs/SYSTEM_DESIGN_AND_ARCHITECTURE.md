@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.11.0        
+**System Version:** 2.12.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -56,6 +56,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Board Filters & Sorting** | `components/BoardFilters.tsx`, `lib/filterTasks.ts`, `lib/boardSort.ts` | Browser Native | Live substring search (id/title/description/branch/agent), priority + assignee quick filters, and a persisted column sort (`priority \| updated \| id`, stable, re-applied on every SSE snapshot under `localStorage kanban.sort`). |
 | **Metrics Dashboard** | `components/MetricsDashboard.tsx`, `lib/dashboardMetrics.ts` | Browser Native | Toggleable 7-tile summary (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the **unfiltered** task list so totals stay stable while filters narrow the board. |
 | **Milestones** | `components/Portfolio.tsx`, `server/routes/milestones.js` | Browser Native | v2.11.0 (opt-milestones): cards carry an optional `milestone` label; `GET /api/milestones` rolls live cards up per goal (total / done / %) for the portfolio view. |
+| **Lease Windows & Bulk Renewal** | `server/store.js` · `leaseWindowFor`, `renewAllLeases`, `routes/agents.js` | Server | v2.12.0: a claim may request its own `lease_ms` (persisted as `claim_lease_ms`, clamped to `KANBAN_MIN_LEASE_MS`..`KANBAN_MAX_LEASE_MS`); every later renewal keeps that window, so a long job is not shrunk back to the global TTL. `POST /api/agents/:agent_id/heartbeat` renews every lease the agent holds in one call, and a holder write re-arms the holder's other leases (RC-1/RC-2 false-reclaim fix). |
 | **Operator Assignment** | `server/store.js` · `assignTask`, `components/TaskSheet.tsx` | Browser Native | v2.11.0 (opt-operator-assignment): a privileged caller can assign a task to a named agent (or release it) via `POST /api/tasks/:id/assign`; assignment sets the owner + lease and lifts a BACKLOG card to BUILDING, bypassing the dependency/contention gates by design. |
 | **Integration Webhooks** | `server/webhooks.js` | Node HTTPS | v2.11.0 (opt-integration-hooks): signed (HMAC-SHA256) outbound JSON POSTs on task diff events to every `KANBAN_WEBHOOK_URLS` sink; fail-silent, no new dependency. |
 

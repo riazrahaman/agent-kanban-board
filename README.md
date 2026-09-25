@@ -125,7 +125,10 @@ The board features pluggable persistence:
    | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
    | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated task description in the alert. |
    | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between Telegram alerts. |
-   | `KANBAN_CLAIM_TTL_MS` | `600000` | Lease TTL (10 min); expired leases are auto-reclaimed. |
+   | `KANBAN_CLAIM_TTL_MS` | `600000` | Default lease window (10 min) used when a claim passes no `lease_ms`. |
+   | `KANBAN_MIN_LEASE_MS` | `60000` | Lower bound a requested `lease_ms` is clamped to (1 min). |
+   | `KANBAN_MAX_LEASE_MS` | `7200000` | Upper bound a requested `lease_ms` is clamped to (2 h). |
+   | `KANBAN_HOLDER_WRITE_RENEWS_ALL` | `1` | When on, a holder's log/PATCH/claim also re-arms all its other leases. |
    | `KANBAN_ORPHAN_GRACE_MS` | `300000` | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to BACKLOG. Decoupled from the claim TTL (raising the TTL does not stretch this window). Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
    | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open. Health probes stay open. |
@@ -193,7 +196,8 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body) | Auth + Contention gated |
-| `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease | Auth required |
+| `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease (optional `lease_ms` re-windows it) | Auth required |
+| `POST` | `/api/agents/:agent_id/heartbeat` | Renew EVERY active lease that agent holds in one call (`?project=` narrows; self or privileged) | Auth required |
 | `POST` | `/api/tasks/:id/logs` | Append operational log entry | Auth required |
 | `GET` | `/api/tasks/:id/logs` | Page a task's logs (`?offset=`/`?limit=`/`?include_spilled=1`); returns `{inline, spilled_count, entries}` | Public |
 | `GET` | `/api/tasks/:id/issues` | List task issue IDs | Public |
@@ -239,7 +243,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (403 tests, including the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (120 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (433 tests, including the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (120 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 ### Releasing
 
