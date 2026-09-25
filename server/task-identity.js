@@ -175,6 +175,7 @@ export function backfillLeaseFields(list) {
   for (const t of list) {
     if (!Number.isInteger(t.version)) t.version = 1;
     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
+    if (t.claim_lease_ms === undefined) t.claim_lease_ms = null;
     if (t.reclaim_count === undefined) t.reclaim_count = 0;
     if (t.branch !== undefined) t.branch = toBranch(t.branch);
     // v2.5.0: every card carries a comments thread; legacy records default to

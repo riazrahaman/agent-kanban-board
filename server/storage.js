@@ -422,6 +422,7 @@ export class GitYamlStorage {
        // §2.4: persist lease + reclaim observability so a git card round-trips
       // them; default to null/0 for legacy cards.
       claim_expires_at: task.claim_expires_at ?? null,
+      claim_lease_ms: task.claim_lease_ms ?? null,
       reclaim_count: task.reclaim_count ?? 0,
        };
     if (task.archived_at) cardData.archived_at = task.archived_at;
