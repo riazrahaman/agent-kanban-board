@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,23 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.5.8] — 2026-09-24
+
+### Fixed
+
+- **BUG-03 — `createTask` was a side door around the claim contract.** Any token holder could create a task directly in `BUILDING`, `IN_REVIEW`, `IN_TEST` or `DONE`, skipping the role gate, the dependency gate and the entire claim/lease lifecycle — fabricating completed work or floating work nobody owned. Creating a task in one of those work states now requires a privileged credential (`403` otherwise). `BACKLOG` (the normal create status) and `BLOCKED` (a parking state and a bulk-import target) stay open to unprivileged creation.
+- **BUG-04 — caller-supplied `assigned_agent` produced unclaimable orphans.** `createTask` took `assigned_agent` straight from the body and never joined it to a lease, so a `BACKLOG` card could look assigned while the contention check rejected every real claimer with `409` forever. Ownership is now written **only** by `POST /claim`; a body-supplied owner is ignored at create.
+- **SEC-04 — forgeable audit provenance at create.** `stage_owners`, `agent_logs` and `comments` were accepted verbatim from the create body, letting a caller fabricate a review history for work nobody did. They now always start empty and are written only by real transitions and real endpoints.
+- **BUG-05 — unbounded / silently-coerced create fields.** `depends_on` as a bare string was silently dropped to `[]`; a non-object `metadata` was silently swallowed into `{}`; a 90 000-character title was accepted. `depends_on` must now be an array of non-empty task ids, `metadata` a plain object of at most 8 000 bytes, and `title`/`description` are capped at 200 / 20 000 characters. The same shape rules apply on `PATCH`.
+
+### Changed
+
+- `store.createTask(data, project, { caller })` now takes the authenticated caller; the `POST /api/tasks` route threads `req.caller` through so the status privilege check is derived from the credential (not a client-asserted role header).
+
+### Quality gates
+
+- Server suite: **300 tests across 43 suites** (adds `kanban.createinput.test.js`, 14 tests). Client suite: 102 tests. Each of the four new gates was falsified (neutralized → tests red → restored byte-exact) before release.
 
 ## [2.5.7] — 2026-09-24
 

@@ -62,10 +62,10 @@ router.post('/', asyncHandler(async (req, res) => {
   const body = req.body ?? {};
    // §2.1: project may arrive as body.project, body.workspace_id, or ?project=.
   const project = resolveProjectFromReq(req);
-  const result = await store.createTask(body, project);
+  const result = await store.createTask(body, project, { caller: req.caller || {} });
   if (result.error) {
     console.warn(`[kanban rejection] POST /api/tasks: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason ? { reason: result.reason } : {}) });
    }
   res.status(201).json(result.task);
 }));
