@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,32 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.14.2] — 2026-09-26
+
+Fix: the About footer's anonymous visit counter now counts **every site load**,
+not just opens of the About tab, so the number matches the "Visit count so far"
+label it has always carried.
+
+### Fixed
+- **The visit counter only counted About-tab opens.** `useVisitCount()` was
+  mounted inside `About.tsx`, and `<About>` only mounts when `view === 'about'`,
+  so a board-first visitor was never counted and the site-wide figure
+  under-reported. The hook is now called once at the app shell (`App.tsx`) and
+  its `{count, counted}` state is passed down to `About` as a `visit` prop.
+  Behaviour is otherwise unchanged: one count per browser session
+  (`sessionStorage` flag `kanban-visit-counted`), a single anonymous integer on
+  the public counter under its own `agent-kanban.riazrahaman.com` namespace, and
+  the line is omitted entirely when the counter is unreachable.
+
+### Changed
+- **About copy is no longer stale.** The "Does it phone home?" FAQ answer now
+  describes a *site-wide* visit counter (shown on the About tab) rather than a
+  counter scoped to "this page", and the capabilities row names `App.tsx` as the
+  call site.
+- `docs/FILE_BY_FILE_EXPLANATION.md` (and its `with-images/` mirror) record the
+  hoist against `About.tsx` / `useVisitCount.ts`; `useVisitCount.test.mjs` now
+  asserts the hook is called in `App.tsx` and is **not** called in `About.tsx`.
 
 ## [2.14.1] — 2026-09-26
 

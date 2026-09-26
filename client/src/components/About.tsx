@@ -18,10 +18,12 @@ import {
   TOUR_SHOTS,
   WHY_CARDS,
 } from '../lib/aboutContent'
-import { formatVisitCount, useVisitCount } from '../lib/useVisitCount'
+import { formatVisitCount } from '../lib/useVisitCount'
+import type { VisitState } from '../lib/useVisitCount'
 
 type Props = {
   version: string | null
+  visit: VisitState
 }
 
 function Cta({ href, children }: { href: string; children: React.ReactNode }) {
@@ -67,8 +69,8 @@ function FlowRow({
   )
 }
 
-export default function About({ version }: Props) {
-  const { count: visitCount, counted: visitCounted } = useVisitCount()
+export default function About({ version, visit }: Props) {
+  const { count: visitCount, counted: visitCounted } = visit
   return (
     <div className="h-full min-w-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-10">

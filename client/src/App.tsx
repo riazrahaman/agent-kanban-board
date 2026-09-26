@@ -15,6 +15,7 @@ import TaskSheet from './components/TaskSheet'
 import HeaderHelp from './components/HeaderHelp'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
+import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
 import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
@@ -65,6 +66,11 @@ export default function App() {
     // Deployed server version, shown in the header so operators can tell at a
     // glance which build is live. Sourced from /api/health (server/package.json).
     const [version, setVersion] = useState<string | null>(null)
+    // Visit counter runs at the app shell, not inside About: it must count every
+    // site load (a board-first visitor may never open the About tab), and the
+    // footer label ("Visit count so far") promises site traffic. Passed down to
+    // About as props.
+    const visit = useVisitCount()
 
     const selectProject = (next: string) => {
       setProject(next)
@@ -476,7 +482,7 @@ export default function App() {
 
         <main className="flex flex-1 overflow-hidden">
           <ErrorBoundary>
-            {view === 'about' && <About version={version} />}
+            {view === 'about' && <About version={version} visit={visit} />}
             {view === 'portfolio' && (
              <Portfolio
                refreshKey={tasks.length}

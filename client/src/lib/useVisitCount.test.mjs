@@ -61,8 +61,20 @@ test('formatVisitCount renders a readable label and degrades to empty', () => {
 })
 
 test('the About page renders the counter and keeps the telemetry copy honest', () => {
+  const app = readFileSync(join(CLIENT_SRC, 'App.tsx'), 'utf8')
+  assert.match(app, /useVisitCount\(\)/, 'App.tsx must call the visit-count hook so every load counts')
+  assert.match(
+    app,
+    /<About version=\{version\} visit=\{visit\}/,
+    'App.tsx must pass the visit state into About',
+  )
+
   const about = readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
-  assert.match(about, /useVisitCount\(\)/, 'About.tsx must call the visit-count hook')
+  assert.doesNotMatch(
+    about,
+    /useVisitCount\(\)/,
+    'About.tsx must NOT call the hook itself — it only mounts on the About tab',
+  )
   assert.match(about, /formatVisitCount\(visitCount\)/, 'About.tsx must render the formatted count')
   assert.doesNotMatch(
     about,

@@ -153,7 +153,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
-  { name: 'Anonymous visit counter', code: 'lib/useVisitCount.ts' },
+  { name: 'Anonymous visit counter', code: 'App.tsx · lib/useVisitCount.ts' },
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
@@ -177,7 +177,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'Does it phone home?',
-    a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous visit counter (no per-visitor data) shown on this page.',
+    a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous site-wide visit counter (one count per browser session, no per-visitor data) shown on the About tab.',
   },
   {
     q: 'How do I host it?',
