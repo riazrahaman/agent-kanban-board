@@ -26,6 +26,7 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
     'Project scoping: ?project=<name> is mandatory on every task path.',
     'Claim to own, PATCH to move — never enter a stage with a status-only PATCH.',
     'Every PATCH sends expected_version; illegal moves 409, wrong roles 403.',
+    'Documents the optional Telegram reclaim alerts the reaper fires on a reset card.',
   ],
 }
 
