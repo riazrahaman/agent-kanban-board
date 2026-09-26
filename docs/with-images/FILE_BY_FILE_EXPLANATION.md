@@ -254,6 +254,12 @@ flowchart TD
 - **Path:** [`ONBOARDING.md`](../ONBOARDING.md)
 - **Content:** "Connect a new project" guide: the project-implicit model (no registration endpoint), the four token mechanisms, project-tagging channels, and a curl walkthrough.
 
+#### `skills/kanban/SKILL.md`
+- **Path:** [`skills/kanban/SKILL.md`](../skills/kanban/SKILL.md)
+- **Type:** Bundled opencode skill (Markdown with `name`/`description`/`version` frontmatter).
+- **Content:** The strict Kanban orchestrator protocol — local deployment and config resolution, mandatory `?project=` scoping on every task path, the claim-first Build → Review → Test lifecycle with builder/reviewer/tester dispatch, safety rules (`expected_version` optimistic locking, heartbeat leases, lease-loss recovery, the 3-cycle limit), and branch-normalization data-integrity notes.
+- **Install:** Copy the directory to a project-local `.opencode/skill/kanban/` (gitignored here) or a global `~/.config/opencode/skill/kanban/`.
+
 #### `render.yaml`
 - **Path:** [`render.yaml`](../render.yaml)
 - **Content:** Render.com blueprint — a single Node web service that builds the client and serves both API + SPA, with a persistent disk mounted at `/data` and auto-generated auth tokens.

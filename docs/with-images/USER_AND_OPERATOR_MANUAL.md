@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.13.0
+**System:** Agent Kanban Board v2.14.0
 
 ---
 
@@ -532,6 +532,22 @@ def agent_claim_and_build(task_id: str, agent_id: str):
     print(f"Task {task_id} submitted for review")
     return True
 ```
+
+---
+
+### 6.4 Bundled Orchestrator Skill
+
+The repository ships a ready-made opencode skill at [`skills/kanban/SKILL.md`](../skills/kanban/SKILL.md) that implements the orchestration pattern described in this chapter. It is the recommended starting point for a new swarm: instead of hand-rolling the claim-first lifecycle and retry logic, load the skill and let the agent follow the protocol.
+
+To install it, copy the directory into an opencode skill path — project-local `.opencode/skill/kanban/` (gitignored in this repository) or global `~/.config/opencode/skill/kanban/`:
+
+```bash
+cp -r skills/kanban .opencode/skill/kanban
+# or, for every project on the machine:
+cp -r skills/kanban ~/.config/opencode/skill/kanban
+```
+
+The skill enforces the same contract as the HTTP API: it resolves the board URL, token and project name from `.opencode/config.json` or the `KANBAN_*` environment variables, appends `?project=<name>` to every task path, claims before entering a stage, sends `expected_version` on every `PATCH`, and dispatches builder, reviewer and tester workers through Build → Review → Test. The About view in the running board describes the skill in the browser.
 
 ---
 

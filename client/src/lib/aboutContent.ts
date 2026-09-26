@@ -3,6 +3,32 @@ export const ABOUT_GITHUB_URL =
 
 export const ABOUT_LIVE_URL = 'https://agent-kanban.riazrahaman.com'
 
+export const SKILL_PATH = 'skills/kanban/SKILL.md'
+
+export type OrchestratorSkill = {
+  name: string
+  summary: string
+  path: string
+  install: string[]
+  notes: string[]
+}
+
+export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
+  name: 'kanban',
+  summary:
+    'A bundled opencode skill turns a coding agent into a strict orchestrator: it drives claim-first transitions over plain HTTP, dispatches builder / reviewer / tester workers, and never writes code itself. The board is the state machine; the skill is the protocol that drives it.',
+  path: SKILL_PATH,
+  install: [
+    'cp -r skills/kanban .opencode/skill/kanban',
+    'cp -r skills/kanban ~/.config/opencode/skill/kanban',
+  ],
+  notes: [
+    'Project scoping: ?project=<name> is mandatory on every task path.',
+    'Claim to own, PATCH to move — never enter a stage with a status-only PATCH.',
+    'Every PATCH sends expected_version; illegal moves 409, wrong roles 403.',
+  ],
+}
+
 export type TrustMetric = {
   value: string
   label: string
@@ -16,7 +42,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '120',
+    value: '121',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },

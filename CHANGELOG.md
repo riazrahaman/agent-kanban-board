@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -16,9 +16,26 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
-## [Unreleased]
+## [2.14.0] — 2026-09-26
+
+The board now ships the orchestrator skill that drives it, and the design
+contract that had only lived in code is written down. Docs-and-assets release;
+no server behaviour changed.
 
 ### Added
+- **`skills/kanban/SKILL.md`** — the opencode skill that turns a coding agent
+  into a strict Kanban-first orchestrator is now bundled in the repo (it
+  previously lived only outside it). It covers local deployment, mandatory
+  `?project=` scoping, the claim-first lifecycle (claim to own, PATCH to move,
+  `expected_version` on every write), role headers, lease/heartbeat rules,
+  branch normalization and legacy-card cleanup. Copy it to `.opencode/skill/`
+  or `~/.config/opencode/skill/` to install.
+- **About page — "Bundled orchestrator skill" section.** The About view now
+  documents the shipped skill: its path (`skills/kanban/SKILL.md`), the install
+  commands, and the three rules it enforces. Backed by a new
+  `ORCHESTRATOR_SKILL` export in `client/src/lib/aboutContent.ts` and asserted
+  by a new data-contract test in `client/src/lib/about.test.mjs` that also
+  reads the real file from disk.
 - **`DESIGN.md`** — the visual contract now exists as a real document. It
   consolidates the design system that had only lived in code and prose:
   the full colour-token tables (`client/src/index.css`), typography stacks
@@ -28,14 +45,30 @@ here **and** an annotated git tag. Do not let work accumulate under
   anti-pattern bans, and instructions for changing any of it. The name was
   already referenced by `client/src/lib/responsive.test.mjs` and the
   `DESIGN.md visual contract` test in `server/test/kanban.test.js`; this makes
-  that reference real. Docs-only — no version bump.
+  that reference real.
 - **`DESIGN_SYSTEM.md`** — a portable, project-agnostic edition of the same
   contract, intended to be handed to a build agent for a *different* project.
   It contains no references to this codebase: the kanban-specific status set is
   generalised into a state-role mapping method, file-path pointers become
   "your theme layer", and a new new-project quick-start checklist is added. All
   token values, contrast targets, font stacks, geometry rules, and the
-  anti-pattern bans are preserved verbatim. Docs-only — no version bump.
+  anti-pattern bans are preserved verbatim.
+
+### Fixed
+- **Corrected three factual errors in the bundled `SKILL.md`** (relative to the
+  external copy it was ported from): the default server port is **4000**, not
+  3000; the default claim TTL is **600,000 ms (10 min)**, not 300,000 ms/5 min,
+  and the skill now documents the per-claim `lease_ms` override clamped to
+  `KANBAN_MIN_LEASE_MS` (60,000) / `KANBAN_MAX_LEASE_MS` (7,200,000); and the
+  auto-deploy steps now install per package (`npm --prefix server install`,
+  `npm --prefix client install`, then `npm run build` + `npm start`), since
+  there is no root `npm install` or root `npm run dev` script.
+
+### Changed
+- `README.md`, `docs/FILE_BY_FILE_EXPLANATION.md` (+ `with-images/` mirror) and
+  `docs/USER_AND_OPERATOR_MANUAL.md` (+ mirror) now document the bundled skill
+  (project-tree entry, a Quickstart step, a file-by-file entry, and a
+  `6.4 Bundled Orchestrator Skill` section respectively).
 
 ## [2.13.0] — 2026-09-25
 

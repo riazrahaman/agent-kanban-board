@@ -8,6 +8,7 @@ import {
   CURL_SNIPPET,
   FAQ,
   LIFECYCLE_STEPS,
+  ORCHESTRATOR_SKILL,
   RECLAIM_FLOW,
   RECLAIM_INTRO,
   SAFETY_FOOTER,
@@ -101,6 +102,48 @@ export default function About({ version }: Props) {
           <pre className="mt-3 overflow-x-auto border border-line bg-surface p-3 font-mono text-[11px] leading-relaxed text-ink">
             {CURL_SNIPPET}
           </pre>
+        </section>
+
+        <section className="mt-12 border-l-2 border-live pl-4">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-muted">
+            Bundled orchestrator skill
+          </h2>
+          <h3 className="mt-3 font-serif text-xl text-ink">
+            The protocol that drives the board, shipped with it
+          </h3>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+            {ORCHESTRATOR_SKILL.summary}
+          </p>
+          <div className="mt-4 border border-line bg-surface p-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
+              Skill file
+            </div>
+            <code className="mt-2 block font-mono text-[11px] text-ink">
+              {ORCHESTRATOR_SKILL.path}
+            </code>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="border border-line bg-surface p-3">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
+                Install
+              </div>
+              <pre className="mt-2 overflow-x-auto font-mono text-[11px] leading-relaxed text-ink">
+                {ORCHESTRATOR_SKILL.install.join('\n')}
+              </pre>
+            </div>
+            <div className="border border-line bg-surface p-3">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
+                Enforces
+              </div>
+              <ul className="mt-2 space-y-1.5">
+                {ORCHESTRATOR_SKILL.notes.map((n) => (
+                  <li key={n} className="text-xs leading-relaxed text-muted">
+                    {n}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </section>
 
         <section className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
