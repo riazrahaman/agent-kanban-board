@@ -18,6 +18,7 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 ├── client/           Vite + React + Tailwind frontend (editorial-minimalist design system)
 │   └── public/landing/  Screenshots served to the in-app About view
 ├── DESIGN.md         The visual contract: tokens, typography, components, bans
+├── skills/           Bundled agent skills — skills/kanban/SKILL.md is the orchestrator protocol
 ├── server/           Node/Express API with atomic JSON & git-backed YAML storage
 ├── docs/             System design, architecture, file reference, and operator manual
 ├── scripts/          test-agents.js — headless multi-agent workflow demo
@@ -53,6 +54,16 @@ npm run dev
 ```
 
 Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
+
+### 3. Drive It With the Orchestrator Skill
+
+The repo bundles an opencode skill at **`skills/kanban/SKILL.md`** — the strict orchestrator protocol that turns a coding agent into the board's admin: claim-first transitions, `?project=` scoping on every task path, `expected_version` optimistic locking, and builder / reviewer / tester dispatch. Copy it into your opencode skill path to load it:
+
+```bash
+# project-local (gitignored) or global
+cp -r skills/kanban .opencode/skill/kanban
+cp -r skills/kanban ~/.config/opencode/skill/kanban
+```
 
 ---
 
@@ -247,7 +258,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (447 tests, including the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (120 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (447 tests, including the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (121 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 ### Releasing
 

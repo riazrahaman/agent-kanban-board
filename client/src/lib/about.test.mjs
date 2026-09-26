@@ -51,6 +51,7 @@ const {
   SAFETY_FOOTER,
   ARCH_LAYERS,
   ARCH_INTRO,
+  ORCHESTRATOR_SKILL,
 } = content
 
 // ---------------------------------------------------------------------------
@@ -244,6 +245,24 @@ test('the six-layer summary mirrors the system design chapter', () => {
   }
 })
 
+test('the orchestrator skill entry names the bundled file and its rules', () => {
+  assert.equal(ORCHESTRATOR_SKILL.name, 'kanban')
+  assert.ok(ORCHESTRATOR_SKILL.summary.length > 0, 'the skill needs a summary')
+  assert.match(
+    ORCHESTRATOR_SKILL.path,
+    /^skills\/kanban\/SKILL\.md$/,
+    'the skill path must point at the bundled committed file',
+  )
+  assert.ok(ORCHESTRATOR_SKILL.install.length >= 1, 'the skill needs an install command')
+  const notes = ORCHESTRATOR_SKILL.notes.join('\n')
+  assert.match(notes, /\?project=/, 'the project-scoping rule must be stated')
+  assert.match(notes, /expected_version/, 'optimistic locking must be stated')
+  // the path must resolve to a real committed file, not a promise
+  const skillFile = join(CLIENT_SRC, '..', '..', ORCHESTRATOR_SKILL.path)
+  const skillBody = readFileSync(skillFile, 'utf8')
+  assert.match(skillBody, /^---\nname: kanban/, 'the bundled skill must carry the kanban frontmatter')
+})
+
 // ---------------------------------------------------------------------------
 // Source contract
 // ---------------------------------------------------------------------------
@@ -292,6 +311,7 @@ test('About.tsx adds the architecture section without dropping existing sections
     'TOUR_SHOTS',
     'CURL_SNIPPET',
     'FAQ',
+    'ORCHESTRATOR_SKILL',
   ]) {
     assert.match(aboutSource, new RegExp(section), `existing section ${section} must be preserved`)
   }
