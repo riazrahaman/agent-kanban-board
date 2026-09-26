@@ -57,7 +57,7 @@ Open `http://localhost:5173` in your browser to view the board. The header switc
 
 ### 3. Drive It With the Orchestrator Skill
 
-The repo bundles an opencode skill at **`skills/kanban/SKILL.md`** — the strict orchestrator protocol that turns a coding agent into the board's admin: claim-first transitions, `?project=` scoping on every task path, `expected_version` optimistic locking, and builder / reviewer / tester dispatch. Copy it into your opencode skill path to load it:
+The repo bundles an opencode skill at **`skills/kanban/SKILL.md`** — the strict orchestrator protocol that turns a coding agent into the board's admin: claim-first transitions, `?project=` scoping on every task path, `expected_version` optimistic locking, and builder / reviewer / tester dispatch. It also documents the optional Telegram reclaim alerts (off unless `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set), the out-of-band signal for the lease-loss recovery path. Copy it into your opencode skill path to load it:
 
 ```bash
 # project-local (gitignored) or global

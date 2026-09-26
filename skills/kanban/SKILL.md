@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 1.1.0
+version: 1.2.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -127,6 +127,10 @@ Validated by a `test_pass` signal:
 - **Lease-loss Recovery**: A 409 `Invalid state transition from BACKLOG to <X>` indicates lease expiration and reaper reset. Recover by re-claiming (`POST /claim`) and re-walking stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
 - **3-Cycle Limit**: If a cycle (Build → Review → Test) repeats 3 times, halt and report blockers.
 - **Evidence-Based Success**: Never transition stages without explicit command output, test results, or commit hashes.
+
+### Reclaim Alerts (optional)
+
+When the reaper resets a card — an expired lease (`lease_expired`) or an active card with no owner (`orphan_normalized`) — the server can POST a Telegram alert to the operator: the out-of-band companion to the lease-loss recovery path above. It is **off unless configured** (`KANBAN_TELEGRAM_BOT_TOKEN` + `KANBAN_TELEGRAM_CHAT_ID`); optional filters are `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, and `KANBAN_BOARD_URL`. The notifier is a pure subscriber — it never affects the board — so do not poll for it; treat an alert as a prompt to inspect the card and re-claim.
 
 ## 5. Data Integrity Notes
 

@@ -257,7 +257,7 @@ flowchart TD
 #### `skills/kanban/SKILL.md`
 - **Path:** [`skills/kanban/SKILL.md`](../skills/kanban/SKILL.md)
 - **Type:** Bundled opencode skill (Markdown with `name`/`description`/`version` frontmatter).
-- **Content:** The strict Kanban orchestrator protocol — local deployment and config resolution, mandatory `?project=` scoping on every task path, the claim-first Build → Review → Test lifecycle with builder/reviewer/tester dispatch, safety rules (`expected_version` optimistic locking, heartbeat leases, lease-loss recovery, the 3-cycle limit), and branch-normalization data-integrity notes.
+- **Content:** The strict Kanban orchestrator protocol — local deployment and config resolution, mandatory `?project=` scoping on every task path, the claim-first Build → Review → Test lifecycle with builder/reviewer/tester dispatch, safety rules (`expected_version` optimistic locking, heartbeat leases, lease-loss recovery, the 3-cycle limit), optional Telegram reclaim alerts (off unless `KANBAN_TELEGRAM_BOT_TOKEN` + `KANBAN_TELEGRAM_CHAT_ID` are set), and branch-normalization data-integrity notes.
 - **Install:** Copy the directory to a project-local `.opencode/skill/kanban/` (gitignored here) or a global `~/.config/opencode/skill/kanban/`.
 
 #### `render.yaml`
