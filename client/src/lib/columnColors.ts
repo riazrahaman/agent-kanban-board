@@ -88,3 +88,48 @@ export function isStockPalette(colors?: ColumnColors | null): boolean {
     ([key, token]) => colors[key] === undefined || colors[key] === token
   )
 }
+
+/** Storage key for a project's local column colors cache. */
+export function columnColorsStorageKey(project?: string): string {
+  const p = typeof project === 'string' && project.trim() !== '' ? project.trim() : 'default'
+  return `kanban.columnColors.${p}`
+}
+
+/** Read persisted column colors for a project from localStorage. */
+export function readStoredColumnColors(project?: string): ColumnColors | null {
+  try {
+    const raw = localStorage.getItem(columnColorsStorageKey(project))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const validTokens = new Set<string>(COLUMN_COLOR_TOKENS)
+    const result: ColumnColors = {}
+    let count = 0
+    for (const [col, tok] of Object.entries(parsed)) {
+      if (typeof tok === 'string' && validTokens.has(tok)) {
+        result[col.toUpperCase()] = tok as ColumnColorToken
+        count++
+      }
+    }
+    return count > 0 ? result : null
+  } catch {
+    return null
+  }
+}
+
+/** Persist column colors for a project to localStorage. */
+export function writeStoredColumnColors(
+  project: string | undefined,
+  colors: ColumnColors | null,
+): void {
+  try {
+    const key = columnColorsStorageKey(project)
+    if (!colors || isStockPalette(colors)) {
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, JSON.stringify(colors))
+    }
+  } catch {
+    // Non-fatal
+  }
+}

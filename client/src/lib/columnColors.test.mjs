@@ -111,4 +111,34 @@ describe('v2.5.0 column colors', () => {
     // Comments decode stored entities and sort oldest-first.
     assert.match(sheet, /decodeStored\(comment\.message\)/)
   })
+
+  it('columnColors storage helpers round-trip correctly and validate tokens', async () => {
+    const m = await importModule('columnColors.ts')
+    const store = {}
+    globalThis.localStorage = {
+      getItem: (k) => store[k] ?? null,
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
+    }
+
+    assert.equal(m.columnColorsStorageKey('aov'), 'kanban.columnColors.aov')
+    assert.equal(m.columnColorsStorageKey(''), 'kanban.columnColors.default')
+    assert.equal(m.readStoredColumnColors('aov'), null)
+
+    m.writeStoredColumnColors('aov', { BUILDING: 'fail', DONE: 'warn' })
+    assert.deepEqual(m.readStoredColumnColors('aov'), { BUILDING: 'fail', DONE: 'warn' })
+
+    // Invalid tokens in raw storage are ignored
+    store['kanban.columnColors.aov'] = JSON.stringify({ BUILDING: 'invalid-token', DONE: 'fail' })
+    assert.deepEqual(m.readStoredColumnColors('aov'), { DONE: 'fail' })
+
+    // Clearing colors removes the item
+    m.writeStoredColumnColors('aov', null)
+    assert.equal(m.readStoredColumnColors('aov'), null)
+    assert.equal(store['kanban.columnColors.aov'], undefined)
+  })
 })

@@ -3,6 +3,18 @@ import type { ProjectSummary, Task } from './types'
 import { getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
 import type { DiffEvent } from './api'
 import type { ColumnColors } from './lib/columnColors'
+import { isStockPalette, readStoredColumnColors, writeStoredColumnColors } from './lib/columnColors'
+import {
+  readStoredFilters,
+  writeStoredFilters,
+  resetStoredFilters,
+  readStoredShowMetrics,
+  writeStoredShowMetrics,
+  readStoredView,
+  writeStoredView,
+  readStoredRailOpen,
+  writeStoredRailOpen,
+} from './lib/uiSettings'
 import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
 import Board from './components/Board'
 import BoardFilters from './components/BoardFilters'
@@ -49,7 +61,7 @@ export default function App() {
 
      // §2.10: which board is shown, and whether we are on the portfolio view.
     const [project, setProject] = useState<string>(initialProject)
-    const [view, setView] = useState<'board' | 'portfolio' | 'about'>('board')
+    const [view, setView] = useState<'board' | 'portfolio' | 'about'>(() => readStoredView())
     const [projects, setProjects] = useState<ProjectSummary[]>([])
     // True once the (unscoped) project list has settled, so the stale-scope
     // recovery below never fires against an empty, not-yet-loaded list.
@@ -57,7 +69,7 @@ export default function App() {
     // Phones hide the signal rail to leave room for the board; this control
     // lets it slide in as an overlay on demand. Desktop ignores it (rail is
     // always docked from md up).
-    const [railOpen, setRailOpen] = useState(false)
+    const [railOpen, setRailOpen] = useState<boolean>(() => readStoredRailOpen())
   // v2.9.1: on phones the header's secondary controls collapse behind a "⋯"
   // disclosure. Left expanded they wrapped to ~8 rows and ate most of the
   // viewport, squeezing the board to an unusable sliver (see
@@ -187,7 +199,11 @@ export default function App() {
     }
 
     const applySettings = (s: { column_colors: Record<string, string> }) => {
-      if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
+      if (!cancelled && s?.column_colors) {
+        const colors = s.column_colors as ColumnColors
+        setColumnColors(colors)
+        writeStoredColumnColors(project || undefined, colors)
+      }
     }
 
     const unsubscribe = subscribeToBoard(applyDiff, applySettings, { project: scope })
@@ -253,9 +269,10 @@ export default function App() {
     }
   }, [])
 
-  const [searchQuery, setSearchQuery] = useState('')
-  const [priorityFilter, setPriorityFilter] = useState('all')
-  const [assigneeFilter, setAssigneeFilter] = useState('all')
+  const initialFilters = useMemo(() => readStoredFilters(), [])
+  const [searchQuery, setSearchQuery] = useState(initialFilters.search)
+  const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority)
+  const [assigneeFilter, setAssigneeFilter] = useState(initialFilters.assignee)
   // Column ordering is an explicit, persisted control (default: priority).
   // Unlike the removed local reorder buttons, the choice survives SSE
   // snapshots and reloads, because it re-applies on every new tasks array.
@@ -278,6 +295,21 @@ export default function App() {
     return sortTasks(list, boardSort)
   }, [tasks, searchQuery, priorityFilter, assigneeFilter, boardSort])
 
+  const handleSearchChange = useCallback((next: string) => {
+    setSearchQuery(next)
+    writeStoredFilters({ search: next })
+  }, [])
+
+  const handlePriorityChange = useCallback((next: string) => {
+    setPriorityFilter(next)
+    writeStoredFilters({ priority: next })
+  }, [])
+
+  const handleAssigneeChange = useCallback((next: string) => {
+    setAssigneeFilter(next)
+    writeStoredFilters({ assignee: next })
+  }, [])
+
   const handleSortChange = useCallback((next: BoardSort) => {
     setBoardSort(next)
     writeStoredSort(next)
@@ -287,6 +319,7 @@ export default function App() {
     setSearchQuery('')
     setPriorityFilter('all')
     setAssigneeFilter('all')
+    resetStoredFilters()
   }, [])
 
   const handleExport = useCallback(() => {
@@ -307,18 +340,46 @@ export default function App() {
      [tasks, openTaskId],
   )
 
-  const [showMetrics, setShowMetrics] = useState(false)
+  const [showMetrics, setShowMetrics] = useState<boolean>(() => readStoredShowMetrics())
+  const handleToggleMetrics = useCallback(() => {
+    setShowMetrics((v) => {
+      const next = !v
+      writeStoredShowMetrics(next)
+      return next
+    })
+  }, [])
+  const handleCloseMetrics = useCallback(() => {
+    setShowMetrics(false)
+    writeStoredShowMetrics(false)
+  }, [])
+
   // v2.5.0: per-project column colors, resolved server-side. The initial fetch
   // loads the current palette on project change; live updates now arrive via
   // the combined diff+settings SSE stream (PERF-01) wired in the task effect
   // above, so no separate settings EventSource is opened. Saved optimistically
-  // through PUT /api/settings.
-  const [columnColors, setColumnColors] = useState<ColumnColors | null>(null)
+  // through PUT /api/settings and cached locally in localStorage (v2.14.4).
+  const [columnColors, setColumnColors] = useState<ColumnColors | null>(() =>
+    readStoredColumnColors(initialProject()),
+  )
   useEffect(() => {
     let cancelled = false
+    const local = readStoredColumnColors(project || undefined)
+    if (local) setColumnColors(local)
+
     getSettings(project || undefined)
       .then((s) => {
-        if (!cancelled) setColumnColors(s.column_colors as ColumnColors)
+        if (!cancelled && s?.column_colors) {
+          const colors = s.column_colors as ColumnColors
+          if (!isStockPalette(colors)) {
+            setColumnColors(colors)
+            writeStoredColumnColors(project || undefined, colors)
+          } else if (local) {
+            setColumnColors(local)
+            saveSettings(project || undefined, local).catch(() => {})
+          } else {
+            setColumnColors(colors)
+          }
+        }
       })
       .catch(() => {
         // Display-only: leave the stock palette on failure.
@@ -329,6 +390,7 @@ export default function App() {
   }, [project])
   const handleColumnColorsChange = useCallback((colors: ColumnColors) => {
     setColumnColors(colors)
+    writeStoredColumnColors(project || undefined, colors)
     saveSettings(project || undefined, colors).catch(() => {
       // Revert silently is safest visually-neutral option: keep the optimistic
       // value but let the next SSE/fetch re-sync.
@@ -336,6 +398,7 @@ export default function App() {
   }, [project])
   const handleColumnColorsReset = useCallback(() => {
     setColumnColors(null)
+    writeStoredColumnColors(project || undefined, null)
     saveSettings(project || undefined, {}).catch(() => {})
   }, [project])
 
@@ -388,7 +451,10 @@ export default function App() {
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setView(value)}
+                  onClick={() => {
+                    setView(value)
+                    writeStoredView(value)
+                  }}
                   aria-pressed={view === value}
                   title={hint}
                   className={`px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] sm:py-1 ${
@@ -459,7 +525,13 @@ export default function App() {
            </span>
            <button
             type="button"
-            onClick={() => setRailOpen((v) => !v)}
+            onClick={() => {
+              setRailOpen((v) => {
+                const next = !v
+                writeStoredRailOpen(next)
+                return next
+              })
+            }}
             aria-pressed={railOpen}
             aria-label="Toggle signal rail"
             title="Show/hide the signal overview + activity rail"
@@ -489,6 +561,7 @@ export default function App() {
                onSelectProject={(next) => {
                  selectProject(next)
                  setView('board')
+                 writeStoredView('board')
                  }}
              />
            )}
@@ -522,11 +595,11 @@ export default function App() {
                 <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
                   <BoardFilters
                     search={searchQuery}
-                    onSearchChange={setSearchQuery}
+                    onSearchChange={handleSearchChange}
                     priority={priorityFilter}
-                    onPriorityChange={setPriorityFilter}
+                    onPriorityChange={handlePriorityChange}
                     assignee={assigneeFilter}
-                    onAssigneeChange={setAssigneeFilter}
+                    onAssigneeChange={handleAssigneeChange}
                     assignees={assignees}
                     totalCount={tasks.length}
                     filteredCount={filteredTasks.length}
@@ -535,7 +608,7 @@ export default function App() {
                     sort={boardSort}
                     onSortChange={handleSortChange}
                     showMetrics={showMetrics}
-                    onToggleMetrics={() => setShowMetrics((v) => !v)}
+                    onToggleMetrics={handleToggleMetrics}
                     columnColors={columnColors}
                     onColumnColorsChange={handleColumnColorsChange}
                     onColumnColorsReset={handleColumnColorsReset}
@@ -543,7 +616,7 @@ export default function App() {
                   {showMetrics && (
                     <MetricsDashboard
                       tasks={tasks}
-                      onClose={() => setShowMetrics(false)}
+                      onClose={handleCloseMetrics}
                     />
                   )}
                   <div className="min-w-0 flex-1 overflow-hidden">
@@ -564,7 +637,10 @@ export default function App() {
                   <>
                     <div
                       className="fixed inset-0 z-30 bg-ink/40 md:hidden"
-                      onClick={() => setRailOpen(false)}
+                      onClick={() => {
+                        setRailOpen(false)
+                        writeStoredRailOpen(false)
+                      }}
                       aria-hidden="true"
                     />
                     <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface md:hidden">
