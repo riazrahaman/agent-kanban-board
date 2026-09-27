@@ -68,6 +68,7 @@ export function createApp() {
   const app = express();
   app.use(configureCors());
   app.use(express.json());
+  app.set('query parser', 'extended');
   // The handshake endpoint must be reachable before the auth middleware: it is
   // gated by proof-of-secret, not by a pre-existing session token.
   app.use('/api/auth', authRouter);
@@ -181,7 +182,7 @@ export function createApp() {
 
   const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client/dist');
   app.use(express.static(clientDist));
-  app.get('*', (req, res, next) => {
+  app.get('{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(clientDist, 'index.html'));
   });
@@ -230,8 +231,9 @@ export async function startServer(
     );
   }
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, host, () => {
-       // §2.4: schedule the lease reaper only on a real boot (not in createApp),
+    const server = app.listen(port, host, (err) => {
+      if (err) return reject(err);
+      // §2.4: schedule the lease reaper only on a real boot (not in createApp),
        // so the HTTP-contract tests never spawn a timer.
       let stop = null;
       if (isReaperEnabled()) {
