@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,30 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.14.3] — 2026-09-27
+
+Fix: tasks in the **DONE** swimlane are now always ordered with the most recently
+completed task at the top and the oldest at the bottom, regardless of the active
+board sort mode.
+
+### Fixed
+- **DONE lane was inheriting global board sort.** When the board was sorted by
+  Priority (the default), older high-priority tasks completed days or weeks ago
+  were positioned above medium- or low-priority tasks completed moments earlier.
+  In Task ID mode, DONE cards were sorted alphabetically. `groupTasks()` in
+  `client/src/board-model.js` now explicitly sorts `grouped.DONE` descending by
+  completion timestamp (`completed_at`, falling back to `updated` / `created_at`
+  for legacy cards), guaranteeing the newest completed tasks always surface first
+  at the top of the lane.
+- **Fixed newline escape in bundled skill.** Cleaned up literal newline in backtick
+  code example in `skills/kanban/SKILL.md` (§5 Branch Normalization).
+
+### Changed
+- Client test suite expanded with a unit test in `boardModel.test.mjs` verifying
+  completion recency ordering in the DONE column across various timestamp shapes
+  and fallbacks; trust metrics in `aboutContent.ts` and `README.md` updated to 122
+  client tests.
 
 ## [2.14.2] — 2026-09-26
 
