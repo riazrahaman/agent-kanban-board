@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,29 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.14.4] — 2026-09-27
+
+Fix: persist custom column colors and main page display settings (search query,
+priority filter, assignee filter, metrics panel toggle, view mode, signal rail,
+and mobile filters disclosure) across browser page refreshes.
+
+### Fixed
+- **Column colors reset on refresh without auth token.** Custom column colors
+  previously depended exclusively on `PUT /api/settings`, which failed silently
+  when the browser did not hold an authenticated write token. `client/src/lib/columnColors.ts`
+  now caches project palettes in `localStorage` (`kanban.columnColors.<project>`),
+  ensuring color customizations persist immediately across reloads for any user,
+  while seamlessly synchronizing with server settings when authenticated.
+- **Main page filters lost on reload.** `searchQuery`, `priorityFilter`, and
+  `assigneeFilter` were held only in ephemeral React component state. A dedicated
+  `client/src/lib/uiSettings.ts` helper persists and restores active filters
+  (`kanban.filters`), with clean reset back to defaults when clicking Reset.
+- **View mode and dashboard visibility persistence.** Active view mode
+  (`kanban.view`: board, portfolio, about), the Metrics dashboard toggle
+  (`kanban.showMetrics`), the mobile signal-rail overlay state (`kanban.railOpen`),
+  and mobile filter controls disclosure (`kanban.mobileFiltersOpen`) are now
+  preserved across page reloads.
 
 ## [2.14.3] — 2026-09-27
 

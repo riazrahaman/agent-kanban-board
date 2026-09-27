@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import ColumnColorsControl from './ColumnColorsControl'
+import { readStoredMobileFiltersOpen, writeStoredMobileFiltersOpen } from '../lib/uiSettings'
 
 type Props = {
   search: string
@@ -49,7 +50,7 @@ export default function BoardFilters({
   // ~5 rows and squeezed the board to a sliver (mobile-rendering-issues.md
   // Issue 1). Search + the task count stay visible because they are the
   // highest-frequency controls.
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(() => readStoredMobileFiltersOpen())
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4">
@@ -78,7 +79,13 @@ export default function BoardFilters({
       {/* phone-only disclosure for the secondary filter/action controls */}
       <button
         type="button"
-        onClick={() => setFiltersOpen((v) => !v)}
+        onClick={() => {
+          setFiltersOpen((v) => {
+            const next = !v
+            writeStoredMobileFiltersOpen(next)
+            return next
+          })
+        }}
         aria-pressed={filtersOpen}
         aria-expanded={filtersOpen}
         aria-label="Toggle filters and actions"
