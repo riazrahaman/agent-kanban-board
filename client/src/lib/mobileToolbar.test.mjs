@@ -186,6 +186,19 @@ test('the column scroll-arrow buttons never overlay card content on phones', () 
   }
 })
 
+test('the column scroll-arrow buttons provide high-contrast tactile affordance (v2.14.5)', () => {
+  const boardSource = readFileSync(join(CLIENT_SRC, 'components', 'Board.tsx'), 'utf8')
+  const arrows = [...boardSource.matchAll(/aria-label="Scroll columns[^"]*"[\s\S]*?className="([^"]*)"/g)]
+  assert.equal(arrows.length, 2, 'Board.tsx must render both scroll-arrow buttons')
+  for (const [, cls] of arrows) {
+    assert.match(cls, /\bborder-2\b/, 'each scroll arrow must have a bold 2px border')
+    assert.match(cls, /\bborder-ink\b/, 'each scroll arrow must use solid ink border for high contrast')
+    assert.match(cls, /\bh-11\b/, 'each scroll arrow must have ample click height')
+    assert.match(cls, /\bw-8\b/, 'each scroll arrow must have ample click width')
+    assert.match(cls, /\btext-lg\b/, 'each scroll arrow must have prominent glyph size')
+  }
+})
+
 test('the card header stacks the badge group so the id keeps real width', () => {
   // Issue 3: the id collapsed to a sliver against a wide badge row on mobile.
   const cardSource = readFileSync(join(CLIENT_SRC, 'components', 'TaskCard.tsx'), 'utf8')
