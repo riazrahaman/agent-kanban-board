@@ -136,8 +136,7 @@ When the reaper resets a card — an expired lease (`lease_expired`) or an activ
 
 ### Branch Normalization
 The server normalizes branch values on write:
-- Blank, empty, or whitespace-only strings (`""`, `"   "`, `"
-"`) become `null`.
+- Blank, empty, or whitespace-only strings (`""`, `"   "`, `"\t"`, `"\n"`) become `null`.
 - Non-string values (`123`, `false`, `[]`) become `null`.
 - Real refs (`fix/x`, `feat/y`) are preserved verbatim without automatic trimming.
 - Do not use zero-width characters (`U+200B`).

@@ -54,6 +54,23 @@ test('groupTasks normalizes unknown statuses into UNKNOWN bucket', () => {
   assert.deepEqual(grouped.UNKNOWN.map((t) => t.id), ['z'])
 })
 
+test('groupTasks orders DONE tasks by completed_at descending (newest at top, oldest at bottom)', () => {
+  const tasks = [
+    task({ id: 'done-old', status: 'DONE', completed_at: '2026-09-20T10:00:00.000Z' }),
+    task({ id: 'done-newest', status: 'DONE', completed_at: '2026-09-27T12:00:00.000Z' }),
+    task({ id: 'done-mid', status: 'DONE', completed_at: '2026-09-25T15:30:00.000Z' }),
+    task({ id: 'done-fallback-updated', status: 'DONE', updated: '2026-09-26T08:00:00.000Z' }),
+    task({ id: 'done-fallback-created', status: 'DONE', created_at: '2026-09-21T05:00:00.000Z' }),
+  ]
+
+  const grouped = groupTasks(tasks)
+  assert.deepEqual(
+    grouped.DONE.map((t) => t.id),
+    ['done-newest', 'done-fallback-updated', 'done-mid', 'done-fallback-created', 'done-old'],
+    'DONE swimlane must always show newest completed first, oldest last',
+  )
+})
+
 test('Column and TaskCard are wrapped in React.memo', async () => {
   const bundle = async (entry) => {
     const result = await build({

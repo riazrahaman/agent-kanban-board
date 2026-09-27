@@ -43,7 +43,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '121',
+    value: '122',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -157,6 +157,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
+  { name: 'DONE lane completion-recency sort', code: 'board-model.js · groupTasks (completed_at descending)' },
   { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
   { name: 'Persisted audit stream', code: 'auditLog.js · appendAudit, GET /api/audit' },
   { name: 'Optional read auth + stream tickets', code: 'middleware/auth.js · KANBAN_READ_AUTH, streamTicket.js' },
