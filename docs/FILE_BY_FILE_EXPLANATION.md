@@ -444,15 +444,11 @@ inherited from `referencedProjects`).
 
 #### `client/vite.config.ts`
 - **Path:** [`client/vite.config.ts`](../client/vite.config.ts)
-- **Settings:** Configures the Vite dev server port (`VITE_PORT`, default 5173), the React plugin, and a dev proxy forwarding `/api` to `http://localhost:4000` (changeOrigin) so same-origin `/api` calls reach the backend during local development.
+- **Settings:** Configures the Vite dev server port (`VITE_PORT`, default 5173), `@tailwindcss/vite` plugin, the React plugin, and a dev proxy forwarding `/api` to `http://localhost:4000` (changeOrigin) so same-origin `/api` calls reach the backend during local development.
 
-#### `client/tailwind.config.js`
-- **Path:** [`client/tailwind.config.js`](../client/tailwind.config.js)
-- **Configuration:** Defines semantic color variables (`bg`, `surface`, `line`, `ink`, `muted`, `pass`, `fail`, `warn`, `block`, `live`) and editorial font stacks (`serif`, `mono`, `sans`).
-
-#### `client/postcss.config.js`
-- **Path:** [`client/postcss.config.js`](../client/postcss.config.js)
-- **Settings:** Tailwind and Autoprefixer plugin registration.
+#### `client/src/index.css`
+- **Path:** [`client/src/index.css`](../client/src/index.css)
+- **Styling & Theme:** Tailwind CSS v4 entry point (`@import "tailwindcss";`), custom class-based dark variant (`@custom-variant dark`), and `@theme` token definitions (`bg`, `surface`, `line`, `ink`, `muted`, `pass`, `fail`, `warn`, `block`, `live`, and font stacks).
 
 #### `client/tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`
 - **Paths:** [`client/tsconfig.json`](../client/tsconfig.json), [`client/tsconfig.app.json`](../client/tsconfig.app.json), [`client/tsconfig.node.json`](../client/tsconfig.node.json)

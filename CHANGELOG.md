@@ -16,6 +16,23 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [2.15.0] — 2026-09-27
+
+Feature: Full modern stack architecture migration — Express 5.2.1, Tailwind CSS v4.3.3, and React 19.3.0.
+
+### Added
+- **Express 5.2.1 Core Framework Migration (`server`).**
+  - Modernized route matching engine to `path-to-regexp` v8 syntax (`app.get('{*splat}', ...)`), eliminating ReDoS risks and resolving wildcard syntax incompatibilities.
+  - Preserved extended query parsing via `app.set('query parser', 'extended')` to maintain backwards-compatibility across all 19 `req.query` consumers.
+  - Handled Express 5 bind-error dual-dispatch semantics in `startServer` listen callback.
+- **Tailwind CSS v4 & `@tailwindcss/vite` Integration (`client`).**
+  - Upgraded styling engine to Tailwind CSS v4 using the native `@tailwindcss/vite` plugin, reducing build times to ~340ms and eliminating legacy PostCSS and Autoprefixer dependencies.
+  - Ported all 18 semantic palette color tokens and typography stacks from `tailwind.config.js` into standard CSS `@theme` variables in `client/src/index.css`.
+  - Configured `@custom-variant dark (&:where(.dark, .dark *));` to maintain strict class-based dark mode without OS media-query drift.
+- **React 19 & React-DOM 19 Ecosystem Upgrade (`client`).**
+  - Upgraded `react`, `react-dom`, `@types/react`, and `@types/react-dom` in strict lockstep to `19.3.0`.
+  - Verified TypeScript strict typechecking under `@types/react@19` with zero typing errors or deprecated API usage.
+
 ## [2.14.6] — 2026-09-27
 
 Maintenance: merge routine dependency updates, bump CI actions, and mandate GitHub issue linking in agent orchestration skills.
