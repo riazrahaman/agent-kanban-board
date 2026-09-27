@@ -74,11 +74,13 @@ Verified endpoint scoping behavior:
 The state machine is enforced via role-based transitions. The Orchestrator operates as `admin` for all status resets and transitions.
 
 ### Stage A: Feature Setup
-1. **Branching**: Create `feat/<slug>` or `fix/<slug>` from `main`.
-2. **Registration**: `POST /tasks` with `project`, `title`, `description`, and the exact branch name:
+1. **GitHub Issue**: Check for an existing issue or file a new one (`gh issue create --title "<title>" --body "..."`). Note the issue number `#<N>`.
+2. **Branching**: Create `feat/<slug>` or `fix/<slug>` from `main`.
+3. **Registration**: `POST /tasks` with `project`, `title`, `description`, exact branch name, and linked issues:
    - Determine the active branch with `git rev-parse --abbrev-ref HEAD` and pass that exact string.
+   - Set `"issues": ["#<N>"]` in the task body so the task is structurally linked to GitHub and mirrors into the `ISSUES` swimlane.
    - Setting `branch` explicitly is critical for human operators and re-claim alerts.
-3. Record `task_id` and initial `version`.
+4. Record `task_id` and initial `version`.
 
 ### Stage B: The Execution Cycle
 
@@ -110,11 +112,13 @@ The state machine is enforced via role-based transitions. The Orchestrator opera
 
 ### Stage C: Closure
 Validated by a `test_pass` signal:
-1. **Documentation**: Dispatch worker to update README and technical docs on the feature branch.
+1. **Docs & Versioning**: Dispatch worker to update README/docs/CHANGELOG and bump version numbers in lockstep.
 2. **Merge**: `git checkout main && git merge --no-ff <branch>`
-3. **Push**: `git push origin main`
+3. **Tag & Push**: `git tag -a v<version> -m "release <version>" && git push origin main --tags`
 4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `admin`, with `expected_version`) + log completion metadata.
-5. **Report**: Summarize completion to user (commit hash, test outputs, completion status).
+5. **Close GitHub Issue**: `gh issue close <N> --comment "Resolved in v<version>: ..."`
+6. **Deployment Check**: Confirm live deployment status (e.g. `railway status` and `GET /api/health`).
+7. **Report**: Summarize completion to user (commit hash, test outputs, completion status).
 
 ## 4. Safety & Reliability Rules
 
