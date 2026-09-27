@@ -16,6 +16,17 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [2.14.6] — 2026-09-27
+
+Maintenance: merge routine dependency updates, bump CI actions, and mandate GitHub issue linking in agent orchestration skills.
+
+### Changed
+- **Dependency & Toolchain Upgrades.** Merged safe Dependabot dependency bumps:
+  - `.github/workflows/ci.yml`: Bumped `actions/setup-node` from 4 to 7 and `actions/checkout` from 4 to 7.
+  - `server`: Bumped `yaml` from 2.9.0 to 2.9.1.
+  - `client`: Bumped `autoprefixer` from 10.5.4 to 10.6.1, `postcss` from 8.5.26 to 8.5.28, and `@types/node` from 26.4.1 to 26.6.2.
+- **Agent Orchestration Skills.** Updated Riaz (`~/.gemini/config/skills/riaz/SKILL.md`) and Kanban (`skills/kanban/SKILL.md`) protocol specifications to mandate creating a GitHub issue during Stage A and linking it via `"issues": ["#<N>"]`, ensuring real-time mirroring into the ISSUES swimlane.
+
 ## [2.14.5] — 2026-09-27
 
 Fix: improve visibility, contrast, and tactile affordance of the board's horizontal
