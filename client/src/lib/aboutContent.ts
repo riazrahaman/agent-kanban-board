@@ -5,10 +5,17 @@ export const ABOUT_LIVE_URL = 'https://agent-kanban.riazrahaman.com'
 
 export const SKILL_PATH = 'skills/kanban/SKILL.md'
 
+export const SKILL_HUB_URL =
+  'https://skills.syed-hasan.com/skills/riazrahaman/agentkanban'
+
+export const SKILL_STANDALONE_REPO_URL =
+  'https://github.com/riazrahaman/kanban-orchestrator'
+
 export type OrchestratorSkill = {
   name: string
   summary: string
   path: string
+  hubUrl?: string
   install: string[]
   notes: string[]
 }
@@ -18,6 +25,7 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
   summary:
     'A bundled opencode skill turns a coding agent into a strict orchestrator: it drives claim-first transitions over plain HTTP, dispatches builder / reviewer / tester workers, and never writes code itself. The board is the state machine; the skill is the protocol that drives it.',
   path: SKILL_PATH,
+  hubUrl: SKILL_HUB_URL,
   install: [
     'cp -r skills/kanban .opencode/skill/kanban',
     'cp -r skills/kanban ~/.config/opencode/skill/kanban',

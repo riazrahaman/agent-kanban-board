@@ -253,6 +253,11 @@ test('the orchestrator skill entry names the bundled file and its rules', () => 
     /^skills\/kanban\/SKILL\.md$/,
     'the skill path must point at the bundled committed file',
   )
+  assert.equal(
+    ORCHESTRATOR_SKILL.hubUrl,
+    'https://skills.syed-hasan.com/skills/riazrahaman/agentkanban',
+    'the orchestrator skill must link to its Skills Hub download page',
+  )
   assert.ok(ORCHESTRATOR_SKILL.install.length >= 1, 'the skill needs an install command')
   const notes = ORCHESTRATOR_SKILL.notes.join('\n')
   assert.match(notes, /\?project=/, 'the project-scoping rule must be stated')

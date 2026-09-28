@@ -13,6 +13,8 @@ import {
   RECLAIM_INTRO,
   SAFETY_FOOTER,
   SAFETY_LAYERS,
+  SKILL_HUB_URL,
+  SKILL_STANDALONE_REPO_URL,
   STACK_ROWS,
   TRUST_METRICS,
   TOUR_SHOTS,
@@ -116,9 +118,25 @@ export default function About({ version, visit }: Props) {
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
             {ORCHESTRATOR_SKILL.summary}
           </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Cta href={ORCHESTRATOR_SKILL.hubUrl ?? SKILL_HUB_URL}>
+              Download from Skills Hub ↗
+            </Cta>
+            <Cta href={SKILL_STANDALONE_REPO_URL}>
+              Standalone repo ↗
+            </Cta>
+          </div>
           <div className="mt-4 border border-line bg-surface p-3">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
-              Skill file
+            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-muted">
+              <span>Skill file</span>
+              <a
+                href={ORCHESTRATOR_SKILL.hubUrl ?? SKILL_HUB_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-live hover:underline"
+              >
+                Skills Hub ↗
+              </a>
             </div>
             <code className="mt-2 block font-mono text-[11px] text-ink">
               {ORCHESTRATOR_SKILL.path}
