@@ -5,7 +5,7 @@
     "buildCommand": "npm ci --prefix client && npm run build --prefix client && npm ci --prefix server"
   },
   "deploy": {
-    "startCommand": "npm --prefix server start",
+    "startCommand": "node server/server.js",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ALWAYS"
