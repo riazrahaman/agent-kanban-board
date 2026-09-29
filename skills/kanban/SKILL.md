@@ -1,14 +1,14 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 1.2.0
+version: 2.15.3
 ---
 
 # Kanban Orchestrator Protocol
 
 Load this skill when a delegated build/feature task is initiated using an agent Kanban board. You are a **Strict Orchestrator (Admin)**. You do not write code directly; you manage the state machine, the board, and the workers.
 
-> **Install this skill:** copy the `skills/kanban/` directory into your opencode skill path — either project-local `.opencode/skill/kanban/` (gitignored in this repo) or global `~/.config/opencode/skill/kanban/`.
+> **Install this skill:** copy the `skills/kanban/` directory into your opencode skills directory (global: `~/.config/opencode/skills/kanban/`, project-local: `.opencode/skills/kanban/`) — note the directory is **`skills`**, plural.
 
 ## 1. Environment & Local Deployment
 
@@ -76,11 +76,25 @@ The state machine is enforced via role-based transitions. The Orchestrator opera
 ### Stage A: Feature Setup
 1. **GitHub Issue**: Check for an existing issue or file a new one (`gh issue create --title "<title>" --body "..."`). Note the issue number `#<N>`.
 2. **Branching**: Create `feat/<slug>` or `fix/<slug>` from `main`.
-3. **Registration**: `POST /tasks` with `project`, `title`, `description`, exact branch name, and linked issues:
+3. **Registration**: `POST /tasks` with the JSON body below. The caller MUST supply `id` (the server does not generate one) and `status`:
+   ```json
+   {
+     "id": "<your-slug-or-id>",
+     "project": "<project_name>",
+     "title": "<title>",
+     "description": "<what and why>",
+     "branch": "<real branch from git rev-parse --abbrev-ref HEAD>",
+     "issues": ["#<N>"],
+     "round": 1,
+     "status": "BACKLOG"
+   }
+   ```
+   - `id`, `project`, `title`, `round`, and `status` are required.
    - Determine the active branch with `git rev-parse --abbrev-ref HEAD` and pass that exact string.
    - Set `"issues": ["#<N>"]` in the task body so the task is structurally linked to GitHub and mirrors into the `ISSUES` swimlane.
    - Setting `branch` explicitly is critical for human operators and re-claim alerts.
-4. Record `task_id` and initial `version`.
+   - `BACKLOG` and `BLOCKED` are open statuses. Creating a task directly into `BUILDING`, `IN_REVIEW`, `IN_TEST`, or `DONE` requires a privileged credential and returns `403`.
+4. Record `task_id` and initial `version` from the response.
 
 ### Stage B: The Execution Cycle
 
@@ -125,10 +139,17 @@ Validated by a `test_pass` signal:
 - **Identity & Roles**: Orchestrator = `admin`. Workers = `builder`, `reviewer`, `tester`.
 - **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.
-- **Optimistic Locking**: Every `PATCH` must provide the current `version` (`expected_version`) to prevent concurrent overwrites (409 Conflict).
+- **Optimistic Locking**: Every `PATCH` requires the card's CURRENT `version` as `expected_version`. Operations like `POST /claim`, `POST /logs`, and `POST /heartbeat` each increment the card's version on the server, so a version read earlier in the cycle is stale. Always fetch the fresh version before issuing a `PATCH`:
+  ```bash
+  GET /tasks/:id?project=X   → read `version`
+  PATCH /tasks/:id?project=X → pass `expected_version`
+  ```
+  Do not cache `version` statically across multiple intermediate writes.
+- **Two Distinct 409 Errors** (inspect response body):
+  - `"Version mismatch"` (with `details.expected` / `details.provided`): The provided `expected_version` is stale. Re-read the current version and retry the `PATCH`.
+  - `"Invalid state transition from A to B"`: The lease lapsed and the background reaper reset the card to `BACKLOG`. Recover by re-claiming (`POST /claim`) and re-walking stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
 - **Claim to Own, PATCH to Move**: Never enter active stages via status-only PATCH.
 - **Heartbeat & Leases**: Claim TTL is `KANBAN_CLAIM_TTL_MS` (default 600,000 ms = 10 min). Issue `POST /tasks/:id/heartbeat?project=X` at least every 2 minutes while holding a card. A claim may also request an explicit window with `{"lease_ms": <ms>}` (clamped to `KANBAN_MIN_LEASE_MS` 60,000 and `KANBAN_MAX_LEASE_MS` 7,200,000). Logs from the holder also extend the lease.
-- **Lease-loss Recovery**: A 409 `Invalid state transition from BACKLOG to <X>` indicates lease expiration and reaper reset. Recover by re-claiming (`POST /claim`) and re-walking stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
 - **3-Cycle Limit**: If a cycle (Build → Review → Test) repeats 3 times, halt and report blockers.
 - **Evidence-Based Success**: Never transition stages without explicit command output, test results, or commit hashes.
 

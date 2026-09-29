@@ -239,6 +239,6 @@ The card entered an active stage through a PATCH that only changed its status, s
 ## Compatibility
 
 - **Versions:** from 2.14.3 on, the skill's version matches this SkillPort listing. 2.14.5 adds the required create fields (`id`, `status`, `round`), the `/api` base URL and a separate token check to the protocol.
-- **Board:** tested against agent-kanban-board v2.14.0 through v2.15.2+.
+- **Board:** tested against agent-kanban-board v2.14.0 through v2.15.3+.
 - **Agents:** written for opencode. The protocol is plain HTTP and the config can come from env vars, so it also works with Claude Code, which is SkillPort's default install target. From 2.14.5 the frontmatter also passes claude.ai's skill upload check.
 - **Changelog:** [CHANGELOG.md](https://github.com/riazrahaman/kanban-orchestrator/blob/main/CHANGELOG.md)
