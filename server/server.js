@@ -273,6 +273,57 @@ export async function startServer(
     });
 }
 
+/**
+ * Attaches graceful shutdown listeners for SIGTERM and SIGINT.
+ *
+ * When Railway, Docker, or Kubernetes rolls out a new deployment or stops
+ * a container, it issues SIGTERM. By cleanly stopping background workers
+ * and calling server.close(), we ensure in-flight requests finish,
+ * persistence flush hooks run, and the process exits with code 0 instead of 143.
+ *
+ * @param {import('node:http').Server} server
+ * @param {object} [opts]
+ * @param {function} [opts.exit]
+ * @param {function} [opts.log]
+ * @param {number} [opts.timeoutMs]
+ * @returns {function} cleanup callback to remove signal listeners
+ */
+export function registerShutdownHandlers(
+  server,
+  { exit = process.exit, log = console.log, timeoutMs = 5000 } = {}
+) {
+  let stopping = false;
+  const shutdown = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    log(`[kanban server] received ${signal}, shutting down gracefully...`);
+    server.close((err) => {
+      if (err) {
+        console.error('[kanban server] error during close:', err);
+        exit(1);
+        return;
+      }
+      exit(0);
+    });
+    const timer = setTimeout(() => {
+      console.warn('[kanban server] graceful shutdown timed out; exiting forcefully');
+      exit(0);
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  };
+
+  const onSigTerm = () => shutdown('SIGTERM');
+  const onSigInt = () => shutdown('SIGINT');
+
+  process.on('SIGTERM', onSigTerm);
+  process.on('SIGINT', onSigInt);
+
+  return () => {
+    process.off('SIGTERM', onSigTerm);
+    process.off('SIGINT', onSigInt);
+  };
+}
+
 // Auto-run when executed directly
 const isDirectRun =
   process.argv[1] &&
@@ -282,6 +333,7 @@ if (isDirectRun) {
   const PORT = process.env.PORT || 4000;
   const HOST = resolveHost();
   startServer(PORT, HOST).then(({ server }) => {
-     console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
-      });
+    console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
+    registerShutdownHandlers(server);
+  });
 }
