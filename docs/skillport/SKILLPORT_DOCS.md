@@ -127,7 +127,7 @@ curl -s -X POST "$KANBAN_URL/tasks" \
   -H "x-agent-id: orchestrator" \
   -H "x-agent-role: admin" \
   -H "content-type: application/json" \
-  -d "{\"id\":\"smoke-1\",\"project\":\"$KANBAN_PROJECT\",\"title\":\"smoke test\"}"
+  -d "{\"id\":\"smoke-1\",\"project\":\"$KANBAN_PROJECT\",\"title\":\"smoke test\",\"status\":\"BACKLOG\",\"round\":1}"
 ```
 
 A `201` with the card JSON means the URL, token and project are all correct. Any other response is covered under **Troubleshooting** below.
@@ -139,7 +139,7 @@ A `201` with the card JSON means the URL, token and project are all correct. Any
 **A · Setup**
 1. Find or open a GitHub issue `#N`.
 2. Branch `feat/<slug>` or `fix/<slug>` from `main`.
-3. Register the card with `POST /tasks`. Pass `id`, `title`, `project`, the exact branch name from `git rev-parse --abbrev-ref HEAD`, and `"issues": ["#N"]`.
+3. Register the card with `POST /tasks`. Pass `id`, `title`, `"status": "BACKLOG"`, `"round": 1`, `project`, the exact branch name from `git rev-parse --abbrev-ref HEAD`, and `"issues": ["#N"]`.
 4. Record the card's `id` and `version`.
 
 **B · Build → Review → Test**
@@ -176,7 +176,8 @@ SkillPort vets skills for hidden or dangerous behavior. This section lists what 
 Every path that targets a single task needs `?project=`. Only `POST /tasks` takes the project in the JSON body instead.
 
 ```
-POST   /tasks                            create · project in body · id + title required
+POST   /tasks                            create · project in body
+                                         requires id, title, status BACKLOG, round 1
 POST   /tasks/:id/claim?project=X        take ownership + lease (BACKLOG → BUILDING)
 POST   /tasks/:id/heartbeat?project=X    renew the lease
 POST   /tasks/:id/logs?project=X         append a log (holder logs also renew the lease)
@@ -209,6 +210,9 @@ Same cause: the path has no `?project=`.
 **`400 id and title are required` on create**
 The board doesn't generate ids, so the caller must supply one. Use a stable slug, such as `"id": "feat-login-rate-limit"`.
 
+**`400 Invalid status: undefined` or `400 round must be a positive integer`**
+Create the card with `"status": "BACKLOG"` and `"round": 1`. Both fields are required.
+
 **`400 Invalid task id`**
 Ids may only contain letters, digits, `_` and `-`. A `/` copied from the branch name is the usual cause, so use `feat-login-rate-limit`, not `feat/login-rate-limit`.
 
@@ -234,7 +238,7 @@ The card entered an active stage through a PATCH that only changed its status, s
 
 ## Compatibility
 
-- **Versions:** from 2.14.3 on, the skill's version matches this SkillPort listing. 2.14.5 adds the task `id` requirement, the `/api` base URL and a separate token check to the protocol.
+- **Versions:** from 2.14.3 on, the skill's version matches this SkillPort listing. 2.14.5 adds the required create fields (`id`, `status`, `round`), the `/api` base URL and a separate token check to the protocol.
 - **Board:** tested against agent-kanban-board v2.14.0 through v2.15.1+.
 - **Agents:** written for opencode. The protocol is plain HTTP and the config can come from env vars, so it also works with Claude Code, which is SkillPort's default install target. From 2.14.5 the frontmatter also passes claude.ai's skill upload check.
 - **Changelog:** [CHANGELOG.md](https://github.com/riazrahaman/kanban-orchestrator/blob/main/CHANGELOG.md)
