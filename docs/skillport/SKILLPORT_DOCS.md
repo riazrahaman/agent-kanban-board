@@ -209,8 +209,11 @@ Same cause: the path has no `?project=`.
 **`400 id and title are required` on create**
 The board doesn't generate ids, so the caller must supply one. Use a stable slug, such as `"id": "feat-login-rate-limit"`.
 
-**`409 Task <project>:<id> already exists`**
-A card with that id already exists in the project. Pick a new id.
+**`400 Invalid task id`**
+Ids may only contain letters, digits, `_` and `-`. A `/` copied from the branch name is the usual cause, so use `feat-login-rate-limit`, not `feat/login-rate-limit`.
+
+**`409 Task <project>/<id> already exists`**
+A card with that id already exists in the project. Resume it if it's the same work, otherwise pick a new id.
 
 **`503 Mutating API is unavailable until an auth token is configured`**
 The board server was started without a token. Restart it with `KANBAN_AUTH_TOKEN` exported.
@@ -231,7 +234,7 @@ The card entered an active stage through a PATCH that only changed its status, s
 
 ## Compatibility
 
-- **Protocol:** `kanban-orchestrator` v1.2.0.
+- **Versions:** from 2.14.3 on, the skill's version matches this SkillPort listing. 2.14.5 adds the task `id` requirement, the `/api` base URL and a separate token check to the protocol.
 - **Board:** tested against agent-kanban-board v2.14.0 through v2.15.1+.
-- **Agents:** written for opencode. The protocol is plain HTTP and the config can come from env vars, so it also works with Claude Code, which is SkillPort's default install target.
+- **Agents:** written for opencode. The protocol is plain HTTP and the config can come from env vars, so it also works with Claude Code, which is SkillPort's default install target. From 2.14.5 the frontmatter also passes claude.ai's skill upload check.
 - **Changelog:** [CHANGELOG.md](https://github.com/riazrahaman/kanban-orchestrator/blob/main/CHANGELOG.md)
