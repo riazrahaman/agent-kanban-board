@@ -124,7 +124,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
                 key={`${item.taskId}-${item.timestamp}-${idx}`}
                 onClick={() => onOpen(item.taskId)}
                 type="button"
-                className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted-bg/50 transition-colors"
+                className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted-bg/50 transition-colors pointer-coarse:min-h-11"
                 title={`${item.taskTitle}: ${item.message}`}
               >
                 <span className="shrink-0 border border-line bg-muted-bg px-1 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink max-w-[70px] truncate">

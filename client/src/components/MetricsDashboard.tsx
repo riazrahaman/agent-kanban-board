@@ -30,7 +30,7 @@ export default function MetricsDashboard({ tasks, onClose }: Props) {
             type="button"
             onClick={onClose}
             aria-label="Close metrics dashboard"
-            className="font-mono text-[10px] uppercase tracking-wider text-muted hover:text-ink transition-colors"
+            className="font-mono text-[10px] uppercase tracking-wider text-muted hover:text-ink transition-colors pointer-coarse:min-h-11 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:px-2"
           >
             ✕ Close
           </button>

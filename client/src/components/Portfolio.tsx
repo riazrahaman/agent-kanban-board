@@ -121,7 +121,7 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
                   <button
                     type="button"
                     onClick={() => m.project && onSelectProject(m.project)}
-                    className="font-mono text-xs text-ink underline-offset-2 hover:underline"
+                    className="font-mono text-xs text-ink underline-offset-2 hover:underline pointer-coarse:min-h-11 pointer-coarse:flex pointer-coarse:items-center"
                     title={`Open the ${m.project} board`}
                   >
                     {m.project}

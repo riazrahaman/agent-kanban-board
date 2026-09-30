@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.15.5
+**System:** Agent Kanban Board v2.15.6
 
 ---
 
@@ -539,12 +539,12 @@ def agent_claim_and_build(task_id: str, agent_id: str):
 
 The repository ships a ready-made opencode skill at [`skills/kanban/SKILL.md`](../skills/kanban/SKILL.md) that implements the orchestration pattern described in this chapter. It is the recommended starting point for a new swarm: instead of hand-rolling the claim-first lifecycle and retry logic, load the skill and let the agent follow the protocol.
 
-To install it, copy the directory into an opencode skill path — project-local `.opencode/skill/kanban/` (gitignored in this repository) or global `~/.config/opencode/skill/kanban/`:
+To install it, copy the directory into an opencode skill path — project-local `.opencode/skills/kanban/` (gitignored in this repository) or global `~/.config/opencode/skills/kanban/`:
 
 ```bash
-cp -r skills/kanban .opencode/skill/kanban
+cp -r skills/kanban .opencode/skills/kanban
 # or, for every project on the machine:
-cp -r skills/kanban ~/.config/opencode/skill/kanban
+cp -r skills/kanban ~/.config/opencode/skills/kanban
 ```
 
 The skill enforces the same contract as the HTTP API: it resolves the board URL, token and project name from `.opencode/config.json` or the `KANBAN_*` environment variables, appends `?project=<name>` to every task path, claims before entering a stage, sends `expected_version` on every `PATCH`, and dispatches builder, reviewer and tester workers through Build → Review → Test. Its safety rules also document the optional Telegram reclaim alerts (off unless `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set), which notify the operator when the reaper resets a card. The About view in the running board describes the skill in the browser.

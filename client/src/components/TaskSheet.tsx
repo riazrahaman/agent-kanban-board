@@ -168,7 +168,7 @@ export default function TaskSheet({ task, onClose }: Props) {
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="p-1 font-mono text-xs text-muted hover:text-ink transition-colors"
+                className="p-1 font-mono text-xs text-muted hover:text-ink transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-center"
               >
                 ✕
               </button>
@@ -212,7 +212,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                     type="button"
                     onClick={() => handleAssign(false)}
                     disabled={assigning}
-                    className="border border-line bg-muted-bg px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-line/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="border border-line bg-muted-bg px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-line/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
                   >
                     {assigning ? 'Assigning…' : 'Assign'}
                   </button>
@@ -220,7 +220,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                     type="button"
                     onClick={() => handleAssign(true)}
                     disabled={assigning || !task.assigned_agent}
-                    className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
                   >
                     Release
                   </button>

@@ -27,8 +27,8 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
   path: SKILL_PATH,
   hubUrl: SKILL_HUB_URL,
   install: [
-    'cp -r skills/kanban .opencode/skill/kanban',
-    'cp -r skills/kanban ~/.config/opencode/skill/kanban',
+    'cp -r skills/kanban .opencode/skills/kanban',
+    'cp -r skills/kanban ~/.config/opencode/skills/kanban',
   ],
   notes: [
     'Project scoping: ?project=<name> is mandatory on every task path.',
@@ -51,7 +51,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '141',
+    value: '146',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },

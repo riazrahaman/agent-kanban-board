@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,59 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.6] — 2026-09-30
+
+Fix: GH #78 follow-ups to the touch-ergonomics pass — an iPad-with-trackpad
+gap in the 16px focus-zoom fix, and several 44px tap targets the #77 sweep
+missed outside the header/filter row.
+
+### Fixed
+- **`pointer: coarse` missed iPads with an attached trackpad/mouse (GH #78).**
+  Such a device's primary pointer reports `fine`, so the `index.css` rule that
+  sets `input, select, textarea` to 16px never matched and the iOS focus-zoom
+  regressed for that hardware combination. The media query is now
+  `@media (any-pointer: coarse)`, which matches as long as *any* available
+  pointer is coarse — the touchscreen still counts even when a trackpad is
+  attached. The Tailwind `pointer-coarse:` variant used elsewhere for 44px
+  sizing is unaffected; only this standalone CSS rule needed the change.
+- **44px targets missed by the #77 sweep.** The TaskSheet close button and its
+  Assign/Release buttons, the Metrics dashboard close button, the Portfolio
+  project-link buttons and the SignalRail activity-feed items now all carry
+  `pointer-coarse:min-h-11` (and `min-w-11` for the icon-only TaskSheet close
+  button).
+- **Columns popover swatches and popup placement.** The color swatches grow to
+  `pointer-coarse:h-6 pointer-coarse:w-6` (24x24px) under a coarse pointer —
+  large enough to satisfy the WCAG 2.2 SC 2.5.8 (Target Size Minimum) 24x24px
+  floor. Below `sm` each swatch row now stacks its label above the swatches
+  (`flex-col`, `sm:flex-row`) and wraps if needed, since 8 swatches at 24px
+  plus gaps no longer fit beside the label on a narrow popup. Below `sm` the
+  popup itself switches from an anchored `absolute` dropdown to a `fixed`
+  sheet pinned to the viewport (`inset-x-2`, `bottom-4`) instead of hanging
+  its left edge off the trigger button, so it can no longer overflow the
+  right edge of a 320px screen; at `sm` and up it still anchors below the
+  Columns button as before. The coarse-pointer width bump is scoped to
+  `sm:pointer-coarse:w-72` (not a bare `pointer-coarse:w-72`), since an
+  unscoped rule would win the cascade over `max-sm:w-auto` on a coarse-pointer
+  phone and silently reintroduce a fixed 288px popup fighting the
+  `max-sm:inset-x-2` viewport margins. The popup also caps its height below
+  `sm` (`max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto`) so on a
+  short viewport (phone landscape, or a 320x480 screen) the top rows
+  (BACKLOG, etc.) scroll into view instead of clipping off the top edge.
+- **Stale skill install path.** `ORCHESTRATOR_SKILL.install` in
+  `aboutContent.ts` referenced the singular `.opencode/skill/kanban`; opencode
+  discovers skills under the plural `.opencode/skills/kanban`, so the About
+  page's copy-paste install commands silently failed to register the skill.
+  The same singular/plural typo is corrected everywhere else it appeared —
+  `README.md`, `docs/USER_AND_OPERATOR_MANUAL.md`,
+  `docs/with-images/USER_AND_OPERATOR_MANUAL.md`,
+  `docs/FILE_BY_FILE_EXPLANATION.md`, `docs/with-images/FILE_BY_FILE_EXPLANATION.md`
+  and `docs/skillport/SKILLPORT_DOCS.md`.
+- `mobileToolbar.test.mjs` now asserts `@media (any-pointer: coarse)` (not
+  `pointer: coarse`), tightens the project-picker option assertion to the
+  option element's own class string, adds coverage for the TaskSheet, Metrics
+  dashboard, Portfolio and SignalRail targets above, and guards the Columns
+  popover's short-screen scroll cap and the `sm:`-scoped coarse-pointer width.
 
 ## [2.15.5] — 2026-09-30
 
