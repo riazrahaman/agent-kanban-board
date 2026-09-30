@@ -61,14 +61,14 @@ export default function BoardFilters({
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Filter by title, desc, id…"
           aria-label="Filter tasks by search term"
-          className="w-full border border-line bg-surface px-2.5 py-1.5 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1"
+          className="w-full border border-line bg-surface px-2.5 py-1.5 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11 pointer-coarse:pr-11"
         />
         {search && (
           <button
             type="button"
             onClick={() => onSearchChange('')}
             aria-label="Clear search"
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-xs text-muted hover:text-ink"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-xs text-muted hover:text-ink pointer-coarse:right-0 pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center"
             title="Clear search"
           >
             ×
@@ -90,7 +90,7 @@ export default function BoardFilters({
         aria-expanded={filtersOpen}
         aria-label="Toggle filters and actions"
         title="Show/hide filters and actions"
-        className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:hidden"
+        className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] pointer-coarse:min-h-11 sm:hidden"
       >
         {isFiltered ? 'Filters •' : 'Filters'}
       </button>
@@ -106,7 +106,7 @@ export default function BoardFilters({
           onChange={(e) => onPriorityChange(e.target.value)}
           aria-label="Filter tasks by priority"
           title="Filter by priority"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
         >
           <option value="all">All Priorities</option>
           <option value="high">High (P0 / P1)</option>
@@ -119,7 +119,7 @@ export default function BoardFilters({
           onChange={(e) => onAssigneeChange(e.target.value)}
           aria-label="Filter tasks by assignee"
           title="Filter by assignee"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
         >
           <option value="all">All Assignees</option>
           <option value="unassigned">Unassigned</option>
@@ -135,7 +135,7 @@ export default function BoardFilters({
           onChange={(e) => onSortChange(e.target.value as 'priority' | 'updated' | 'id')}
           aria-label="Sort tasks within columns"
           title="Column ordering (persisted for this browser)"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
         >
           <option value="priority">Sort: Priority</option>
           <option value="updated">Sort: Recently Updated</option>
@@ -148,7 +148,7 @@ export default function BoardFilters({
             onClick={onReset}
             aria-label="Reset all filters"
             title="Clear all active filters"
-            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
           >
             Reset
           </button>
@@ -160,7 +160,7 @@ export default function BoardFilters({
             onClick={onExport}
             aria-label="Export tasks as JSON"
             title="Export tasks to JSON"
-            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1"
+            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
           >
             Export
           </button>
@@ -182,7 +182,7 @@ export default function BoardFilters({
             aria-label="Toggle metrics dashboard"
             title="Toggle summary metrics dashboard"
             className={[
-              'border px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] sm:py-1',
+              'border px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11',
               showMetrics
                 ? 'border-ink bg-muted-bg text-ink font-semibold'
                 : 'border-line bg-surface text-muted hover:bg-muted-bg hover:text-ink',

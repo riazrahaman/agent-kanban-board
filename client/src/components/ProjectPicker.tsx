@@ -80,7 +80,7 @@ export default function ProjectPicker({ value, projects, onChange }: Props) {
         aria-haspopup="listbox"
         aria-expanded={open}
         onKeyDown={onTriggerKeyDown}
-        className="flex min-w-0 max-w-[10rem] items-center gap-1 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none"
+        className="flex min-w-0 max-w-[10rem] items-center gap-1 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none pointer-coarse:min-h-11"
       >
         <span className="truncate">{selected.label}</span>
         <span aria-hidden="true">▾</span>
@@ -98,7 +98,7 @@ export default function ProjectPicker({ value, projects, onChange }: Props) {
               aria-selected={item.value === value}
               onMouseEnter={() => setActiveIndex(i)}
               onClick={() => select(item.value)}
-              className={`cursor-pointer truncate px-2 py-1 font-mono text-[11px] ${
+              className={`cursor-pointer truncate px-2 py-1 font-mono text-[11px] pointer-coarse:min-h-11 pointer-coarse:leading-9 ${
                 item.value === value ? 'bg-muted-bg text-ink' : 'text-ink'
               } ${i === activeIndex ? 'bg-muted-bg' : ''}`}
             >

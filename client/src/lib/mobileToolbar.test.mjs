@@ -209,3 +209,103 @@ test('the card header stacks the badge group so the id keeps real width', () => 
   assert.match(badgeGroup, /\bw-full\b/, 'the badge group must take a full row on phones')
   assert.match(badgeGroup, /\bsm:w-auto\b/, 'the badge group returns inline from sm up')
 })
+
+// ---------------------------------------------------------------------------
+// GH #76 / #77: touch ergonomics, keyed on `pointer: coarse`.
+//
+// #76: iOS Safari zooms the page on focus when a text control's computed
+// font-size is < 16px; the mono controls are 11px. #77: at 320-430px the tabs,
+// the `⋯` header menu and the filter row were 29-31px tall, under the 44px
+// touch-target floor. Both fixes apply only under `(pointer: coarse)` so mouse
+// and trackpad users keep the dense desktop layout at every width (a width
+// breakpoint cannot tell a 768px tablet from a 768px desktop window).
+// ---------------------------------------------------------------------------
+
+const cssSource = readFileSync(join(CLIENT_SRC, 'index.css'), 'utf8')
+const headerHelpSource = readFileSync(join(CLIENT_SRC, 'components', 'HeaderHelp.tsx'), 'utf8')
+const projectPickerSource = readFileSync(join(CLIENT_SRC, 'components', 'ProjectPicker.tsx'), 'utf8')
+const COARSE_TARGET = /\bpointer-coarse:min-h-11\b/
+
+test('touch devices get >=16px text in every form control (no iOS focus zoom)', () => {
+  const idx = cssSource.search(/@media \(pointer: coarse\) \{/)
+  assert.ok(idx >= 0, 'index.css must carry an @media (pointer: coarse) block')
+  const block = cssSource.slice(idx, cssSource.indexOf('}\n}', idx) + 3)
+  for (const tag of ['input', 'select', 'textarea']) {
+    assert.match(block, new RegExp(`\\b${tag}\\b`), `the coarse-pointer rule must cover <${tag}>`)
+  }
+  const size = Number(block.match(/font-size:\s*(\d+)px/)?.[1])
+  assert.ok(size >= 16, `coarse-pointer form controls need >= 16px, got ${size}`)
+  // It must be unlayered: Tailwind emits `text-[11px]` inside @layer utilities,
+  // and only an unlayered rule reliably outranks it. Brace depth 0 = top level.
+  const before = cssSource.slice(0, idx)
+  const depth = (before.match(/\{/g) || []).length - (before.match(/\}/g) || []).length
+  assert.equal(depth, 0, 'the coarse-pointer font rule must sit at the top level, not inside @layer/@theme')
+})
+
+test('header tabs, menu and controls reach 44px on coarse pointers', () => {
+  const tabs = appSource.match(/aria-pressed=\{view === value\}[\s\S]*?className=\{`([^`]*)`/)?.[1]
+  assert.ok(tabs, 'App.tsx must render the Board/Portfolio/About tabs')
+  assert.match(tabs, COARSE_TARGET, 'the view tabs need a 44px touch height')
+
+  const menu = appSource.match(/aria-label="Toggle board controls"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(menu, 'App.tsx must render the header menu button')
+  assert.match(menu, COARSE_TARGET, 'the icon-only header menu needs a 44px touch height')
+  assert.match(menu, /\bpointer-coarse:min-w-11\b/, 'the icon-only header menu needs a 44px touch width')
+
+  for (const label of ['Bind this board to an agent id', 'API token for mutating requests']) {
+    const cls = appSource.match(new RegExp(`aria-label="${label}[^"]*"[\\s\\S]*?className="([^"]*)"`))?.[1]
+    assert.ok(cls, `App.tsx must render the "${label}" input`)
+    assert.match(cls, COARSE_TARGET, `the "${label}" input needs a 44px touch height`)
+  }
+  for (const label of ['Toggle signal rail', 'Toggle theme']) {
+    // className sits before aria-label on one button and after it on the
+    // other, so scan the whole <button>...</button> element around the label.
+    const at = appSource.indexOf(`aria-label="${label}"`)
+    const element = at < 0 ? '' : appSource.slice(appSource.lastIndexOf('<button', at), appSource.indexOf('</button>', at))
+    const cls = element.match(/className="([^"]*)"/)?.[1]
+    assert.ok(cls, `App.tsx must render the "${label}" button`)
+    assert.match(cls, COARSE_TARGET, `the "${label}" button needs a 44px touch height`)
+  }
+
+  assert.match(headerHelpSource, COARSE_TARGET, 'the header help "i" needs a 44px touch height')
+  assert.match(headerHelpSource, /\bpointer-coarse:min-w-11\b/, 'the icon-only help "i" needs a 44px touch width')
+  const picker = projectPickerSource.match(/aria-haspopup="listbox"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(picker, 'ProjectPicker must render its trigger')
+  assert.match(picker, COARSE_TARGET, 'the project picker trigger needs a 44px touch height')
+  assert.match(projectPickerSource, /role="option"[\s\S]*?pointer-coarse:min-h-11/, 'project options need a 44px touch height')
+})
+
+test('every filter-row control reaches 44px on coarse pointers', () => {
+  const controls = [
+    ...borderedControlClasses(filtersSource),
+    ...borderedControlClasses(columnColorsSource),
+  ]
+  assert.ok(controls.length >= 6, `expected toolbar controls, found ${controls.length}`)
+  for (const cls of controls) {
+    assert.match(cls, COARSE_TARGET, `every toolbar control needs a 44px coarse-pointer target, got: ${cls}`)
+  }
+  const search = filtersSource.match(/aria-label="Filter tasks by search term"\s*className="([^"]*)"/)?.[1]
+  assert.ok(search, 'BoardFilters must render the search input')
+  assert.match(search, COARSE_TARGET, 'the search input needs a 44px touch height')
+  assert.match(search, /\bpointer-coarse:pr-11\b/, 'the search input must reserve room for the 44px clear button')
+  const clear = filtersSource.match(/aria-label="Clear search"\s*className="([^"]*)"/)?.[1]
+  assert.ok(clear, 'BoardFilters must render the clear-search button')
+  assert.match(clear, /\bpointer-coarse:min-w-11\b/, 'the clear-search glyph needs a 44px touch width')
+  assert.match(clear, COARSE_TARGET, 'the clear-search glyph needs a 44px touch height')
+})
+
+test('the 44px touch sizing never leaks to fine pointers (desktop density unchanged)', () => {
+  for (const [name, src] of [
+    ['App.tsx', appSource],
+    ['BoardFilters.tsx', filtersSource],
+    ['ColumnColorsControl.tsx', columnColorsSource],
+    ['HeaderHelp.tsx', headerHelpSource],
+    ['ProjectPicker.tsx', projectPickerSource],
+  ]) {
+    assert.doesNotMatch(
+      src,
+      /(?<![\w:-])min-[hw]-11\b/,
+      `${name}: 44px min sizes must be gated behind pointer-coarse:, never unprefixed`,
+    )
+  }
+})

@@ -108,6 +108,21 @@ body,
   }
 }
 
+/* iOS Safari zooms the page when a focused form control's computed font-size
+   is under 16px, and the dense mono controls are 11px. Touch devices get 16px
+   text in every text control; mouse/trackpad devices keep the compact 11px, so
+   desktop sizing is unchanged at every width. Keyed on `pointer: coarse`, not a
+   width breakpoint: it is the input-mechanism signal (a 768px iPad is coarse, a
+   narrow desktop window is not). Deliberately unlayered so it outranks the
+   `text-[11px]` utilities, which Tailwind emits inside @layer utilities. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
   margin: 0;

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,55 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.5] — 2026-09-30
+
+Fix: on phones the board's form controls triggered iOS focus-zoom, and the
+header and filter-row tap targets were well under the 44px touch minimum.
+
+### Fixed
+- **iOS Safari zoomed the page on focus (GH #76).** The filter input, the three
+  filter `<select>`s and the header inputs rendered at 11px, and iOS zooms any
+  focused control under 16px. `index.css` now sets `input, select, textarea` to
+  16px under `@media (pointer: coarse)`. The rule is deliberately unlayered so it
+  outranks Tailwind's `text-[11px]` utilities (emitted inside `@layer utilities`),
+  and it also covers the task sheet's comment/log textareas and Agent ID input.
+- **Tap targets below 44px (GH #77).** At 320–430px the Board/Portfolio/About
+  tabs measured 29px tall, the `⋯` menu 29x31 and the filter input + Filters
+  button 31px; at 768px the tabs were 25px and the header controls 26–27px.
+  Under `pointer: coarse` these now carry `pointer-coarse:min-h-11` (44px):
+  - the view tabs, the `⋯` menu (also `min-w-11`, since it is icon-only), the
+    agent id and token inputs, and the Signal and theme buttons;
+  - the filter input, the Filters disclosure, the three selects,
+    Reset / Export / Metrics, and the Columns button plus its "Reset to
+    defaults";
+  - the header help `i` (44x44) and the project picker's trigger and options;
+  - the clear-search `×`, now 44x44, with the filter input padded
+    (`pointer-coarse:pr-11`) so typed text does not run under it.
+  - Measured in touch emulation at 320/375/390/430/768: 0 header/filter controls
+    under 44px (was 18 at 320–430 with both disclosures open, 16 at 768), 0 form controls under 16px
+    (was 6), and `scrollWidth` equal to the viewport at every width.
+- **Why `pointer: coarse` and not a width breakpoint.** A 768px tablet and a
+  768px desktop window measured pixel-identical before this change, so a width
+  breakpoint could not enlarge one without the other. The input-mechanism query
+  can: mouse and trackpad users keep the dense 11px / 25–27px layout at every
+  width (768 and 1280 measured identical before and after), and a landscape iPad
+  gets the larger targets too. `min-h`/`min-w` leave the existing
+  `py-1.5 sm:py-1` and `md:h-[26px]` density classes untouched.
+- `mobileToolbar.test.mjs` gains four source-contract guards: the 16px rule
+  exists, covers all three tags and sits at the top level; every header and
+  filter-row control carries the 44px coarse-pointer target; icon-only buttons
+  also get the 44px width; and no unprefixed `min-h-11`/`min-w-11` can leak the
+  sizing to fine pointers.
+
+### Known trade-offs
+- The phone header is taller: 84px → 113px with the `⋯` menu closed (163px →
+  217px open). That is the cost of 44px rows.
+- Inputs keep their widths, so at 320px the 16px token placeholder truncates
+  ("api tok"). Widening them risked re-wrapping the 320px header fixed in #57.
+- The column scroll arrows stay 32px wide at `md`+ on touch: widening them would
+  reintroduce the card overlap fixed in #57. The Columns popover's 16px colour
+  swatches are also unchanged. Follow-ups are tracked in GH #78.
 
 ## [2.15.4] — 2026-09-30
 
