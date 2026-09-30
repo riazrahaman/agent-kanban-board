@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { addComment, appendLog, assignTask } from '../api'
 import { normalizePriority } from '../priority'
@@ -39,9 +39,10 @@ export default function TaskSheet({ task, onClose }: Props) {
   // MOB-6: the sheet scrolls on short viewports (see the panel below), so it
   // would otherwise keep its scroll offset when the operator opens a different
   // card — landing mid-panel on content they did not scroll to. Reset to the
-  // top whenever the open card changes.
+  // top whenever the open card changes. useLayoutEffect (not useEffect) so the
+  // old offset is never painted for a frame.
   const sheetRef = useRef<HTMLElement | null>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = sheetRef.current
     if (el) el.scrollTop = 0
   }, [task?.id])
@@ -173,7 +174,7 @@ export default function TaskSheet({ task, onClose }: Props) {
               </button>
             </div>
 
-            <div className="flex min-h-[160px] flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="min-h-[160px] flex-1 overflow-y-auto p-4 space-y-4">
               <section>
                 <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Description
