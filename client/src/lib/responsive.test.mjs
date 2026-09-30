@@ -497,14 +497,7 @@ test('client .ts/.tsx source stays free of banned visual patterns', () => {
 // These are source-contract assertions: they read the real component off disk.
 // ---------------------------------------------------------------------------
 
-// Pull the className of the first element whose attribute block matches `anchor`.
-function classNamesNear(source, anchor) {
-  const at = source.indexOf(anchor)
-  if (at < 0) return []
-  const window = source.slice(Math.max(0, at - 600), at + 600)
-  return [...window.matchAll(/className=\{?["'`]([^"'`]+)["'`]/g)].map((m) => m[1])
-}
-
+// Split a className into its individual utility tokens.
 const tokensOf = (cls) => cls.split(/\s+/).filter(Boolean)
 
 test('TaskSheet description region stacks its sections and cannot be squeezed away', () => {
@@ -568,25 +561,62 @@ test('TaskSheet <aside> scrolls when its fixed children exceed the viewport', ()
     tokens.includes('h-screen') || tokens.includes('h-dvh'),
     'the <aside> must use `h-screen`/`h-dvh` (index.css upgrades h-screen to 100dvh) rather than `h-full`, which can resolve to the URL-bar-hidden height',
   )
+  // Same failure mode as the region bug, one level up: if the aside ever lost
+  // `flex-col` it would become a flex ROW and lay the header, region and both
+  // composers side by side across the viewport.
+  assert.ok(
+    !tokens.includes('flex') || tokens.includes('flex-col'),
+    'the <aside> must carry `flex-col` alongside `flex` — without it the sheet lays out as a row',
+  )
+  // The scroll-reset effect is inert unless the aside actually carries the ref.
+  assert.match(
+    aside,
+    /ref=\{sheetRef\}/,
+    'the <aside> must carry `ref={sheetRef}`, or the MOB-6 scroll reset has nothing to act on',
+  )
 })
 
 test('TaskSheet header and both composer forms are pinned against the region', () => {
-  // Anchor each element by a stable, non-cosmetic attribute rather than by its
-  // full className, so incidental styling cannot make this pass or fail.
-  const anchors = [
-    // The sheet header precedes the task's identifier span, which is the first
-    // distinctive element inside it. `aria-label="Close"` is 600+ chars further
-    // down, so it is too distant to anchor the header's own className.
-    ['sheet header', 'title={task.id}'],
-    ['comment composer', 'onSubmit={handleComment}'],
-    ['log composer', 'onSubmit={handleSubmit}'],
-  ]
-  for (const [label, anchor] of anchors) {
-    const classes = classNamesNear(taskSheetSource, anchor)
-    const pinned = classes.some((cls) => tokensOf(cls).includes('shrink-0'))
+  // Select each element by its token set rather than by an anchor + distance
+  // window. An earlier revision anchored on a nearby attribute with a character
+  // window, which is fragile in both directions: too tight and the element's own
+  // className falls outside it; too wide and a NEIGHBOURING element's `shrink-0`
+  // satisfies the assertion. Token sets are unambiguous.
+  const all = [...taskSheetSource.matchAll(/className="([^"]*)"/g)].map((m) => tokensOf(m[1]))
+  const find = (pred, label) => {
+    const hit = all.filter(pred)
+    assert.equal(
+      hit.length,
+      1,
+      `expected exactly one ${label} in TaskSheet.tsx, found ${hit.length} — the selector is ambiguous, so this test must be updated`,
+    )
+    return hit[0]
+  }
+
+  const header = find(
+    (t) => t.includes('shrink-0') && t.includes('border-b'),
+    'sheet header (shrink-0 + border-b)',
+  )
+  assert.ok(header.includes('shrink-0'), 'the sheet header must carry `shrink-0`')
+
+  const comment = find(
+    (t) => t.includes('shrink-0') && t.includes('pb-2') && t.includes('border-t'),
+    'comment composer (shrink-0 + border-t + pb-2)',
+  )
+  assert.ok(comment.includes('shrink-0'), 'the comment composer must carry `shrink-0`')
+
+  const log = find(
+    (t) => t.includes('shrink-0') && t.includes('border-t') && !t.includes('pb-2'),
+    'log composer (shrink-0 + border-t, no pb-2)',
+  )
+  assert.ok(log.includes('shrink-0'), 'the log composer must carry `shrink-0`')
+
+  // Both composers and the header must be pinned together: if any one of them
+  // can shrink, it reclaims height from the description region instead.
+  for (const [label, tokens] of [['header', header], ['comment composer', comment], ['log composer', log]]) {
     assert.ok(
-      pinned,
-      `the ${label} must carry \`shrink-0\` so it keeps its full height and the description region absorbs the compression`,
+      tokens.includes('shrink-0'),
+      `the ${label} must keep \`shrink-0\` so the description region absorbs the compression`,
     )
   }
 })
