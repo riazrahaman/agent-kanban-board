@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,31 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.4] — 2026-09-30
+
+Fix: the task detail sheet left the description almost no visible height on short
+viewports, and none at all with the keyboard open.
+
+### Fixed
+- **Description region collapsed on short viewports (MOB-6).** The sheet is a flex
+  column whose header and two composers were fixed, so the description region —
+  the only child that could shrink — absorbed all compression. At 293x546 the
+  fixed chrome reached 82% of the viewport and the region held 100px; with the
+  keyboard open it collapsed to 32px and showed no description at all.
+  - The region now carries `min-h-[160px]` (heading plus ~4 lines at the measured
+    22.75px line-height, plus its own padding).
+  - The sheet itself is now scrollable (`h-screen` + `overflow-y-auto`
+    `overscroll-contain`). The floor alone is a regression: the `<aside>` is
+    `fixed` with no overflow, so extra height pushed the log composer past its
+    edge where nothing could scroll to it (measured: "Add log entry" at y=590
+    against a 546px viewport, `elementFromPoint` null).
+  - Header and both composers carry `shrink-0`, making the existing non-shrinking
+    behaviour explicit so a future `min-h-0` cannot reintroduce the collapse.
+  - The sheet resets its scroll offset when the open card changes
+    (`useLayoutEffect` on `task?.id`), so a newly opened card does not render
+    mid-panel now that the sheet can scroll.
+  - No change on normal phones or desktop, where the sheet does not scroll.
 
 ## [2.15.3] — 2026-09-29
 
