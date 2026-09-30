@@ -14,3 +14,7 @@ opencode.json
 
 # Riaz protocol config (contains tokens) — never commit
 .opencode/
+
+# SkillPort-installed skills and lockfile — local tooling, not part of the project
+.claude/
+skillport.lock
