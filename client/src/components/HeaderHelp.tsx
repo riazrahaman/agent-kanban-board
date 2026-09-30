@@ -33,7 +33,7 @@ export default function HeaderHelp() {
         aria-label="What do the agent id and api token fields do?"
         aria-expanded={open}
         title="What do the agent id and api token fields do?"
-        className="flex h-[32px] w-[32px] items-center justify-center border border-line bg-surface font-serif text-[13px] italic leading-none text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] md:h-[26px] md:w-[26px]"
+        className="flex h-[32px] w-[32px] items-center justify-center border border-line bg-surface font-serif text-[13px] italic leading-none text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] md:h-[26px] md:w-[26px] pointer-coarse:min-h-11 pointer-coarse:min-w-11"
       >
         i
       </button>
