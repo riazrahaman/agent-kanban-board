@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { addComment, appendLog, assignTask } from '../api'
 import { normalizePriority } from '../priority'
@@ -35,6 +35,17 @@ export default function TaskSheet({ task, onClose }: Props) {
   const [assignError, setAssignError] = useState<string | null>(null)
 
   const open = !!task
+
+  // MOB-6: the sheet scrolls on short viewports (see the panel below), so it
+  // would otherwise keep its scroll offset when the operator opens a different
+  // card — landing mid-panel on content they did not scroll to. Reset to the
+  // top whenever the open card changes. useLayoutEffect (not useEffect) so the
+  // old offset is never painted for a frame.
+  const sheetRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    const el = sheetRef.current
+    if (el) el.scrollTop = 0
+  }, [task?.id])
 
   // v2.11.0 (opt-operator-assignment): a privileged token can assign a card to a
   // named agent (or release it). Reuses the sheet's Agent ID field as the target.
@@ -96,15 +107,17 @@ export default function TaskSheet({ task, onClose }: Props) {
       />
 
       <aside
+        ref={sheetRef}
         className={[
-          'fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col',
+          'fixed right-0 top-0 z-50 flex h-screen w-full max-w-md flex-col',
           'border-l border-line bg-surface transition-transform duration-200',
+          'overflow-y-auto overscroll-contain',
           open ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
       >
         {task && (
           <>
-            <div className="flex items-start justify-between gap-3 border-b border-line p-4">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
                   {/* Identifier, not prose — one line, ellipsised, full value in
@@ -161,7 +174,7 @@ export default function TaskSheet({ task, onClose }: Props) {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="min-h-[160px] flex-1 overflow-y-auto p-4 space-y-4">
               <section>
                 <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Description
@@ -324,7 +337,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                 input (one "who am I" field for both composers). */}
             <form
               onSubmit={handleComment}
-              className="space-y-2 border-t border-line bg-surface p-4 pb-2"
+              className="shrink-0 space-y-2 border-t border-line bg-surface p-4 pb-2"
             >
               <textarea
                 value={commentText}
@@ -345,7 +358,7 @@ export default function TaskSheet({ task, onClose }: Props) {
 
             <form
               onSubmit={handleSubmit}
-              className="space-y-2 border-t border-line p-4 bg-surface"
+              className="shrink-0 space-y-2 border-t border-line p-4 bg-surface"
             >
               <input
                 type="text"

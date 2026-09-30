@@ -478,3 +478,153 @@ test('client .ts/.tsx source stays free of banned visual patterns', () => {
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// TaskSheet mobile layout — MOB-6
+//
+// On a short viewport the sheet's four flex children all competed for height and
+// the description region (the only child that could shrink) collapsed to a few
+// lines, or to zero with the keyboard open. The fix pins a minimum on that
+// region AND lets the sheet itself scroll, because a minimum alone pushes the
+// bottom composer past the `fixed` aside's edge where it is unreachable.
+//
+// Assertions are token-based, not whole-className matches: an earlier revision
+// of this block pinned the exact string and thereby locked in a real bug (a bare
+// `flex` had been added to the region, which made it a flex ROW and laid the
+// Description / Assignment / Comments / Agent Log sections out side by side).
+// Token checks assert the property, so an incidental class cannot pass.
+//
+// These are source-contract assertions: they read the real component off disk.
+// ---------------------------------------------------------------------------
+
+// Split a className into its individual utility tokens.
+const tokensOf = (cls) => cls.split(/\s+/).filter(Boolean)
+
+test('TaskSheet description region stacks its sections and cannot be squeezed away', () => {
+  // The region is the only div carrying all three of these.
+  const region = [...taskSheetSource.matchAll(/className="([^"]*)"/g)]
+    .map((m) => m[1])
+    .find((cls) => {
+      const t = tokensOf(cls)
+      return t.includes('flex-1') && t.includes('overflow-y-auto') && t.includes('space-y-4')
+    })
+  assert.ok(
+    region,
+    'TaskSheet must render a content region combining `flex-1 overflow-y-auto space-y-4`',
+  )
+
+  const tokens = tokensOf(region)
+
+  // The floor: without it the region collapses to a few lines on short viewports.
+  const floor = tokens.find((t) => /^min-h-(\[\d+(px|rem)\]|\d+)$/.test(t))
+  assert.ok(
+    floor,
+    `the content region needs a \`min-h-\` floor or it collapses on short viewports (got: ${region})`,
+  )
+  const px = floor.includes('[')
+    ? (floor.includes('px') ? Number(floor.match(/\[(\d+)px\]/)[1]) : Number(floor.match(/\[(\d+)rem\]/)[1]) * 16)
+    : Number(floor.replace('min-h-', '')) * 4 // Tailwind numeric scale = 0.25rem
+  assert.ok(
+    px >= 140,
+    `the region floor must keep the heading plus ~4 lines visible: >=140px (got ${floor} = ${px}px)`,
+  )
+
+  // A bare `flex` here turns the region into a flex ROW: the sections then sit
+  // side by side in a narrow strip instead of stacking. `flex-col` is fine;
+  // bare `flex` is not.
+  assert.ok(
+    !tokens.includes('flex') || tokens.includes('flex-col'),
+    'the content region must NOT carry a bare `flex` (that makes it a flex row and lays the sections out side by side); use `flex-col` or no flex at all',
+  )
+})
+
+test('TaskSheet <aside> scrolls when its fixed children exceed the viewport', () => {
+  const aside = taskSheetSource.match(/<aside\b[\s\S]{0,400}?\}\s*>/)?.[0]
+  assert.ok(aside, 'TaskSheet.tsx must render the <aside> element')
+
+  const tokens = aside
+    .split(/className=\{?\[?/)
+    .flatMap((chunk) => [...chunk.matchAll(/'([^']+)'/g)].map((m) => m[1]))
+    .join(' ')
+    .split(/\s+/)
+    .filter(Boolean)
+
+  assert.ok(
+    tokens.includes('overflow-y-auto'),
+    'the <aside> must be scrollable — a min-height on the region without this clips the bottom composer off-screen',
+  )
+  assert.ok(
+    tokens.includes('overscroll-contain'),
+    'the <aside> must use `overscroll-contain` so sheet scrolling cannot chain to the page and collapse the iOS URL bar',
+  )
+  assert.ok(
+    tokens.includes('h-screen') || tokens.includes('h-dvh'),
+    'the <aside> must use `h-screen`/`h-dvh` (index.css upgrades h-screen to 100dvh) rather than `h-full`, which can resolve to the URL-bar-hidden height',
+  )
+  // Same failure mode as the region bug, one level up: if the aside ever lost
+  // `flex-col` it would become a flex ROW and lay the header, region and both
+  // composers side by side across the viewport.
+  assert.ok(
+    !tokens.includes('flex') || tokens.includes('flex-col'),
+    'the <aside> must carry `flex-col` alongside `flex` — without it the sheet lays out as a row',
+  )
+  // The scroll-reset effect is inert unless the aside actually carries the ref.
+  assert.match(
+    aside,
+    /ref=\{sheetRef\}/,
+    'the <aside> must carry `ref={sheetRef}`, or the MOB-6 scroll reset has nothing to act on',
+  )
+})
+
+test('TaskSheet header and both composer forms are pinned against the region', () => {
+  // Select each element by its token set rather than by an anchor + distance
+  // window. An earlier revision anchored on a nearby attribute with a character
+  // window, which is fragile in both directions: too tight and the element's own
+  // className falls outside it; too wide and a NEIGHBOURING element's `shrink-0`
+  // satisfies the assertion. Token sets are unambiguous.
+  const all = [...taskSheetSource.matchAll(/className="([^"]*)"/g)].map((m) => tokensOf(m[1]))
+  const find = (pred, label) => {
+    const hit = all.filter(pred)
+    assert.equal(
+      hit.length,
+      1,
+      `expected exactly one ${label} in TaskSheet.tsx, found ${hit.length} — the selector is ambiguous, so this test must be updated`,
+    )
+    return hit[0]
+  }
+
+  const header = find(
+    (t) => t.includes('shrink-0') && t.includes('border-b'),
+    'sheet header (shrink-0 + border-b)',
+  )
+  assert.ok(header.includes('shrink-0'), 'the sheet header must carry `shrink-0`')
+
+  const comment = find(
+    (t) => t.includes('shrink-0') && t.includes('pb-2') && t.includes('border-t'),
+    'comment composer (shrink-0 + border-t + pb-2)',
+  )
+  assert.ok(comment.includes('shrink-0'), 'the comment composer must carry `shrink-0`')
+
+  const log = find(
+    (t) => t.includes('shrink-0') && t.includes('border-t') && !t.includes('pb-2'),
+    'log composer (shrink-0 + border-t, no pb-2)',
+  )
+  assert.ok(log.includes('shrink-0'), 'the log composer must carry `shrink-0`')
+
+  // Both composers and the header must be pinned together: if any one of them
+  // can shrink, it reclaims height from the description region instead.
+  for (const [label, tokens] of [['header', header], ['comment composer', comment], ['log composer', log]]) {
+    assert.ok(
+      tokens.includes('shrink-0'),
+      `the ${label} must keep \`shrink-0\` so the description region absorbs the compression`,
+    )
+  }
+})
+
+test('TaskSheet resets its scroll offset when a different card is opened', () => {
+  assert.match(
+    taskSheetSource,
+    /use(Effect|LayoutEffect)\(\(\) => \{[\s\S]*?scrollTop = 0[\s\S]*?\}, \[task\?\.id\]\)/,
+    'a now-scrollable sheet must reset scrollTop when the open task changes, otherwise a newly opened card renders mid-panel',
+  )
+})
