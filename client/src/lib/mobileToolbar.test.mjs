@@ -211,24 +211,39 @@ test('the card header stacks the badge group so the id keeps real width', () => 
 })
 
 // ---------------------------------------------------------------------------
-// GH #76 / #77: touch ergonomics, keyed on `pointer: coarse`.
+// GH #76 / #77 / #78: touch ergonomics, keyed on `pointer-coarse:`.
 //
 // #76: iOS Safari zooms the page on focus when a text control's computed
 // font-size is < 16px; the mono controls are 11px. #77: at 320-430px the tabs,
 // the `⋯` header menu and the filter row were 29-31px tall, under the 44px
-// touch-target floor. Both fixes apply only under `(pointer: coarse)` so mouse
-// and trackpad users keep the dense desktop layout at every width (a width
-// breakpoint cannot tell a 768px tablet from a 768px desktop window).
+// touch-target floor. #78: extends the 44px floor to the TaskSheet, Metrics
+// dashboard, Portfolio and SignalRail controls the first pass missed, and
+// switches the raw CSS font-size rule from `pointer: coarse` (primary pointer)
+// to `any-pointer: coarse` so an iPad with an attached trackpad — whose
+// primary pointer reports `fine` — still gets the 16px zoom-prevention text.
+// The Tailwind `pointer-coarse:` variant used for min-h/min-w sizing is left
+// on `pointer: coarse` (Tailwind's built-in mapping); only the standalone CSS
+// rule needed the `any-pointer` fix. All of it applies only under a coarse
+// pointer signal so mouse and trackpad users keep the dense desktop layout at
+// every width (a width breakpoint cannot tell a 768px tablet from a 768px
+// desktop window).
 // ---------------------------------------------------------------------------
 
 const cssSource = readFileSync(join(CLIENT_SRC, 'index.css'), 'utf8')
 const headerHelpSource = readFileSync(join(CLIENT_SRC, 'components', 'HeaderHelp.tsx'), 'utf8')
 const projectPickerSource = readFileSync(join(CLIENT_SRC, 'components', 'ProjectPicker.tsx'), 'utf8')
+const taskSheetSource = readFileSync(join(CLIENT_SRC, 'components', 'TaskSheet.tsx'), 'utf8')
+const metricsDashboardSource = readFileSync(
+  join(CLIENT_SRC, 'components', 'MetricsDashboard.tsx'),
+  'utf8',
+)
+const portfolioSource = readFileSync(join(CLIENT_SRC, 'components', 'Portfolio.tsx'), 'utf8')
+const signalRailSource = readFileSync(join(CLIENT_SRC, 'components', 'SignalRail.tsx'), 'utf8')
 const COARSE_TARGET = /\bpointer-coarse:min-h-11\b/
 
 test('touch devices get >=16px text in every form control (no iOS focus zoom)', () => {
-  const idx = cssSource.search(/@media \(pointer: coarse\) \{/)
-  assert.ok(idx >= 0, 'index.css must carry an @media (pointer: coarse) block')
+  const idx = cssSource.search(/@media \(any-pointer: coarse\) \{/)
+  assert.ok(idx >= 0, 'index.css must carry an @media (any-pointer: coarse) block')
   const block = cssSource.slice(idx, cssSource.indexOf('}\n}', idx) + 3)
   for (const tag of ['input', 'select', 'textarea']) {
     assert.match(block, new RegExp(`\\b${tag}\\b`), `the coarse-pointer rule must cover <${tag}>`)
@@ -272,7 +287,9 @@ test('header tabs, menu and controls reach 44px on coarse pointers', () => {
   const picker = projectPickerSource.match(/aria-haspopup="listbox"[\s\S]*?className="([^"]*)"/)?.[1]
   assert.ok(picker, 'ProjectPicker must render its trigger')
   assert.match(picker, COARSE_TARGET, 'the project picker trigger needs a 44px touch height')
-  assert.match(projectPickerSource, /role="option"[\s\S]*?pointer-coarse:min-h-11/, 'project options need a 44px touch height')
+  const option = projectPickerSource.match(/role="option"[\s\S]*?className=\{`([^`]*)`/)?.[1]
+  assert.ok(option, 'ProjectPicker must render its option rows')
+  assert.match(option, COARSE_TARGET, 'project options need a 44px touch height')
 })
 
 test('every filter-row control reaches 44px on coarse pointers', () => {
@@ -301,6 +318,10 @@ test('the 44px touch sizing never leaks to fine pointers (desktop density unchan
     ['ColumnColorsControl.tsx', columnColorsSource],
     ['HeaderHelp.tsx', headerHelpSource],
     ['ProjectPicker.tsx', projectPickerSource],
+    ['TaskSheet.tsx', taskSheetSource],
+    ['MetricsDashboard.tsx', metricsDashboardSource],
+    ['Portfolio.tsx', portfolioSource],
+    ['SignalRail.tsx', signalRailSource],
   ]) {
     assert.doesNotMatch(
       src,
@@ -308,4 +329,83 @@ test('the 44px touch sizing never leaks to fine pointers (desktop density unchan
       `${name}: 44px min sizes must be gated behind pointer-coarse:, never unprefixed`,
     )
   }
+})
+
+// ---------------------------------------------------------------------------
+// GH #78: 44px targets missed by the first #77 pass — TaskSheet, Metrics
+// dashboard, Portfolio and SignalRail all render tappable buttons that were
+// left at their dense desktop size on coarse pointers.
+// ---------------------------------------------------------------------------
+
+test('the TaskSheet close and assignment buttons reach 44px on coarse pointers', () => {
+  const close = taskSheetSource.match(/aria-label="Close"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(close, 'TaskSheet must render its close button')
+  assert.match(close, COARSE_TARGET, 'the TaskSheet close button needs a 44px touch height')
+  assert.match(close, /\bpointer-coarse:min-w-11\b/, 'the icon-only close button needs a 44px touch width')
+
+  const assign = taskSheetSource.match(
+    /onClick=\{\(\) => handleAssign\(false\)\}[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(assign, 'TaskSheet must render the Assign button')
+  assert.match(assign, COARSE_TARGET, 'the Assign button needs a 44px touch height')
+
+  const release = taskSheetSource.match(
+    /onClick=\{\(\) => handleAssign\(true\)\}[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(release, 'TaskSheet must render the Release button')
+  assert.match(release, COARSE_TARGET, 'the Release button needs a 44px touch height')
+})
+
+test('the Metrics dashboard close button reaches 44px on coarse pointers', () => {
+  const close = metricsDashboardSource.match(
+    /aria-label="Close metrics dashboard"[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(close, 'MetricsDashboard must render its close button')
+  assert.match(close, COARSE_TARGET, 'the metrics dashboard close button needs a 44px touch height')
+})
+
+test('the Portfolio project link buttons reach 44px on coarse pointers', () => {
+  const link = portfolioSource.match(
+    /onClick=\{\(\) => m\.project && onSelectProject\(m\.project\)\}[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(link, 'Portfolio must render its per-project link button')
+  assert.match(link, COARSE_TARGET, 'the Portfolio project link needs a 44px touch height')
+})
+
+test('the SignalRail activity items reach 44px on coarse pointers', () => {
+  const item = signalRailSource.match(
+    /onClick=\{\(\) => onOpen\(item\.taskId\)\}[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(item, 'SignalRail must render its activity-feed buttons')
+  assert.match(item, COARSE_TARGET, 'each SignalRail activity item needs a 44px touch height')
+})
+
+test('the Columns popover never clips its top rows on short screens (GH #78 B3)', () => {
+  const dialog = columnColorsSource.match(
+    /role="dialog"[\s\S]*?aria-label="Column colors"[\s\S]*?className="([^"]*)"/,
+  )?.[1]
+  assert.ok(dialog, 'ColumnColorsControl must render its popover dialog')
+  assert.match(
+    dialog,
+    /\bmax-sm:max-h-\[calc\(100dvh-2rem\)\]/,
+    'the popover must cap its height on phones so short viewports (e.g. landscape) can scroll instead of clipping the top rows',
+  )
+  assert.match(
+    dialog,
+    /\bmax-sm:overflow-y-auto\b/,
+    'the popover must allow vertical scrolling on phones once it is height-capped',
+  )
+  // GH #78 B3: the coarse-pointer width bump must be scoped to `sm` and up so
+  // it cannot override `max-sm:w-auto` and defeat the `max-sm:inset-x-2`
+  // viewport margins on a coarse-pointer phone.
+  assert.match(
+    dialog,
+    /\bsm:pointer-coarse:w-72\b/,
+    'the wider coarse-pointer popover must be gated behind `sm:` so mobile keeps `max-sm:w-auto`',
+  )
+  assert.doesNotMatch(
+    dialog,
+    /(?<!sm:)\bpointer-coarse:w-72\b/,
+    'an unscoped `pointer-coarse:w-72` would win over `max-sm:w-auto` on a coarse-pointer phone',
+  )
 })

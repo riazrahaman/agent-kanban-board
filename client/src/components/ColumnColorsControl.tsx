@@ -64,16 +64,19 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
         <div
           role="dialog"
           aria-label="Column colors"
-          className="absolute right-0 top-[calc(100%+6px)] z-50 w-64 border-2 border-ink/70 bg-surface p-2 text-left"
+          className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:absolute sm:right-0 sm:top-[calc(100%+6px)] sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-4 max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
         >
           {COLUMN_ORDER.map((column) => {
             const current = colors?.[column] ?? DEFAULT_COLUMN_COLORS[column]
             return (
-              <div key={column} className="flex items-center justify-between gap-2 py-1">
+              <div
+                key={column}
+                className="flex flex-col gap-1 py-1 sm:flex-row sm:items-center sm:justify-between"
+              >
                 <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
                   {column}
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-1">
                   {COLUMN_COLOR_TOKENS.map((token) => (
                     <button
                       key={token}
@@ -83,7 +86,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
                       aria-pressed={current === token}
                       onClick={() => pick(column, token)}
                       className={[
-                        'h-4 w-4 border transition-transform',
+                        'h-4 w-4 pointer-coarse:h-6 pointer-coarse:w-6 border transition-transform',
                         SWATCH_CLASS[token],
                         current === token ? 'border-ink' : 'border-line hover:scale-110',
                       ].join(' ')}

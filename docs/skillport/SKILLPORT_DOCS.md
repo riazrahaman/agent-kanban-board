@@ -56,11 +56,11 @@ npx @skillporthq/cli@latest add riazrahaman/agentkanban
 opencode requires the skill's folder name to match the `name:` in its frontmatter, which is `kanban-orchestrator`. After the SkillPort install, copy it into place:
 
 ```bash
-mkdir -p .opencode/skill
-cp -r .claude/skills/riazrahaman__agentkanban .opencode/skill/kanban-orchestrator
+mkdir -p .opencode/skills
+cp -r .claude/skills/riazrahaman__agentkanban .opencode/skills/kanban-orchestrator
 
 # or globally
-cp -r .claude/skills/riazrahaman__agentkanban ~/.config/opencode/skill/kanban-orchestrator
+cp -r .claude/skills/riazrahaman__agentkanban ~/.config/opencode/skills/kanban-orchestrator
 ```
 
 ---
