@@ -478,3 +478,74 @@ test('client .ts/.tsx source stays free of banned visual patterns', () => {
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// TaskSheet mobile layout — MOB-6
+//
+// On a short viewport the sheet's four flex children all competed for height and
+// the description region (the only child that could shrink) collapsed to a few
+// lines, or to zero with the keyboard open. The fix pins a minimum on that
+// region AND lets the sheet itself scroll, because a minimum alone pushes the
+// bottom composer past the `fixed` aside's edge where it is unreachable.
+//
+// These are source-contract assertions: they read the real component off disk.
+// ---------------------------------------------------------------------------
+
+test('TaskSheet description region cannot be squeezed below a readable height', () => {
+  const region = taskSheetSource.match(/className="flex (min-h-\[[^\]]+\]) flex-1 overflow-y-auto p-4 space-y-4"/)?.[1]
+  assert.ok(
+    region,
+    'the TaskSheet content region must combine `flex`, a `min-h-[…]` floor and `flex-1 overflow-y-auto` — without the floor it collapses on short viewports',
+  )
+  const px = Number(region.match(/min-h-\[(\d+)px\]/)?.[1])
+  assert.ok(
+    px >= 140,
+    `the description region floor must be at least 140px so the heading plus ~4 lines stay visible (got ${region})`,
+  )
+})
+
+test('TaskSheet <aside> scrolls when its fixed children exceed the viewport', () => {
+  const aside = taskSheetSource.match(/<aside\b[\s\S]{0,400}?\.join\(' '\)\}/)?.[0]
+  assert.ok(aside, 'TaskSheet.tsx must render the <aside> with a joined className array')
+  assert.match(
+    aside,
+    /overflow-y-auto/,
+    'the <aside> must be scrollable — a min-height on the region without this clips the bottom composer off-screen',
+  )
+  assert.match(
+    aside,
+    /overscroll-contain/,
+    'the <aside> must use `overscroll-contain` so sheet scrolling cannot chain to the page and collapse the iOS URL bar',
+  )
+  assert.match(
+    aside,
+    /\bh-screen\b/,
+    'the <aside> must use `h-screen` (index.css upgrades it to 100dvh) rather than `h-full`, which can resolve to the URL-bar-hidden height',
+  )
+})
+
+test('TaskSheet header and both composer forms are pinned against the region', () => {
+  assert.match(
+    taskSheetSource,
+    /className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-4"/,
+    'the sheet header must carry `shrink-0` so the description region absorbs the compression instead',
+  )
+  for (const [label, pattern] of [
+    ['comment composer', /className="shrink-0 space-y-2 border-t border-line bg-surface p-4 pb-2"/],
+    ['log composer', /className="shrink-0 space-y-2 border-t border-line p-4 bg-surface"/],
+  ]) {
+    assert.match(
+      taskSheetSource,
+      pattern,
+      `the ${label} must carry \`shrink-0\` so it keeps its full height and stays reachable`,
+    )
+  }
+})
+
+test('TaskSheet resets its scroll offset when a different card is opened', () => {
+  assert.match(
+    taskSheetSource,
+    /useEffect\(\(\) => \{[\s\S]*?scrollTop = 0[\s\S]*?\}, \[task\?\.id\]\)/,
+    'a now-scrollable sheet must reset scrollTop when the open task changes, otherwise a newly opened card renders mid-panel',
+  )
+})
