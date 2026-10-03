@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,46 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.7] — 2026-10-03
+
+Feature: adopt the midnight-navy blueprint dark mode from the Stack Field
+Guide (https://stack-field-guide.riazrahaman.com/#map) in place of the
+green-tinted charcoal dark theme, and fix two modal backdrops that rendered
+as a light milky overlay instead of dimming the board in dark mode (GH #83).
+
+### Changed
+- **Dark mode palette overhaul.** The `.dark` theme block in `index.css` is
+  replaced wholesale with the Stack Field Guide's midnight-navy blueprint
+  palette, closing out the olive/sage cast of the previous green-tinted
+  charcoal (`#1b211d` / `#252d27` / `#445047` / `#e8ece4` / `#b4beaf`):
+  - Page background `--bg: #0c1726` (Field Guide `--paper`), elevated
+    card/sheet surface `--surface: #13243b` (`--card`), hairline borders
+    `--line: #26405f` (`--rule`).
+  - Primary text `--ink: #e7edf6` (14.8:1 AAA on bg, Field Guide `--ink`),
+    secondary/muted text `--muted: #a9b7cb` (8.5:1 AA on bg, `--ink-2`), chip
+    backgrounds `--muted-bg: rgba(120, 170, 255, 0.08)`.
+  - Scrollbars retuned to the navy surface: `--scroll-track`,
+    `--scroll-thumb`, `--scroll-thumb-hover`.
+  - The five workflow/status tokens remapped 1:1 to the Field Guide's
+    category colors: `--up` mint emerald (pass/done, `--c-data`), `--down`
+    coral orange (fail/down, `--accent`/`--c-ship`), `--warn` amber gold
+    (caution, `--c-lang`), `--block` slate grey (stalled/backlog, `--c-cfg`),
+    `--live` sky blue (active/running, `--c-run`), `--test` violet purple
+    (review/test, `--c-app`). `--pass`/`--fail` continue to track
+    `--up`/`--down` automatically via the existing `var()` indirection in
+    `:root`, unchanged.
+  - A new `--grid` token plus a `.dark body` rule draws a subtle 28px
+    graph-paper grid behind the page, echoing the Field Guide's map
+    background; light mode's warm cream page is untouched.
+- **Modal backdrops fixed in dark mode.** `TaskSheet.tsx`'s overlay was
+  `bg-ink/30 dark:bg-ink/70` — in dark mode `--ink` is now a near-white
+  ice tone, so the "dim the board" backdrop rendered as a light milky film
+  instead of darkening anything behind the sheet. It is now
+  `bg-black/40 dark:bg-black/60`, which actually dims in both themes. The
+  phone-only header-controls backdrop in `App.tsx` had the same bug
+  (`bg-ink/40` with no dark variant at all) and gets the same fix:
+  `bg-black/40 dark:bg-black/60`.
 
 ## [2.15.6] — 2026-09-30
 
