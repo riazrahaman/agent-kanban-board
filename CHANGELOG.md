@@ -31,9 +31,9 @@ as a light milky overlay instead of dimming the board in dark mode (GH #83).
   - Page background `--bg: #0c1726` (Field Guide `--paper`), elevated
     card/sheet surface `--surface: #13243b` (`--card`), hairline borders
     `--line: #26405f` (`--rule`).
-  - Primary text `--ink: #e7edf6` (14.8:1 AAA on bg, Field Guide `--ink`),
-    secondary/muted text `--muted: #a9b7cb` (8.5:1 AA on bg, `--ink-2`), chip
-    backgrounds `--muted-bg: rgba(120, 170, 255, 0.08)`.
+  - Primary text `--ink: #e7edf6` (15.3:1 AAA on bg, Field Guide `--ink`),
+    secondary/muted text `--muted: #a9b7cb` (8.85:1 AAA on bg, `--ink-2`),
+    chip backgrounds `--muted-bg: rgba(120, 170, 255, 0.08)`.
   - Scrollbars retuned to the navy surface: `--scroll-track`,
     `--scroll-thumb`, `--scroll-thumb-hover`.
   - The five workflow/status tokens remapped 1:1 to the Field Guide's
@@ -43,10 +43,14 @@ as a light milky overlay instead of dimming the board in dark mode (GH #83).
     `--live` sky blue (active/running, `--c-run`), `--test` violet purple
     (review/test, `--c-app`). `--pass`/`--fail` continue to track
     `--up`/`--down` automatically via the existing `var()` indirection in
-    `:root`, unchanged.
-  - A new `--grid` token plus a `.dark body` rule draws a subtle 28px
-    graph-paper grid behind the page, echoing the Field Guide's map
-    background; light mode's warm cream page is untouched.
+    `:root`, unchanged. `--live` is lightened to `#6aa8ff` (from the Field
+    Guide's literal `#5ea0ff`) with `--live-bg` at `rgba(106, 168, 255,
+    0.12)`, so `text-live` on `bg-live-bg` on `--surface` clears 4.5:1 AA
+    (the literal Field Guide value measured 4.49:1, failing by a hair).
+  - No background texture: a blueprint-grid `.dark body` rule was evaluated
+    and dropped — it would sit entirely behind the app's own `bg-bg` surface
+    and never render, and DESIGN.md §1.1 bans background gradients beyond
+    the board's two edge-fade overlays.
 - **Modal backdrops fixed in dark mode.** `TaskSheet.tsx`'s overlay was
   `bg-ink/30 dark:bg-ink/70` — in dark mode `--ink` is now a near-white
   ice tone, so the "dim the board" backdrop rendered as a light milky film

@@ -79,8 +79,8 @@
   --bg: #0c1726;        /* deep navy page — Field Guide --paper */
   --surface: #13243b;   /* cards/sheets: elevated navy panel — Field Guide --card */
   --line: #26405f;      /* crisp slate-blue hairlines — Field Guide --rule */
-  --ink: #e7edf6;       /* ice-white — 14.8:1 AAA on bg — Field Guide --ink */
-  --muted: #a9b7cb;     /* slate-blue grey — 8.5:1 AA on bg — Field Guide --ink-2 */
+  --ink: #e7edf6;       /* ice-white — 15.3:1 AAA on bg — Field Guide --ink */
+  --muted: #a9b7cb;     /* slate-blue grey — 8.85:1 AAA on bg — Field Guide --ink-2 */
   --muted-bg: rgba(120, 170, 255, 0.08);
   --scroll-track: rgba(12, 23, 38, 0.7);
   --scroll-thumb: rgba(169, 183, 203, 0.35);
@@ -93,22 +93,12 @@
   --warn: #f2c14e; --warn-bg: rgba(242, 193, 78, 0.16);
   /* slate grey: stalled/backlog (--c-cfg) */
   --block: #9ba6b8;--block-bg: rgba(155, 166, 184, 0.14);
-  /* sky blue: active/running (--c-run) */
-  --live: #5ea0ff; --live-bg: rgba(94, 160, 255, 0.16);
+  /* sky blue: active/running (--c-run) — lightened from the Field Guide's
+     #5ea0ff so text-live on bg-live-bg on --surface clears 4.5:1 AA (was
+     4.49:1, failing by a hair) */
+  --live: #6aa8ff; --live-bg: rgba(106, 168, 255, 0.12);
   /* violet purple: review/test (--c-app) */
   --test: #b38cff; --test-bg: rgba(179, 140, 255, 0.16);
-  /* subtle blueprint grid texture drawn on <body> below */
-  --grid: rgba(120, 170, 255, 0.055);
-}
-
-/* Subtle blueprint grid texture, dark mode only — echoes the Stack Field
-   Guide's graph-paper map background. Light mode's warm cream page is
-   deliberately left untouched. */
-.dark body {
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 html,
