@@ -392,7 +392,7 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 - **Guided tour:** curated screenshots served from `/landing/*.png` (board, project filter, task inspector, portfolio, dark mode).
 - **FAQ and community CTA:** hosting, telemetry, database, and how to connect a project.
 
-The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the warm-charcoal dark palette) and the responsive layout automatically.
+The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the active dark palette) and the responsive layout automatically.
 
 ---
 
