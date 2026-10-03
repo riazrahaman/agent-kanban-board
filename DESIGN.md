@@ -46,20 +46,20 @@ hex.
 
 | Token | Utility | Light (`:root`) | Dark (`.dark`) | Role |
 |---|---|---|---|---|
-| `--bg` | `bg-bg` | `#f6f2e8` | `#1b211d` | Page ground (warm cream / green-charcoal) |
-| `--surface` | `bg-surface` | `#fdfbf5` | `#252d27` | Cards, sheets, header/footer panels |
-| `--line` | `border-line` | `#e6dfd0` | `#445047` | The 1px hairline — all structure |
-| `--ink` | `text-ink` | `#211f1a` | `#e8ece4` | Primary text (14.73:1 / 13.1:1 on `--bg`) |
-| `--muted` | `text-muted` | `#6e6857` | `#b4beaf` | Secondary text (4.97:1 / 8.8:1 on `--bg`) |
-| `--muted-bg` | `bg-muted-bg` | `#efe9db` | `rgba(255,255,255,.07)` | Chips, badges, subtle fills |
+| `--bg` | `bg-bg` | `#f6f2e8` | `#0c1726` | Page ground (warm cream / deep navy) |
+| `--surface` | `bg-surface` | `#fdfbf5` | `#13243b` | Cards, sheets, header/footer panels |
+| `--line` | `border-line` | `#e6dfd0` | `#26405f` | The 1px hairline — all structure |
+| `--ink` | `text-ink` | `#211f1a` | `#e7edf6` | Primary text (14.73:1 / 15.3:1 on `--bg`) |
+| `--muted` | `text-muted` | `#6e6857` | `#a9b7cb` | Secondary text (4.97:1 / 8.85:1 on `--bg`) |
+| `--muted-bg` | `bg-muted-bg` | `#efe9db` | `rgba(120,170,255,.08)` | Chips, badges, subtle fills |
 
 ### 2.2 Scrollbar tokens (board only)
 
 | Token | Light | Dark | Role |
 |---|---|---|---|
-| `--scroll-track` | `#ece5d6` | `rgba(255,255,255,.07)` | Board scroll track |
-| `--scroll-thumb` | `#b8ad95` | `rgba(255,255,255,.30)` | Board scroll thumb |
-| `--scroll-thumb-hover` | `#9b8f74` | `rgba(255,255,255,.48)` | Thumb hover |
+| `--scroll-track` | `#ece5d6` | `rgba(12,23,38,.7)` | Board scroll track |
+| `--scroll-thumb` | `#b8ad95` | `rgba(169,183,203,.35)` | Board scroll thumb |
+| `--scroll-thumb-hover` | `#9b8f74` | `rgba(169,183,203,.55)` | Thumb hover |
 
 The board needs a **visible** scrollbar (off-screen columns were undiscoverable);
 the global document scrollbar stays a faint `--line` hairline. See §7.3.
@@ -71,14 +71,14 @@ the CSS comments' own measurements.
 
 | Token | Utility pair | Light fg | Light bg | Dark fg | Dark bg | Meaning |
 |---|---|---|---|---|---|---|
-| `--up` / `--up-bg` | `text-up` / `bg-up-bg` | `#346538` | `#e8efe2` | `#8fc79f` | `rgba(120,190,145,.16)` | Healthy / passing |
-| `--down` / `--down-bg` | `text-down` / `bg-down-bg` | `#9f2f2d` | `#f9e7e3` | `#e39b96` | `rgba(220,115,110,.17)` | Failing / bad |
+| `--up` / `--up-bg` | `text-up` / `bg-up-bg` | `#346538` | `#e8efe2` | `#3dd6a8` | `rgba(61,214,168,.16)` | Healthy / passing |
+| `--down` / `--down-bg` | `text-down` / `bg-down-bg` | `#9f2f2d` | `#f9e7e3` | `#ff7a55` | `rgba(255,122,85,.18)` | Failing / bad |
 | `--pass` | alias of `--up` | — | — | — | — | Passing checks |
 | `--fail` | alias of `--down` | — | — | — | — | Failed checks |
-| `--warn` / `--warn-bg` | `text-warn` / `bg-warn-bg` | `#8A6A12` | `#f6efdc` | `#ddb45c` | `rgba(221,180,92,.16)` | Attention (4.89:1 light) |
-| `--block` / `--block-bg` | `text-block` / `bg-block-bg` | `#4A4D52` | `#ece7db` | `#a6acb5` | `rgba(255,255,255,.07)` | Stalled — grey, deliberately *not* bad (8.20:1 light) |
-| `--live` / `--live-bg` | `text-live` / `bg-live-bg` | `#1F5673` | `#e4ecf0` | `#8fbcd6` | `rgba(143,188,214,.16)` | Running now (7.69:1 light) |
-| `--test` / `--test-bg` | `text-test` / `bg-test-bg` | `#6B4E9B` | `#ece5f5` | `#b9a3e3` | `rgba(169,138,224,.18)` | Verification stage — violet (6.4:1 light) |
+| `--warn` / `--warn-bg` | `text-warn` / `bg-warn-bg` | `#8A6A12` | `#f6efdc` | `#f2c14e` | `rgba(242,193,78,.16)` | Attention (4.89:1 light) |
+| `--block` / `--block-bg` | `text-block` / `bg-block-bg` | `#4A4D52` | `#ece7db` | `#9ba6b8` | `rgba(155,166,184,.14)` | Stalled — grey, deliberately *not* bad (8.20:1 light) |
+| `--live` / `--live-bg` | `text-live` / `bg-live-bg` | `#1F5673` | `#e4ecf0` | `#6aa8ff` | `rgba(106,168,255,.12)` | Running now (7.69:1 light) |
+| `--test` / `--test-bg` | `text-test` / `bg-test-bg` | `#6B4E9B` | `#ece5f5` | `#b38cff` | `rgba(179,140,255,.16)` | Verification stage — violet (6.4:1 light) |
 
 Notes:
 
@@ -98,8 +98,10 @@ Notes:
   would re-apply dark tokens under `:root` regardless of the `.dark` class,
   making a user's explicit "light" choice invisible. The OS preference is
   consulted exactly once, in JS (`lib/theme.ts`), then folded into one class.
-- The dark palette is green-tinted to match `riazrahaman.com`, so the two sites
-  read as one product family.
+- The dark palette is a midnight-navy blueprint adopted from the Stack Field
+  Guide (https://stack-field-guide.riazrahaman.com/#map): deep navy canvas,
+  elevated navy card surface, crisp slate-blue borders, ice-white text, and
+  status tokens mapped to the Field Guide's category colors.
 
 ---
 

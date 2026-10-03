@@ -176,7 +176,7 @@ enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps.
 - **Form + Colour**: Status is encoded in form as well as colour: left 3px severity stripe, text badge, status glyphs (`▲` for review), and active pulsing indicators.
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
-- **Theming**: A warm-cream light palette and a green-charcoal dark palette (matching riazrahaman.com), toggled in the header; the explicit choice wins over the OS preference and native controls follow via `color-scheme`.
+- **Theming**: A warm-cream light palette and a midnight-navy blueprint dark palette (adopted from the Stack Field Guide), toggled in the header; the explicit choice wins over the OS preference and native controls follow via `color-scheme`.
 - **Responsive**: The shell wraps instead of overflowing, board columns snap-scroll at `85vw` on mobile (`w-72` from `md` up), and the Signal Rail collapses into a slide-over drawer below `md`. On touch devices (`pointer: coarse`) header and filter-row controls grow to 44px tap targets and form controls to 16px text (no iOS focus-zoom); mouse/trackpad layouts are unchanged.
 
 ---

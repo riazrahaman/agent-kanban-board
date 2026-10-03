@@ -100,7 +100,7 @@ export default function TaskSheet({ task, onClose }: Props) {
     <>
       <div
         className={[
-          'fixed inset-0 z-40 bg-ink/30 dark:bg-ink/70 transition-opacity',
+          'fixed inset-0 z-40 bg-black/40 dark:bg-black/60 transition-opacity',
           open ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
         ].join(' ')}
         onClick={onClose}

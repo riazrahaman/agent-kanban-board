@@ -636,7 +636,7 @@ export default function App() {
                 {railOpen && (
                   <>
                     <div
-                      className="fixed inset-0 z-30 bg-ink/40 md:hidden"
+                      className="fixed inset-0 z-30 bg-black/40 dark:bg-black/60 md:hidden"
                       onClick={() => {
                         setRailOpen(false)
                         writeStoredRailOpen(false)

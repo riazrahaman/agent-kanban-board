@@ -70,24 +70,35 @@
 
 .dark {
   color-scheme: dark;
-  /* Green-tinted charcoal — matches riazrahaman.com's dark theme so the two
-     sites read as one product family. Brighter muted text and visible lines
-     (vs the previous near-invisible rgba lines) drive the visibility win. */
-  --bg: #1b211d;        /* deep green-charcoal page */
-  --surface: #252d27;   /* cards/sheets: raised panel tone */
-  --line: #445047;      /* visible green-grey hairlines */
-  --ink: #e8ece4;       /* warm green-tinted off-white — 13.1:1 on bg */
-  --muted: #b4beaf;     /* bright sage grey — 8.8:1 on bg */
-  --muted-bg: rgba(255, 255, 255, 0.07);
-  --scroll-track: rgba(255, 255, 255, 0.07);
-  --scroll-thumb: rgba(255, 255, 255, 0.30);
-  --scroll-thumb-hover: rgba(255, 255, 255, 0.48);
-  --up: #8fc79f;   --up-bg: rgba(120, 190, 145, 0.16);
-  --down: #e39b96; --down-bg: rgba(220, 115, 110, 0.17);
-  --warn: #ddb45c; --warn-bg: rgba(221, 180, 92, 0.16);
-  --block: #a6acb5;--block-bg: rgba(255, 255, 255, 0.07);
-  --live: #8fbcd6; --live-bg: rgba(143, 188, 214, 0.16);
-  --test: #b9a3e3; --test-bg: rgba(169, 138, 224, 0.18);
+  /* Midnight-navy blueprint — adopted from the Stack Field Guide
+     (https://stack-field-guide.riazrahaman.com/#map) in place of the former
+     green-tinted charcoal, which read with an olive/sage cast. Deep navy
+     canvas, elevated navy card surface, crisp slate-blue borders, ice-white
+     primary text, and status tokens mapped 1:1 to the Field Guide's category
+     colors (--c-data/--c-ship/--c-lang/--c-cfg/--c-run/--c-app). */
+  --bg: #0c1726;        /* deep navy page — Field Guide --paper */
+  --surface: #13243b;   /* cards/sheets: elevated navy panel — Field Guide --card */
+  --line: #26405f;      /* crisp slate-blue hairlines — Field Guide --rule */
+  --ink: #e7edf6;       /* ice-white — 15.3:1 AAA on bg — Field Guide --ink */
+  --muted: #a9b7cb;     /* slate-blue grey — 8.85:1 AAA on bg — Field Guide --ink-2 */
+  --muted-bg: rgba(120, 170, 255, 0.08);
+  --scroll-track: rgba(12, 23, 38, 0.7);
+  --scroll-thumb: rgba(169, 183, 203, 0.35);
+  --scroll-thumb-hover: rgba(169, 183, 203, 0.55);
+  /* mint emerald: pass/done/healthy (--c-data) */
+  --up: #3dd6a8;   --up-bg: rgba(61, 214, 168, 0.16);
+  /* coral orange: fail/down (--accent / --c-ship) */
+  --down: #ff7a55; --down-bg: rgba(255, 122, 85, 0.18);
+  /* amber gold: warn/caution (--c-lang) */
+  --warn: #f2c14e; --warn-bg: rgba(242, 193, 78, 0.16);
+  /* slate grey: stalled/backlog (--c-cfg) */
+  --block: #9ba6b8;--block-bg: rgba(155, 166, 184, 0.14);
+  /* sky blue: active/running (--c-run) — lightened from the Field Guide's
+     #5ea0ff so text-live on bg-live-bg on --surface clears 4.5:1 AA (was
+     4.49:1, failing by a hair) */
+  --live: #6aa8ff; --live-bg: rgba(106, 168, 255, 0.12);
+  /* violet purple: review/test (--c-app) */
+  --test: #b38cff; --test-bg: rgba(179, 140, 255, 0.16);
 }
 
 html,
