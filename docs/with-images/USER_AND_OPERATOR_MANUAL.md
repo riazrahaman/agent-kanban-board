@@ -372,7 +372,7 @@ audit trail records only real transitions and real log/comment calls.
 ### 5.5 Theme Customization
 Click the **Light / Dark** button in the header to switch color themes. Your explicit choice always wins over the operating system preference and is persisted in browser `localStorage`; with no stored choice the dashboard follows the OS `prefers-color-scheme`. Native form controls (including the project filter's option popup) follow the active theme via `color-scheme`.
 
-The light theme uses a warm cream palette; the dark theme uses a green-tinted charcoal palette (matching riazrahaman.com) with brighter muted text and visible hairlines. Both meet WCAG AA contrast for body text.
+The light theme uses a warm cream palette; the dark theme uses a midnight-navy blueprint palette adopted from the Stack Field Guide (https://stack-field-guide.riazrahaman.com/#map), with bright ice-white text and crisp slate-blue hairlines. Both meet WCAG AA contrast for body text.
 
 ### 5.6 Responsive & Mobile Layout
 The dashboard is responsive from ~360px phone widths up to widescreen desktop:
