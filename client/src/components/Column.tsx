@@ -92,7 +92,7 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
       </div>
       <div
         data-status={status}
-        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto p-2"
+        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto p-2 touch-pan-y"
       >
         {tasks.map((task) => (
           <TaskCard

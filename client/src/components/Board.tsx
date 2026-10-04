@@ -33,6 +33,12 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
   }, [])
 
   useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = 0
+    }
+  }, [])
+
+  useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     updateEdges()
@@ -66,56 +72,59 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
   }
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1">
-      {canLeft && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-bg to-transparent" />
-      )}
-      <div
-        ref={scrollRef}
-        className="board-scroll flex h-full w-full snap-x scroll-pl-4 gap-4 overflow-x-auto p-4"
-      >
-        {visibleColumns.map((col) => (
-          <Column
-            key={col.status}
-            status={col.status}
-            title={col.title}
-            stepNumber={col.stepNumber}
-            tasks={grouped[col.status] || []}
-            onOpen={onOpen}
-            showProject={showProject}
-            accentClass={resolveColumnAccent(col.status, columnColors)}
-          />
-        ))}
-      </div>
-      {canRight && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-bg to-transparent" />
-      )}
-
+    <div className="relative flex h-full min-w-0 flex-1 items-center">
       {/* Explicit affordance for pointer users: the styled scrollbar below is
           always visible, but a trackpad-less mouse can't easily drag it, and
-          these also make "there is more to the right" unmistakable. */}
-      {canLeft && (
-        <button
-          type="button"
-          onClick={() => scrollBy(-1)}
-          aria-label="Scroll columns left"
-          title="Scroll columns left"
-          className="absolute left-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden"
+          these also make "there is more to the right" unmistakable.
+          Placing the buttons outside the scroller ensures they never overlay
+          card content in the peeking columns at any viewport width. */}
+      <button
+        type="button"
+        onClick={() => scrollBy(-1)}
+        disabled={!canLeft}
+        aria-label="Scroll columns left"
+        title="Scroll columns left"
+        className="z-20 hidden h-11 w-8 shrink-0 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden ml-2 disabled:pointer-events-none disabled:opacity-0"
+      >
+        ‹
+      </button>
+
+      <div className="relative flex h-full min-w-0 flex-1">
+        {canLeft && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-bg to-transparent" />
+        )}
+        <div
+          ref={scrollRef}
+          className="board-scroll flex h-full w-full snap-x snap-proximity scroll-pl-4 gap-4 overflow-x-auto p-4 touch-pan-x"
         >
-          ‹
-        </button>
-      )}
-      {canRight && (
-        <button
-          type="button"
-          onClick={() => scrollBy(1)}
-          aria-label="Scroll columns right"
-          title="Scroll columns right"
-          className="absolute right-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden"
-        >
-          ›
-        </button>
-      )}
+          {visibleColumns.map((col) => (
+            <Column
+              key={col.status}
+              status={col.status}
+              title={col.title}
+              stepNumber={col.stepNumber}
+              tasks={grouped[col.status] || []}
+              onOpen={onOpen}
+              showProject={showProject}
+              accentClass={resolveColumnAccent(col.status, columnColors)}
+            />
+          ))}
+        </div>
+        {canRight && (
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-bg to-transparent" />
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => scrollBy(1)}
+        disabled={!canRight}
+        aria-label="Scroll columns right"
+        title="Scroll columns right"
+        className="z-20 hidden h-11 w-8 shrink-0 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden mr-2 disabled:pointer-events-none disabled:opacity-0"
+      >
+        ›
+      </button>
     </div>
   )
 }
