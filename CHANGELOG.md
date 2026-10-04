@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,28 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.9] — 2026-10-04
+
+Fix: tablet/iPad Safari layout polish — hide empty UNKNOWN swimlane, suppress scroll-arrow card overlay on coarse pointers, and expand header input widths (GH #85).
+
+### Fixed
+- **Empty `UNKNOWN` swimlane suppressed.** Dynamically filter board columns via
+  `getVisibleColumns(grouped)` so that the `UNKNOWN (0)` swimlane only renders
+  when cards with an unrecognized status exist in the board model. This reclaims
+  288px (18rem) of horizontal space across all viewports.
+- **Scroll-arrow card overlay eliminated on touch tablets.** Added
+  `pointer-coarse:hidden` to both horizontal scroll-arrow buttons (`‹` and `›`).
+  On iPad Safari and touch-screen tablets (`pointer: coarse`), this completely
+  prevents the navigation buttons from floating over task cards at vertical center
+  and intercepting card click/touch events, letting touch users swipe naturally.
+- **Header inputs expanded for tablets.** Monospace placeholder
+  `agent id (auto-claim)` was truncated to `"agent id (auto-"` on tablets due to
+  `sm:w-40`. Expanded `agentDraft` to `w-32 sm:w-48` and `tokenDraft` to
+  `w-24 sm:w-32`, providing ample room across tablet and desktop viewports.
+- **Unit and responsive test coverage.** Added unit tests in `boardModel.test.mjs`
+  verifying dynamic column visibility, contract assertions in `mobileToolbar.test.mjs`
+  for `pointer-coarse:hidden`, and responsive layout tests in `responsive.test.mjs`.
 
 ## [2.15.8] — 2026-10-04
 
