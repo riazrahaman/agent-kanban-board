@@ -140,9 +140,9 @@ export default function About({ version, visit }: Props) {
   }
 
   return (
-    <div className="h-full min-w-0 flex-1 overflow-y-auto">
+    <div className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
       <div className="mx-auto w-full max-w-[1536px] px-4 py-8 sm:px-6 lg:px-8">
-        <div className="flex justify-center gap-8 xl:gap-12">
+        <div className="flex justify-start lg:justify-center gap-8 xl:gap-12">
           {/* Left Navigation: Table of Contents */}
           <aside className="hidden w-52 shrink-0 lg:block xl:w-56">
             <div className="sticky top-8 space-y-6">
@@ -183,7 +183,7 @@ export default function About({ version, visit }: Props) {
           </aside>
 
           {/* Center Main Narrative & Content */}
-          <article className="min-w-0 max-w-3xl flex-1">
+          <article className="w-full min-w-0 max-w-3xl flex-1">
             <header id="overview" className="scroll-mt-8">
               <p className="font-mono text-[11px] uppercase tracking-widest text-muted">
                 A kanban board where the users aren&apos;t human
@@ -246,12 +246,12 @@ export default function About({ version, visit }: Props) {
                     Skills Hub ↗
                   </a>
                 </div>
-                <code className="mt-2 block font-mono text-[11px] text-ink">
+                <code className="mt-2 block break-all font-mono text-[11px] text-ink">
                   {ORCHESTRATOR_SKILL.path}
                 </code>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div className="border border-line bg-surface p-3">
+                <div className="min-w-0 border border-line bg-surface p-3">
                   <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
                     Install
                   </div>
@@ -259,7 +259,7 @@ export default function About({ version, visit }: Props) {
                     {ORCHESTRATOR_SKILL.install.join('\n')}
                   </pre>
                 </div>
-                <div className="border border-line bg-surface p-3">
+                <div className="min-w-0 border border-line bg-surface p-3">
                   <div className="font-mono text-[10px] uppercase tracking-wider text-muted">
                     Enforces
                   </div>
@@ -307,7 +307,7 @@ export default function About({ version, visit }: Props) {
                     <p className="mt-2 text-sm leading-relaxed text-muted">
                       {c.body}
                     </p>
-                    <p className="mt-3 font-mono text-[11px] leading-snug text-live">
+                    <p className="mt-3 break-words font-mono text-[11px] leading-snug text-live [overflow-wrap:anywhere]">
                       {c.mechanism}
                     </p>
                   </article>
@@ -345,19 +345,18 @@ export default function About({ version, visit }: Props) {
               <h2 className="font-serif text-xl text-ink">
                 Under the UI is a deliberately strict engine
               </h2>
-              <div className="mt-4 border border-line bg-surface">
-                <table className="w-full text-left">
-                  <tbody>
-                    {CAPABILITIES.map((c) => (
-                      <tr key={c.name} className="border-b border-line last:border-0">
-                        <td className="px-3 py-2 text-sm text-ink">{c.name}</td>
-                        <td className="px-3 py-2 text-right font-mono text-[10px] text-muted">
-                          {c.code}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="mt-4 border border-line bg-surface divide-y divide-line">
+                {CAPABILITIES.map((c) => (
+                  <div
+                    key={c.name}
+                    className="flex flex-col gap-1 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                  >
+                    <span className="text-sm text-ink">{c.name}</span>
+                    <span className="font-mono text-[10px] text-muted sm:text-right [overflow-wrap:anywhere]">
+                      {c.code}
+                    </span>
+                  </div>
+                ))}
               </div>
             </section>
 
