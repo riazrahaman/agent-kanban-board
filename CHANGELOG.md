@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,35 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.8] — 2026-10-04
+
+Fix: resolve mobile layout horizontal overflow and left-clipping on About page (GH #84).
+
+### Fixed
+- **Left-clipping on mobile eliminated.** The multi-column flex container in
+  `About.tsx` declared `flex justify-center`. On mobile viewports where both
+  navigation and quick-links sidebars are hidden, flexbox centering caused any
+  child exceeding the viewport width to overflow symmetrically left and right.
+  Because mobile browsers cannot scroll to negative coordinates (`x < 0`), the
+  leftmost ~150px of content was permanently clipped. The container now uses
+  `justify-start lg:justify-center`, anchoring to the left edge on mobile and
+  centering on wide viewports.
+- **Strict engine capabilities made responsive.** Replaced the unconstrained
+  2-column `<table>` in `#strict-engine` with a responsive stacked flex layout
+  (`divide-y divide-line`, `flex-col sm:flex-row`, `sm:items-center sm:justify-between`).
+  This eliminates the ~600px intrinsic table blowout caused by long code paths
+  such as `store.js · getOrphanGraceMs (KANBAN_ORPHAN_GRACE_MS)`.
+- **Orchestrator skill grid items clamped.** Added `min-w-0` to the install and
+  enforce grid cards in `#orchestrator-skill`, preventing `<pre>` and unbroken
+  file paths from widening grid tracks past the viewport.
+- **Scroll containment & text wrap safety.** Added `overflow-x-hidden` on the
+  About scroll container, `w-full min-w-0 max-w-3xl flex-1` on the center article,
+  `break-all` on the skill path code block, and `[overflow-wrap:anywhere]` on
+  card mechanisms.
+- **Responsive regression test suite.** Added five automated assertions to
+  `responsive.test.mjs` locking in mobile start-alignment, scroll containment,
+  grid clamping, and capability row stacking.
 
 ## [2.15.7] — 2026-10-03
 
