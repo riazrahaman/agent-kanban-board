@@ -70,21 +70,21 @@ test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', ()
   )
 })
 
-test('App header inputs expand on tablet/desktop viewports (sm:w-48 agentDraft, sm:w-32 tokenDraft)', () => {
+test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, sm:w-36 tokenDraft)', () => {
   const agentInput = appSource.match(/placeholder="agent id \(auto-claim\)"[\s\S]*?className="([^"]*)"/)?.[1]
   assert.ok(agentInput, 'App.tsx must render agentDraft input')
   assert.match(
     agentInput,
-    /\bsm:w-48\b/,
-    'agentDraft input must use sm:w-48 so placeholder is not truncated on tablet viewports',
+    /\bsm:w-64\b/,
+    'agentDraft input must use sm:w-64 so placeholder is not truncated on tablet viewports',
   )
 
   const tokenInput = appSource.match(/placeholder="api token"[\s\S]*?className="([^"]*)"/)?.[1]
   assert.ok(tokenInput, 'App.tsx must render tokenDraft input')
   assert.match(
     tokenInput,
-    /\bsm:w-32\b/,
-    'tokenDraft input must use sm:w-32 on tablet/desktop viewports',
+    /\bsm:w-36\b/,
+    'tokenDraft input must use sm:w-36 on tablet/desktop viewports',
   )
 })
 
@@ -105,6 +105,11 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     columnSource,
     /\bsnap-start\b/,
     'Column.tsx must include `snap-start` so scroll snapping aligns to a column edge',
+  )
+  assert.match(
+    columnSource,
+    /\btouch-pan-y\b/,
+    'Column.tsx task list must include `touch-pan-y` so horizontal swipe gestures propagate to parent scroll container',
   )
 
   // The other half of the responsive contract: a card must never be able to
@@ -445,6 +450,16 @@ test('Board scroll container snaps horizontally and scrolls x (snap-x, scroll-pl
     scrollContainer,
     /\boverflow-x-auto\b/,
     'the horizontal scroll container must include `overflow-x-auto`',
+  )
+  assert.match(
+    scrollContainer,
+    /\bsnap-proximity\b/,
+    'the horizontal scroll container must include `snap-proximity`',
+  )
+  assert.match(
+    scrollContainer,
+    /\btouch-pan-x\b/,
+    'the horizontal scroll container must include `touch-pan-x`',
   )
 })
 
