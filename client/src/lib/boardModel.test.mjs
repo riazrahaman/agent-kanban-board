@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { groupTasks } from '../board-model.js'
+import { getVisibleColumns, groupTasks } from '../board-model.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -97,3 +97,24 @@ test('Column and TaskCard are wrapped in React.memo', async () => {
   const card = await bundle(join(__dirname, '..', 'components', 'TaskCard.tsx'))
   assert.equal(card.default.$$typeof, reactMemo, 'TaskCard is memoized')
 })
+
+test('getVisibleColumns excludes UNKNOWN column when no tasks have unknown status', () => {
+  const grouped = groupTasks([
+    task({ id: 'a', status: 'BACKLOG' }),
+    task({ id: 'b', status: 'DONE' }),
+  ])
+  const cols = getVisibleColumns(grouped)
+  assert.equal(cols.some((c) => c.status === 'UNKNOWN'), false)
+  assert.equal(cols.length, 7)
+})
+
+test('getVisibleColumns includes UNKNOWN column when at least one task has unknown status', () => {
+  const grouped = groupTasks([
+    task({ id: 'a', status: 'BACKLOG' }),
+    task({ id: 'b', status: 'wat' }),
+  ])
+  const cols = getVisibleColumns(grouped)
+  assert.equal(cols.some((c) => c.status === 'UNKNOWN'), true)
+  assert.equal(cols.length, 8)
+})
+

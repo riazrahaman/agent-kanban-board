@@ -35,3 +35,18 @@ export function groupTasks(tasks) {
 
   return grouped
 }
+
+export const COLUMNS = [
+  { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
+  { status: 'BUILDING', title: 'Building', stepNumber: '02' },
+  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03' },
+  { status: 'IN_TEST', title: 'In Test', stepNumber: '04' },
+  { status: 'BLOCKED', title: 'Blocked' },
+  { status: 'DONE', title: 'Done' },
+  { status: 'UNKNOWN', title: 'Unknown' },
+  { status: 'ISSUES', title: 'Issues' },
+]
+
+export function getVisibleColumns(grouped) {
+  return COLUMNS.filter((col) => col.status !== 'UNKNOWN' || (grouped.UNKNOWN?.length ?? 0) > 0)
+}

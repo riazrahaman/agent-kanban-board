@@ -483,7 +483,7 @@ export default function App() {
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             className="w-24 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-40 sm:py-1 pointer-coarse:min-h-11"
+             className="w-32 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-48 sm:py-1 pointer-coarse:min-h-11"
             />
             <input
              type="password"
@@ -498,7 +498,7 @@ export default function App() {
              title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
              autoComplete="off"
              spellCheck={false}
-             className="w-20 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-28 sm:py-1 pointer-coarse:min-h-11"
+             className="w-24 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-32 sm:py-1 pointer-coarse:min-h-11"
             />
             <HeaderHelp />
             {!tokenSaved && (

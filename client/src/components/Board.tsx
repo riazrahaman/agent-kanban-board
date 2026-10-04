@@ -1,19 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Task, TaskStatus } from '../types'
-import { groupTasks } from '../board-model.js'
+import type { Task } from '../types'
+import { getVisibleColumns, groupTasks } from '../board-model.js'
 import Column from './Column'
 import { resolveColumnAccent, type ColumnColors } from '../lib/columnColors'
-
-const COLUMNS: { status: TaskStatus; title: string; stepNumber?: string }[] = [
-  { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
-  { status: 'BUILDING', title: 'Building', stepNumber: '02' },
-  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03' },
-  { status: 'IN_TEST', title: 'In Test', stepNumber: '04' },
-  { status: 'BLOCKED', title: 'Blocked' },
-  { status: 'DONE', title: 'Done' },
-  { status: 'UNKNOWN', title: 'Unknown' },
-  { status: 'ISSUES', title: 'Issues' },
-]
 
 type Props = {
   tasks: Task[]
@@ -30,6 +19,7 @@ const COLUMN_STEP = 304
 
 export default function Board({ tasks, onOpen, showProject = false, columnColors }: Props) {
   const grouped = useMemo(() => groupTasks(tasks), [tasks])
+  const visibleColumns = useMemo(() => getVisibleColumns(grouped), [grouped])
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
   const [canRight, setCanRight] = useState(false)
@@ -84,7 +74,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         ref={scrollRef}
         className="board-scroll flex h-full w-full snap-x scroll-pl-4 gap-4 overflow-x-auto p-4"
       >
-        {COLUMNS.map((col) => (
+        {visibleColumns.map((col) => (
           <Column
             key={col.status}
             status={col.status}
@@ -110,7 +100,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
           onClick={() => scrollBy(-1)}
           aria-label="Scroll columns left"
           title="Scroll columns left"
-          className="absolute left-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex"
+          className="absolute left-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden"
         >
           ‹
         </button>
@@ -121,7 +111,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
           onClick={() => scrollBy(1)}
           aria-label="Scroll columns right"
           title="Scroll columns right"
-          className="absolute right-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex"
+          className="absolute right-3 top-1/2 z-20 hidden h-11 w-8 -translate-y-1/2 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden"
         >
           ›
         </button>

@@ -70,6 +70,24 @@ test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', ()
   )
 })
 
+test('App header inputs expand on tablet/desktop viewports (sm:w-48 agentDraft, sm:w-32 tokenDraft)', () => {
+  const agentInput = appSource.match(/placeholder="agent id \(auto-claim\)"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(agentInput, 'App.tsx must render agentDraft input')
+  assert.match(
+    agentInput,
+    /\bsm:w-48\b/,
+    'agentDraft input must use sm:w-48 so placeholder is not truncated on tablet viewports',
+  )
+
+  const tokenInput = appSource.match(/placeholder="api token"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(tokenInput, 'App.tsx must render tokenDraft input')
+  assert.match(
+    tokenInput,
+    /\bsm:w-32\b/,
+    'tokenDraft input must use sm:w-32 on tablet/desktop viewports',
+  )
+})
+
 // ---------------------------------------------------------------------------
 // components/Column.tsx
 // ---------------------------------------------------------------------------

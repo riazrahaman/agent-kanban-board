@@ -183,6 +183,7 @@ test('the column scroll-arrow buttons never overlay card content on phones', () 
   for (const [, cls] of arrows) {
     assert.match(cls, /\bhidden\b/, 'each scroll arrow must be hidden by default')
     assert.match(cls, /\bmd:flex\b/, 'each scroll arrow may only reappear from md up')
+    assert.match(cls, /\bpointer-coarse:hidden\b/, 'each scroll arrow must be hidden on coarse pointer devices (touch/tablets)')
   }
 })
 
