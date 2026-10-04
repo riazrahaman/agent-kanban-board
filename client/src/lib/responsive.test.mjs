@@ -21,6 +21,7 @@ const BOARD_PATH = join(CLIENT_SRC, 'components', 'Board.tsx')
 const TASK_CARD_PATH = join(CLIENT_SRC, 'components', 'TaskCard.tsx')
 const TASK_SHEET_PATH = join(CLIENT_SRC, 'components', 'TaskSheet.tsx')
 const ERROR_BOUNDARY_PATH = join(CLIENT_SRC, 'components', 'ErrorBoundary.tsx')
+const ABOUT_PATH = join(CLIENT_SRC, 'components', 'About.tsx')
 const CSS_PATH = join(CLIENT_SRC, 'index.css')
 
 const appSource = readFileSync(APP_PATH, 'utf8')
@@ -29,6 +30,7 @@ const boardSource = readFileSync(BOARD_PATH, 'utf8')
 const taskCardSource = readFileSync(TASK_CARD_PATH, 'utf8')
 const taskSheetSource = readFileSync(TASK_SHEET_PATH, 'utf8')
 const errorBoundarySource = readFileSync(ERROR_BOUNDARY_PATH, 'utf8')
+const aboutSource = readFileSync(ABOUT_PATH, 'utf8')
 const cssSource = readFileSync(CSS_PATH, 'utf8')
 
 // ---------------------------------------------------------------------------
@@ -628,3 +630,76 @@ test('TaskSheet resets its scroll offset when a different card is opened', () =>
     'a now-scrollable sheet must reset scrollTop when the open task changes, otherwise a newly opened card renders mid-panel',
   )
 })
+
+// ---------------------------------------------------------------------------
+// components/About.tsx
+// ---------------------------------------------------------------------------
+
+test('About page responsive layout invariants', async (t) => {
+  await t.test('About scroll container uses overflow-x-hidden', () => {
+    const scrollContainer = aboutSource.match(/<div className="([^"]*overflow-y-auto[^"]*)">/)?.[1]
+    assert.ok(scrollContainer, 'About.tsx must render an overflow-y-auto scroll container')
+    assert.match(
+      scrollContainer,
+      /\boverflow-x-hidden\b/,
+      'About.tsx scroll container must include `overflow-x-hidden` to prevent horizontal clipping',
+    )
+  })
+
+  await t.test('About multi-column container uses justify-start and lg:justify-center', () => {
+    const flexContainer = aboutSource.match(/<div className="([^"]*justify-start[^"]*)">/)?.[1]
+    assert.ok(flexContainer, 'About.tsx must render a container with justify-start')
+    assert.match(
+      flexContainer,
+      /\bjustify-start\b/,
+      'About multi-column container must use `justify-start` on mobile',
+    )
+    assert.match(
+      flexContainer,
+      /\blg:justify-center\b/,
+      'About multi-column container must upgrade to `lg:justify-center` on desktop',
+    )
+  })
+
+  await t.test('About article uses w-full min-w-0 max-w-3xl flex-1', () => {
+    const articleTag = aboutSource.match(/<article className="([^"]*)">/)?.[1]
+    assert.ok(articleTag, 'About.tsx must render an <article> element')
+    assert.match(articleTag, /\bw-full\b/, 'About article must include `w-full`')
+    assert.match(articleTag, /\bmin-w-0\b/, 'About article must include `min-w-0`')
+    assert.match(articleTag, /\bmax-w-3xl\b/, 'About article must include `max-w-3xl`')
+    assert.match(articleTag, /\bflex-1\b/, 'About article must include `flex-1`')
+  })
+
+  await t.test('About grid items in orchestrator skill carry min-w-0', () => {
+    const skillGrid = aboutSource.match(/<div className="mt-3 grid gap-3 sm:grid-cols-2">([\s\S]*?)<\/div>\s*<\/section>/)?.[1]
+    assert.ok(skillGrid, 'About.tsx must render the orchestrator skill grid')
+    const gridItems = [...skillGrid.matchAll(/<div className="([^"]*)">\s*<div[^>]*>\s*(?:Install|Enforces)/g)]
+    assert.equal(gridItems.length, 2, 'must find Install and Enforces cards in orchestrator skill grid')
+    for (const match of gridItems) {
+      assert.match(
+        match[1],
+        /\bmin-w-0\b/,
+        `orchestrator skill card (${match[1]}) must carry \`min-w-0\` to prevent pre/code overflow blowout`,
+      )
+    }
+  })
+
+  await t.test(
+    'About strict engine capabilities container uses responsive flex stacking (divide-y divide-line, flex-col sm:flex-row)',
+    () => {
+      const engineSection = aboutSource.match(/<section id="strict-engine"[\s\S]*?<\/section>/)?.[0]
+      assert.ok(engineSection, 'About.tsx must render #strict-engine section')
+      assert.match(
+        engineSection,
+        /className="[^"]*\bdivide-y\b[^"]*\bdivide-line\b[^"]*"/,
+        'capabilities container must carry `divide-y divide-line`',
+      )
+      assert.match(
+        engineSection,
+        /className="[^"]*\bflex\b[^"]*\bflex-col\b[^"]*\bsm:flex-row\b[^"]*"/,
+        'capability row must carry `flex flex-col sm:flex-row` for responsive stacking',
+      )
+    },
+  )
+})
+
