@@ -106,15 +106,15 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     /\bsnap-start\b/,
     'Column.tsx must include `snap-start` so scroll snapping aligns to a column edge',
   )
-  // GH #87 regression: v2.15.10 added `touch-pan-y` here and `touch-pan-x` on
-  // Board.tsx's scroll container. Per the touch-action spec, the *effective*
-  // touch-action on a touched element is the intersection of its own
-  // touch-action and every ancestor's — intersecting `pan-y` (child) with
-  // `pan-x` (ancestor) resolves to `none`, which suppressed ALL swiping
-  // (horizontal board scroll *and* vertical column scroll) on touch devices.
-  // The fix drops both single-axis declarations entirely (the browser's
-  // default `touch-action: auto` already lets each scroll container claim
-  // whichever axis it actually scrolls) and uses `overscroll-y-contain`
+  // GH #87 regression: v2.15.10 gave this element touch-action: pan-y and
+  // Board.tsx's scroll container touch-action: pan-x. Per the touch-action
+  // spec, the *effective* touch-action on a touched element is the
+  // intersection of its own touch-action and every ancestor's — intersecting
+  // pan-y (child) with pan-x (ancestor) resolves to none, which suppressed
+  // ALL swiping (horizontal board scroll *and* vertical column scroll) on
+  // touch devices. The fix drops both single-axis declarations entirely (the
+  // browser's default touch-action: auto already lets each scroll container
+  // claim whichever axis it actually scrolls) and uses overscroll-y-contain
   // instead, purely to stop vertical column scrolling from chaining to the
   // body — a non-conflicting, same-axis-only rule.
   assert.match(
@@ -122,15 +122,23 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     /\boverscroll-y-contain\b/,
     'Column.tsx task list must include `overscroll-y-contain` so vertical scrolling does not chain to the page',
   )
+  // The two Tailwind class names below are assembled from concatenated
+  // string fragments rather than written out as a single contiguous literal,
+  // because Tailwind v4's content scanner has no JS parser — it just scans
+  // raw file bytes for candidate class names — so writing the banned names
+  // out in full here (even inside a regex) would itself get scanned and emit
+  // an unused utility into the compiled CSS.
+  const bannedPanY = new RegExp('\\b' + 'touch-' + 'pan-y\\b')
+  const bannedPanX = new RegExp('\\b' + 'touch-' + 'pan-x\\b')
   assert.doesNotMatch(
     columnSource,
-    /\btouch-pan-y\b/,
-    'Column.tsx must not reintroduce `touch-pan-y` — intersected with Board.tsx\'s horizontal pan rule this resolves to `touch-action: none` and blocks all swiping (GH #87)',
+    bannedPanY,
+    'Column.tsx must not reintroduce touch-action: pan-y — intersected with Board.tsx\'s horizontal pan rule this resolves to touch-action: none and blocks all swiping (GH #87)',
   )
   assert.doesNotMatch(
     columnSource,
-    /\btouch-pan-x\b/,
-    'Column.tsx must not carry `touch-pan-x` either — any single-axis touch-action here can conflict with Board.tsx\'s scroll container',
+    bannedPanX,
+    'Column.tsx must not carry touch-action: pan-x either — any single-axis touch-action here can conflict with Board.tsx\'s scroll container',
   )
 
   // The other half of the responsive contract: a card must never be able to
@@ -478,25 +486,33 @@ test('Board scroll container snaps horizontally and scrolls x (snap-x, scroll-pl
     'the horizontal scroll container must include `snap-proximity`',
   )
   // GH #87 regression — see the matching note in the Column.tsx test above:
-  // `touch-pan-x` here, intersected with Column.tsx's former `touch-pan-y`,
-  // resolved to an effective `touch-action: none` and blocked all touch
-  // swiping/scrolling. `overscroll-x-contain` replaces it: it only stops the
-  // board's own horizontal scroll from chaining into the iOS edge-swipe
-  // back/forward gesture, and does not constrain which axis can pan.
+  // touch-action: pan-x here, intersected with Column.tsx's former
+  // touch-action: pan-y, resolved to an effective touch-action: none and
+  // blocked all touch swiping/scrolling. overscroll-x-contain replaces it: it
+  // only stops the board's own horizontal scroll from chaining up to a parent
+  // scroller (which, left unchecked, is one way an edge swipe can get
+  // reinterpreted as iOS's back/forward navigation gesture), and it does not
+  // constrain which axis can pan.
   assert.match(
     scrollContainer,
     /\boverscroll-x-contain\b/,
-    'the horizontal scroll container must include `overscroll-x-contain` so its scroll does not chain to iOS edge-swipe navigation',
+    'the horizontal scroll container must include `overscroll-x-contain` to discourage its scroll from chaining into iOS edge-swipe navigation',
+  )
+  // See the matching note in the Column.tsx test above: these are assembled
+  // from concatenated string fragments, not written out as a contiguous
+  // literal, so Tailwind v4's text-based content scanner can't pick up the
+  // banned class names and emit them as unused utilities in the compiled CSS.
+  const bannedPanX = new RegExp('\\b' + 'touch-' + 'pan-x\\b')
+  const bannedPanY = new RegExp('\\b' + 'touch-' + 'pan-y\\b')
+  assert.doesNotMatch(
+    scrollContainer,
+    bannedPanX,
+    'the horizontal scroll container must not reintroduce touch-action: pan-x — intersected with Column.tsx\'s vertical pan rule this resolves to touch-action: none and blocks all swiping (GH #87)',
   )
   assert.doesNotMatch(
     scrollContainer,
-    /\btouch-pan-x\b/,
-    'the horizontal scroll container must not reintroduce `touch-pan-x` — intersected with Column.tsx\'s vertical pan rule this resolves to `touch-action: none` and blocks all swiping (GH #87)',
-  )
-  assert.doesNotMatch(
-    scrollContainer,
-    /\btouch-pan-y\b/,
-    'the horizontal scroll container must not carry `touch-pan-y` either — any single-axis touch-action here can conflict with Column.tsx\'s scroll container',
+    bannedPanY,
+    'the horizontal scroll container must not carry touch-action: pan-y either — any single-axis touch-action here can conflict with Column.tsx\'s scroll container',
   )
 })
 

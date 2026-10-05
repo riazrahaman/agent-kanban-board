@@ -43,9 +43,12 @@ Fix: restore mobile and tablet horizontal swiping, broken completely since
     rule — an overscroll-behavior rule) so vertical column scrolling can't
     chain into a rubber-banding page scroll.
   - Board.tsx's `.board-scroll` gets `overscroll-x-contain` so horizontal
-    column scrolling can't chain into iOS's edge-swipe back/forward
-    navigation gesture. Neither constrains which axis an element may pan, so
-    the two no longer intersect to `none`.
+    column scrolling does not chain up to a parent scroller, which helps
+    discourage it from being reinterpreted as iOS's edge-swipe back/forward
+    navigation gesture (`overscroll-behavior` constrains scroll chaining, not
+    the OS-level edge gesture itself, so this reduces rather than eliminates
+    the risk). Neither rule constrains which axis an element may pan, so the
+    two no longer intersect to `none`.
 - `responsive.test.mjs`'s Column and Board tests now assert
   `overscroll-y-contain` / `overscroll-x-contain` respectively and explicitly
   `doesNotMatch` both `touch-pan-x` and `touch-pan-y` in each file, so this
