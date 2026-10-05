@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,44 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.15.11] — 2026-10-05
+
+Fix: restore mobile and tablet horizontal swiping, broken completely since
+2.15.10 (GH #87).
+
+### Fixed
+- **Effective touch-action resolved to `none`, blocking all swiping.**
+  2.15.10 added `touch-pan-y` to the Column card list container and
+  `touch-pan-x` to `.board-scroll` (Board.tsx), intending the former to let
+  horizontal swipes "propagate" from a column to the board and the latter to
+  smooth horizontal momentum. Per the touch-action spec (Pointer Events
+  Level 2/3 §5.2.4, "Effective touch action"), the touch-action that actually
+  governs a gesture is the **intersection** of the touched element's
+  touch-action and every ancestor's — and `pan-y` ∩ `pan-x` = `none`. Because
+  every task card sits inside both the column (`pan-y`) and the board scroller
+  (`pan-x`), and columns occupy `85vw` on phones/tablets, the effective
+  touch-action over virtually the entire screen became `none`: Mobile Safari
+  and mobile Chrome suppressed *all* touch panning — horizontal board swipes
+  and vertical column scrolling alike — the opposite of 2.15.10's intent.
+- **Fix: drop both single-axis `touch-pan-*` rules.** Neither was actually
+  necessary — each scroll container already claims whichever axis it scrolls
+  under the browser's default `touch-action: auto`, and removing both rules
+  removes the conflicting intersection entirely. In their place:
+  - Column.tsx's card list gets `overscroll-y-contain` (not a touch-action
+    rule — an overscroll-behavior rule) so vertical column scrolling can't
+    chain into a rubber-banding page scroll.
+  - Board.tsx's `.board-scroll` gets `overscroll-x-contain` so horizontal
+    column scrolling does not chain up to a parent scroller, which helps
+    discourage it from being reinterpreted as iOS's edge-swipe back/forward
+    navigation gesture (`overscroll-behavior` constrains scroll chaining, not
+    the OS-level edge gesture itself, so this reduces rather than eliminates
+    the risk). Neither rule constrains which axis an element may pan, so the
+    two no longer intersect to `none`.
+- `responsive.test.mjs`'s Column and Board tests now assert
+  `overscroll-y-contain` / `overscroll-x-contain` respectively and explicitly
+  `doesNotMatch` both `touch-pan-x` and `touch-pan-y` in each file, so this
+  specific intersection-to-`none` regression cannot silently return.
 
 ## [2.15.10] — 2026-10-04
 
