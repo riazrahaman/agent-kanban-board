@@ -2,10 +2,15 @@
 // opt-public-bug-reports) — the same style as mobileToolbar.test.mjs /
 // columnColors.test.mjs: assert on the raw source text rather than
 // mounting React, since this project has no DOM test runner. Covers the
-// DESIGN.md contract (hairlines only, square corners, no banned fonts, no
-// dangerouslySetInnerHTML), the honeypot's accessibility shape, lazy
-// Turnstile loading, and that the entry point is wired from both the header
-// and the About page end to end.
+// DESIGN.md contract (hairlines only, square corners, no banned fonts or
+// raw-HTML injection), the honeypot's accessibility shape, lazy Turnstile
+// loading, and that the entry point is wired from both the header and the
+// About page end to end.
+//
+// Banned tokens below are assembled from fragments on purpose (same
+// convention as about.test.mjs): this test file must not contain the
+// literal strings make sec's git-grep is watching for, or the check would
+// flag its OWN source.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -94,7 +99,7 @@ test('the dialog introduces no banned DESIGN.md patterns', () => {
     { name: 'any border radius', re: /\brounded\b|\brounded-[a-z]+\b/ },
     { name: 'In' + 'ter', re: new RegExp('\\bIn' + 'ter\\b', 'i') },
     { name: 'Rob' + 'oto', re: new RegExp('\\bRob' + 'oto\\b', 'i') },
-    { name: 'dangerouslySetInnerHTML', re: /dangerouslySetInnerHTML/ },
+    { name: 'danger' + 'ouslySetInnerHTML', re: new RegExp('danger' + 'ouslySetInnerHTML') },
   ]
   for (const { name, re } of BANNED) {
     assert.doesNotMatch(dialogSource, re, `BugReportDialog.tsx must not contain \`${name}\``)
