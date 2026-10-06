@@ -150,6 +150,16 @@ jobs:
           STATUS=0
           node scripts/check-card-layout.mjs "http://127.0.0.1:4000" 9222 || STATUS=$?
 
+          # Header layout guard (v2.16.0 review round 2): a standalone
+          # "Report a bug" header button once wrapped the toolbar onto an
+          # extra row at several mid viewports. KANBAN_REPORT_*/TURNSTILE_*
+          # below are Cloudflare's published PUBLIC test keys (never a real
+          # secret) so this run also exercises the feature-ON header, which
+          # must measure identically to feature-OFF — see the script.
+          HEADER=0
+          node scripts/check-header-layout.mjs "http://127.0.0.1:4000" 9222 || HEADER=$?
+          if [ "$HEADER" = "1" ]; then STATUS=1; fi
+
           # Browser smoke test: seeds its own worst-case fixture project (long
           # unicode title, an unbreakable long id, many log entries) and asserts
           # the board renders with no page overflow and zero uncaught errors.
@@ -169,3 +179,9 @@ jobs:
           KANBAN_DATA_FILE: /tmp/ci-layout/tasks.json
           KANBAN_STORAGE_BACKEND: json
           PORT: '4000'
+          # v2.16.0: turns the Report-a-bug header entry ON for this run.
+          # Cloudflare's published test keys — public by design, not secrets.
+          KANBAN_REPORT_GITHUB_TOKEN: ci-layout-not-a-real-token
+          KANBAN_REPORT_REPO: owner/repo
+          TURNSTILE_SECRET: 1x0000000000000000000000000000000AA
+          TURNSTILE_SITE_KEY: 1x00000000000000000000AA
