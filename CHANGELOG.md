@@ -64,12 +64,29 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   limits, every Turnstile outcome (fail/wrong-action/wrong-hostname/network
   error/replay), the per-IP limit and an `X-Forwarded-For` spoof attempt, the
   daily cap (incl. that a failed filing never spends it), GitHub retry/label
-  fallback, and issue-body sanitisation.
+  fallback, and issue-body sanitisation. Plus 7 more server tests for the
+  body-parser fix below (`kanban.bodyparser.test.js`).
 - `KANBAN_TRUST_PROXY` (default `1`) makes the Express `trust proxy` hop count
   explicit and configurable, so the per-IP bug-report limiter (and anything
   else keyed off `req.ip`) sees the real client address behind Railway's one
   reverse-proxy hop without trusting an attacker-forged
   `X-Forwarded-For` prefix beyond that hop.
+
+### Fixed
+- **Malformed JSON and oversized request bodies reported as a 500.**
+  `express.json()` runs globally, on every route, before auth or routing; a
+  parse failure or a body over the 100kb default limit threw a body-parser
+  error that the global error handler in `server.js` did not recognize, so
+  it fell through to the generic `500 {error:'Internal Server Error'}`
+  branch — misreporting a client mistake as a server failure. The handler
+  now translates `err.type === 'entity.parse.failed'` to
+  `400 {error:'invalid_json'}` and `'entity.too.large'` to
+  `413 {error:'payload_too_large'}`, with no stack trace or internal detail
+  in either body; every other error is unaffected. Guarded by the new
+  `server/test/kanban.bodyparser.test.js` against both the new
+  `POST /api/bug-reports` and the existing `POST /api/tasks`, proving the
+  translation is global (it runs ahead of auth entirely) and harmless to a
+  normal request.
 
 ## [2.15.11] — 2026-10-05
 
