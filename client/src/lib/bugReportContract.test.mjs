@@ -126,10 +126,12 @@ test('App.tsx wires the feature flag and the dialog, but owns no header button i
 // header's flex toolbar row widened it enough to push the row to wrap at
 // several mid viewports (824-1100px measured in real Chrome) even though it
 // never wraps with the feature off. The entry point was moved INSIDE
-// HeaderHelp's `absolute`-positioned popover, which costs zero width in the
-// header's flex layout regardless of the feature flag — asserted here by
-// construction (no button literal in App.tsx's header markup at all, and
-// the one in HeaderHelp.tsx sits in an `absolute`-positioned subtree).
+// HeaderHelp's popover, which is taken out of the header's flex flow at
+// EVERY breakpoint (`max-lg:fixed` on phones/tablets, `lg:absolute` from
+// 1024px up — see the containment fix below), so it costs zero width in the
+// toolbar regardless of the feature flag — asserted here by construction
+// (no button literal in App.tsx's header markup at all, and the one in
+// HeaderHelp.tsx sits inside that out-of-flow subtree).
 test('the header toolbar itself contains no "Report a bug" button (moved into the HeaderHelp popover)', () => {
   assert.doesNotMatch(
     appSource,
@@ -142,16 +144,22 @@ test('the header toolbar itself contains no "Report a bug" button (moved into th
   // mentions "Report a bug" in prose — the actual rendered entry (what this
   // assertion cares about) is the LAST occurrence, inside the JSX.
   const reportBugIdx = headerHelpSource.lastIndexOf('Report a bug')
-  assert.ok(popoverOpen > -1, 'HeaderHelp.tsx must still render its absolute-positioned popover')
+  assert.ok(popoverOpen > -1, 'HeaderHelp.tsx must still render its popover')
   assert.ok(reportBugIdx > -1, 'HeaderHelp.tsx must render the "Report a bug" entry')
   assert.ok(
     reportBugIdx > popoverOpen,
     'the "Report a bug" entry must be INSIDE the popover markup, not a sibling in the flex toolbar',
   )
-  // The popover's own wrapper is `absolute`, so anything inside it is taken
-  // out of the header's flex flow — it cannot affect toolbar width/wrapping.
+  // The popover's wrapper must be taken out of the header's flex flow at
+  // EVERY breakpoint — `max-lg:fixed` on phones/tablets (where it becomes a
+  // viewport-anchored sheet so it can never clip off-screen regardless of
+  // where the "i" button lands) and `lg:absolute` from 1024px up (the
+  // original anchored-dropdown look, safe once there is enough room). Either
+  // branch takes it out of flow; what it must NEVER be is `static` (the
+  // flex-participating default), which would cost toolbar width again.
   const popoverBlock = headerHelpSource.slice(headerHelpSource.indexOf('{open && ('), reportBugIdx)
-  assert.match(popoverBlock, /className="absolute\b/, 'the popover wrapper must stay `absolute` so its contents cost zero toolbar width')
+  assert.match(popoverBlock, /\bmax-lg:fixed\b/, 'the popover must use a viewport-anchored fixed position below `lg` so it can never clip off-screen')
+  assert.match(popoverBlock, /\blg:absolute\b/, 'the popover must stay out-of-flow (`absolute`) from `lg` up too, never static')
 })
 
 test('HeaderHelp.tsx gates the entry on the enabled flag and closes the popover before opening the dialog', () => {
@@ -162,6 +170,36 @@ test('HeaderHelp.tsx gates the entry on the enabled flag and closes the popover 
     'must close the popover before opening the dialog so Escape/focus hand off cleanly',
   )
   assert.match(headerHelpSource, /pointer-coarse:min-h-11/, 'the entry must still meet the 44px touch target')
+})
+
+// Regression guard (v2.16.0 round 4): `absolute right-0 w-80` clipped the
+// popover off the LEFT edge of the viewport whenever the "i" button's own
+// x-position was less than 320px — measured at 320-390px (~44% clipped) and
+// again at 768-820px (the full header-controls row crowds the button
+// rightward). `right:0` anchors to the BUTTON, never the viewport, so no
+// width/max-width tweak alone can fix it — verified with a real headless
+// Chrome via scripts/check-header-layout.mjs's popover-containment check
+// (which also proves non-vacuity: reverting to the old class makes it fail).
+test('the popover cannot clip off-screen: unconditional width cap plus a viewport-anchored fallback below `lg`', () => {
+  const popoverBlock = headerHelpSource.slice(
+    headerHelpSource.indexOf('{open && ('),
+    headerHelpSource.lastIndexOf('Report a bug'),
+  )
+  assert.match(
+    popoverBlock,
+    /max-w-\[calc\(100vw-1\.5rem\)\]/,
+    'an unconditional max-width safety net must apply at every breakpoint, not just below `lg`',
+  )
+  assert.match(
+    popoverBlock,
+    /max-lg:inset-x-3/,
+    'below `lg` the popover must be positioned by VIEWPORT margins (inset-x), not by the button\'s x-position',
+  )
+  assert.doesNotMatch(
+    popoverBlock,
+    /className="absolute right-0/,
+    'must never go back to an unconditional `absolute right-0` with no breakpoint guard — that is exactly what clipped',
+  )
 })
 
 test('About.tsx exposes the same entry point, gated on the same flag', () => {

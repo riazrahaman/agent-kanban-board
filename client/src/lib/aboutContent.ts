@@ -51,7 +51,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '183',
+    value: '184',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -207,7 +207,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'How do I report a bug?',
-    a: '"Report a bug" in the header (and here) opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. No account, no attachments, no PII collected; the report is public on GitHub. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug").',
+    a: '"Report a bug" in the header\'s "i" help popover (and here) opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. No account, no attachments, no PII collected; the report is public on GitHub. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug").',
   },
 ]
 
