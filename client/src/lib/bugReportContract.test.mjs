@@ -24,6 +24,7 @@ const dialogSource = readFileSync(join(CLIENT_SRC, 'components', 'BugReportDialo
 const appSource = readFileSync(join(CLIENT_SRC, 'App.tsx'), 'utf8')
 const aboutSource = readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
 const apiSource = readFileSync(join(CLIENT_SRC, 'api.ts'), 'utf8')
+const headerHelpSource = readFileSync(join(CLIENT_SRC, 'components', 'HeaderHelp.tsx'), 'utf8')
 
 test('the dialog lazy-loads the Turnstile script only when the sheet opens', () => {
   assert.match(
@@ -106,7 +107,7 @@ test('the dialog introduces no banned DESIGN.md patterns', () => {
   }
 })
 
-test('App.tsx wires the entry point end to end: fetch once, header button, dialog mounted', () => {
+test('App.tsx wires the feature flag and the dialog, but owns no header button itself', () => {
   assert.match(appSource, /getBugReportConfig\(\)/, 'App.tsx must fetch the feature flag')
   assert.match(
     appSource,
@@ -116,9 +117,51 @@ test('App.tsx wires the entry point end to end: fetch once, header button, dialo
   assert.match(appSource, /<BugReportDialog\b/, 'the dialog must be mounted in the app shell')
   assert.match(
     appSource,
-    /\{bugReportEnabled && \(\s*<button/,
-    'the header entry point must be hidden until the feature is confirmed enabled',
+    /<HeaderHelp\s+bugReportEnabled=\{bugReportEnabled\}/,
+    'App.tsx must forward the flag + opener into HeaderHelp, not render its own button',
   )
+})
+
+// Regression guard (v2.16.0): a standalone "Report a bug" button in the
+// header's flex toolbar row widened it enough to push the row to wrap at
+// several mid viewports (824-1100px measured in real Chrome) even though it
+// never wraps with the feature off. The entry point was moved INSIDE
+// HeaderHelp's `absolute`-positioned popover, which costs zero width in the
+// header's flex layout regardless of the feature flag — asserted here by
+// construction (no button literal in App.tsx's header markup at all, and
+// the one in HeaderHelp.tsx sits in an `absolute`-positioned subtree).
+test('the header toolbar itself contains no "Report a bug" button (moved into the HeaderHelp popover)', () => {
+  assert.doesNotMatch(
+    appSource,
+    /Report a bug/,
+    'App.tsx must not render a "Report a bug" label anywhere — the entry point lives in HeaderHelp.tsx\'s popover now',
+  )
+
+  const popoverOpen = headerHelpSource.indexOf("role=\"dialog\"")
+  // lastIndexOf, not indexOf: the doc comment above the component already
+  // mentions "Report a bug" in prose — the actual rendered entry (what this
+  // assertion cares about) is the LAST occurrence, inside the JSX.
+  const reportBugIdx = headerHelpSource.lastIndexOf('Report a bug')
+  assert.ok(popoverOpen > -1, 'HeaderHelp.tsx must still render its absolute-positioned popover')
+  assert.ok(reportBugIdx > -1, 'HeaderHelp.tsx must render the "Report a bug" entry')
+  assert.ok(
+    reportBugIdx > popoverOpen,
+    'the "Report a bug" entry must be INSIDE the popover markup, not a sibling in the flex toolbar',
+  )
+  // The popover's own wrapper is `absolute`, so anything inside it is taken
+  // out of the header's flex flow — it cannot affect toolbar width/wrapping.
+  const popoverBlock = headerHelpSource.slice(headerHelpSource.indexOf('{open && ('), reportBugIdx)
+  assert.match(popoverBlock, /className="absolute\b/, 'the popover wrapper must stay `absolute` so its contents cost zero toolbar width')
+})
+
+test('HeaderHelp.tsx gates the entry on the enabled flag and closes the popover before opening the dialog', () => {
+  assert.match(headerHelpSource, /bugReportEnabled && onReportBug/)
+  assert.match(
+    headerHelpSource,
+    /setOpen\(false\)\s*\n\s*onReportBug\(\)/,
+    'must close the popover before opening the dialog so Escape/focus hand off cleanly',
+  )
+  assert.match(headerHelpSource, /pointer-coarse:min-h-11/, 'the entry must still meet the 44px touch target')
 })
 
 test('About.tsx exposes the same entry point, gated on the same flag', () => {

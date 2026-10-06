@@ -521,17 +521,10 @@ export default function App() {
              spellCheck={false}
              className="w-28 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11"
             />
-            <HeaderHelp />
-            {bugReportEnabled && (
-              <button
-                type="button"
-                onClick={() => setBugReportOpen(true)}
-                title="Report a bug — files a public GitHub issue, no account needed"
-                className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
-              >
-                Report a bug
-              </button>
-            )}
+            <HeaderHelp
+              bugReportEnabled={bugReportEnabled}
+              onReportBug={() => setBugReportOpen(true)}
+            />
             {!tokenSaved && (
              <span
               className="hidden font-mono text-[10px] uppercase tracking-wider text-muted sm:inline"

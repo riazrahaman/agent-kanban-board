@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 
+type Props = {
+  /** v2.16.0 (opt-public-bug-reports): only when the server confirms the
+   *  feature is configured. Rendered as a row inside this popover rather
+   *  than its own header button — a standalone button widened the toolbar
+   *  enough to push it onto an extra row at several mid viewports (see
+   *  CHANGELOG "Fixed", v2.16.0). The popover is `absolute`-positioned, so
+   *  anything inside it costs zero width in the header's flex layout
+   *  regardless of the flag. */
+  bugReportEnabled?: boolean
+  onReportBug?: () => void
+}
+
 /**
  * A small "i" affordance in the header that explains the two operator fields
- * (agent id + api token). Discoverable on demand without permanently spending
- * header space on prose.
+ * (agent id + api token), and — when configured — a "Report a bug" entry.
+ * Discoverable on demand without permanently spending header space on prose
+ * or on a second always-visible button.
  */
-export default function HeaderHelp() {
+export default function HeaderHelp({ bugReportEnabled, onReportBug }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -65,6 +78,21 @@ export default function HeaderHelp() {
               </dd>
             </div>
           </dl>
+          {bugReportEnabled && onReportBug && (
+            <>
+              <div className="my-2.5 border-t border-line" />
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  onReportBug()
+                }}
+                className="w-full border border-line bg-surface px-2 py-1.5 text-left font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
+              >
+                Report a bug
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
