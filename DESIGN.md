@@ -328,6 +328,18 @@ The Turnstile widget container (`<div ref={widgetContainerRef} />`) is an
 unstyled mount point — Cloudflare's own script renders into it — so it
 carries no DESIGN.md tokens itself; the surrounding form does.
 
+**Entry point: inside the header's "i" popover, not a header button.**
+`HeaderHelp.tsx`'s "Report a bug" row sits inside its existing `absolute`-
+positioned popover (§7, same component), behind a hairline divider. An
+earlier revision added a standalone always-visible button to the header's
+flex toolbar instead — it cost just enough width to push the toolbar onto an
+extra row at several mid viewports (measured 824-1100px in real Chrome)
+even with the row already nearly full. Anything added to the toolbar's flex
+row is live real estate; a feature that must stay invisible until opened
+belongs behind an existing disclosure (the "i" popover, a dropdown, the
+mobile `⋯` disclosure) rather than its own chrome. `About.tsx` keeps its own
+CTA — that page isn't width-constrained the way the header toolbar is.
+
 ---
 
 ## 8. Theming

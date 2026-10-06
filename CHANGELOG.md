@@ -87,6 +87,25 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   `POST /api/bug-reports` and the existing `POST /api/tasks`, proving the
   translation is global (it runs ahead of auth entirely) and harmless to a
   normal request.
+- **The header toolbar wrapped to an extra row with Report-a-bug on.**
+  A standalone, always-visible "Report a bug" button added to the header's
+  flex toolbar row cost just enough width to push it onto a second row at
+  several mid viewports (measured 824-1100px in real Chrome; e.g. at 1100px
+  the DARK/LIGHT theme toggle was orphaned onto its own row) — a regression
+  the feature-off header never had. Moved the entry point inside
+  `HeaderHelp.tsx`'s existing "i" popover instead (behind a hairline
+  divider, closing the popover before opening the dialog so Escape/focus
+  hand off cleanly); the popover is `absolute`-positioned, so anything
+  inside it costs zero width in the toolbar's flex layout regardless of the
+  feature flag. The About page keeps its own CTA. Guarded by a new
+  `bugReportContract.test.mjs` regression test asserting the header toolbar
+  carries no "Report a bug" button at all, AND by a new CI-only real-browser
+  guard (`scripts/check-header-layout.mjs`, CDP-driven like the existing
+  `check-card-layout.mjs`) that measures the actual rendered header height at
+  320-1920px with the feature on, failing if it ever grows past baseline
+  again. Verified in real headless Chrome: identical header height at all
+  eleven widths, both themes, feature on vs off (320/360/390: 84px;
+  768/824/900/1024: 120px; 1100: 82px; 1280/1440/1920: 49px).
 
 ## [2.15.11] — 2026-10-05
 
