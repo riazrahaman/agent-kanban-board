@@ -18,6 +18,7 @@ import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
+import { createBugReportsRouter } from './routes/bugReports.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -64,14 +65,46 @@ export function resolveHost(env = process.env) {
   return raw;
 }
 
-export function createApp() {
+/**
+ * Resolves Express's `trust proxy` setting from `KANBAN_TRUST_PROXY`.
+ *
+ * Needed for `GET /api/bug-reports` (and anything else keyed off `req.ip`) to
+ * see the REAL client address rather than a platform load balancer's: Railway
+ * (and most PaaS front doors) put exactly one reverse proxy in front of the
+ * app, so the default is `1` — trust one hop, i.e. use the rightmost
+ * untrusted address in `X-Forwarded-For`. A caller cannot widen that by
+ * sending a longer forged `X-Forwarded-For` chain; Express only reads as many
+ * entries as there are trusted hops. Accepts the numeric hop count (default),
+ * `false`/`"0"` to trust no proxy at all (raw socket address), `true` to
+ * trust every hop (only correct if you know exactly how many proxies sit in
+ * front — otherwise it reopens the spoof this exists to close), or one of
+ * Express's named presets (`loopback`, `linklocal`, `uniquelocal`).
+ */
+export function resolveTrustProxy(raw = process.env.KANBAN_TRUST_PROXY) {
+  if (raw === undefined || raw === '') return 1;
+  if (raw === 'false' || raw === '0') return false;
+  if (raw === 'true') return true;
+  const n = Number(raw);
+  if (Number.isFinite(n)) return n;
+  return raw; // named preset or proxyaddr-compatible IP/CIDR list
+}
+
+export function createApp(opts = {}) {
   const app = express();
   app.use(configureCors());
   app.use(express.json());
+  app.set('trust proxy', resolveTrustProxy());
   app.set('query parser', 'extended');
   // The handshake endpoint must be reachable before the auth middleware: it is
   // gated by proof-of-secret, not by a pre-existing session token.
   app.use('/api/auth', authRouter);
+  // §bug-reports (v2.16.0): mounted BEFORE auth/rate-limit on purpose — this is
+  // the one unauthenticated, human-facing write route on the board (an
+  // anonymous visitor has no board token). It is its own in-memory limiter
+  // (see routes/bugReports.js), not the per-project mutation limiter below.
+  // `opts.bugReports` lets tests inject a fake fetch/clock; production passes
+  // nothing and the router reads real env + global fetch.
+  app.use('/api/bug-reports', createBugReportsRouter(opts.bugReports));
   app.use(createAuthMiddleware());
   app.use(createRateLimitMiddleware());
 

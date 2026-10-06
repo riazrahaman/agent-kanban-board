@@ -52,6 +52,15 @@ const DESCRIPTIONS = {
   'KANBAN_TELEGRAM_BOT_TOKEN': 'Telegram bot token for reclaim alerts',
   'KANBAN_TELEGRAM_CHAT_ID': 'Telegram chat id that receives reclaim alerts',
   'KANBAN_TRASH_DAYS': 'Days a soft-deleted task stays in the trash sink (default 30)',
+  'KANBAN_TRUST_PROXY': 'Express "trust proxy" setting; hop count behind a reverse proxy (default 1)',
+  'KANBAN_REPORT_GITHUB_TOKEN': '(secret) Fine-grained PAT with Issues: write, used to file bug reports',
+  'KANBAN_REPORT_REPO': 'GitHub repository bug reports are filed against (owner/name)',
+  'TURNSTILE_SECRET': '(secret) Cloudflare Turnstile secret key for captcha verification',
+  'TURNSTILE_SITE_KEY': '(public) Cloudflare Turnstile site key, served to the browser',
+  'TURNSTILE_HOSTNAMES': '(optional) Comma-separated siteverify hostname allow-list; unset skips the check',
+  'KANBAN_REPORT_DAILY_CAP': '(optional) Global bug-report cap per UTC day (default 50)',
+  'KANBAN_REPORT_PER_IP_PER_HOUR': '(optional) Per-IP bug-report cap per hour (default 3)',
+  'KANBAN_REPORT_GITHUB_API_URL': '(optional) GitHub API base URL (default https://api.github.com)',
   'PORT': 'HTTP port for the server',
   'HOST': 'Host interface to bind to',
   'VITE_API_BASE': 'Base URL for API calls',
@@ -116,6 +125,11 @@ for (const k of viteVars) {
 }
 if (!viteVars.has('API_BASE')) allVars.push({ name: 'VITE_API_BASE', scope: 'client' });
 if (!viteVars.has('PORT')) allVars.push({ name: 'VITE_PORT', scope: 'client' });
+
+const turnstileVars = findEnvVars(path.join(repoRoot, 'server'), 'process.env.TURNSTILE_');
+for (const k of turnstileVars) {
+  allVars.push({ name: `TURNSTILE_${k}`, scope: 'server' });
+}
 
 allVars.sort((a, b) => a.name.localeCompare(b.name));
 
