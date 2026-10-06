@@ -363,11 +363,15 @@ client, since a wrapped flex row, a squashed card header, or a popover
 clipped off the viewport edge is a rendered geometry outcome no class-name
 assertion can see. The header-layout guard measures the real header height
 at twelve widths (320-1920px, two-sided — a drop below baseline fails just
-as a rise above it does) AND opens the "i" help popover at eight of them
-(320-1440px) to assert its bounding box stays fully inside the viewport
-with a margin, with the Report-a-bug feature turned ON in that CI run — the
-two regression classes this release's round-2 and round-4 fixes addressed,
-respectively.
+as a rise above it does) under a NON-coarse pointer (a resized desktop
+window), AND repeats a subset of those widths under an emulated COARSE
+pointer (`Emulation.setTouchEmulationEnabled`, matching a real touch phone/
+tablet — the two measure genuinely different, both-correct heights, since
+several controls grow under `pointer-coarse:` Tailwind variants). It also
+opens the "i" help popover at eight widths (320-1440px) to assert its
+bounding box stays fully inside the viewport with a margin. All of this
+runs with the Report-a-bug feature turned ON — the two regression classes
+this release's round-2 and round-4 fixes addressed.
 
 ### Releasing
 

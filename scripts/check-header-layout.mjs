@@ -17,22 +17,28 @@
  * same reasoning scripts/check-card-layout.mjs gives for driving a real
  * browser instead of asserting a class string.
  *
- * Expected header heights are two-sided on purpose (not just a ceiling):
- * dropping BELOW baseline can mean content silently went missing just as
- * much as growing above it can mean an extra wrapped row. Measured
- * independently four ways against this exact build before being treated as
- * ground truth (see CHANGELOG v2.16.0 "Fixed" for the full reconciliation
- * note): the project's own CDP convention (this script, `mobile` flag
- * removed — see below), and three separate real-Chromium passes (viewport
- * resize only, no mobile-emulation quirk, incl. one with an extra 2s wait to
- * rule out a version-chip fetch race). All four agreed: 84/120/49px. An
- * EARLIER pass of this script toggled Chrome's `mobile` emulation flag for
- * widths under 768 (`mobile: width < 768` in `setDeviceMetricsOverride`),
- * which is a DIFFERENT rendering path (touch/mobile text autosizing, not
- * just a narrower desktop viewport) than how an operator actually resizes a
- * real browser window — this project's responsive layout is pure CSS
- * breakpoints on viewport width, not a device-type switch, so `mobile` is
- * now always `false` here, matching how a human actually experiences it.
+ * TWO baselines, because TWO real pointer environments produce two
+ * genuinely different (and both correct) header heights:
+ *
+ *   - NON-COARSE (`EXPECTATIONS`, below): a desktop browser window resized
+ *     narrow — `pointer: coarse` never matches, so the `pointer-coarse:`
+ *     Tailwind variants (44px touch targets on several header controls)
+ *     never apply. 84/120/49px. This is what `Emulation.setDeviceMetricsOverride`
+ *     alone measures, and it is ALL this guard verified through round 4.
+ *   - COARSE (`COARSE_EXPECTATIONS`, below): a REAL touch phone/tablet, where
+ *     `pointer: coarse` DOES match, growing the `⋯` toggle (and other
+ *     controls) to a 44px minimum and the header along with it:
+ *     113/155/101/67px. Round-4 CHANGELOG language claiming "84px, not
+ *     113px" was WRONG — both are real, for different pointer types, and
+ *     ON == OFF in both. `Emulation.setDeviceMetricsOverride`'s own `mobile`
+ *     flag does NOT reliably flip `pointer: coarse` in headless Chrome
+ *     either way, which is why an earlier pass toggling it produced neither
+ *     number cleanly. `Emulation.setTouchEmulationEnabled` is what actually
+ *     flips the media query (verified below) — see the second pass.
+ *
+ * Both are two-sided on purpose (not just a ceiling): dropping BELOW
+ * baseline can mean content silently went missing just as much as growing
+ * above it can mean an extra wrapped row.
  *
  * Dependency-free, same CDP-over-WebSocket approach as check-card-layout.mjs
  * and check-browser-smoke.mjs — no puppeteer/playwright.
@@ -59,14 +65,22 @@ const WS = globalThis.WebSocket;
 const BASE = process.argv[2] || 'http://127.0.0.1:4100';
 const PORT_ARG = process.argv[3] || process.env.CDP_PORT;
 
-// width -> expected header height (px). Real-Chromium ground truth — see the
-// file header comment for the reconciliation. Identical with the bug-report
-// feature on or off, in both themes, at every one of these widths.
+// width -> expected header height (px), NON-COARSE pointer (desktop window
+// resize). Real-Chromium ground truth — see the file header comment.
+// Identical with the bug-report feature on or off, in both themes.
 const EXPECTATIONS = {
   320: 84, 360: 84, 390: 84,
   768: 120, 820: 120, 824: 120, 900: 120, 1024: 120,
   1100: 82,
   1280: 49, 1440: 49, 1920: 49,
+};
+// width -> expected header height (px), COARSE pointer (real touch phone/
+// tablet — `pointer-coarse:min-h-11` 44px targets grow several header
+// controls). Same real-Chromium measurement, `Emulation.setTouchEmulationEnabled`
+// forcing `pointer: coarse` to match. Checked at a subset of widths — the
+// same ones CONTAINMENT_WIDTHS below already covers.
+const COARSE_EXPECTATIONS = {
+  320: 113, 768: 155, 1100: 101, 1280: 67,
 };
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
@@ -303,15 +317,52 @@ async function main() {
       }
     }
   }
+
+  // Second pass: COARSE pointer (a real touch phone/tablet), a handful of
+  // widths — see COARSE_EXPECTATIONS above for why these numbers legitimately
+  // differ from the non-coarse pass. `setDeviceMetricsOverride`'s own
+  // `mobile` flag does NOT reliably flip `pointer: coarse` in headless
+  // Chrome; `setTouchEmulationEnabled` does (verified against this exact
+  // build before being wired in — see CHANGELOG v2.16.0 "Fixed").
+  const coarseOffenders = [];
+  const measuredCoarseHeights = {};
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+  await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+  for (const [widthStr, expected] of Object.entries(COARSE_EXPECTATIONS)) {
+    const width = Number(widthStr);
+    await send('Emulation.setDeviceMetricsOverride', {
+      width, height: 900, deviceScaleFactor: 1, mobile: false,
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+    const h = r.result && r.result.value;
+    measuredCoarseHeights[width] = h;
+    if (typeof h !== 'number') {
+      coarseOffenders.push({ width, expected, actual: h, reason: 'header missing' });
+    } else if (Math.abs(h - expected) > TOLERANCE_PX) {
+      coarseOffenders.push({
+        width, expected, actual: h,
+        reason: h > expected ? `+${h - expected}px over` : `-${expected - h}px under`,
+      });
+    }
+  }
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   ws.close();
 
   console.log(`header layout guard (CDP :${usedPort})`);
-  console.log(`  heights: ${JSON.stringify(measuredHeights)}`);
+  console.log(`  heights (non-coarse): ${JSON.stringify(measuredHeights)}`);
+  console.log(`  heights (coarse):     ${JSON.stringify(measuredCoarseHeights)}`);
   console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
 
-  if (heightOffenders.length === 0 && containmentOffenders.length === 0) {
-    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline, popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
+  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0) {
+    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
     process.exit(0);
+  }
+  if (coarseOffenders.length) {
+    console.error(`  FAIL — ${coarseOffenders.length} width(s) off the expected COARSE-pointer header height:`);
+    for (const o of coarseOffenders) {
+      console.error(`    ${o.width}px: expected ${o.expected}±${TOLERANCE_PX}, got ${o.actual}  (${o.reason})`);
+    }
   }
   if (heightOffenders.length) {
     console.error(`  FAIL — ${heightOffenders.length} width(s) off the expected header height:`);

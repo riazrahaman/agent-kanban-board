@@ -105,7 +105,9 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   320-1920px with the feature on, failing if it ever grows past baseline
   again. Verified in real headless Chrome: identical header height at all
   eleven widths, both themes, feature on vs off (320/360/390: 84px;
-  768/824/900/1024: 120px; 1100: 82px; 1280/1440/1920: 49px).
+  768/824/900/1024: 120px; 1100: 82px; 1280/1440/1920: 49px) — a non-coarse
+  pointer (desktop window resize); see the baseline reconciliation below for
+  the separate, also-real coarse-pointer (real touch) numbers.
 - **The fix above's own popover clipped off the viewport edge on phones and
   tablets.** Moving the entry into HeaderHelp's `absolute right-0 w-80`
   popover fixed the toolbar-width regression but introduced a second one:
@@ -130,30 +132,42 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   proven by temporarily restoring the clipped positioning and confirming
   each one fails, then reverting.
 
-  **Baseline reconciliation (header height at 320-390px).** An earlier pass
-  of `check-header-layout.mjs` toggled Chrome's `mobile` emulation flag for
-  narrow widths (`mobile: width < 768` in `Emulation.setDeviceMetricsOverride`)
-  and reported 84px; a tester measuring in real Chrome reported 113px at the
-  same widths. Re-measured four independent ways with `mobile` ALWAYS
-  `false` (a real browser window resize, which is what this project's CSS
-  breakpoints are actually designed against — not a device-type switch):
-  the script itself, a Playwright pass with no emulation, a Playwright pass
-  with an extra 2s wait to rule out a version-chip fetch race, and a direct
-  DOM inspection of the title-row/toggle-button geometry (which showed ~90px
-  of slack at 320px — not a razor-thin wrapping boundary). All four agreed:
-  84px, not 113px. Root cause of the ORIGINAL script's flaky containment
-  probe (a related but separate bug, now also fixed): it drove the phone
-  disclosure-toggle click and the "i"-button click back-to-back in one
-  synchronous CDP script with no render tick between them, which could leave
-  React's `headerOpen` state stuck on into the NEXT width's measurement —
-  reproducing exactly this kind of inflated height (163px, observed while
-  debugging) from leaked state rather than a real per-width baseline. The
-  probe now drives each click as a separate CDP round-trip with a real
-  settle delay, matching how an actual user's clicks always have an
-  event-loop turn between them. `EXPECTATIONS` in the script, and the
-  prose above, both carry the reconciled 84/120/49px baseline; the height
-  comparison is now two-sided (fails on a drop below baseline, not just a
-  rise above it) so a future accidental content removal is also caught.
+  **Baseline reconciliation, corrected (header height at narrow widths).**
+  An earlier version of this note claimed 84px was "the" correct height at
+  320-390px and that a tester's real-Chrome reading of 113px was a
+  measurement artifact. That was wrong, and is retracted. **Both numbers are
+  real, for two different real pointer environments, and the feature is
+  ON == OFF in both:**
+  - **84/120/49px** — a desktop browser window resized narrow. `pointer:
+    coarse` never matches here, so the `pointer-coarse:min-h-11` (44px
+    touch target) Tailwind variants on several header controls never apply.
+  - **113/155/101/67px** (at 320/768/1100/1280px respectively) — a REAL
+    touch phone or tablet, where `pointer: coarse` DOES match, growing the
+    `⋯` toggle (31px → 44px) and the header along with it.
+
+  `Emulation.setDeviceMetricsOverride`'s own `mobile` flag does not reliably
+  flip the `pointer: coarse` media query in headless Chrome either way,
+  which is why an earlier pass toggling it for narrow widths produced a
+  number that was consistent but matched neither pointer environment
+  cleanly, and was mistaken for ground truth. `Emulation.setTouchEmulationEnabled`
+  is what actually flips it (confirmed directly: `matchMedia('(pointer:
+  coarse)').matches` flips from `false` to `true`); `check-header-layout.mjs`
+  now runs BOTH passes — see `EXPECTATIONS` (non-coarse) and
+  `COARSE_EXPECTATIONS` (coarse) in the script — so CI covers the pointer
+  type it can actually drive headlessly. CI does not exercise real touch
+  hardware; the coarse pass emulates `pointer: coarse` itself, which is the
+  mechanism, not a hardware stand-in, so a genuinely novel coarse-only
+  regression on real hardware is still a manual/tester catch, same as before
+  this pass existed. Both passes are two-sided (a drop below baseline fails
+  too, not just a rise above it).
+
+  Separately, and unrelated to which number is correct: the ORIGINAL
+  containment probe had a real bug, now fixed, that produced a bogus 163px
+  reading while debugging this — it drove the phone disclosure-toggle click
+  and the "i"-button click back-to-back in one synchronous CDP script with
+  no render tick between them, which could leave React's `headerOpen` state
+  stuck on into the NEXT width's measurement. The probe now drives each
+  click as a separate CDP round-trip with a real settle delay.
 
 ## [2.15.11] — 2026-10-05
 
