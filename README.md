@@ -2,7 +2,7 @@
 
 A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
-Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing.
+Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
 
 Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
 
@@ -164,6 +164,94 @@ The board features pluggable persistence:
   - Untrusted origins receive no `Access-Control-Allow-Origin` header.
 - **Input Sanitization (A03)**:
   - All untrusted input from agents (task titles, descriptions, and log messages) is escaped to prevent Stored XSS.
+- **Report-a-bug is the one unauthenticated write route**, by design (an
+  anonymous visitor has no board token) — it is off until explicitly
+  configured, honeypot + captcha + rate-limit gated, and mounted so it never
+  weakens auth on any other endpoint. See
+  [Enabling Report-a-bug](#enabling-report-a-bug).
+
+---
+
+## Report a Bug
+
+A visitor can click **Report a bug** (header, and on the About page) to file
+a title + description straight to GitHub as a `user-report`-labelled issue —
+no account, no attachments, and no contact field is collected (the repo is
+public; nothing that looks like personal data is asked for). It is protected
+by [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), a
+honeypot field, and both a global daily cap and a per-IP hourly cap. The
+route is unauthenticated by design (`POST /api/bug-reports` takes no board
+token, no `?project=`) — see [Security & Authentication](#security--authentication).
+
+**The feature is OFF until explicitly configured** — unset, `GET
+/api/bug-reports/config` reports `{enabled:false}` and the UI never shows the
+entry point; `POST /api/bug-reports` 404s.
+
+### Enabling Report-a-bug
+
+Set the first four of these (server-side; see `.env.example` /
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference):
+
+| Variable | Secret? | Required | Where to get it |
+| :--- | :--- | :--- | :--- |
+| `KANBAN_REPORT_GITHUB_TOKEN` | **secret** | yes | A [fine-grained GitHub PAT](https://github.com/settings/personal-access-tokens/new) scoped to **one** repository, with repository permission **Issues: Read and write**. Nothing else. |
+| `KANBAN_REPORT_REPO` | public | yes | The repo the token is scoped to, as `owner/name` (e.g. `riazrahaman/agent-kanban-board`). |
+| `TURNSTILE_SECRET` | **secret** | yes | From the [Cloudflare Turnstile dashboard](https://dash.cloudflare.com/?to=/:account/turnstile) — add a widget, copy its secret key. |
+| `TURNSTILE_SITE_KEY` | public | yes | The matching site key from the same widget. Served to the browser via `GET /api/bug-reports/config`; never the secret. |
+| `TURNSTILE_HOSTNAMES` | public | optional | Comma-separated allow-list that a siteverify response's `hostname` must appear in (e.g. `agent-kanban.riazrahaman.com`). Unset skips the check and logs one startup warning. |
+| `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports per UTC day. Default `50`. Resets on restart (in-memory). |
+| `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap per hour. Default `3`. Resets on restart (in-memory). |
+| `KANBAN_REPORT_GITHUB_API_URL` | public | optional | Overrides the GitHub API base (default `https://api.github.com`) — points the local demo/test stub (`scripts/stub-github-issues.mjs`) instead of the real API. |
+| `KANBAN_TRUST_PROXY` | public | optional | Express `trust proxy` hop count behind a reverse proxy (default `1`, correct for Railway). Needed for the per-IP cap to see the real client address instead of the proxy's. |
+
+**Never commit a real token or secret.** `.env.example` ships only
+placeholders; `.gitignore` already excludes a real `.env`. If you paste a
+token or secret into a chat, an issue, or a commit by mistake, revoke and
+rotate it immediately — fine-grained PATs and Turnstile secrets can both be
+rotated from the same dashboards linked above.
+
+**Testing without a real token.** Cloudflare publishes fixed test
+keys for exactly this purpose — they are designed to be shared in docs and
+test suites, not secrets:
+
+| Key | Behaviour |
+| :--- | :--- |
+| `1x0000000000000000000000000000000AA` (secret) | Always passes |
+| `2x0000000000000000000000000000000AA` (secret) | Always fails |
+| `3x0000000000000000000000000000000AA` (secret) | Always answers as an already-used/expired token |
+| `1x00000000000000000000AA` (site key) | Always-pass test site key, safe to render in a browser |
+
+Note: Cloudflare's test secrets return a fixed canned response (no real
+`action`/`hostname`), so hitting the **real** Cloudflare network with them
+will not pass this server's `action==='bug-report'` check end-to-end — that
+check is exactly what `server/test/kanban.bugreports.test.js` exercises
+instead, with a fully injected fetch (see below). A genuine live demo of the
+whole path needs a real (free) Turnstile site.
+
+### Running the local demo
+
+No real GitHub token or live Turnstile network call required — a bundled
+stub plays GitHub's side:
+
+```bash
+node scripts/stub-github-issues.mjs &
+
+KANBAN_REPORT_GITHUB_API_URL=http://localhost:3456 \
+KANBAN_REPORT_GITHUB_TOKEN=stub-token \
+KANBAN_REPORT_REPO=owner/repo \
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA \
+TURNSTILE_SITE_KEY=1x00000000000000000000AA \
+npm --prefix server start
+```
+
+`GET /api/bug-reports/config` now reports `{enabled:true,...}`. Submitting a
+report through the UI (or `curl`) still makes a REAL call to Cloudflare's
+siteverify endpoint — only GitHub is stubbed — so pass a real Turnstile token
+from the rendered widget, or run
+`npm --prefix server test -- test/kanban.bugreports.test.js` to exercise the
+entire flow (honeypot, validation, every Turnstile outcome, rate limits,
+GitHub retry/label fallback) with both Turnstile and GitHub fully mocked and
+no network at all.
 
 ---
 

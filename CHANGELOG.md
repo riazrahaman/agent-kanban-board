@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,61 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.16.0] — 2026-10-06
+
+Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
+
+### Added
+- **Public, anonymous bug reporting.** A visitor can click "Report a bug"
+  (header + About page), fill a title and description, pass a Cloudflare
+  Turnstile challenge, and the server files a labelled (`user-report`) GitHub
+  issue on their behalf — no account, no attachments, no contact field (the
+  repo is public; nothing that could be personal data is collected).
+  `GET /api/bug-reports/config` → `POST /api/bug-reports`
+  (`server/routes/bugReports.js`); UNAUTHENTICATED by design (no board token,
+  no `?project=`) and mounted ahead of the auth/rate-limit middleware in
+  `server.js` — the one human-facing write route on the board.
+- **Off unless configured.** The feature is 404/disabled until
+  `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO`, `TURNSTILE_SECRET` and
+  `TURNSTILE_SITE_KEY` are all set. Optional: `TURNSTILE_HOSTNAMES` (siteverify
+  hostname allow-list; unset logs one startup warning and skips the check),
+  `KANBAN_REPORT_DAILY_CAP` (default 50/UTC day, global), the per-IP cap
+  `KANBAN_REPORT_PER_IP_PER_HOUR` (default 3/hour), and
+  `KANBAN_REPORT_GITHUB_API_URL` (points the demo/test suite at a local stub
+  instead of the real GitHub API). See README "Enabling Report-a-bug".
+- **Defense in depth, in order:** a honeypot field (bots that fill it get a
+  quiet fake 200, nothing is filed), strict validation (title 1-120 chars,
+  description 10-5000, control characters stripped), the in-memory rate
+  limits above (peek-then-consume-on-success, so a report that fails
+  validation, captcha, or filing never spends the cap), Turnstile
+  `action:'bug-report'` + hostname verification (fails closed, 502, on a
+  Turnstile network error), and GitHub filing with up to 3 retry attempts
+  (exponential backoff) on network errors/5xx/429/secondary-rate-limited 403,
+  no retry on any other 4xx, and an uncounted one-shot fallback that drops the
+  `user-report` label on a 422 (the label may not exist on a fresh repo yet).
+- **Markdown-injection-safe issue bodies.** The user's description is wrapped
+  in a fenced code block whose backtick run is always longer than any run
+  already in the text, so mentions, `#refs`, images/tracking pixels and raw
+  HTML in a report can never break out of the fence or notify anyone; the
+  title additionally neutralizes `@mentions` and collapses embedded newlines
+  to a single line before it is sent.
+- **New demo stub** `scripts/stub-github-issues.mjs` — a dependency-free local
+  stand-in for `POST /repos/:owner/:repo/issues` that prints exactly what the
+  server would have sent to GitHub, for demoing the full flow without a real
+  PAT (point `KANBAN_REPORT_GITHUB_API_URL` at it).
+- 45 new server tests (`server/test/kanban.bugreports.test.js`) and 26 new
+  client tests (`client/src/lib/bugReport.test.mjs`,
+  `bugReportContract.test.mjs`) cover the feature gate, honeypot, validation
+  limits, every Turnstile outcome (fail/wrong-action/wrong-hostname/network
+  error/replay), the per-IP limit and an `X-Forwarded-For` spoof attempt, the
+  daily cap (incl. that a failed filing never spends it), GitHub retry/label
+  fallback, and issue-body sanitisation.
+- `KANBAN_TRUST_PROXY` (default `1`) makes the Express `trust proxy` hop count
+  explicit and configurable, so the per-IP bug-report limiter (and anything
+  else keyed off `req.ip`) sees the real client address behind Railway's one
+  reverse-proxy hop without trusting an attacker-forged
+  `X-Forwarded-For` prefix beyond that hop.
 
 ## [2.15.11] — 2026-10-05
 

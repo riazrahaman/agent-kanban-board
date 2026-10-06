@@ -307,6 +307,27 @@ dividers (`border-b border-line py-2.5 last:border-0`); step markers are
 `flex h-7 w-7 … border border-line bg-surface font-mono text-[11px]`. Counts
 (`TRUST_METRICS`) must be refreshed when the test suites change size.
 
+### 7.7 Report-a-bug sheet (`components/BugReportDialog.tsx`)
+
+Same slide-in shell as TaskSheet (§7, right-anchored `aside`, `fixed inset-0`
+scrim, `translate-x-full` ↔ `translate-x-0`, Escape-to-close) — the one other
+panel on the board that is not a task. Two conventions it introduces that a
+future form should reuse:
+
+- **Char counter.** A right-aligned `font-mono text-[10px] tabular-nums
+  text-muted` count next to the field label, driven by a pure
+  `remainingChars(value, max)` helper (`lib/bugReport.ts`) — never computed
+  inline in the component.
+- **Honeypot field.** Moved off-screen with `absolute -left-[9999px] ...
+  h-px w-px overflow-hidden` plus `aria-hidden="true"` and `tabIndex={-1}` —
+  **never** `className="hidden"` / `display:none`, which some bots
+  special-case and skip "filling" (defeating the trap). Still a real
+  `<label>` + `<input>` pair, just unreachable by a human.
+
+The Turnstile widget container (`<div ref={widgetContainerRef} />`) is an
+unstyled mount point — Cloudflare's own script renders into it — so it
+carries no DESIGN.md tokens itself; the surrounding form does.
+
 ---
 
 ## 8. Theming
