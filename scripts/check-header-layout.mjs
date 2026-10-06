@@ -1,29 +1,38 @@
 #!/usr/bin/env node
 /**
- * Header layout guard: the header toolbar must not grow taller/wrap an extra
- * row at any of the widths below.
+ * Header layout guard: (1) the header toolbar must not grow taller/wrap an
+ * extra row at any of the widths below, and (2) the "i" help popover (which
+ * now also hosts the Report-a-bug entry, v2.16.0) must stay fully inside the
+ * viewport with a safe margin at every width.
  *
- * WHY THIS EXISTS (v2.16.0 review round 2). A standalone, always-visible
- * "Report a bug" button added to the header's flex toolbar cost just enough
- * width to push the row onto an extra line at several mid viewports (824px:
- * 120px either way, already two rows; 1100px: 120px vs the feature-off 82px
- * — the theme toggle was orphaned onto its own row). A className assertion
- * cannot know how the browser actually wraps a flex row; this measures the
- * REAL rendered header height, the same way scripts/check-card-layout.mjs
- * measures real card geometry instead of trusting a class string.
+ * WHY THIS EXISTS (v2.16.0 review rounds 2-4). Round 2: a standalone,
+ * always-visible "Report a bug" header button cost just enough width to
+ * wrap the toolbar onto an extra row at several mid viewports. Round 4: the
+ * fix (moving the entry into HeaderHelp's "i" popover) introduced its own
+ * defect — `absolute right-0 w-80` clips off the LEFT edge of the viewport
+ * whenever the anchor button sits less than 320px from the left edge,
+ * measured at 320-390px (~44% clipped) and again at 768-820px (the full
+ * header-controls row crowds the button rightward). Neither defect is a
+ * className a unit test can see; both are rendered-geometry outcomes, the
+ * same reasoning scripts/check-card-layout.mjs gives for driving a real
+ * browser instead of asserting a class string.
  *
- * The fix moved the entry point inside HeaderHelp's existing `absolute`-
- * positioned "i" popover, which costs zero width in the toolbar's flex
- * layout by construction — but "by construction" is exactly the kind of
- * claim this guard exists to verify empirically, and to keep verifying on
- * every future change to the header.
- *
- * Expected heights are the board's OWN real breakpoints (measured against
- * this exact header, feature on AND off — see CHANGELOG v2.16.0 "Fixed"):
- * phones collapse to the single-row chrome (~84px), the header/filter
- * disclosure range doubles up (~120px) until `lg`, then settles back to a
- * single row (~49-82px). A small tolerance absorbs font-rendering variance
- * across runner images; it must NOT absorb a whole extra wrapped row.
+ * Expected header heights are two-sided on purpose (not just a ceiling):
+ * dropping BELOW baseline can mean content silently went missing just as
+ * much as growing above it can mean an extra wrapped row. Measured
+ * independently four ways against this exact build before being treated as
+ * ground truth (see CHANGELOG v2.16.0 "Fixed" for the full reconciliation
+ * note): the project's own CDP convention (this script, `mobile` flag
+ * removed — see below), and three separate real-Chromium passes (viewport
+ * resize only, no mobile-emulation quirk, incl. one with an extra 2s wait to
+ * rule out a version-chip fetch race). All four agreed: 84/120/49px. An
+ * EARLIER pass of this script toggled Chrome's `mobile` emulation flag for
+ * widths under 768 (`mobile: width < 768` in `setDeviceMetricsOverride`),
+ * which is a DIFFERENT rendering path (touch/mobile text autosizing, not
+ * just a narrower desktop viewport) than how an operator actually resizes a
+ * real browser window — this project's responsive layout is pure CSS
+ * breakpoints on viewport width, not a device-type switch, so `mobile` is
+ * now always `false` here, matching how a human actually experiences it.
  *
  * Dependency-free, same CDP-over-WebSocket approach as check-card-layout.mjs
  * and check-browser-smoke.mjs — no puppeteer/playwright.
@@ -31,8 +40,8 @@
  * Usage:
  *   node scripts/check-header-layout.mjs <base-url> [cdp-port]
  *
- * Exit 0 = every width stays within tolerance of its expected height.
- * Exit 1 = at least one width grew (wrapped an extra row).
+ * Exit 0 = every width stays within tolerance on both guards.
+ * Exit 1 = a header-height or popover-containment regression.
  * Exit 2 = environmental skip/error (no Chrome / no server / no page).
  */
 import http from 'node:http';
@@ -50,16 +59,23 @@ const WS = globalThis.WebSocket;
 const BASE = process.argv[2] || 'http://127.0.0.1:4100';
 const PORT_ARG = process.argv[3] || process.env.CDP_PORT;
 
-// width -> { expected, tolerance }. Measured against a real Chromium build
-// of this exact client (see CHANGELOG v2.16.0 "Fixed" for the ON/OFF table);
-// identical with the bug-report feature on or off, in both themes.
+// width -> expected header height (px). Real-Chromium ground truth — see the
+// file header comment for the reconciliation. Identical with the bug-report
+// feature on or off, in both themes, at every one of these widths.
 const EXPECTATIONS = {
   320: 84, 360: 84, 390: 84,
-  768: 120, 824: 120, 900: 120, 1024: 120,
+  768: 120, 820: 120, 824: 120, 900: 120, 1024: 120,
   1100: 82,
   1280: 49, 1440: 49, 1920: 49,
 };
+// Two-sided: a height BELOW baseline-tolerance can mean content silently
+// disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
+
+// The popover's bounding box must stay within [MARGIN_PX, innerWidth -
+// MARGIN_PX] on both edges at every width.
+const POPOVER_MARGIN_PX = 8;
+const CONTAINMENT_WIDTHS = [320, 360, 390, 768, 820, 1024, 1280, 1440];
 
 function candidatePorts() {
   const list = [];
@@ -105,6 +121,46 @@ const HEADER_HEIGHT_PROBE = `(() => {
   return h ? Math.round(h.getBoundingClientRect().height) : null;
 })()`;
 
+// Each popover-containment check is a SEQUENCE of small scripts, with a real
+// settle delay between them (see the call sites below) rather than one
+// cram-everything-into-one-script-evaluation. React's state updates (the
+// phone disclosure opening, then the popover opening) are NOT guaranteed to
+// have committed to the DOM by the next synchronous line in the SAME script
+// — clicking the disclosure toggle and the "i" button back-to-back with no
+// render in between left the popover never opening (and, worse, left the
+// disclosure's `headerOpen` state stuck on for the NEXT width's
+// measurement). A real user's two separate clicks always have an event-loop
+// turn between them; this gives the harness the same thing.
+const FIND_TOGGLE = `(() => {
+  const toggle = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Toggle board controls');
+  const visible = !!toggle && toggle.getClientRects().length > 0;
+  if (visible) toggle.click();
+  return visible;
+})()`;
+const CLICK_HELP = `(() => {
+  const help = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'What do the agent id and api token fields do?');
+  if (!help) return false;
+  help.click();
+  return true;
+})()`;
+const READ_POPOVER = `(() => {
+  const popover = document.querySelector('[role="dialog"][aria-label="Operator field reference"]');
+  if (!popover) return { error: 'popover did not open' };
+  const r = popover.getBoundingClientRect();
+  const reportBtn = [...popover.querySelectorAll('button')].find(
+    (b) => b.textContent.trim() === 'Report a bug',
+  );
+  const reportBox = reportBtn ? reportBtn.getBoundingClientRect() : null;
+  return {
+    innerWidth: window.innerWidth,
+    box: { x: r.x, y: r.y, width: r.width, height: r.height },
+    hasReportButton: !!reportBtn,
+    reportBox: reportBox ? { x: reportBox.x, width: reportBox.width, height: reportBox.height } : null,
+  };
+})()`;
+
 async function main() {
   let target = null;
   let usedPort = null;
@@ -148,12 +204,13 @@ async function main() {
   };
 
   await send('Page.enable');
+  // `mobile: false` ALWAYS — see the file header comment. This is a desktop
+  // browser window being resized, not a device-type emulation switch.
   await send('Emulation.setDeviceMetricsOverride', {
     width: 1024, height: 900, deviceScaleFactor: 1, mobile: false,
   });
   await send('Page.navigate', { url: BASE });
 
-  // Wait for the header to actually exist before measuring anything.
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await new Promise((r) => setTimeout(r, 500));
@@ -166,36 +223,107 @@ async function main() {
     process.exit(2);
   }
 
-  const offenders = [];
-  const measured = {};
-  for (const [widthStr, expected] of Object.entries(EXPECTATIONS)) {
-    const width = Number(widthStr);
+  const heightOffenders = [];
+  const containmentOffenders = [];
+  const measuredHeights = {};
+  const measuredBoxes = {};
+
+  const allWidths = [...new Set([...Object.keys(EXPECTATIONS).map(Number), ...CONTAINMENT_WIDTHS])].sort((a, b) => a - b);
+
+  for (const width of allWidths) {
     await send('Emulation.setDeviceMetricsOverride', {
-      width, height: 900, deviceScaleFactor: 1, mobile: width < 768,
+      width, height: 900, deviceScaleFactor: 1, mobile: false,
     });
-    // Let layout settle after the viewport resize.
     await new Promise((r) => setTimeout(r, 150));
-    const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
-    const h = r.result && r.result.value;
-    measured[width] = h;
-    if (typeof h !== 'number') {
-      offenders.push({ width, expected, actual: h, reason: 'header missing' });
-      continue;
+
+    if (Object.prototype.hasOwnProperty.call(EXPECTATIONS, width)) {
+      const expected = EXPECTATIONS[width];
+      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+      const h = r.result && r.result.value;
+      measuredHeights[width] = h;
+      if (typeof h !== 'number') {
+        heightOffenders.push({ width, expected, actual: h, reason: 'header missing' });
+      } else if (Math.abs(h - expected) > TOLERANCE_PX) {
+        heightOffenders.push({
+          width, expected, actual: h,
+          reason: h > expected ? `+${h - expected}px over` : `-${expected - h}px under`,
+        });
+      }
     }
-    if (h > expected + TOLERANCE_PX) {
-      offenders.push({ width, expected, actual: h, reason: `+${h - expected}px over tolerance` });
+
+    if (CONTAINMENT_WIDTHS.includes(width)) {
+      // Step 1: open the phone disclosure, IF it is what currently gates the
+      // "i" button (a real settle delay before the next click — see the
+      // probe comment above for why this cannot be one synchronous script).
+      const toggleStep = await send('Runtime.evaluate', { expression: FIND_TOGGLE, returnByValue: true });
+      const toggledOpen = Boolean(toggleStep.result && toggleStep.result.value);
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Step 2: open the "i" popover itself.
+      const helpStep = await send('Runtime.evaluate', { expression: CLICK_HELP, returnByValue: true });
+      const helpClicked = Boolean(helpStep.result && helpStep.result.value);
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Step 3: measure.
+      const readStep = await send('Runtime.evaluate', { expression: READ_POPOVER, returnByValue: true });
+      const v = readStep.result && readStep.result.value;
+      measuredBoxes[width] = v;
+
+      // Step 4: close everything back up, so the next width starts from the
+      // same default-closed state a real first load would — a settle delay
+      // each time, same reasoning as opening.
+      if (helpClicked) {
+        await send('Runtime.evaluate', { expression: CLICK_HELP, returnByValue: true });
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      if (toggledOpen) {
+        await send('Runtime.evaluate', { expression: FIND_TOGGLE, returnByValue: true });
+        await new Promise((r) => setTimeout(r, 150));
+      }
+
+      if (!helpClicked) {
+        containmentOffenders.push({ width, reason: 'help button not found' });
+      } else if (!v || v.error) {
+        containmentOffenders.push({ width, reason: (v && v.error) || 'no result' });
+      } else {
+        const { box, innerWidth, hasReportButton, reportBox } = v;
+        const leftEdge = box.x;
+        const rightEdge = box.x + box.width;
+        if (leftEdge < POPOVER_MARGIN_PX) {
+          containmentOffenders.push({ width, reason: `left edge at ${Math.round(leftEdge)}px, clipped off-screen (margin ${POPOVER_MARGIN_PX}px)` });
+        }
+        if (rightEdge > innerWidth - POPOVER_MARGIN_PX) {
+          containmentOffenders.push({ width, reason: `right edge at ${Math.round(rightEdge)}px exceeds viewport ${innerWidth}px (margin ${POPOVER_MARGIN_PX}px)` });
+        }
+        if (!hasReportButton) {
+          containmentOffenders.push({ width, reason: 'Report a bug row not found in the popover (feature off, or markup regressed)' });
+        } else if (reportBox && (reportBox.x < 0 || reportBox.x + reportBox.width > innerWidth)) {
+          containmentOffenders.push({ width, reason: `Report a bug row itself clipped (x=${Math.round(reportBox.x)}, width=${Math.round(reportBox.width)}, viewport=${innerWidth})` });
+        }
+      }
     }
   }
   ws.close();
 
-  console.log(`header layout guard (CDP :${usedPort}): ${JSON.stringify(measured)}`);
-  if (offenders.length === 0) {
-    console.log(`  OK — header height stayed within ${TOLERANCE_PX}px of baseline at every tested width`);
+  console.log(`header layout guard (CDP :${usedPort})`);
+  console.log(`  heights: ${JSON.stringify(measuredHeights)}`);
+  console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
+
+  if (heightOffenders.length === 0 && containmentOffenders.length === 0) {
+    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline, popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
     process.exit(0);
   }
-  console.error(`  FAIL — ${offenders.length} width(s) grew past the expected header height:`);
-  for (const o of offenders) {
-    console.error(`    ${o.width}px: expected <= ${o.expected + TOLERANCE_PX}, got ${o.actual}  (${o.reason})`);
+  if (heightOffenders.length) {
+    console.error(`  FAIL — ${heightOffenders.length} width(s) off the expected header height:`);
+    for (const o of heightOffenders) {
+      console.error(`    ${o.width}px: expected ${o.expected}±${TOLERANCE_PX}, got ${o.actual}  (${o.reason})`);
+    }
+  }
+  if (containmentOffenders.length) {
+    console.error(`  FAIL — ${containmentOffenders.length} popover containment violation(s):`);
+    for (const o of containmentOffenders) {
+      console.error(`    ${o.width}px: ${o.reason}`);
+    }
   }
   process.exit(1);
 }
