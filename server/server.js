@@ -220,8 +220,23 @@ export function createApp(opts = {}) {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 
-  // Global error handler: omit internal stack traces (A05)
+  // Global error handler: omit internal stack traces (A05).
+  //
+  // express.json() (mounted above, on EVERY route) throws a body-parser
+  // error for malformed JSON or an oversized body BEFORE any route handler
+  // runs; left untranslated, both fell through to the generic 500 branch
+  // below — a client error reported as a server error, with no way to tell
+  // "you sent broken JSON" from "the server is actually broken". Both error
+  // types carry a stable `err.type` from body-parser itself, so this checks
+  // that rather than inspecting `err.message` (which is not a public
+  // contract and could change under a dependency bump).
   app.use((err, req, res, next) => {
+    if (err && err.type === 'entity.parse.failed') {
+      return res.status(400).json({ error: 'invalid_json' });
+    }
+    if (err && err.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'payload_too_large' });
+    }
     console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
     res.status(500).json({ error: 'Internal Server Error' });
   });
