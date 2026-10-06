@@ -106,6 +106,54 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   again. Verified in real headless Chrome: identical header height at all
   eleven widths, both themes, feature on vs off (320/360/390: 84px;
   768/824/900/1024: 120px; 1100: 82px; 1280/1440/1920: 49px).
+- **The fix above's own popover clipped off the viewport edge on phones and
+  tablets.** Moving the entry into HeaderHelp's `absolute right-0 w-80`
+  popover fixed the toolbar-width regression but introduced a second one:
+  `right:0` anchors the popover to the "i" BUTTON, not the viewport, so a
+  fixed 320px-wide popover overflowed the LEFT edge whenever the button sat
+  less than 320px from it — measured at 320-390px (~44% of the popover and
+  the "Report a bug" label itself off-screen) and again at 768-820px, where
+  the header-controls row is already fully inline and crowds the button
+  rightward past the point a 320px right-anchored popover can still fit. No
+  width/max-width tweak alone can fix an anchor-relative overflow. Fixed by
+  switching to a viewport-anchored `fixed` sheet (`inset-x-3`, bottom-pinned)
+  below `lg` (1024px) — mirroring `ColumnColorsControl`'s own `max-sm:`
+  convention, just at a wider cutover to cover the measured range — with the
+  original `absolute right-0` dropdown kept from `lg` up, plus an
+  unconditional `max-w-[calc(100vw-1.5rem)]` safety net at every width. Does
+  not change header toolbar height (verified ON/OFF-identical, same as
+  above). Guarded by a new `scripts/check-header-layout.mjs` check that opens
+  the popover at eight widths (320-1440px) and asserts its bounding box
+  stays within the viewport with an 8px margin, and a new
+  `bugReportContract.test.mjs` assertion that the popover can never regress
+  to an unconditional `absolute right-0`. Non-vacuity of both guards was
+  proven by temporarily restoring the clipped positioning and confirming
+  each one fails, then reverting.
+
+  **Baseline reconciliation (header height at 320-390px).** An earlier pass
+  of `check-header-layout.mjs` toggled Chrome's `mobile` emulation flag for
+  narrow widths (`mobile: width < 768` in `Emulation.setDeviceMetricsOverride`)
+  and reported 84px; a tester measuring in real Chrome reported 113px at the
+  same widths. Re-measured four independent ways with `mobile` ALWAYS
+  `false` (a real browser window resize, which is what this project's CSS
+  breakpoints are actually designed against — not a device-type switch):
+  the script itself, a Playwright pass with no emulation, a Playwright pass
+  with an extra 2s wait to rule out a version-chip fetch race, and a direct
+  DOM inspection of the title-row/toggle-button geometry (which showed ~90px
+  of slack at 320px — not a razor-thin wrapping boundary). All four agreed:
+  84px, not 113px. Root cause of the ORIGINAL script's flaky containment
+  probe (a related but separate bug, now also fixed): it drove the phone
+  disclosure-toggle click and the "i"-button click back-to-back in one
+  synchronous CDP script with no render tick between them, which could leave
+  React's `headerOpen` state stuck on into the NEXT width's measurement —
+  reproducing exactly this kind of inflated height (163px, observed while
+  debugging) from leaked state rather than a real per-width baseline. The
+  probe now drives each click as a separate CDP round-trip with a real
+  settle delay, matching how an actual user's clicks always have an
+  event-loop turn between them. `EXPECTATIONS` in the script, and the
+  prose above, both carry the reconciled 84/120/49px baseline; the height
+  comparison is now two-sided (fails on a drop below baseline, not just a
+  rise above it) so a future accidental content removal is also caught.
 
 ## [2.15.11] — 2026-10-05
 

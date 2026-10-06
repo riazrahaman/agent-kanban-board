@@ -329,16 +329,34 @@ unstyled mount point — Cloudflare's own script renders into it — so it
 carries no DESIGN.md tokens itself; the surrounding form does.
 
 **Entry point: inside the header's "i" popover, not a header button.**
-`HeaderHelp.tsx`'s "Report a bug" row sits inside its existing `absolute`-
-positioned popover (§7, same component), behind a hairline divider. An
-earlier revision added a standalone always-visible button to the header's
-flex toolbar instead — it cost just enough width to push the toolbar onto an
-extra row at several mid viewports (measured 824-1100px in real Chrome)
-even with the row already nearly full. Anything added to the toolbar's flex
-row is live real estate; a feature that must stay invisible until opened
-belongs behind an existing disclosure (the "i" popover, a dropdown, the
-mobile `⋯` disclosure) rather than its own chrome. `About.tsx` keeps its own
-CTA — that page isn't width-constrained the way the header toolbar is.
+`HeaderHelp.tsx`'s "Report a bug" row sits inside its existing popover (§7,
+same component), behind a hairline divider. An earlier revision added a
+standalone always-visible button to the header's flex toolbar instead — it
+cost just enough width to push the toolbar onto an extra row at several mid
+viewports (measured 824-1100px in real Chrome) even with the row already
+nearly full. Anything added to the toolbar's flex row is live real estate;
+a feature that must stay invisible until opened belongs behind an existing
+disclosure (the "i" popover, a dropdown, the mobile `⋯` disclosure) rather
+than its own chrome. `About.tsx` keeps its own CTA — that page isn't
+width-constrained the way the header toolbar is.
+
+**The popover itself must stay viewport-anchored below `lg`, not
+button-anchored.** `right:0` positions a popover relative to its own
+trigger button, not the viewport — fine for a narrow popover (ProjectPicker's
+`w-48`) near a predictable edge, but a wide one (this `w-80`) clipped off the
+LEFT edge whenever the "i" button sat less than 320px from it: measured at
+320-390px AND again at 768-820px, where the full header-controls row is
+already inline and crowds the button rightward. No width/max-width tweak
+fixes an anchor-relative overflow — the fix is a different ANCHOR, not a
+smaller box. Below `lg` (1024px) this popover is `fixed` + `inset-x-3`
+(viewport margins, bottom-pinned), the same strategy `ColumnColorsControl`
+already uses below `sm` — just at a wider cutover, because this popover is
+wider and sits further right in a busier row. From `lg` up it reverts to the
+original `absolute right-0` anchored dropdown. `max-w-[calc(100vw-1.5rem)]`
+is an unconditional safety net at every breakpoint. Guarded by
+`scripts/check-header-layout.mjs`'s popover-containment check (real
+headless Chrome, 320-1440px) and a `bugReportContract.test.mjs` assertion
+that it can never regress to an unconditional `absolute right-0`.
 
 ---
 
