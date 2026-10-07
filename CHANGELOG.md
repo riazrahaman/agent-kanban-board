@@ -18,7 +18,8 @@ here **and** an annotated git tag. Do not let work accumulate under
 
 ## [2.16.1] — 2026-10-07
 
-Security: patch a transitive critical advisory in `proxy-addr`, lockfile-only.
+Security: patch two transitive advisories (`proxy-addr`, `source-map-js`)
+that were failing CI's dependency audit; both lockfile/manifest-only.
 
 ### Security
 - **`proxy-addr` 1.1.0-2.0.7, transitive via `express@5.2.1`** — CRITICAL:
@@ -36,6 +37,30 @@ Security: patch a transitive critical advisory in `proxy-addr`, lockfile-only.
   --audit-level=high` now reports 0 vulnerabilities. Full suite (503 server
   / 184 client tests) re-run against 2.0.8, including the Report-a-bug
   X-Forwarded-For spoofing test specifically — unaffected.
+- **`source-map-js` 1.0.0-1.2.1, transitive via `vite@7.3.6` → `postcss` and
+  `@tailwindcss/vite@4.3.3` → `@tailwindcss/node`** — HIGH: an event-loop
+  denial of service through indexed source-map section offsets
+  ([GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)).
+  `npm --prefix client audit --audit-level=high` was failing CI on this
+  (hidden behind the server audit's failure above, in the same `bash -e`
+  CI step, until that one was fixed and this one surfaced on its own).
+  Both dependents are build-time-only (the Vite dev server / production
+  build pipeline, not anything shipped to the browser bundle), so the DoS
+  itself has no runtime blast radius on this project — fixed anyway, since
+  it still fails the audit gate every build.
+  `npm audit fix`'s own suggested fix cascaded into ~70 added optional
+  platform binaries for esbuild/rollup/tailwindcss-oxide/lightningcss (it
+  wanted to resolve through a newer `vite`/`@tailwindcss/vite`, not just
+  patch `source-map-js` in place) — rejected as not a minimal, reviewable
+  change. Pinned instead via `client/package.json`'s existing `overrides`
+  block: `"source-map-js": "^1.2.2"` (both `postcss` and `@tailwindcss/node`
+  declare `^1.2.1`, which `1.2.2` satisfies — confirmed before pinning).
+  `client/package-lock.json`'s only change is the `source-map-js` entry
+  itself (version/resolved/integrity); no other package moved. Verified
+  with a clean `rm -rf client/node_modules && npm ci`: `npm --prefix client
+  audit --audit-level=high` now reports 0 vulnerabilities. Drop the
+  override once `postcss`/`@tailwindcss/node` themselves bump their declared
+  `source-map-js` range past `1.2.2`.
 
 ## [2.16.0] — 2026-10-06
 
