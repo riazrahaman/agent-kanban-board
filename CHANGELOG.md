@@ -19,7 +19,7 @@ here **and** an annotated git tag. Do not let work accumulate under
 ## [2.16.1] — 2026-10-07
 
 Security: patch two transitive advisories (`proxy-addr`, `source-map-js`)
-that were failing CI's dependency audit; both lockfile/manifest-only.
+that were failing CI's dependency audit; both lockfile/manifest-only (#89).
 
 ### Security
 - **`proxy-addr` 1.1.0-2.0.7, transitive via `express@5.2.1`** — CRITICAL:
@@ -62,9 +62,17 @@ that were failing CI's dependency audit; both lockfile/manifest-only.
   override once `postcss`/`@tailwindcss/node` themselves bump their declared
   `source-map-js` range past `1.2.2`.
 
+### Known issues / follow-ups
+- **#90** — the auth-failure rate limiter (`middleware/rateLimit.js`) trusts
+  the leftmost `X-Forwarded-For` entry rather than the hop count configured
+  via `trust proxy`, unlike the Report-a-bug limiter's spoof-resistant
+  `req.ip` approach; pre-existing, open.
+- **#91** — a small batch of Report-a-bug follow-ups (minor polish, not yet
+  triaged in detail); open.
+
 ## [2.16.0] — 2026-10-06
 
-Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
+Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default (#88).
 
 ### Added
 - **Public, anonymous bug reporting.** A visitor can click "Report a bug"
@@ -214,6 +222,12 @@ Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
   no render tick between them, which could leave React's `headerOpen` state
   stuck on into the NEXT width's measurement. The probe now drives each
   click as a separate CDP round-trip with a real settle delay.
+
+**Deployment note.** `v2.16.0` is tagged but was never deployed: CI's
+"Audit Dependencies" step failed on the `proxy-addr` advisory (see 2.16.1
+below, #89), so Railway skipped the deploy. The tag was intentionally left
+in place rather than moved. Report-a-bug first went live in **2.16.1**
+(CI green, Railway deploy succeeded).
 
 ## [2.15.11] — 2026-10-05
 
