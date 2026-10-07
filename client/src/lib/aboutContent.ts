@@ -46,12 +46,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '451',
+    value: '503',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '155',
+    value: '184',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -172,6 +172,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph, validateMetadata' },
   { name: 'Fail-closed corrupt-store load', code: 'store.js · JsonStorage.load' },
   { name: 'Readiness probe', code: 'routes/health.js · GET /api/health/ready' },
+  { name: 'Anonymous "Report a bug" -> GitHub issue', code: 'routes/bugReports.js · POST /api/bug-reports, Turnstile-protected' },
 ]
 
 export type FaqItem = {
@@ -203,6 +204,10 @@ export const FAQ: FaqItem[] = [
   {
     q: 'How will I know when an agent dies?',
     a: 'The reaper returns the task to BACKLOG and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. A held lease dies the moment it stops being renewed; an ownerless active card is only normalized once a grace window has passed. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
+  },
+  {
+    q: 'How do I report a bug?',
+    a: '"Report a bug" in the header\'s "i" help popover (and here) opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. No account, no attachments, no PII collected; the report is public on GitHub. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug").',
   },
 ]
 

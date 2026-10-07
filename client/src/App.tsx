@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
-import { getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
+import { getBugReportConfig, getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
 import type { DiffEvent } from './api'
 import type { ColumnColors } from './lib/columnColors'
 import { isStockPalette, readStoredColumnColors, writeStoredColumnColors } from './lib/columnColors'
@@ -24,6 +24,7 @@ import MetricsDashboard from './components/MetricsDashboard'
 import ProjectPicker from './components/ProjectPicker'
 import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
+import BugReportDialog from './components/BugReportDialog'
 import HeaderHelp from './components/HeaderHelp'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
@@ -269,6 +270,26 @@ export default function App() {
     }
   }, [])
 
+  // v2.16.0 (opt-public-bug-reports): fetch once on mount, fail quiet. The
+  // entry point (header + About CTA) only renders when the operator has
+  // configured the feature; the dialog itself needs the public site key.
+  const [bugReportEnabled, setBugReportEnabled] = useState(false)
+  const [bugReportSiteKey, setBugReportSiteKey] = useState<string | null>(null)
+  const [bugReportOpen, setBugReportOpen] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    getBugReportConfig()
+      .then((cfg) => {
+        if (cancelled) return
+        setBugReportEnabled(cfg.enabled)
+        setBugReportSiteKey(cfg.siteKey ?? null)
+      })
+      .catch(() => {/* stays disabled; the entry point simply never appears */})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const initialFilters = useMemo(() => readStoredFilters(), [])
   const [searchQuery, setSearchQuery] = useState(initialFilters.search)
   const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority)
@@ -500,7 +521,10 @@ export default function App() {
              spellCheck={false}
              className="w-28 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11"
             />
-            <HeaderHelp />
+            <HeaderHelp
+              bugReportEnabled={bugReportEnabled}
+              onReportBug={() => setBugReportOpen(true)}
+            />
             {!tokenSaved && (
              <span
               className="hidden font-mono text-[10px] uppercase tracking-wider text-muted sm:inline"
@@ -554,7 +578,12 @@ export default function App() {
 
         <main className="flex flex-1 overflow-hidden">
           <ErrorBoundary>
-            {view === 'about' && <About version={version} visit={visit} />}
+            {view === 'about' && (
+              <About version={version} visit={visit}
+                bugReportEnabled={bugReportEnabled}
+                onReportBug={() => setBugReportOpen(true)}
+              />
+            )}
             {view === 'portfolio' && (
              <Portfolio
                refreshKey={tasks.length}
@@ -654,6 +683,11 @@ export default function App() {
        </main>
 
        <TaskSheet task={openTask} onClose={() => setOpenTaskId(null)} />
+       <BugReportDialog
+         open={bugReportOpen}
+         siteKey={bugReportSiteKey}
+         onClose={() => setBugReportOpen(false)}
+       />
      </div>
    )
 }

@@ -27,6 +27,10 @@ import type { VisitState } from '../lib/useVisitCount'
 type Props = {
   version: string | null
   visit: VisitState
+  /** v2.16.0 (opt-public-bug-reports): hidden entirely when the operator has
+   *  not configured Report-a-bug (see App.tsx's one-time config fetch). */
+  bugReportEnabled?: boolean
+  onReportBug?: () => void
 }
 
 const SECTIONS = [
@@ -93,7 +97,7 @@ function FlowRow({
   )
 }
 
-export default function About({ version, visit }: Props) {
+export default function About({ version, visit, bugReportEnabled, onReportBug }: Props) {
   const { count: visitCount, counted: visitCounted } = visit
   const [activeSection, setActiveSection] = useState<string>('overview')
   const [copied, setCopied] = useState(false)
@@ -199,6 +203,15 @@ export default function About({ version, visit }: Props) {
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <Cta href={ABOUT_GITHUB_URL}>Download · fork · contribute</Cta>
                 <Cta href={ABOUT_LIVE_URL}>Open live demo</Cta>
+                {bugReportEnabled && onReportBug && (
+                  <button
+                    type="button"
+                    onClick={onReportBug}
+                    className="inline-flex items-center border border-line bg-surface px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
+                  >
+                    Report a bug
+                  </button>
+                )}
                 {version && (
                   <span className="font-mono text-[11px] text-muted">
                     v{version}

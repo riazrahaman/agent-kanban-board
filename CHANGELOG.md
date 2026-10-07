@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,159 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.16.0] — 2026-10-06
+
+Add: in-app "Report a bug" → GitHub issue, captcha-protected, off by default.
+
+### Added
+- **Public, anonymous bug reporting.** A visitor can click "Report a bug"
+  (header + About page), fill a title and description, pass a Cloudflare
+  Turnstile challenge, and the server files a labelled (`user-report`) GitHub
+  issue on their behalf — no account, no attachments, no contact field (the
+  repo is public; nothing that could be personal data is collected).
+  `GET /api/bug-reports/config` → `POST /api/bug-reports`
+  (`server/routes/bugReports.js`); UNAUTHENTICATED by design (no board token,
+  no `?project=`) and mounted ahead of the auth/rate-limit middleware in
+  `server.js` — the one human-facing write route on the board.
+- **Off unless configured.** The feature is 404/disabled until
+  `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO`, `TURNSTILE_SECRET` and
+  `TURNSTILE_SITE_KEY` are all set. Optional: `TURNSTILE_HOSTNAMES` (siteverify
+  hostname allow-list; unset logs one startup warning and skips the check),
+  `KANBAN_REPORT_DAILY_CAP` (default 50/UTC day, global), the per-IP cap
+  `KANBAN_REPORT_PER_IP_PER_HOUR` (default 3/hour), and
+  `KANBAN_REPORT_GITHUB_API_URL` (points the demo/test suite at a local stub
+  instead of the real GitHub API). See README "Enabling Report-a-bug".
+- **Defense in depth, in order:** a honeypot field (bots that fill it get a
+  quiet fake 200, nothing is filed), strict validation (title 1-120 chars,
+  description 10-5000, control characters stripped), the in-memory rate
+  limits above (peek-then-consume-on-success, so a report that fails
+  validation, captcha, or filing never spends the cap), Turnstile
+  `action:'bug-report'` + hostname verification (fails closed, 502, on a
+  Turnstile network error), and GitHub filing with up to 3 retry attempts
+  (exponential backoff) on network errors/5xx/429/secondary-rate-limited 403,
+  no retry on any other 4xx, and an uncounted one-shot fallback that drops the
+  `user-report` label on a 422 (the label may not exist on a fresh repo yet).
+- **Markdown-injection-safe issue bodies.** The user's description is wrapped
+  in a fenced code block whose backtick run is always longer than any run
+  already in the text, so mentions, `#refs`, images/tracking pixels and raw
+  HTML in a report can never break out of the fence or notify anyone; the
+  title additionally neutralizes `@mentions` and collapses embedded newlines
+  to a single line before it is sent.
+- **New demo stub** `scripts/stub-github-issues.mjs` — a dependency-free local
+  stand-in for `POST /repos/:owner/:repo/issues` that prints exactly what the
+  server would have sent to GitHub, for demoing the full flow without a real
+  PAT (point `KANBAN_REPORT_GITHUB_API_URL` at it).
+- 45 new server tests (`server/test/kanban.bugreports.test.js`) and 26 new
+  client tests (`client/src/lib/bugReport.test.mjs`,
+  `bugReportContract.test.mjs`) cover the feature gate, honeypot, validation
+  limits, every Turnstile outcome (fail/wrong-action/wrong-hostname/network
+  error/replay), the per-IP limit and an `X-Forwarded-For` spoof attempt, the
+  daily cap (incl. that a failed filing never spends it), GitHub retry/label
+  fallback, and issue-body sanitisation. Plus 7 more server tests for the
+  body-parser fix below (`kanban.bodyparser.test.js`).
+- `KANBAN_TRUST_PROXY` (default `1`) makes the Express `trust proxy` hop count
+  explicit and configurable, so the per-IP bug-report limiter (and anything
+  else keyed off `req.ip`) sees the real client address behind Railway's one
+  reverse-proxy hop without trusting an attacker-forged
+  `X-Forwarded-For` prefix beyond that hop.
+
+### Fixed
+- **Malformed JSON and oversized request bodies reported as a 500.**
+  `express.json()` runs globally, on every route, before auth or routing; a
+  parse failure or a body over the 100kb default limit threw a body-parser
+  error that the global error handler in `server.js` did not recognize, so
+  it fell through to the generic `500 {error:'Internal Server Error'}`
+  branch — misreporting a client mistake as a server failure. The handler
+  now translates `err.type === 'entity.parse.failed'` to
+  `400 {error:'invalid_json'}` and `'entity.too.large'` to
+  `413 {error:'payload_too_large'}`, with no stack trace or internal detail
+  in either body; every other error is unaffected. Guarded by the new
+  `server/test/kanban.bodyparser.test.js` against both the new
+  `POST /api/bug-reports` and the existing `POST /api/tasks`, proving the
+  translation is global (it runs ahead of auth entirely) and harmless to a
+  normal request.
+- **The header toolbar wrapped to an extra row with Report-a-bug on.**
+  A standalone, always-visible "Report a bug" button added to the header's
+  flex toolbar row cost just enough width to push it onto a second row at
+  several mid viewports (measured 824-1100px in real Chrome; e.g. at 1100px
+  the DARK/LIGHT theme toggle was orphaned onto its own row) — a regression
+  the feature-off header never had. Moved the entry point inside
+  `HeaderHelp.tsx`'s existing "i" popover instead (behind a hairline
+  divider, closing the popover before opening the dialog so Escape/focus
+  hand off cleanly); the popover is `absolute`-positioned, so anything
+  inside it costs zero width in the toolbar's flex layout regardless of the
+  feature flag. The About page keeps its own CTA. Guarded by a new
+  `bugReportContract.test.mjs` regression test asserting the header toolbar
+  carries no "Report a bug" button at all, AND by a new CI-only real-browser
+  guard (`scripts/check-header-layout.mjs`, CDP-driven like the existing
+  `check-card-layout.mjs`) that measures the actual rendered header height at
+  320-1920px with the feature on, failing if it ever grows past baseline
+  again. Verified in real headless Chrome: identical header height at all
+  eleven widths, both themes, feature on vs off (320/360/390: 84px;
+  768/824/900/1024: 120px; 1100: 82px; 1280/1440/1920: 49px) — a non-coarse
+  pointer (desktop window resize); see the baseline reconciliation below for
+  the separate, also-real coarse-pointer (real touch) numbers.
+- **The fix above's own popover clipped off the viewport edge on phones and
+  tablets.** Moving the entry into HeaderHelp's `absolute right-0 w-80`
+  popover fixed the toolbar-width regression but introduced a second one:
+  `right:0` anchors the popover to the "i" BUTTON, not the viewport, so a
+  fixed 320px-wide popover overflowed the LEFT edge whenever the button sat
+  less than 320px from it — measured at 320-390px (~44% of the popover and
+  the "Report a bug" label itself off-screen) and again at 768-820px, where
+  the header-controls row is already fully inline and crowds the button
+  rightward past the point a 320px right-anchored popover can still fit. No
+  width/max-width tweak alone can fix an anchor-relative overflow. Fixed by
+  switching to a viewport-anchored `fixed` sheet (`inset-x-3`, bottom-pinned)
+  below `lg` (1024px) — mirroring `ColumnColorsControl`'s own `max-sm:`
+  convention, just at a wider cutover to cover the measured range — with the
+  original `absolute right-0` dropdown kept from `lg` up, plus an
+  unconditional `max-w-[calc(100vw-1.5rem)]` safety net at every width. Does
+  not change header toolbar height (verified ON/OFF-identical, same as
+  above). Guarded by a new `scripts/check-header-layout.mjs` check that opens
+  the popover at eight widths (320-1440px) and asserts its bounding box
+  stays within the viewport with an 8px margin, and a new
+  `bugReportContract.test.mjs` assertion that the popover can never regress
+  to an unconditional `absolute right-0`. Non-vacuity of both guards was
+  proven by temporarily restoring the clipped positioning and confirming
+  each one fails, then reverting.
+
+  **Baseline reconciliation, corrected (header height at narrow widths).**
+  An earlier version of this note claimed 84px was "the" correct height at
+  320-390px and that a tester's real-Chrome reading of 113px was a
+  measurement artifact. That was wrong, and is retracted. **Both numbers are
+  real, for two different real pointer environments, and the feature is
+  ON == OFF in both:**
+  - **84/120/49px** — a desktop browser window resized narrow. `pointer:
+    coarse` never matches here, so the `pointer-coarse:min-h-11` (44px
+    touch target) Tailwind variants on several header controls never apply.
+  - **113/155/101/67px** (at 320/768/1100/1280px respectively) — a REAL
+    touch phone or tablet, where `pointer: coarse` DOES match, growing the
+    `⋯` toggle (31px → 44px) and the header along with it.
+
+  `Emulation.setDeviceMetricsOverride`'s own `mobile` flag does not reliably
+  flip the `pointer: coarse` media query in headless Chrome either way,
+  which is why an earlier pass toggling it for narrow widths produced a
+  number that was consistent but matched neither pointer environment
+  cleanly, and was mistaken for ground truth. `Emulation.setTouchEmulationEnabled`
+  is what actually flips it (confirmed directly: `matchMedia('(pointer:
+  coarse)').matches` flips from `false` to `true`); `check-header-layout.mjs`
+  now runs BOTH passes — see `EXPECTATIONS` (non-coarse) and
+  `COARSE_EXPECTATIONS` (coarse) in the script — so CI covers the pointer
+  type it can actually drive headlessly. CI does not exercise real touch
+  hardware; the coarse pass emulates `pointer: coarse` itself, which is the
+  mechanism, not a hardware stand-in, so a genuinely novel coarse-only
+  regression on real hardware is still a manual/tester catch, same as before
+  this pass existed. Both passes are two-sided (a drop below baseline fails
+  too, not just a rise above it).
+
+  Separately, and unrelated to which number is correct: the ORIGINAL
+  containment probe had a real bug, now fixed, that produced a bogus 163px
+  reading while debugging this — it drove the phone disclosure-toggle click
+  and the "i"-button click back-to-back in one synchronous CDP script with
+  no render tick between them, which could leave React's `headerOpen` state
+  stuck on into the NEXT width's measurement. The probe now drives each
+  click as a separate CDP round-trip with a real settle delay.
 
 ## [2.15.11] — 2026-10-05
 

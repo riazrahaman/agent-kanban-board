@@ -325,6 +325,54 @@ export async function getSettings(project?: string): Promise<SettingsResponse> {
   return handleResponse<SettingsResponse>(res)
 }
 
+// ---------------------------------------------------------------------------
+// v2.16.0 (opt-public-bug-reports) — in-app "Report a bug" -> GitHub issue.
+// Both endpoints are UNAUTHENTICATED (no board token, no `?project=`): this
+// is the one human-facing write surface on the board, meant for an anonymous
+// visitor. See server/routes/bugReports.js for the server-side contract.
+// ---------------------------------------------------------------------------
+
+export type BugReportConfig = { enabled: boolean; siteKey?: string }
+
+/**
+ * Whether the operator has configured Report-a-bug, and (only when enabled)
+ * the public Turnstile site key the widget needs. Never carries a secret.
+ * Callers should fetch once and fail quiet (hide the entry point) on error.
+ */
+export async function getBugReportConfig(): Promise<BugReportConfig> {
+  const res = await fetch(`${API_BASE}/bug-reports/config`)
+  return handleResponse<BugReportConfig>(res)
+}
+
+export type BugReportSuccess = { ok: true; issue_number: number; issue_url: string }
+
+/**
+ * A failed submit is NOT thrown as an Error (unlike the rest of this file):
+ * the form needs the exact `status` + `error` code to choose copy via
+ * `describeSubmitError` (lib/bugReport.ts), not a stringified message.
+ */
+export type BugReportResult =
+  | { ok: true; issue_number: number; issue_url: string }
+  | { ok: false; status: number; code?: string }
+
+export async function submitBugReport(
+  payload: import('./lib/bugReport').BugReportPayload,
+): Promise<BugReportResult> {
+  const res = await fetch(`${API_BASE}/bug-reports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  let body: any = null
+  try {
+    body = await res.json()
+  } catch {
+    body = null
+  }
+  if (!res.ok) return { ok: false, status: res.status, code: body?.error }
+  return { ok: true, issue_number: body.issue_number, issue_url: body.issue_url }
+}
+
 /** Persist a project's column_colors override. Any authenticated token may. */
 export async function saveSettings(
   project: string | undefined,

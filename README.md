@@ -2,7 +2,7 @@
 
 A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
-Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing.
+Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
 
 Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
 
@@ -164,6 +164,102 @@ The board features pluggable persistence:
   - Untrusted origins receive no `Access-Control-Allow-Origin` header.
 - **Input Sanitization (A03)**:
   - All untrusted input from agents (task titles, descriptions, and log messages) is escaped to prevent Stored XSS.
+- **Report-a-bug is the one unauthenticated write route**, by design (an
+  anonymous visitor has no board token) — it is off until explicitly
+  configured, honeypot + captcha + rate-limit gated, and mounted so it never
+  weakens auth on any other endpoint. See
+  [Enabling Report-a-bug](#enabling-report-a-bug).
+
+---
+
+## Report a Bug
+
+A visitor can click **Report a bug** — inside the header's "i" help popover,
+and again on the About page — to file a title + description straight to
+GitHub as a `user-report`-labelled issue —
+no account, no attachments, and no contact field is collected (the repo is
+public; nothing that looks like personal data is asked for). It is protected
+by [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), a
+honeypot field, and both a global daily cap and a per-IP hourly cap. The
+route is unauthenticated by design (`POST /api/bug-reports` takes no board
+token, no `?project=`) — see [Security & Authentication](#security--authentication).
+
+**The feature is OFF until explicitly configured** — unset, `GET
+/api/bug-reports/config` reports `{enabled:false}` and the UI never shows the
+entry point; `POST /api/bug-reports` 404s.
+
+### Enabling Report-a-bug
+
+Set the first four of these (server-side; see `.env.example` /
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference):
+
+| Variable | Secret? | Required | Where to get it |
+| :--- | :--- | :--- | :--- |
+| `KANBAN_REPORT_GITHUB_TOKEN` | **secret** | yes | A [fine-grained GitHub PAT](https://github.com/settings/personal-access-tokens/new) scoped to **one** repository, with repository permission **Issues: Read and write**. Nothing else. |
+| `KANBAN_REPORT_REPO` | public | yes | The repo the token is scoped to, as `owner/name` (e.g. `riazrahaman/agent-kanban-board`). |
+| `TURNSTILE_SECRET` | **secret** | yes | From the [Cloudflare Turnstile dashboard](https://dash.cloudflare.com/?to=/:account/turnstile) — add a widget, copy its secret key. |
+| `TURNSTILE_SITE_KEY` | public | yes | The matching site key from the same widget. Served to the browser via `GET /api/bug-reports/config`; never the secret. |
+| `TURNSTILE_HOSTNAMES` | public | optional | Comma-separated allow-list that a siteverify response's `hostname` must appear in (e.g. `agent-kanban.riazrahaman.com`). Unset skips the check and logs one startup warning. |
+| `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports per UTC day. Default `50`. Resets on restart (in-memory). |
+| `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap per hour. Default `3`. Resets on restart (in-memory). |
+| `KANBAN_REPORT_GITHUB_API_URL` | public | optional | Overrides the GitHub API base (default `https://api.github.com`) — points the local demo/test stub (`scripts/stub-github-issues.mjs`) instead of the real API. |
+| `KANBAN_TRUST_PROXY` | public | optional | Express `trust proxy` hop count behind a reverse proxy (default `1`, correct for Railway). Needed for the per-IP cap to see the real client address instead of the proxy's. |
+
+**`KANBAN_TRUST_PROXY` must match your actual deployment topology.** The
+default of `1` is correct only when exactly one trusted reverse proxy sits in
+front of the app (Railway's edge, or an equivalent single-hop load balancer).
+If the app is exposed directly — no proxy at all — set it to `0`; otherwise
+a client can send its own `X-Forwarded-For` header and spoof the address the
+per-IP rate limit is keyed on, defeating it entirely.
+
+**Never commit a real token or secret.** `.env.example` ships only
+placeholders; `.gitignore` already excludes a real `.env`. If you paste a
+token or secret into a chat, an issue, or a commit by mistake, revoke and
+rotate it immediately — fine-grained PATs and Turnstile secrets can both be
+rotated from the same dashboards linked above.
+
+**Testing without a real token.** Cloudflare publishes fixed test
+keys for exactly this purpose — they are designed to be shared in docs and
+test suites, not secrets:
+
+| Key | Behaviour |
+| :--- | :--- |
+| `1x0000000000000000000000000000000AA` (secret) | Always passes |
+| `2x0000000000000000000000000000000AA` (secret) | Always fails |
+| `3x0000000000000000000000000000000AA` (secret) | Always answers as an already-used/expired token |
+| `1x00000000000000000000AA` (site key) | Always-pass test site key, safe to render in a browser |
+
+Note: Cloudflare's test secrets return a fixed canned response (no real
+`action`/`hostname`), so hitting the **real** Cloudflare network with them
+will not pass this server's `action==='bug-report'` check end-to-end — that
+check is exactly what `server/test/kanban.bugreports.test.js` exercises
+instead, with a fully injected fetch (see below). A genuine live demo of the
+whole path needs a real (free) Turnstile site.
+
+### Running the local demo
+
+No real GitHub token or live Turnstile network call required — a bundled
+stub plays GitHub's side:
+
+```bash
+node scripts/stub-github-issues.mjs &
+
+KANBAN_REPORT_GITHUB_API_URL=http://localhost:3456 \
+KANBAN_REPORT_GITHUB_TOKEN=stub-token \
+KANBAN_REPORT_REPO=owner/repo \
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA \
+TURNSTILE_SITE_KEY=1x00000000000000000000AA \
+npm --prefix server start
+```
+
+`GET /api/bug-reports/config` now reports `{enabled:true,...}`. Submitting a
+report through the UI (or `curl`) still makes a REAL call to Cloudflare's
+siteverify endpoint — only GitHub is stubbed — so pass a real Turnstile token
+from the rendered widget, or run
+`npm --prefix server test -- test/kanban.bugreports.test.js` to exercise the
+entire flow (honeypot, validation, every Turnstile outcome, rate limits,
+GitHub retry/label fallback) with both Turnstile and GitHub fully mocked and
+no network at all.
 
 ---
 
@@ -258,7 +354,24 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (451 tests, including the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (155 tests, including the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (503 tests, including the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (184 tests, including the v2.16.0 Report-a-bug lib + UI-contract suites (pure validation/char-counters/payload logic, a source scan of the dialog, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header toolbar itself carries no "Report a bug" button, the entry having moved inside HeaderHelp's popover after it widened the toolbar enough to wrap at several mid viewports, and the follow-up guard that the popover itself cannot clip off the viewport edge after that move), the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+
+CI additionally drives a real headless Chrome over the DevTools protocol
+(`scripts/check-card-layout.mjs`, `scripts/check-browser-smoke.mjs`, and —
+new in v2.16.0 — `scripts/check-header-layout.mjs`) against the built
+client, since a wrapped flex row, a squashed card header, or a popover
+clipped off the viewport edge is a rendered geometry outcome no class-name
+assertion can see. The header-layout guard measures the real header height
+at twelve widths (320-1920px, two-sided — a drop below baseline fails just
+as a rise above it does) under a NON-coarse pointer (a resized desktop
+window), AND repeats a subset of those widths under an emulated COARSE
+pointer (`Emulation.setTouchEmulationEnabled`, matching a real touch phone/
+tablet — the two measure genuinely different, both-correct heights, since
+several controls grow under `pointer-coarse:` Tailwind variants). It also
+opens the "i" help popover at eight widths (320-1440px) to assert its
+bounding box stays fully inside the viewport with a margin. All of this
+runs with the Report-a-bug feature turned ON — the two regression classes
+this release's round-2 and round-4 fixes addressed.
 
 ### Releasing
 
