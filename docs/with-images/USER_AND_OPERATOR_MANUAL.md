@@ -406,6 +406,12 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 
 The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the active dark palette) and the responsive layout automatically.
 
+### 5.8 Reporting a Bug (v2.16.0+)
+
+Open the header's **"i"** help popover (the small italic affordance next to the agent id / api token fields) — when the operator has configured the feature, a **"Report a bug"** row appears below a hairline divider. Clicking it closes the popover and opens a short form: title, description, and a Cloudflare Turnstile captcha. The same entry also appears as a button on the About view. Submitting files a public, labelled (`user-report`) GitHub issue directly from the server; no account, no attachments, and no contact field is collected.
+
+The entry point only renders once `GET /api/bug-reports/config` reports `{"enabled":true}` — it is off by default and invisible until an operator sets `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO`, `TURNSTILE_SECRET` and `TURNSTILE_SITE_KEY`. See the README's "Enabling Report-a-bug" section for the full environment-variable reference, the Cloudflare test keys, and how to verify a deployment is live.
+
 ---
 
 ## 6. Autonomous Swarm Integration Guide

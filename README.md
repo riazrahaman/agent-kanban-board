@@ -199,7 +199,7 @@ Set the first four of these (server-side; see `.env.example` /
 | `KANBAN_REPORT_REPO` | public | yes | The repo the token is scoped to, as `owner/name` (e.g. `riazrahaman/agent-kanban-board`). |
 | `TURNSTILE_SECRET` | **secret** | yes | From the [Cloudflare Turnstile dashboard](https://dash.cloudflare.com/?to=/:account/turnstile) — add a widget, copy its secret key. |
 | `TURNSTILE_SITE_KEY` | public | yes | The matching site key from the same widget. Served to the browser via `GET /api/bug-reports/config`; never the secret. |
-| `TURNSTILE_HOSTNAMES` | public | optional | Comma-separated allow-list that a siteverify response's `hostname` must appear in (e.g. `agent-kanban.riazrahaman.com`). Unset skips the check and logs one startup warning. |
+| `TURNSTILE_HOSTNAMES` | public | optional, **recommended in production** | Comma-separated allow-list that a siteverify response's `hostname` must appear in (e.g. `agent-kanban.riazrahaman.com`). Unset skips the check and logs one startup warning. |
 | `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports per UTC day. Default `50`. Resets on restart (in-memory). |
 | `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap per hour. Default `3`. Resets on restart (in-memory). |
 | `KANBAN_REPORT_GITHUB_API_URL` | public | optional | Overrides the GitHub API base (default `https://api.github.com`) — points the local demo/test stub (`scripts/stub-github-issues.mjs`) instead of the real API. |
@@ -260,6 +260,21 @@ from the rendered widget, or run
 entire flow (honeypot, validation, every Turnstile outcome, rate limits,
 GitHub retry/label fallback) with both Turnstile and GitHub fully mocked and
 no network at all.
+
+### Verify it is live
+
+Once the four required variables are set on a real deployment:
+
+```bash
+curl <board-url>/api/bug-reports/config
+```
+
+returns `{"enabled":true,"siteKey":"..."}` when all four are set, or
+`{"enabled":false}` otherwise (e.g. one variable missing or mistyped). That
+confirms configuration only — a real Turnstile token can only be produced by
+the widget running in a browser, so the first genuine end-to-end check is
+submitting one real report from the site itself. This files a real, public
+GitHub issue labelled `user-report`, which you can close once confirmed.
 
 ---
 
