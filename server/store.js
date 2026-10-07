@@ -105,6 +105,13 @@ export function getMaxLeaseMs() {
   return Number.isFinite(n) && n > 0 ? n : 7200000;
 }
 
+export function getProgressStallMs() {
+  const raw = process.env.KANBAN_PROGRESS_STALL_MS;
+  if (raw === undefined || raw === '') return 1800000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 1800000;
+}
+
 export function leaseWindowFor(task) {
   return task.claim_lease_ms ?? getClaimTtlMs();
 }
@@ -2262,92 +2269,121 @@ export function getMilestones(project) {
     if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
     candidate.agent_logs.push({
       timestamp: candidate.updated,
-         message: !fromAgent
-          ? 'Task had no owner — reclaimed to BACKLOG by system normalizer.'
+      message: !fromAgent
+        ? 'Task had no owner — reclaimed to BACKLOG by system normalizer.'
+        : (reason === 'progress_stalled'
+          ? 'PROGRESS STALLED — task reclaimed to BACKLOG by system reaper.'
           : (reason === 'lease_expired'
-           ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
-           : `Task reclaimed to BACKLOG by system (${reason}).`),
-         agent_id: 'system',
-         reason: !fromAgent ? reason : 'lease_expired',
-         reclaimed_from: fromAgent,
-         });
+            ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
+            : `Task reclaimed to BACKLOG by system (${reason}).`)),
+      agent_id: 'system',
+      reason: !fromAgent ? reason : (reason || 'lease_expired'),
+      reclaimed_from: fromAgent,
+    });
 
-         // KB-05: persist first, then mutate memory, then notify.
-         await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-         updateInMemoryTask(candidate);
-         // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
-         notify({
-         actor: 'system',
-         reason: reason,
-         semantic: new Map([[
-           compositeKey(candidate.project, candidate.id),
-           { kind: 'reclaimed', actor: 'system', reason, prevTask: task },
-           ]]),
-           });
-         return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
-         }
+    // KB-05: persist first, then mutate memory, then notify.
+    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    updateInMemoryTask(candidate);
+    // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
+    notify({
+      actor: 'system',
+      reason: reason,
+      semantic: new Map([[
+        compositeKey(candidate.project, candidate.id),
+        { kind: 'reclaimed', actor: 'system', reason, prevTask: task },
+      ]]),
+    });
+    return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
+  }
 
-        /**
-        * reclaimTask(id, { reason, now }) — public, lock-wrapped reclaim. Delegates
-        * to the unlocked inner so a caller that is already inside the lock
-        * (reapExpiredClaims) does not deadlock on the promise-queue lock.
-        */
-       export async function reclaimTask(id, { reason = 'lease_expired', now, project } = {}) {
-       return withMutationLock(async () => {
-        const task = getTask(id, project);
-        if (!task) return { error: 'Task not found', status: 404 };
-        const nowMs = typeof now === 'number' ? now : nowFn();
-        return reclaimTaskInner(task, { reason, nowMs });
-         });
-       }
+  /**
+   * reclaimTask(id, { reason, now }) — public, lock-wrapped reclaim. Delegates
+   * to the unlocked inner so a caller that is already inside the lock
+   * (reapExpiredClaims) does not deadlock on the promise-queue lock.
+   */
+  export async function reclaimTask(id, { reason = 'lease_expired', now, project } = {}) {
+    return withMutationLock(async () => {
+      const task = getTask(id, project);
+      if (!task) return { error: 'Task not found', status: 404 };
+      const nowMs = typeof now === 'number' ? now : nowFn();
+      return reclaimTaskInner(task, { reason, nowMs });
+    });
+  }
 
-       /**
-       * reapExpiredClaims — sweep active claims whose lease has expired and reclaim
-       * them. Runs in the mutation lock so it is serialized with every other writer
-       * (a heartbeat that lands first commits before the sweep sees a fresh expiry).
-       * `now` is injectable so tests can force expiry. Returns the reclaimed ids.
-       * Calls the UNLOCKED reclaimTaskInner directly (it already holds the lock).
-       */
-       export async function reapExpiredClaims({ now } = {}) {
-       return withMutationLock(async () => {
-       const nowMs = typeof now === 'number' ? now : nowFn();
-       const candidates = tasks.filter((t) => {
+  /**
+   * reapExpiredClaims — sweep active claims whose lease has expired and reclaim
+   * them. Runs in the mutation lock so it is serialized with every other writer
+   * (a heartbeat that lands first commits before the sweep sees a fresh expiry).
+   * `now` is injectable so tests can force expiry. Returns the reclaimed ids.
+   * Calls the UNLOCKED reclaimTaskInner directly (it already holds the lock).
+   */
+  export async function reapExpiredClaims({ now } = {}) {
+    return withMutationLock(async () => {
+      const nowMs = typeof now === 'number' ? now : nowFn();
+      const stallMs = getProgressStallMs();
+      const candidateReasons = new Map();
+      const candidates = tasks.filter((t) => {
         const active = t.status === STATUSES.BUILDING
-        || t.status === STATUSES.IN_REVIEW
-        || t.status === STATUSES.IN_TEST;
-       if (!active) return false;
-      if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
-        // Orphan: active with no owner/lease. Normally this is a status-only
-        // PATCH that has not yet been claimed — a legitimate intermediate state,
-        // not a stuck card. Only reclaim once it has been untouched for the
-        // grace window, so a freshly-written card survives the next sweep.
-        const graceMs = getOrphanGraceMs();
-        if (graceMs <= 0) return true;
-        const touchedMs = Date.parse(t.updated);
-        if (Number.isNaN(touchedMs)) return true;
-        return nowMs - touchedMs >= graceMs;
+          || t.status === STATUSES.IN_REVIEW
+          || t.status === STATUSES.IN_TEST;
+        if (!active) return false;
+        if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
+          // Orphan: active with no owner/lease. Normally this is a status-only
+          // PATCH that has not yet been claimed — a legitimate intermediate state,
+          // not a stuck card. Only reclaim once it has been untouched for the
+          // grace window, so a freshly-written card survives the next sweep.
+          const graceMs = getOrphanGraceMs();
+          if (graceMs <= 0) {
+            candidateReasons.set(t, 'orphan_normalized');
+            return true;
+          }
+          const touchedMs = Date.parse(t.updated);
+          if (Number.isNaN(touchedMs)) {
+            candidateReasons.set(t, 'orphan_normalized');
+            return true;
+          }
+          if (nowMs - touchedMs >= graceMs) {
+            candidateReasons.set(t, 'orphan_normalized');
+            return true;
+          }
+          return false;
         }
-       const expiresMs = Date.parse(t.claim_expires_at);
+
+        if (stallMs > 0 && t.last_progress_at) {
+          const lastProgMs = Date.parse(t.last_progress_at);
+          if (!Number.isNaN(lastProgMs) && nowMs - lastProgMs >= stallMs) {
+            candidateReasons.set(t, 'progress_stalled');
+            return true;
+          }
+        }
+
+        const expiresMs = Date.parse(t.claim_expires_at);
         if (Number.isNaN(expiresMs)) return false;
-        return expiresMs <= nowMs;
-         });
-       let reclaimed = 0;
-       const ids = [];
-       for (const t of candidates) {
-         // getTask MUST be given the candidate's own project: task ids are unique
-         // only within a project, so the 1-arg form resolves against `default` and
-         // either returns null (throwing, aborting the whole sweep) or — when the
-         // same short id exists in `default` — reclaims the wrong task.
-         const task = getTask(t.id, t.project);
-         const reason = (task.assigned_agent === null || task.claim_expires_at == null)
-          ? 'orphan_normalized'
-          : 'lease_expired';
-         const r = await reclaimTaskInner(task, { reason, nowMs });
-         if (r && r.reclaimed) {
-           reclaimed += 1;
-           ids.push(compositeKey(t.project, t.id));
-            }
-           }
+        if (expiresMs <= nowMs) {
+          candidateReasons.set(t, 'lease_expired');
+          return true;
+        }
+        return false;
+      });
+      let reclaimed = 0;
+      const ids = [];
+      for (const t of candidates) {
+        // getTask MUST be given the candidate's own project: task ids are unique
+        // only within a project, so the 1-arg form resolves against `default` and
+        // either returns null (throwing, aborting the whole sweep) or — when the
+        // same short id exists in `default` — reclaims the wrong task.
+        const task = getTask(t.id, t.project);
+        const reason = candidateReasons.get(t) || (
+          (task.assigned_agent === null || task.claim_expires_at == null)
+            ? 'orphan_normalized'
+            : 'lease_expired'
+        );
+        const r = await reclaimTaskInner(task, { reason, nowMs });
+        if (r && r.reclaimed) {
+          reclaimed += 1;
+          ids.push(compositeKey(t.project, t.id));
+        }
+      }
            if (reclaimed > 0) notify();
            return { reclaimed: ids, now: nowMs };
            });

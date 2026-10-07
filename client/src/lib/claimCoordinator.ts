@@ -37,6 +37,11 @@ export type CoordinatorConfig = {
      */
   leaseMs?: number
      /**
+     * Max idle time without card progress before the lease is considered stalled, in ms.
+     * Default 1800000 (30 minutes).
+     */
+  progressStallMs?: number
+     /**
      * Which projects this agent should participate in. Empty/undefined = all
      * projects.
      */
@@ -83,6 +88,16 @@ export function needsHeartbeat(
   config: CoordinatorConfig = {}
 ): boolean {
   if (!isMineHeld(task, agentId, nowMs)) return false
+
+  if (task.last_progress_at) {
+    const lastProgress = Date.parse(task.last_progress_at)
+    if (!Number.isNaN(lastProgress)) {
+      const stallTimeout = config.progressStallMs ?? 1800000
+      if (stallTimeout > 0 && nowMs - lastProgress >= stallTimeout) {
+        return false
+      }
+    }
+  }
 
   const remaining = leaseRemainingMs(task, nowMs)
     // No usable window → nothing to renew against.
@@ -155,7 +170,7 @@ export function shouldAutoClaim(tasks: Task[], agentId: string, nowMs: number): 
  * server message does not silently turn the recovery path back into dead code.
  */
 export const LOST_LEASE_PATTERN =
-  /not[ _]?(a[ _])?lease[ _]?holder|not[ _]?claimed|no[ _]?active[ _]?lease/i
+  /not[ _]?(a[ _])?lease[ _]?holder|not[ _]?claimed|no[ _]?active[ _]?lease|progress[ _]?stalled/i
 
 export function isLostLeaseError(message: string): boolean {
   return LOST_LEASE_PATTERN.test(message)
