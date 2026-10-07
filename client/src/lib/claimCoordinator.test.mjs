@@ -122,17 +122,41 @@ test('leaseRemainingMs returns null for unclaimed tasks and a negative number af
 
 test('isLostLeaseError matches the reasons the server actually sends', () => {
   // These are the exact strings api.ts throws: `heartbeat failed (409) (<reason>)`
-  // with reason ∈ { not_lease_holder, not_claimed }. The original pattern used
+  // with reason ∈ { not_lease_holder, not_claimed, progress_stalled }. The original pattern used
   // spaces ("not a lease holder"), matched neither, and left the documented
   // drop-the-lease recovery path as dead code.
   assert.equal(coord.isLostLeaseError('heartbeat failed (409) (not_lease_holder)'), true)
   assert.equal(coord.isLostLeaseError('heartbeat failed (409) (not_claimed)'), true)
+  assert.equal(coord.isLostLeaseError('heartbeat failed (409) (progress_stalled)'), true)
+  assert.equal(coord.isLostLeaseError('progress_stalled'), true)
+  assert.equal(coord.isLostLeaseError('progress stalled'), true)
   // Prose forms must keep working if the server is ever reworded.
   assert.equal(coord.isLostLeaseError('not a lease holder'), true)
   assert.equal(coord.isLostLeaseError('no active lease'), true)
   // A genuine failure must NOT be swallowed as a lost lease.
   assert.equal(coord.isLostLeaseError('heartbeat failed (500) (Internal Server Error)'), false)
   assert.equal(coord.isLostLeaseError('NetworkError'), false)
+
+  // Verify needsHeartbeat suppresses heartbeats when progress has stalled:
+  const now = Date.now()
+  const cfg = { leaseMs: 60000, renewAtFraction: 0.5, progressStallMs: 1800000 }
+  const task = heldTask({
+    claim_expires_at: new Date(now + 20000).toISOString(),
+    last_progress_at: new Date(now - 100000).toISOString(),
+  })
+  assert.equal(coord.needsHeartbeat(task, 'agentA', now, cfg), true)
+  const stalledTask = heldTask({
+    claim_expires_at: new Date(now + 20000).toISOString(),
+    last_progress_at: new Date(now - 1800000).toISOString(),
+  })
+  assert.equal(coord.needsHeartbeat(stalledTask, 'agentA', now, cfg), false)
+  const customStallTask = heldTask({
+    claim_expires_at: new Date(now + 20000).toISOString(),
+    last_progress_at: new Date(now - 60000).toISOString(),
+  })
+  assert.equal(coord.needsHeartbeat(customStallTask, 'agentA', now, { ...cfg, progressStallMs: 50000 }), false)
+  assert.equal(coord.needsHeartbeat(customStallTask, 'agentA', now, { ...cfg, progressStallMs: 70000 }), true)
+  assert.equal(coord.needsHeartbeat(customStallTask, 'agentA', now, { ...cfg, progressStallMs: 0 }), true, '0 disables stall check')
 })
 
 test('observedLeaseWindowMs calibrates to the real server TTL', () => {
