@@ -1,21 +1,36 @@
 #!/usr/bin/env node
 /**
  * Header layout guard: (1) the header toolbar must not grow taller/wrap an
- * extra row at any of the widths below, and (2) the "i" help popover (which
- * now also hosts the Report-a-bug entry, v2.16.0) must stay fully inside the
- * viewport with a safe margin at every width.
+ * extra row at any of the widths below, whether the Report-a-bug header icon
+ * is rendered or not, and (2) the "i" help popover must stay fully inside
+ * the viewport with a safe margin at every width.
  *
- * WHY THIS EXISTS (v2.16.0 review rounds 2-4). Round 2: a standalone,
- * always-visible "Report a bug" header button cost just enough width to
- * wrap the toolbar onto an extra row at several mid viewports. Round 4: the
- * fix (moving the entry into HeaderHelp's "i" popover) introduced its own
- * defect — `absolute right-0 w-80` clips off the LEFT edge of the viewport
- * whenever the anchor button sits less than 320px from the left edge,
- * measured at 320-390px (~44% clipped) and again at 768-820px (the full
- * header-controls row crowds the button rightward). Neither defect is a
- * className a unit test can see; both are rendered-geometry outcomes, the
- * same reasoning scripts/check-card-layout.mjs gives for driving a real
- * browser instead of asserting a class string.
+ * WHY THIS EXISTS (v2.16.0 review rounds 2-4; entry point moved again in
+ * v2.17.0). Round 2: a standalone, always-visible "Report a bug" header
+ * button cost just enough width to wrap the toolbar onto an extra row at
+ * several mid viewports. Round 4: the fix (moving the entry into
+ * HeaderHelp's "i" popover) introduced its own defect — `absolute right-0
+ * w-80` clips off the LEFT edge of the viewport whenever the anchor button
+ * sits less than 320px from the left edge, measured at 320-390px (~44%
+ * clipped) and again at 768-820px (the full header-controls row crowds the
+ * button rightward). Neither defect is a className a unit test can see;
+ * both are rendered-geometry outcomes, the same reasoning
+ * scripts/check-card-layout.mjs gives for driving a real browser instead of
+ * asserting a class string.
+ *
+ * v2.17.0 moved the entry point OUT of the popover (which cost zero header
+ * width by construction — an `absolute` box) and into an actual icon button
+ * living directly in the header's flex row, beside the theme toggle — the
+ * ORIGINAL round-2 risk, reintroduced on purpose because a popover entry was
+ * still a multi-tap discovery path on a phone. This guard is what proves the
+ * EXPECTATIONS/COARSE_EXPECTATIONS baselines below — measured with the
+ * feature flag ON (see ci.yml) — are identical to the feature-OFF numbers a
+ * clean checkout would measure: the icon+theme button pair shares one
+ * border and claws back its own slice of the row's gap (`App.tsx`,
+ * `md:-ml-2`, applied only when the icon renders) specifically so adding it
+ * costs net-zero toolbar height at every width in both pointer environments
+ * — verified by hand against a feature-OFF build before these numbers were
+ * committed; this script re-verifies the feature-ON side on every CI run.
  *
  * TWO baselines, because TWO real pointer environments produce two
  * genuinely different (and both correct) header heights:
@@ -163,15 +178,31 @@ const READ_POPOVER = `(() => {
   const popover = document.querySelector('[role="dialog"][aria-label="Operator field reference"]');
   if (!popover) return { error: 'popover did not open' };
   const r = popover.getBoundingClientRect();
-  const reportBtn = [...popover.querySelectorAll('button')].find(
-    (b) => b.textContent.trim() === 'Report a bug',
-  );
-  const reportBox = reportBtn ? reportBtn.getBoundingClientRect() : null;
   return {
     innerWidth: window.innerWidth,
     box: { x: r.x, y: r.y, width: r.width, height: r.height },
-    hasReportButton: !!reportBtn,
-    reportBox: reportBox ? { x: reportBox.x, width: reportBox.width, height: reportBox.height } : null,
+  };
+})()`;
+// v2.17.0: the Report-a-bug entry point lives directly in the header now (an
+// icon button beside the theme toggle), not inside this popover. Checked
+// separately — it must stay fully on-screen AND immediately adjacent to the
+// theme toggle (no gap wide enough to look like a different control) at
+// every containment width.
+const READ_BUG_ICON = `(() => {
+  const icon = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Report a bug');
+  const theme = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Toggle theme');
+  if (!icon) return { present: false };
+  if (!theme) return { present: true, error: 'theme toggle not found' };
+  const i = icon.getBoundingClientRect();
+  const t = theme.getBoundingClientRect();
+  return {
+    present: true,
+    innerWidth: window.innerWidth,
+    iconBox: { x: i.x, width: i.width, height: i.height },
+    themeBox: { x: t.x, width: t.width },
+    gapPx: Math.round(t.x - (i.x + i.width)),
   };
 })()`;
 
@@ -273,6 +304,29 @@ async function main() {
       const toggledOpen = Boolean(toggleStep.result && toggleStep.result.value);
       await new Promise((r) => setTimeout(r, 200));
 
+      // Step 1b: if the bug icon is rendered (feature ON — see ci.yml), it
+      // must stay fully on-screen and sit immediately beside the theme
+      // toggle (v2.17.0). Skipped entirely when the feature is off (the icon
+      // simply does not render) rather than treated as a failure.
+      const iconStep = await send('Runtime.evaluate', { expression: READ_BUG_ICON, returnByValue: true });
+      const iconInfo = iconStep.result && iconStep.result.value;
+      if (iconInfo && iconInfo.present) {
+        if (iconInfo.error) {
+          containmentOffenders.push({ width, reason: `bug icon: ${iconInfo.error}` });
+        } else {
+          const { iconBox, innerWidth: iw, gapPx } = iconInfo;
+          if (iconBox.x < 0 || iconBox.x + iconBox.width > iw) {
+            containmentOffenders.push({ width, reason: `bug icon clipped (x=${Math.round(iconBox.x)}, width=${Math.round(iconBox.width)}, viewport=${iw})` });
+          }
+          // A handful of px covers the shared-border/no-gap construction
+          // (App.tsx) — anything wider suggests another control slipped
+          // between the two, or the group broke apart onto separate rows.
+          if (gapPx < -1 || gapPx > 2) {
+            containmentOffenders.push({ width, reason: `bug icon is not immediately beside the theme toggle (gap ${gapPx}px)` });
+          }
+        }
+      }
+
       // Step 2: open the "i" popover itself.
       const helpStep = await send('Runtime.evaluate', { expression: CLICK_HELP, returnByValue: true });
       const helpClicked = Boolean(helpStep.result && helpStep.result.value);
@@ -300,7 +354,7 @@ async function main() {
       } else if (!v || v.error) {
         containmentOffenders.push({ width, reason: (v && v.error) || 'no result' });
       } else {
-        const { box, innerWidth, hasReportButton, reportBox } = v;
+        const { box, innerWidth } = v;
         const leftEdge = box.x;
         const rightEdge = box.x + box.width;
         if (leftEdge < POPOVER_MARGIN_PX) {
@@ -308,11 +362,6 @@ async function main() {
         }
         if (rightEdge > innerWidth - POPOVER_MARGIN_PX) {
           containmentOffenders.push({ width, reason: `right edge at ${Math.round(rightEdge)}px exceeds viewport ${innerWidth}px (margin ${POPOVER_MARGIN_PX}px)` });
-        }
-        if (!hasReportButton) {
-          containmentOffenders.push({ width, reason: 'Report a bug row not found in the popover (feature off, or markup regressed)' });
-        } else if (reportBox && (reportBox.x < 0 || reportBox.x + reportBox.width > innerWidth)) {
-          containmentOffenders.push({ width, reason: `Report a bug row itself clipped (x=${Math.round(reportBox.x)}, width=${Math.round(reportBox.width)}, viewport=${innerWidth})` });
         }
       }
     }

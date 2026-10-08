@@ -1,24 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 
-type Props = {
-  /** v2.16.0 (opt-public-bug-reports): only when the server confirms the
-   *  feature is configured. Rendered as a row inside this popover rather
-   *  than its own header button — a standalone button widened the toolbar
-   *  enough to push it onto an extra row at several mid viewports (see
-   *  CHANGELOG "Fixed", v2.16.0). The popover is `absolute`-positioned, so
-   *  anything inside it costs zero width in the header's flex layout
-   *  regardless of the flag. */
-  bugReportEnabled?: boolean
-  onReportBug?: () => void
-}
-
 /**
  * A small "i" affordance in the header that explains the two operator fields
- * (agent id + api token), and — when configured — a "Report a bug" entry.
- * Discoverable on demand without permanently spending header space on prose
- * or on a second always-visible button.
+ * (agent id + api token). Discoverable on demand without permanently
+ * spending header space on prose.
+ *
+ * v2.17.0 (mobile-dialog-theme-auto-bugicon): this popover USED to also host
+ * a bug-reporting row (v2.16.0) — moved out to its own header icon button
+ * beside the theme toggle (see App.tsx) because a popover entry was still a
+ * multi-tap discovery path on a phone. The `max-lg:fixed` viewport-anchored
+ * containment fix below (round 4) stays: it fixes a real clipping bug in
+ * THIS popover's own positioning, unrelated to what it contains.
  */
-export default function HeaderHelp({ bugReportEnabled, onReportBug }: Props) {
+export default function HeaderHelp() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -94,21 +88,6 @@ export default function HeaderHelp({ bugReportEnabled, onReportBug }: Props) {
               </dd>
             </div>
           </dl>
-          {bugReportEnabled && onReportBug && (
-            <>
-              <div className="my-2.5 border-t border-line" />
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false)
-                  onReportBug()
-                }}
-                className="w-full border border-line bg-surface px-2 py-1.5 text-left font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
-              >
-                Report a bug
-              </button>
-            </>
-          )}
         </div>
       )}
     </div>
