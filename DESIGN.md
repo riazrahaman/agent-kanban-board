@@ -345,7 +345,15 @@ mouse. It and the theme toggle sit together in one `shrink-0` flex group so
 they are always adjacent and wrap (or don't) as a single unit. Rendered only
 once `GET /api/bug-reports/config` confirms the feature, and renders nothing
 at all (not a disabled/hidden button) when it is off — same
-zero-layout-change-by-default contract every earlier entry point used.
+zero-layout-change-by-default contract every earlier entry point used. The
+icon's own footprint still has to come from somewhere in the row when it IS
+on: the api-token input (`sm:w-36`, short placeholder, lots of slack) takes
+a `bugReportEnabled`-only width cut sized to the icon's exact footprint
+(27px mouse / 44px coarse pointer), scoped to the one breakpoint band where
+the row is actually tight and reset at `xl` — see the comment above the
+`tokenInputBugIconClawback` const in `App.tsx` for the full mechanism (a
+`min-width` floor alone does not move a flex-wrap line-break decision; only
+an actual width reduction does).
 `About.tsx` keeps its own CTA (§7.6) — that page isn't width-constrained the
 way the header toolbar is.
 
@@ -423,10 +431,13 @@ guards and the card's test notes for what was actually measured.
   explicitly rather than by removing the key, so every mode round-trips
   through one read path with no special-cased "no key" branch.
 - The single compact toggle button cycles `nextMode(current)`: Auto → Light →
-  Dark → Auto, labelled `AUTO`/`LIGHT`/`DARK` (similar width in all three
-  states so the header does not reflow) via `modeLabel`, with a dynamic
-  `title` from `themeToggleTitle` (e.g. "Theme: auto (follows system). Click
-  for light"). Auto mode live-updates: a `matchMedia('(prefers-color-scheme:
+  Dark → Auto, labelled `AUTO`/`LIGHT`/`DARK` via `modeLabel`. The button is a
+  fixed `w-16` width, not merely "similar-width" labels (v2.17.0 round 3): a
+  WebKit-only repro showed LIGHT rendering a few px wider than AUTO/DARK,
+  which was enough to tip the header-controls row into an extra wrapped
+  line in a narrow viewport band — a fixed width removes the mode as a
+  variable entirely. It carries a dynamic `title` from `themeToggleTitle`
+  (e.g. "Theme: auto (follows system). Click for light"). Auto mode live-updates: a `matchMedia('(prefers-color-scheme:
   dark)')` `change` listener in `App.tsx` re-resolves the theme the instant
   the OS setting flips, no reload needed. `theme.test.mjs` locks the
   precedence, cycling and persistence rules; `client/index.html`'s pre-paint

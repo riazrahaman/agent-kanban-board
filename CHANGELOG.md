@@ -27,9 +27,13 @@ toggle; the footer link is removed entirely.
 - **Auto theme**: the theme control is now three states — Auto (follows the
   OS `prefers-color-scheme`, live-updating via a `matchMedia` `change`
   listener with no reload needed), Light, Dark — cycled by the same compact
-  header button (Auto → Light → Dark → Auto), labelled `AUTO`/`LIGHT`/`DARK`
-  (similar width at every state so the header does not reflow). Auto is the
-  default for a visitor with no stored choice; existing stored `'light'`/
+  header button (Auto → Light → Dark → Auto), labelled `AUTO`/`LIGHT`/`DARK`.
+  The button has a fixed `w-16` width (not just "similar-width" labels): an
+  independent tester found that LIGHT renders a few px wider than AUTO/DARK
+  in real WebKit, which was enough to tip the header-controls row into an
+  extra wrapped line in a narrow width band a plain visual check never
+  landed on — a fixed width removes the mode itself as a variable. Auto is
+  the default for a visitor with no stored choice; existing stored `'light'`/
   `'dark'` values are honoured unchanged. `'auto'` is now stored explicitly
   in `localStorage` rather than by removing the key, so every mode
   round-trips through one read path. `client/src/lib/theme.ts` gained
@@ -43,12 +47,12 @@ toggle; the footer link is removed entirely.
   border/surface tokens and a single shared border with it (no gap) so the
   pair's combined footprint stays small enough to clear
   `scripts/check-header-layout.mjs`'s header-height guard at every width —
-  the guard now measures the feature ON vs OFF directly and requires the
-  header to measure IDENTICALLY either way, instead of relying on the entry
-  point costing zero width by being tucked inside a popover. `aria-label`/
-  `title="Report a bug"`, native `<button>`, `pointer-coarse:min-h-11
-  pointer-coarse:min-w-11` touch target, ~28px square on a mouse. Rendered
-  only once `GET /api/bug-reports/config` confirms the feature.
+  the guard requires the header to measure IDENTICALLY with the feature ON
+  vs OFF, instead of relying on the entry point costing zero width by being
+  tucked inside a popover. `aria-label`/`title="Report a bug"`, native
+  `<button>`, `pointer-coarse:min-h-11 pointer-coarse:min-w-11` touch
+  target, ~28px square on a mouse. Rendered only once
+  `GET /api/bug-reports/config` confirms the feature.
 
 ### Changed
 - **Report-a-bug entry points**: now exactly two — the new header icon
@@ -60,6 +64,27 @@ toggle; the footer link is removed entirely.
   and stays).
 
 ### Fixed
+- **Header-controls row wrapped one line earlier with the bug icon ON than
+  OFF (WebKit, round 3)**: an independent tester's deterministic Playwright
+  WebKit repro (`devices['iPhone 15']`, theme LIGHT, 1100px viewport: 155px
+  header ON vs 101px OFF) showed the icon-plus-theme-toggle pair's width
+  wasn't fully absorbed — the earlier round-2 `-ml-2` claw-back only
+  covered part of the icon's own footprint (27px on a mouse, 44px on
+  `pointer-coarse:min-w-11`), and the LIGHT label's few extra px (see the
+  Auto theme entry above) widened the bad band further. Fixed on two axes:
+  the theme toggle is now a fixed `w-16` width (mode no longer affects row
+  width at all), and the api-token input absorbs the icon's exact remaining
+  footprint via a `bugReportEnabled`-only width reduction, scoped to the
+  one breakpoint band where the row is actually tight and reset at `xl`
+  where it has slack again (`client/src/App.tsx`). Verified with a live
+  Chromium + Playwright WebKit fine sweep (every 8px from 320-1920, both
+  pointer types, all three theme modes): ON and OFF now measure byte-for-
+  byte identical at every point checked.
+  `scripts/check-header-layout.mjs` gained a third pass that forces each
+  theme mode and sweeps 8px steps across the known wrap thresholds,
+  diffing a feature-ON server against a feature-OFF one live when CI
+  supplies both (`ci.yml` now starts a second, flag-off server for this)
+  rather than trusting a hand-verified table.
 - **Report-a-bug sheet on iOS Safari**: a real-device recording showed the
   sheet panning horizontally with zoomed, clipped content, and the
   Turnstile widget/Submit button pinned under Safari's floating bottom
