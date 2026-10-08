@@ -82,9 +82,12 @@ test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, 
   // v2.17.0: tokenDraft's className became a template literal (it now also
   // carries a bugReportEnabled-only width reduction — see App.tsx's
   // "bug icon" comment on this input), so it is no longer a plain
-  // `className="..."` string; match either form.
+  // `className="..."` string; match either form. The placeholder itself is
+  // "token" (round 4 — shortened from "api token" so it is never clipped
+  // once the clawback above shrinks this input on a coarse pointer; see
+  // the test below for the dedicated regression guard).
   const tokenInputMatch = appSource.match(
-    /placeholder="api token"[\s\S]*?className=(?:"([^"]*)"|\{`([^`]*)`\})/,
+    /placeholder="token"[\s\S]*?className=(?:"([^"]*)"|\{`([^`]*)`\})/,
   )
   const tokenInput = tokenInputMatch?.[1] ?? tokenInputMatch?.[2]
   assert.ok(tokenInput, 'App.tsx must render tokenDraft input')
@@ -127,6 +130,38 @@ test('tokenDraft width reduction (bug-icon slack absorption) stays bounded and r
     tokenInput,
     /\bxl:w-36\b/,
     'tokenDraft must reset to w-36 at xl — the row has slack again there, so the reduction must not persist',
+  )
+})
+
+test('tokenDraft placeholder is short enough to survive the bug-icon width clawback, in BOTH feature states', () => {
+  // v2.17.0 round 4 (tester-caught clip, coarse pointer, 768-1100px,
+  // feature ON): "api token" needed ~86-89px at 16px mono but this input's
+  // inner width drops to ~84px once bugReportEnabled's clawback (see the
+  // test above) shrinks it to 100px on a coarse pointer — a 2-5px clip.
+  // "token" is unconditional (not inside the bugReportEnabled ternary)
+  // precisely so the placeholder's own width is never a second,
+  // feature-dependent variable in the ON==OFF header invariant: it must
+  // read the same regardless of whether the clawback is active.
+  assert.match(
+    appSource,
+    /placeholder="token"/,
+    'tokenDraft placeholder must be the short "token" (not "api token", which clips once the bug-icon clawback shrinks the input)',
+  )
+  assert.doesNotMatch(
+    appSource,
+    /placeholder="api token"/,
+    'the old, longer "api token" placeholder must not reappear',
+  )
+  // The accessible name stays fully descriptive — only the visible
+  // placeholder shortened.
+  const tokenInputBlock = appSource.slice(
+    appSource.indexOf('placeholder="token"'),
+    appSource.indexOf('placeholder="token"') + 400,
+  )
+  assert.match(
+    tokenInputBlock,
+    /aria-label="API token for mutating requests"/,
+    'tokenDraft must keep its full, descriptive aria-label even though the placeholder shortened',
   )
 })
 

@@ -569,7 +569,17 @@ export default function App() {
              onKeyDown={(e) => {
                if (e.key === 'Enter') commitToken()
                }}
-             placeholder="api token"
+             // v2.17.0 round 4 (tester-caught clip, coarse pointer, 768-1100px,
+             // feature ON): "api token" (16px mono, needs ~86-89px) was
+             // clipped by 2-5px against this input's ~84px inner width once
+             // the bug-icon clawback above shrinks it to 100px. Shortened to
+             // "token" for BOTH feature on and off — not gated on
+             // bugReportEnabled — so the placeholder's own width is never a
+             // second, feature-dependent variable in the ON==OFF header
+             // invariant this input already carries (see
+             // tokenInputBugIconClawback above). aria-label (the accessible/
+             // descriptive name) is unchanged.
+             placeholder="token"
              aria-label="API token for mutating requests"
              title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
              autoComplete="off"

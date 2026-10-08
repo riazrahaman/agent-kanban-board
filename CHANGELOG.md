@@ -85,6 +85,17 @@ toggle; the footer link is removed entirely.
   diffing a feature-ON server against a feature-OFF one live when CI
   supplies both (`ci.yml` now starts a second, flag-off server for this)
   rather than trusting a hand-verified table.
+- **api-token placeholder clipped on coarse pointers (round 4)**: fixing the
+  above left one cosmetic gap — a tester caught the round-3 width cut
+  (100px wide on a coarse pointer, 768-1100px, feature ON, vs 144px off)
+  clipping the "api token" placeholder by 2-5px (16px mono needs ~86-89px;
+  the shrunk input's inner width is ~84px). Shortened the placeholder to
+  "token" for BOTH feature states — not gated on `bugReportEnabled` — so
+  the placeholder's own width is never a second, feature-dependent
+  variable on top of the input's own width cut; the accessible name
+  (`aria-label="API token for mutating requests"`) is unchanged. No width
+  or class changed, so the ON==OFF header-height invariant above is
+  untouched.
 - **Report-a-bug sheet on iOS Safari**: a real-device recording showed the
   sheet panning horizontally with zoomed, clipped content, and the
   Turnstile widget/Submit button pinned under Safari's floating bottom
