@@ -55,14 +55,36 @@
  * baseline can mean content silently went missing just as much as growing
  * above it can mean an extra wrapped row.
  *
+ * THIRD PASS (v2.17.0 round 3): an independent tester caught a case none of
+ * the above sees — Playwright WebKit, `pointer: coarse`, theme mode LIGHT,
+ * viewport 1100px: 155px ON vs 101px OFF. AUTO/DARK and most widths were
+ * fine; the first two passes above sample too coarse a width grid (12-84px
+ * gaps) to land inside the bad band, and they never force a theme mode, so
+ * a mode-dependent regression (the LIGHT label rendering a few px wider
+ * than AUTO/DARK) was invisible to them even in Chromium, where the SAME
+ * class of defect exists in different, equally narrow bands (confirmed by
+ * a manual fine sweep during the fix — Chromium was never actually clean,
+ * the coarse sample widths above just didn't happen to land on a bad one).
+ * The third pass below closes both gaps: it forces each of the three theme
+ * modes (`localStorage['theme']` + reload — see client/src/lib/theme.ts)
+ * and sweeps every 8px across the known wrap thresholds, for both pointer
+ * types. When a second, feature-OFF server URL is supplied (see Usage), it
+ * diffs ON against OFF LIVE rather than against a hardcoded table, so it
+ * cannot go stale the way a hand-verified comment can; without one it falls
+ * back to FINE_EXPECTATIONS/FINE_COARSE_EXPECTATIONS, captured the same way
+ * the first two passes' tables were.
+ *
  * Dependency-free, same CDP-over-WebSocket approach as check-card-layout.mjs
  * and check-browser-smoke.mjs — no puppeteer/playwright.
  *
  * Usage:
- *   node scripts/check-header-layout.mjs <base-url> [cdp-port]
+ *   node scripts/check-header-layout.mjs <base-url> [cdp-port] [off-base-url]
  *
- * Exit 0 = every width stays within tolerance on both guards.
- * Exit 1 = a header-height or popover-containment regression.
+ * <off-base-url> is optional: a second server with the bug-report feature
+ * OFF, for a live ON-vs-OFF diff in the third pass (see ci.yml).
+ *
+ * Exit 0 = every width stays within tolerance on all three guards.
+ * Exit 1 = a header-height, wrap-threshold or popover-containment regression.
  * Exit 2 = environmental skip/error (no Chrome / no server / no page).
  */
 import http from 'node:http';
@@ -97,6 +119,35 @@ const EXPECTATIONS = {
 const COARSE_EXPECTATIONS = {
   320: 113, 768: 155, 1100: 101, 1280: 67,
 };
+
+// Optional second server (feature OFF) for a live ON-vs-OFF diff in the
+// third pass — see the file header comment and ci.yml.
+const OFF_BASE = process.argv[4] || null;
+
+// Every stored theme mode (client/src/lib/theme.ts `ThemeMode`) — the
+// round-3 defect was mode-dependent, so the third pass below forces each
+// one in turn rather than trusting whatever mode the browser happens to
+// boot into.
+const THEME_MODES = ['auto', 'light', 'dark'];
+
+const range = (from, to, step) => {
+  const out = [];
+  for (let x = from; x <= to; x += step) out.push(x);
+  return out;
+};
+// 8px steps across the two wrap thresholds the first two passes already
+// know about (1024<->1100 and 1100<->1280 — see EXPECTATIONS) plus a margin
+// either side, non-coarse and coarse pointer respectively. This is exactly
+// the grid fine enough to have caught the round-3 defect (an 8-40px band)
+// in Chromium, not just the WebKit repro it was first found in.
+const FINE_WIDTHS = range(1000, 1260, 8);
+const FINE_COARSE_WIDTHS = range(1000, 1270, 8);
+// Fallback tables, used only when OFF_BASE is not supplied. Captured with a
+// live ON-vs-OFF diff (both empty, i.e. equal, at the time this pass was
+// written) against the same real-Chromium ground truth as EXPECTATIONS/
+// COARSE_EXPECTATIONS above.
+const fineNonCoarseExpected = (w) => (w <= 1032 ? 120 : w <= 1232 ? 82 : 49);
+const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1256 ? 101 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
@@ -396,15 +447,96 @@ async function main() {
     }
   }
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+
+  // Third pass (v2.17.0 round 3) — see the file header comment. Forces each
+  // theme mode and sweeps 8px-step width grids across the known wrap
+  // thresholds, non-coarse and coarse, diffing ON against OFF live when
+  // OFF_BASE is given, else against the fallback tables above.
+  async function navigateAndWaitForHeader(url) {
+    await send('Page.navigate', { url });
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise((r) => setTimeout(r, 300));
+      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+      if (r.result && typeof r.result.value === 'number') return true;
+    }
+    return false;
+  }
+  async function setThemeModeAndReload(url, mode) {
+    // Navigate first so localStorage is set on the RIGHT origin (ON and OFF
+    // are different ports/origins with independent storage), then reload so
+    // the pre-paint inline script (client/index.html) picks the mode up the
+    // same way a real visitor's stored choice would be.
+    const loaded = await navigateAndWaitForHeader(url);
+    if (!loaded) return false;
+    await send('Runtime.evaluate', { expression: `localStorage.setItem('theme', ${JSON.stringify(mode)})` });
+    return navigateAndWaitForHeader(url);
+  }
+  async function measureHeightsAcrossWidths(widths) {
+    const out = {};
+    for (const width of widths) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await new Promise((r) => setTimeout(r, 150));
+      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+      out[width] = r.result && typeof r.result.value === 'number' ? r.result.value : null;
+    }
+    return out;
+  }
+
+  const fineOffenders = [];
+  const fineMode = OFF_BASE ? 'live ON-vs-OFF diff' : 'fallback table';
+  for (const mode of THEME_MODES) {
+    const onReady = await setThemeModeAndReload(BASE, mode);
+    if (!onReady) { fineOffenders.push({ mode, reason: 'ON header never rendered after forcing theme + reload' }); continue; }
+    const onNonCoarse = await measureHeightsAcrossWidths(FINE_WIDTHS);
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+    const onCoarse = await measureHeightsAcrossWidths(FINE_COARSE_WIDTHS);
+    await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+
+    let offNonCoarse = null;
+    let offCoarse = null;
+    if (OFF_BASE) {
+      const offReady = await setThemeModeAndReload(OFF_BASE, mode);
+      if (!offReady) {
+        fineOffenders.push({ mode, reason: 'OFF header never rendered after forcing theme + reload' });
+      } else {
+        offNonCoarse = await measureHeightsAcrossWidths(FINE_WIDTHS);
+        await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+        await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+        offCoarse = await measureHeightsAcrossWidths(FINE_COARSE_WIDTHS);
+        await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      }
+    }
+
+    for (const width of FINE_WIDTHS) {
+      const expected = offNonCoarse ? offNonCoarse[width] : fineNonCoarseExpected(width);
+      const actual = onNonCoarse[width];
+      if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
+        fineOffenders.push({ mode, coarse: false, width, expected, actual });
+      }
+    }
+    for (const width of FINE_COARSE_WIDTHS) {
+      const expected = offCoarse ? offCoarse[width] : fineCoarseExpected(width);
+      const actual = onCoarse[width];
+      if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
+        fineOffenders.push({ mode, coarse: true, width, expected, actual });
+      }
+    }
+  }
+  // Leave the session pointed back at BASE in its default mode so a reused
+  // CDP target (unlikely, but cheap to guard) is not left mid-experiment.
+  await setThemeModeAndReload(BASE, 'auto');
+
   ws.close();
 
   console.log(`header layout guard (CDP :${usedPort})`);
   console.log(`  heights (non-coarse): ${JSON.stringify(measuredHeights)}`);
   console.log(`  heights (coarse):     ${JSON.stringify(measuredCoarseHeights)}`);
   console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
+  console.log(`  fine wrap-threshold sweep (${fineMode}, ${THEME_MODES.join('/')}): ${fineOffenders.length === 0 ? 'OK' : `${fineOffenders.length} offender(s)`}`);
 
-  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0) {
-    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
+  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0 && fineOffenders.length === 0) {
+    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types, every theme mode, fine and coarse width grids), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
     process.exit(0);
   }
   if (coarseOffenders.length) {
@@ -423,6 +555,16 @@ async function main() {
     console.error(`  FAIL — ${containmentOffenders.length} popover containment violation(s):`);
     for (const o of containmentOffenders) {
       console.error(`    ${o.width}px: ${o.reason}`);
+    }
+  }
+  if (fineOffenders.length) {
+    console.error(`  FAIL — ${fineOffenders.length} fine wrap-threshold offender(s) (${fineMode}):`);
+    for (const o of fineOffenders) {
+      if (o.width === undefined) {
+        console.error(`    mode=${o.mode}: ${o.reason}`);
+      } else {
+        console.error(`    mode=${o.mode} coarse=${o.coarse} ${o.width}px: expected ${o.expected}±${TOLERANCE_PX}, got ${o.actual}`);
+      }
     }
   }
   process.exit(1);

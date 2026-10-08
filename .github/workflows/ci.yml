@@ -78,11 +78,25 @@ jobs:
         # long unbreakable token) because an empty board would pass vacuously.
         run: |
           set -e
-          mkdir -p /tmp/ci-layout
+          mkdir -p /tmp/ci-layout /tmp/ci-layout-off
           node server/server.js &
           SERVER_PID=$!
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:4000/api/health >/dev/null && break
+            sleep 1
+          done
+
+          # Second server with the bug-report feature OFF (none of the
+          # KANBAN_REPORT_*/TURNSTILE_* vars below), so the header layout
+          # guard's third pass can diff ON against OFF live instead of
+          # trusting a hardcoded, hand-verified-once table — see
+          # scripts/check-header-layout.mjs.
+          env -u KANBAN_REPORT_GITHUB_TOKEN -u KANBAN_REPORT_REPO -u TURNSTILE_SECRET -u TURNSTILE_SITE_KEY \
+            PORT=4001 KANBAN_DATA_DIR=/tmp/ci-layout-off KANBAN_DATA_FILE=/tmp/ci-layout-off/tasks.json \
+            node server/server.js &
+          SERVER_OFF_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:4001/api/health >/dev/null && break
             sleep 1
           done
 
@@ -112,7 +126,7 @@ jobs:
           echo "layout fixture seeded: $SEEDED task(s)"
           if [ "$SEEDED" -lt 4 ]; then
             echo "::error::layout fixture did not seed (got $SEEDED of 4) — the guard would pass vacuously"
-            kill $SERVER_PID 2>/dev/null || true
+            kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
             exit 1
           fi
 
@@ -128,7 +142,7 @@ jobs:
           done
           if [ -z "$CHROME_BIN" ]; then
             echo "::warning::no Chrome/Chromium found on this runner — skipping the card layout guard"
-            kill $SERVER_PID 2>/dev/null || true
+            kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
             exit 0
           fi
           echo "layout guard using: $CHROME_BIN"
@@ -143,21 +157,23 @@ jobs:
           done
           if [ "$READY" != "1" ]; then
             echo "::warning::Chrome DevTools endpoint never came up — skipping the card layout guard"
-            kill $CHROME_PID $SERVER_PID 2>/dev/null || true
+            kill $CHROME_PID $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
             exit 0
           fi
 
           STATUS=0
           node scripts/check-card-layout.mjs "http://127.0.0.1:4000" 9222 || STATUS=$?
 
-          # Header layout guard (v2.16.0 review round 2): a standalone
-          # "Report a bug" header button once wrapped the toolbar onto an
-          # extra row at several mid viewports. KANBAN_REPORT_*/TURNSTILE_*
-          # below are Cloudflare's published PUBLIC test keys (never a real
-          # secret) so this run also exercises the feature-ON header, which
-          # must measure identically to feature-OFF — see the script.
+          # Header layout guard (v2.16.0 review round 2; strengthened v2.17.0
+          # round 3): a standalone "Report a bug" header button once wrapped
+          # the toolbar onto an extra row at several mid viewports.
+          # KANBAN_REPORT_*/TURNSTILE_* below are Cloudflare's published
+          # PUBLIC test keys (never a real secret) so :4000 runs with the
+          # feature ON; :4001 (started above) runs with it OFF, so the
+          # guard's fine wrap-threshold pass can diff the two live instead
+          # of trusting a hand-verified table — see the script.
           HEADER=0
-          node scripts/check-header-layout.mjs "http://127.0.0.1:4000" 9222 || HEADER=$?
+          node scripts/check-header-layout.mjs "http://127.0.0.1:4000" 9222 "http://127.0.0.1:4001" || HEADER=$?
           if [ "$HEADER" = "1" ]; then STATUS=1; fi
 
           # Browser smoke test: seeds its own worst-case fixture project (long
@@ -169,7 +185,7 @@ jobs:
           node scripts/check-browser-smoke.mjs "http://127.0.0.1:4000" 9222 || SMOKE=$?
           if [ "$SMOKE" = "1" ]; then STATUS=1; fi
 
-          kill $CHROME_PID $SERVER_PID 2>/dev/null || true
+          kill $CHROME_PID $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
           exit $STATUS
         env:
           KANBAN_AUTH_TOKEN: ci-layout-token
