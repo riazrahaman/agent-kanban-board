@@ -159,7 +159,6 @@ than a border to nest, keeping the hairline budget low.
     <Board/>            ← horizontal snap-scroll columns
     <SignalRail/>       ← w-80, border-l; slides over below md
   </main>
-  <AppFooter/>          ← optional hairline-topped strip, see below
 </div>
 ```
 
@@ -170,20 +169,10 @@ than a border to nest, keeping the hairline budget low.
   (`border border-line bg-surface px-2.5 py-1.5 … hover:bg-muted-bg`).
 - The live-connection dot is a `h-2 w-2 bg-live animate-pulse` square (no
   radius), `aria-label="Live connection"`.
-- **Global footer pattern (`components/AppFooter.tsx`, v2.16.3):** a sibling
-  of `<main>`, not nested inside it, so it renders identically underneath
-  the board, portfolio and about views. It carries `shrink-0 border-t
-  border-line bg-surface` — the hairline-top mirror of the header's
-  hairline-bottom — and is deliberately never `fixed`/`sticky`: because it
-  is a real flex child of the `h-screen`/`100dvh` column, it costs a thin,
-  fixed slice of real height out of `<main>`'s `flex-1` share instead of
-  overlaying the board, the Signal rail or a card. Content inside follows
-  the same small/mono/uppercase/muted treatment as other secondary labels
-  (e.g. the header's `read-only` chip), and any pointer-coarse touch target
-  in it meets the 44px minimum via `pointer-coarse:min-h-11` on the control
-  itself, not by padding the footer strip. Render it conditionally (return
-  `null`, not an empty `<footer>`) when its content is config-gated off, so
-  a site that never enables the gated feature sees zero layout change.
+- There is no app-wide footer. A v2.16.3 slim footer link (`AppFooter.tsx`)
+  that existed as a third Report-a-bug entry point was removed in v2.17.0
+  once the feature got a direct header icon (§7.7) — see that section for
+  the current set of entry points.
 
 ---
 
@@ -341,32 +330,46 @@ future form should reuse:
 
 The Turnstile widget container (`<div ref={widgetContainerRef} />`) is an
 unstyled mount point — Cloudflare's own script renders into it — so it
-carries no DESIGN.md tokens itself; the surrounding form does.
+carries no DESIGN.md tokens itself (beyond a defensive `max-w-full
+overflow-hidden` cap, v2.17.0); the surrounding form does. It is rendered
+with Turnstile's `size: 'flexible'` option so it fills the sheet's width
+instead of forcing a fixed ~300px box.
 
-**Entry point: inside the header's "i" popover, not a header button.**
-`HeaderHelp.tsx`'s "Report a bug" row sits inside its existing popover (§7,
-same component), behind a hairline divider. An earlier revision added a
-standalone always-visible button to the header's flex toolbar instead — it
-cost just enough width to push the toolbar onto an extra row at several mid
-viewports (measured 824-1100px in real Chrome) even with the row already
-nearly full. Anything added to the toolbar's flex row is live real estate;
-a feature that must stay invisible until opened belongs behind an existing
-disclosure (the "i" popover, a dropdown, the mobile `⋯` disclosure) rather
-than its own chrome. `About.tsx` keeps its own CTA — that page isn't
-width-constrained the way the header toolbar is.
+**Entry point (v2.17.0): a small icon button in the header, immediately
+beside the theme toggle.** `App.tsx` renders an inline-SVG bug glyph
+(stroke-only line icon, matching the rest of the UI's no-emoji/no-icon-font
+convention) in a square button styled with the same `border-line`/
+`bg-surface` tokens as the theme toggle, `pointer-coarse:min-h-11
+pointer-coarse:min-w-11` for the touch target and a compact ~28px box on a
+mouse. It and the theme toggle sit together in one `shrink-0` flex group so
+they are always adjacent and wrap (or don't) as a single unit. Rendered only
+once `GET /api/bug-reports/config` confirms the feature, and renders nothing
+at all (not a disabled/hidden button) when it is off — same
+zero-layout-change-by-default contract every earlier entry point used.
+`About.tsx` keeps its own CTA (§7.6) — that page isn't width-constrained the
+way the header toolbar is.
 
-**Third entry point: the global footer (v2.16.3), because the popover was
-still a multi-tap discovery path on a phone.** Getting to the popover's
-"Report a bug" row on a phone meant opening the `⋯` disclosure, then the "i"
-popover, then finding the row below its divider — three taps, and nothing
-about that path is visible without already knowing it exists.
-`components/AppFooter.tsx` adds a slim, always-visible text link at the very
-end of the page (§5 Layout Shell) using the SAME `bugReportEnabled` flag and
-`onReportBug` opener as the other two, so all three stay in lockstep by
-construction rather than by convention.
+This replaces TWO earlier entry points, both removed in v2.17.0: a row
+inside `HeaderHelp.tsx`'s "i" popover (v2.16.0 — a standalone labelled
+header button had cost just enough width to wrap the toolbar at several mid
+viewports, so the entry was hidden behind the popover instead), and a slim
+global footer link (`AppFooter.tsx`, v2.16.3, added because the popover was
+still a 3-tap discovery path on a phone). An unlabelled icon-only button
+sidesteps the ORIGINAL width problem the popover was built to avoid, so a
+single direct, always-visible entry point now covers the same ground the
+popover + footer combination did. `HeaderHelp.tsx` reverts to explaining
+only the agent-id/api-token fields; its own `max-lg:fixed` viewport
+containment fix (below) is unrelated to what the popover contains and
+stays. Guarded by `scripts/check-header-layout.mjs`, which measures the
+header's height with the feature flag ON vs OFF at eleven widths
+(320-1920px) in both pointer environments — the hard requirement is that
+ON and OFF measure IDENTICALLY; a width that would wrap only when the icon
+is present must be fixed by tightening the icon/theme group's layout, not
+accepted as a taller ON-state header.
 
-**The popover itself must stay viewport-anchored below `lg`, not
-button-anchored.** `right:0` positions a popover relative to its own
+**The "i" popover itself must stay viewport-anchored below `lg`, not
+button-anchored** (unrelated to what it contains — this is about the
+popover's own position). `right:0` positions a popover relative to its own
 trigger button, not the viewport — fine for a narrow popover (ProjectPicker's
 `w-48`) near a predictable edge, but a wide one (this `w-80`) clipped off the
 LEFT edge whenever the "i" button sat less than 320px from it: measured at
@@ -383,17 +386,52 @@ is an unconditional safety net at every breakpoint. Guarded by
 headless Chrome, 320-1440px) and a `bugReportContract.test.mjs` assertion
 that it can never regress to an unconditional `absolute right-0`.
 
+**iOS/WebKit sheet fixes (v2.17.0).** A real-device report showed the sheet
+panning horizontally, its content zoomed, and the Turnstile widget/Submit
+button pinned under Safari's floating bottom toolbar. Defenses applied:
+`overflow-x-hidden` + `max-w-[100vw]` on the `<aside>` itself (a
+`position:fixed` panel translated off-screen via `translate-x-full`, or an
+absolutely-positioned descendant like the honeypot's `-left-[9999px]` offset,
+can still widen WebKit's document scroll area even though nothing is
+visually overflowing) plus the same `overflow-x: hidden` on `html, body` as
+a second line of defense (`index.css`); `inert` on the closed sheet so it
+exits the a11y tree and tab order immediately; `height: 100dvh` so mobile
+chrome cannot clip it; and a submit button pinned in its own `shrink-0`
+footer OUTSIDE the scrollable body (`form="bug-report-form"` associates it
+with the `<form>` by id) with `padding-bottom:
+calc(1rem + env(safe-area-inset-bottom))`, so it stays reachable above a
+floating toolbar regardless of scroll position. The horizontal-overflow and
+bottom-clearance mechanisms are verifiable in real WebKit (Playwright); the
+OS-level pinch-zoom-on-focus chrome itself is not reproducible outside a
+physical iPhone — see `bugReportContract.test.mjs` for the source-level
+guards and the card's test notes for what was actually measured.
+
 ---
 
 ## 8. Theming
 
 - Class-based (`tailwind.config.js` → `darkMode: 'class'`); `.dark` on the root
   swaps every token.
-- Resolution is pure and lives in `client/src/lib/theme.ts`:
-  `resolveTheme(stored, prefersDark)` → an explicit stored `'light' | 'dark'`
-  always wins; otherwise the OS preference is used. Storage key: `theme`.
-- The toggle calls `nextTheme(current)`. `theme.test.mjs` (5 tests) locks the
-  precedence and persistence rules.
+- Three stored modes (v2.17.0): `'auto'` (follows OS `prefers-color-scheme`,
+  the default with no stored choice), `'light'`, `'dark'` (explicit, always
+  win). Resolution is pure and lives in `client/src/lib/theme.ts`:
+  `parseStoredMode(stored)` turns a raw `localStorage` read into a mode (only
+  the exact literals `'light'`/`'dark'` are explicit; anything else,
+  including an explicit `'auto'`, a missing key or garbage, is auto);
+  `resolveMode(mode, prefersDark)` resolves a mode to the applied
+  `'light' | 'dark'` theme. Storage key: `theme` — `'auto'` is written
+  explicitly rather than by removing the key, so every mode round-trips
+  through one read path with no special-cased "no key" branch.
+- The single compact toggle button cycles `nextMode(current)`: Auto → Light →
+  Dark → Auto, labelled `AUTO`/`LIGHT`/`DARK` (similar width in all three
+  states so the header does not reflow) via `modeLabel`, with a dynamic
+  `title` from `themeToggleTitle` (e.g. "Theme: auto (follows system). Click
+  for light"). Auto mode live-updates: a `matchMedia('(prefers-color-scheme:
+  dark)')` `change` listener in `App.tsx` re-resolves the theme the instant
+  the OS setting flips, no reload needed. `theme.test.mjs` locks the
+  precedence, cycling and persistence rules; `client/index.html`'s pre-paint
+  inline script mirrors the same stored-value handling so there is no flash
+  of the wrong theme in any of the three modes on first load.
 - Because `color-scheme` follows the class, native form controls switch with it.
 
 ---

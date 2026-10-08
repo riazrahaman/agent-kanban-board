@@ -528,7 +528,7 @@ inherited from `referencedProjects`).
 - **`ErrorBoundary.tsx`:** React Class Error Boundary containing card render errors.
 
 #### Client Libraries (`client/src/lib/`)
-- **`theme.ts`:** Pure theme resolution helpers (`resolveTheme`, `nextTheme`, `isDark`, `THEME_STORAGE_KEY`).
+- **`theme.ts`:** Pure tri-state theme resolution helpers (`parseStoredMode`, `resolveMode`, `nextMode`, `isDark`, `modeLabel`, `themeToggleTitle`, `THEME_STORAGE_KEY`) — Auto/Light/Dark, v2.17.0.
 - **`status.ts`:** `CANONICAL_STATUSES` and `ACTIVE_STATUSES` matching backend definitions.
 - **`filterTasks.ts`:** Pure filter predicate — live substring search (id/title/description/branch/assigned_agent), normalized-priority filter, and assignee filter including `unassigned`. Guarded by `filterTasks.test.mjs`.
 - **`boardSort.ts`:** Column ordering for the board — `sortTasks(tasks, sort)` over `priority | updated | id` (stable, non-mutating; priority reuses `PRIORITY_WEIGHT`), plus `readStoredSort`/`writeStoredSort` persisting the choice under `localStorage kanban.sort` so column order survives SSE snapshots and reloads. Guarded by `boardSort.test.mjs`.

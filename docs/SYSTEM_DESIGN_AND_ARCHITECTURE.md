@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 2.16.3        
+**System Version:** 2.17.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -75,7 +75,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 - **Technical Monospace:** `JetBrains Mono` / System Monospace (`ui-monospace`, `SF Mono`, `Menlo`, `Consolas`) with `tabular-nums` for card IDs, counts, timestamps, and metric rollups.
 - **Body Sans-Serif:** System UI stack (`system-ui`, `-apple-system`, `Segoe UI`, `Helvetica`, `Arial`).
 - **Surface & Hairlines:** 1px borders (`border-line`), 0px radius on cards, 3px vertical severity stripe on cards; dropshadows and heavy gradients are banished.
-- **Theme Support:** Dynamic CSS custom properties with an explicit Light/Dark toggle; the operator's stored choice wins over the OS `prefers-color-scheme`, and `color-scheme` keeps native form controls in sync.
+- **Theme Support:** Dynamic CSS custom properties with an Auto/Light/Dark toggle (v2.17.0); Auto follows the OS `prefers-color-scheme` live (a `matchMedia` change listener, no reload needed) and is the default with no stored choice, an explicit Light/Dark choice wins outright, and `color-scheme` keeps native form controls in sync.
 - **Responsive Behaviour:** The app shell wraps rather than overflowing horizontally; board columns snap-scroll at `85vw` on mobile; the Signal Rail is a docked sidebar at `md`+ and a slide-over drawer below `md`. On phones the secondary header/toolbar controls sit behind a `⋯` / `Filters` disclosure, the column paging arrows are hidden below `md`, and the task-card badge group wraps full-width under the id — so the board keeps most of the viewport and cards stay readable (v2.5.9 toolbar reachability, v2.9.1 chrome budget + card header).
 
 ---
