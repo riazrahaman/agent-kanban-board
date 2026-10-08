@@ -159,6 +159,7 @@ than a border to nest, keeping the hairline budget low.
     <Board/>            ← horizontal snap-scroll columns
     <SignalRail/>       ← w-80, border-l; slides over below md
   </main>
+  <AppFooter/>          ← optional hairline-topped strip, see below
 </div>
 ```
 
@@ -169,6 +170,20 @@ than a border to nest, keeping the hairline budget low.
   (`border border-line bg-surface px-2.5 py-1.5 … hover:bg-muted-bg`).
 - The live-connection dot is a `h-2 w-2 bg-live animate-pulse` square (no
   radius), `aria-label="Live connection"`.
+- **Global footer pattern (`components/AppFooter.tsx`, v2.16.3):** a sibling
+  of `<main>`, not nested inside it, so it renders identically underneath
+  the board, portfolio and about views. It carries `shrink-0 border-t
+  border-line bg-surface` — the hairline-top mirror of the header's
+  hairline-bottom — and is deliberately never `fixed`/`sticky`: because it
+  is a real flex child of the `h-screen`/`100dvh` column, it costs a thin,
+  fixed slice of real height out of `<main>`'s `flex-1` share instead of
+  overlaying the board, the Signal rail or a card. Content inside follows
+  the same small/mono/uppercase/muted treatment as other secondary labels
+  (e.g. the header's `read-only` chip), and any pointer-coarse touch target
+  in it meets the 44px minimum via `pointer-coarse:min-h-11` on the control
+  itself, not by padding the footer strip. Render it conditionally (return
+  `null`, not an empty `<footer>`) when its content is config-gated off, so
+  a site that never enables the gated feature sees zero layout change.
 
 ---
 
@@ -339,6 +354,16 @@ a feature that must stay invisible until opened belongs behind an existing
 disclosure (the "i" popover, a dropdown, the mobile `⋯` disclosure) rather
 than its own chrome. `About.tsx` keeps its own CTA — that page isn't
 width-constrained the way the header toolbar is.
+
+**Third entry point: the global footer (v2.16.3), because the popover was
+still a multi-tap discovery path on a phone.** Getting to the popover's
+"Report a bug" row on a phone meant opening the `⋯` disclosure, then the "i"
+popover, then finding the row below its divider — three taps, and nothing
+about that path is visible without already knowing it exists.
+`components/AppFooter.tsx` adds a slim, always-visible text link at the very
+end of the page (§5 Layout Shell) using the SAME `bugReportEnabled` flag and
+`onReportBug` opener as the other two, so all three stay in lockstep by
+construction rather than by convention.
 
 **The popover itself must stay viewport-anchored below `lg`, not
 button-anchored.** `right:0` positions a popover relative to its own
