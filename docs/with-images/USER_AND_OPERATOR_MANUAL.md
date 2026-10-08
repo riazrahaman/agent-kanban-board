@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.16.2
+**System:** Agent Kanban Board v2.16.3
 
 ---
 
@@ -406,9 +406,15 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 
 The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the active dark palette) and the responsive layout automatically.
 
-### 5.8 Reporting a Bug (v2.16.0+)
+### 5.8 Reporting a Bug (v2.16.0+, footer link added in v2.16.3)
 
-Open the header's **"i"** help popover (the small italic affordance next to the agent id / api token fields) — when the operator has configured the feature, a **"Report a bug"** row appears below a hairline divider. Clicking it closes the popover and opens a short form: title, description, and a Cloudflare Turnstile captcha. The same entry also appears as a button on the About view. Submitting files a public, labelled (`user-report`) GitHub issue directly from the server; no account, no attachments, and no contact field is collected.
+When the operator has configured the feature, there are three entry points, all opening the same short form (title, description, a Cloudflare Turnstile captcha):
+
+1. **Footer link (v2.16.3+):** a slim "Report a bug" text link in the hairline-topped footer at the very end of the page content, below the board/portfolio/about area. Reachable at every width without opening any other control — added because the popover was still a 3-tap discovery path on a phone (open the `⋯` disclosure, then the "i" popover, then the row).
+2. **Header "i" help popover:** the small italic affordance next to the agent id / api token fields — a **"Report a bug"** row appears below a hairline divider. Clicking it closes the popover before opening the form.
+3. **About view:** the same entry also appears as a button alongside the other calls to action.
+
+Submitting files a public, labelled (`user-report`) GitHub issue directly from the server; no account, no attachments, and no contact field is collected.
 
 The entry point only renders once `GET /api/bug-reports/config` reports `{"enabled":true}` — it is off by default and invisible until an operator sets `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO`, `TURNSTILE_SECRET` and `TURNSTILE_SITE_KEY`. See the README's "Enabling Report-a-bug" section for the full environment-variable reference, the Cloudflare test keys, and how to verify a deployment is live.
 

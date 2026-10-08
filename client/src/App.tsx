@@ -26,6 +26,7 @@ import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
 import BugReportDialog from './components/BugReportDialog'
 import HeaderHelp from './components/HeaderHelp'
+import AppFooter from './components/AppFooter'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
@@ -681,6 +682,8 @@ export default function App() {
            )}
          </ErrorBoundary>
        </main>
+
+       <AppFooter bugReportEnabled={bugReportEnabled} onReportBug={() => setBugReportOpen(true)} />
 
        <TaskSheet task={openTask} onClose={() => setOpenTaskId(null)} />
        <BugReportDialog

@@ -132,6 +132,14 @@ test('App.tsx wires the feature flag and the dialog, but owns no header button i
 // toolbar regardless of the feature flag — asserted here by construction
 // (no button literal in App.tsx's header markup at all, and the one in
 // HeaderHelp.tsx sits inside that out-of-flow subtree).
+//
+// v2.16.3 added a THIRD entry point — a footer link, see
+// footerContract.test.mjs — specifically because the popover was still a
+// 3-tap discovery path on phones. That footer is a sibling of <header> in
+// App.tsx, rendered well after </header> closes, so this guard's premise
+// (the header toolbar's own flex row costs zero width for the feature)
+// still holds; it just no longer implies the popover is the ONLY other
+// place "Report a bug" appears.
 test('the header toolbar itself contains no "Report a bug" button (moved into the HeaderHelp popover)', () => {
   assert.doesNotMatch(
     appSource,
