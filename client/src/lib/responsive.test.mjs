@@ -79,12 +79,54 @@ test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, 
     'agentDraft input must use sm:w-64 so placeholder is not truncated on tablet viewports',
   )
 
-  const tokenInput = appSource.match(/placeholder="api token"[\s\S]*?className="([^"]*)"/)?.[1]
+  // v2.17.0: tokenDraft's className became a template literal (it now also
+  // carries a bugReportEnabled-only width reduction — see App.tsx's
+  // "bug icon" comment on this input), so it is no longer a plain
+  // `className="..."` string; match either form.
+  const tokenInputMatch = appSource.match(
+    /placeholder="api token"[\s\S]*?className=(?:"([^"]*)"|\{`([^`]*)`\})/,
+  )
+  const tokenInput = tokenInputMatch?.[1] ?? tokenInputMatch?.[2]
   assert.ok(tokenInput, 'App.tsx must render tokenDraft input')
   assert.match(
     tokenInput,
     /\bsm:w-36\b/,
     'tokenDraft input must use sm:w-36 on tablet/desktop viewports',
+  )
+})
+
+test('tokenDraft width reduction (bug-icon slack absorption) stays bounded and resets above xl', () => {
+  // v2.17.0 round 3 (tester-caught WebKit header-wrap defect, fixed via
+  // App.tsx + scripts/check-header-layout.mjs): the icon's own footprint
+  // (27px mouse / 44px coarse) has to come from somewhere in the
+  // header-controls row or it wraps one line earlier with the icon on than
+  // off (verified with a live Chromium + WebKit sweep, see CHANGELOG
+  // 2.17.0). This is scoped to md (the only band where the row is tight)
+  // and reset at xl (the row has slack again there) so a regression that
+  // widens the scope — or drops the reset — doesn't silently reintroduce a
+  // ON-vs-OFF mismatch outside the one band it was measured for.
+  // The input's className interpolates a `tokenInputBugIconClawback` const
+  // (computed once above the component's `return`, with the full mechanism
+  // comment) rather than inlining the ternary — resolve that const's
+  // bugReportEnabled-true value from source.
+  const tokenInput = appSource.match(
+    /const tokenInputBugIconClawback = bugReportEnabled\s*\n\s*\?\s*'([^']*)'/,
+  )?.[1]
+  assert.ok(tokenInput, 'App.tsx must declare the tokenInputBugIconClawback const')
+  assert.match(
+    tokenInput,
+    /(?:^|\s)md:w-\[calc\(9rem-27px\)\](?:\s|$)/,
+    'tokenDraft must cut 27px (the mouse-pointer bug icon width) from its md width',
+  )
+  assert.match(
+    tokenInput,
+    /(?:^|\s)md:pointer-coarse:w-\[calc\(9rem-44px\)\](?:\s|$)/,
+    'tokenDraft must cut 44px (the coarse-pointer bug icon width) from its md width under pointer-coarse',
+  )
+  assert.match(
+    tokenInput,
+    /\bxl:w-36\b/,
+    'tokenDraft must reset to w-36 at xl — the row has slack again there, so the reduction must not persist',
   )
 })
 

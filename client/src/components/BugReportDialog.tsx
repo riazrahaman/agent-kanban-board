@@ -307,6 +307,13 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
                   type="text"
                   tabIndex={-1}
                   autoComplete="off"
+                  // v2.17.0: text-base (16px) for the same reason as the other
+                  // fields in this dialog — a sub-16px input font size makes
+                  // iOS Safari zoom the viewport on focus. This field is
+                  // off-screen and never focused by a real user, but a
+                  // same-origin script or assistive tech could still land
+                  // focus on it, so it carries the same defense as the rest.
+                  className="text-base"
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
                 />

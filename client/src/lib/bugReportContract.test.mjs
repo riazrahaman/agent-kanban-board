@@ -75,6 +75,16 @@ test('the honeypot field is off-screen (not display:none), aria-hidden, and unre
   const classTokens = classAttr.split(/\s+/)
   assert.ok(!classTokens.includes('hidden'), `honeypot className must not include the bare "hidden" utility: ${classAttr}`)
   assert.match(honeypotBlock, /id="bug-report-website"/)
+  // v2.17.0: text-base (16px) on the <input> itself too, same iOS-Safari
+  // focus-zoom defense as the dialog's other fields — see App.tsx's
+  // tokenInputBugIconClawback comment and DESIGN.md for the sibling
+  // header-controls font-size story this mirrors.
+  const inputBlock = honeypotBlock.slice(honeypotBlock.indexOf('<input'))
+  assert.match(
+    inputBlock,
+    /className="[^"]*\btext-base\b[^"]*"/,
+    'the honeypot <input> must carry text-base (16px) to defend against iOS Safari focus-zoom',
+  )
 })
 
 test('the form shows the public-on-GitHub notice and char counters for both fields', () => {

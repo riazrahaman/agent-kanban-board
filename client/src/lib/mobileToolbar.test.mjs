@@ -269,7 +269,13 @@ test('header tabs, menu and controls reach 44px on coarse pointers', () => {
   assert.match(menu, /\bpointer-coarse:min-w-11\b/, 'the icon-only header menu needs a 44px touch width')
 
   for (const label of ['Bind this board to an agent id', 'API token for mutating requests']) {
-    const cls = appSource.match(new RegExp(`aria-label="${label}[^"]*"[\\s\\S]*?className="([^"]*)"`))?.[1]
+    // v2.17.0: tokenDraft's className became a template literal (see
+    // responsive.test.mjs), so match either a plain string or a template
+    // literal className.
+    const m = appSource.match(
+      new RegExp(`aria-label="${label}[^"]*"[\\s\\S]*?className=(?:"([^"]*)"|\\{\`([^\`]*)\`\\})`),
+    )
+    const cls = m?.[1] ?? m?.[2]
     assert.ok(cls, `App.tsx must render the "${label}" input`)
     assert.match(cls, COARSE_TARGET, `the "${label}" input needs a 44px touch height`)
   }

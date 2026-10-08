@@ -459,6 +459,27 @@ export default function App() {
 
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
+  // v2.17.0 round 3 (tester-caught WebKit header-wrap defect — see the
+  // icon+theme wrapper's JSX comment below for the full mechanism): the bug
+  // icon's own footprint (27px mouse / 44px coarse pointer) has to come
+  // from somewhere in the header-controls row or that row wraps one line
+  // earlier with the icon on than off. CSS flex line-breaking decides wraps
+  // using each item's unshrunk basis (its width property), so a min-width
+  // floor on an already-shrinkable item changes nothing about WHERE the row
+  // wraps (verified empirically with a fine-grained Chromium + WebKit width
+  // sweep — a min-width floor never moved a wrap point in either engine).
+  // Only an actual reduction of the specified width moves it, so the token
+  // input (short placeholder, lots of slack vs its sm:w-36 box) absorbs it
+  // instead of the agent id input (sm:w-64 is sized tight to its own
+  // longer placeholder — responsive.test.mjs pins it for that reason).
+  // Scoped to md (the row is only tight there) and reset at xl (agent id
+  // drops to xl:w-52 and the row gap drops to xl:gap-2, so there is slack
+  // again) — confirmed by the fine sweep in check-header-layout.mjs: no
+  // reduction is needed at or above 1280px.
+  const tokenInputBugIconClawback = bugReportEnabled
+    ? 'md:w-[calc(9rem-27px)] md:pointer-coarse:w-[calc(9rem-44px)] xl:w-36'
+    : ''
+
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
         <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
@@ -553,7 +574,7 @@ export default function App() {
              title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
              autoComplete="off"
              spellCheck={false}
-             className="w-28 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11"
+             className={`w-28 min-w-0 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11 ${tokenInputBugIconClawback}`}
             />
             <HeaderHelp />
             {!tokenSaved && (
@@ -602,14 +623,29 @@ export default function App() {
                not two independently-wrapping controls. No gap and a shared
                border (the icon's own `border-r-0` butts flush against the
                theme button's left border) instead of two separately
-               bordered-and-gapped boxes: at 1280px under a coarse pointer,
-               the gapped form cost just enough extra width to tip the
-               toolbar into an extra wrapped row that the feature-off header
-               never has. The wrapper itself carries no border/padding of
-               its own, so with the icon absent (flag off) the theme button
-               renders exactly as it did before this feature existed — zero
-               layout change. */}
-           <div className={`flex shrink-0 items-stretch ${bugReportEnabled ? 'md:-ml-2' : ''}`}>
+               bordered-and-gapped boxes. The wrapper itself carries no
+               border/padding of its own, so with the icon absent (flag off)
+               the theme button renders exactly as it did before this
+               feature existed — zero layout change.
+
+               Tester-caught regression (v2.17.0 round 2): a plain `-ml-2`
+               margin trick here only clawed back 8px — less than the
+               icon's own footprint (27px mouse / 44px coarse, the latter
+               from `pointer-coarse:min-w-11`) — so the header-controls row
+               (data-testid="header-controls", a `flex-wrap` row) wrapped
+               one row earlier with the icon ON than OFF in a real browser,
+               in narrow bands invisible to check-header-layout.mjs's
+               coarse-grained width list and to headless-Chrome-only
+               verification (confirmed with Playwright WebKit iPhone
+               emulation AND a fine Chromium width sweep — both engines, not
+               WebKit-only). A margin claw-back that size would have to dig
+               into the PRECEDING sibling's own box, not just the row gap,
+               so it was dropped. The real fix is on the api-token input
+               below: its width is cut by exactly this icon's footprint
+               (pointer-type-aware) only across the md–lg band where the
+               row is otherwise tight (see its comment) so the two headers
+               stay byte-for-byte identical in height at every width. */}
+           <div className="flex shrink-0 items-stretch">
              {bugReportEnabled && (
                <button
                  type="button"
@@ -640,7 +676,7 @@ export default function App() {
              <button
                type="button"
                onClick={() => setThemeMode(nextMode)}
-               className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
+               className="w-16 shrink-0 border border-line bg-surface py-1.5 text-center font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
                aria-label="Toggle theme"
                title={themeToggleTitle(themeMode)}
              >
