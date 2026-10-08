@@ -109,6 +109,21 @@ body,
   color: var(--ink);
 }
 
+/* Defensive against a WebKit/iOS Safari quirk (v2.17.0, mobile-dialog fixes):
+   a `position: fixed` panel translated off-screen via `translate-x-full`
+   (BugReportDialog/TaskSheet/SignalRail's slide-in sheets) can still widen
+   the document's scrollable area in WebKit even though it is visually gone
+   and out of normal flow — observed as the whole page panning/swaying
+   horizontally on an iPhone with the sheet open. Clipping at the document
+   root is a second line of defense alongside `overflow-x-hidden` on the
+   sheet itself: the board's own horizontal scrolling (columns, the mobile
+   toolbar) happens in nested `overflow-x-auto` containers, never on
+   html/body, so this cannot clip anything intentional. */
+html,
+body {
+  overflow-x: hidden;
+}
+
 /* Mobile browsers grow/shrink the visual viewport as the URL bar shows and
    hides; `100vh` is the *largest* viewport, so an h-screen layout overflows the
    bottom on phones. `dvh` tracks the viewport that is actually visible. The
