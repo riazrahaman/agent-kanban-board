@@ -1,21 +1,36 @@
 #!/usr/bin/env node
 /**
  * Header layout guard: (1) the header toolbar must not grow taller/wrap an
- * extra row at any of the widths below, and (2) the "i" help popover (which
- * now also hosts the Report-a-bug entry, v2.16.0) must stay fully inside the
- * viewport with a safe margin at every width.
+ * extra row at any of the widths below, whether the Report-a-bug header icon
+ * is rendered or not, and (2) the "i" help popover must stay fully inside
+ * the viewport with a safe margin at every width.
  *
- * WHY THIS EXISTS (v2.16.0 review rounds 2-4). Round 2: a standalone,
- * always-visible "Report a bug" header button cost just enough width to
- * wrap the toolbar onto an extra row at several mid viewports. Round 4: the
- * fix (moving the entry into HeaderHelp's "i" popover) introduced its own
- * defect — `absolute right-0 w-80` clips off the LEFT edge of the viewport
- * whenever the anchor button sits less than 320px from the left edge,
- * measured at 320-390px (~44% clipped) and again at 768-820px (the full
- * header-controls row crowds the button rightward). Neither defect is a
- * className a unit test can see; both are rendered-geometry outcomes, the
- * same reasoning scripts/check-card-layout.mjs gives for driving a real
- * browser instead of asserting a class string.
+ * WHY THIS EXISTS (v2.16.0 review rounds 2-4; entry point moved again in
+ * v2.17.0). Round 2: a standalone, always-visible "Report a bug" header
+ * button cost just enough width to wrap the toolbar onto an extra row at
+ * several mid viewports. Round 4: the fix (moving the entry into
+ * HeaderHelp's "i" popover) introduced its own defect — `absolute right-0
+ * w-80` clips off the LEFT edge of the viewport whenever the anchor button
+ * sits less than 320px from the left edge, measured at 320-390px (~44%
+ * clipped) and again at 768-820px (the full header-controls row crowds the
+ * button rightward). Neither defect is a className a unit test can see;
+ * both are rendered-geometry outcomes, the same reasoning
+ * scripts/check-card-layout.mjs gives for driving a real browser instead of
+ * asserting a class string.
+ *
+ * v2.17.0 moved the entry point OUT of the popover (which cost zero header
+ * width by construction — an `absolute` box) and into an actual icon button
+ * living directly in the header's flex row, beside the theme toggle — the
+ * ORIGINAL round-2 risk, reintroduced on purpose because a popover entry was
+ * still a multi-tap discovery path on a phone. This guard is what proves the
+ * EXPECTATIONS/COARSE_EXPECTATIONS baselines below — measured with the
+ * feature flag ON (see ci.yml) — are identical to the feature-OFF numbers a
+ * clean checkout would measure: the icon+theme button pair shares one
+ * border and claws back its own slice of the row's gap (`App.tsx`,
+ * `md:-ml-2`, applied only when the icon renders) specifically so adding it
+ * costs net-zero toolbar height at every width in both pointer environments
+ * — verified by hand against a feature-OFF build before these numbers were
+ * committed; this script re-verifies the feature-ON side on every CI run.
  *
  * TWO baselines, because TWO real pointer environments produce two
  * genuinely different (and both correct) header heights:
@@ -40,14 +55,36 @@
  * baseline can mean content silently went missing just as much as growing
  * above it can mean an extra wrapped row.
  *
+ * THIRD PASS (v2.17.0 round 3): an independent tester caught a case none of
+ * the above sees — Playwright WebKit, `pointer: coarse`, theme mode LIGHT,
+ * viewport 1100px: 155px ON vs 101px OFF. AUTO/DARK and most widths were
+ * fine; the first two passes above sample too coarse a width grid (12-84px
+ * gaps) to land inside the bad band, and they never force a theme mode, so
+ * a mode-dependent regression (the LIGHT label rendering a few px wider
+ * than AUTO/DARK) was invisible to them even in Chromium, where the SAME
+ * class of defect exists in different, equally narrow bands (confirmed by
+ * a manual fine sweep during the fix — Chromium was never actually clean,
+ * the coarse sample widths above just didn't happen to land on a bad one).
+ * The third pass below closes both gaps: it forces each of the three theme
+ * modes (`localStorage['theme']` + reload — see client/src/lib/theme.ts)
+ * and sweeps every 8px across the known wrap thresholds, for both pointer
+ * types. When a second, feature-OFF server URL is supplied (see Usage), it
+ * diffs ON against OFF LIVE rather than against a hardcoded table, so it
+ * cannot go stale the way a hand-verified comment can; without one it falls
+ * back to FINE_EXPECTATIONS/FINE_COARSE_EXPECTATIONS, captured the same way
+ * the first two passes' tables were.
+ *
  * Dependency-free, same CDP-over-WebSocket approach as check-card-layout.mjs
  * and check-browser-smoke.mjs — no puppeteer/playwright.
  *
  * Usage:
- *   node scripts/check-header-layout.mjs <base-url> [cdp-port]
+ *   node scripts/check-header-layout.mjs <base-url> [cdp-port] [off-base-url]
  *
- * Exit 0 = every width stays within tolerance on both guards.
- * Exit 1 = a header-height or popover-containment regression.
+ * <off-base-url> is optional: a second server with the bug-report feature
+ * OFF, for a live ON-vs-OFF diff in the third pass (see ci.yml).
+ *
+ * Exit 0 = every width stays within tolerance on all three guards.
+ * Exit 1 = a header-height, wrap-threshold or popover-containment regression.
  * Exit 2 = environmental skip/error (no Chrome / no server / no page).
  */
 import http from 'node:http';
@@ -82,6 +119,35 @@ const EXPECTATIONS = {
 const COARSE_EXPECTATIONS = {
   320: 113, 768: 155, 1100: 101, 1280: 67,
 };
+
+// Optional second server (feature OFF) for a live ON-vs-OFF diff in the
+// third pass — see the file header comment and ci.yml.
+const OFF_BASE = process.argv[4] || null;
+
+// Every stored theme mode (client/src/lib/theme.ts `ThemeMode`) — the
+// round-3 defect was mode-dependent, so the third pass below forces each
+// one in turn rather than trusting whatever mode the browser happens to
+// boot into.
+const THEME_MODES = ['auto', 'light', 'dark'];
+
+const range = (from, to, step) => {
+  const out = [];
+  for (let x = from; x <= to; x += step) out.push(x);
+  return out;
+};
+// 8px steps across the two wrap thresholds the first two passes already
+// know about (1024<->1100 and 1100<->1280 — see EXPECTATIONS) plus a margin
+// either side, non-coarse and coarse pointer respectively. This is exactly
+// the grid fine enough to have caught the round-3 defect (an 8-40px band)
+// in Chromium, not just the WebKit repro it was first found in.
+const FINE_WIDTHS = range(1000, 1260, 8);
+const FINE_COARSE_WIDTHS = range(1000, 1270, 8);
+// Fallback tables, used only when OFF_BASE is not supplied. Captured with a
+// live ON-vs-OFF diff (both empty, i.e. equal, at the time this pass was
+// written) against the same real-Chromium ground truth as EXPECTATIONS/
+// COARSE_EXPECTATIONS above.
+const fineNonCoarseExpected = (w) => (w <= 1032 ? 120 : w <= 1232 ? 82 : 49);
+const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1256 ? 101 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
@@ -163,15 +229,31 @@ const READ_POPOVER = `(() => {
   const popover = document.querySelector('[role="dialog"][aria-label="Operator field reference"]');
   if (!popover) return { error: 'popover did not open' };
   const r = popover.getBoundingClientRect();
-  const reportBtn = [...popover.querySelectorAll('button')].find(
-    (b) => b.textContent.trim() === 'Report a bug',
-  );
-  const reportBox = reportBtn ? reportBtn.getBoundingClientRect() : null;
   return {
     innerWidth: window.innerWidth,
     box: { x: r.x, y: r.y, width: r.width, height: r.height },
-    hasReportButton: !!reportBtn,
-    reportBox: reportBox ? { x: reportBox.x, width: reportBox.width, height: reportBox.height } : null,
+  };
+})()`;
+// v2.17.0: the Report-a-bug entry point lives directly in the header now (an
+// icon button beside the theme toggle), not inside this popover. Checked
+// separately — it must stay fully on-screen AND immediately adjacent to the
+// theme toggle (no gap wide enough to look like a different control) at
+// every containment width.
+const READ_BUG_ICON = `(() => {
+  const icon = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Report a bug');
+  const theme = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Toggle theme');
+  if (!icon) return { present: false };
+  if (!theme) return { present: true, error: 'theme toggle not found' };
+  const i = icon.getBoundingClientRect();
+  const t = theme.getBoundingClientRect();
+  return {
+    present: true,
+    innerWidth: window.innerWidth,
+    iconBox: { x: i.x, width: i.width, height: i.height },
+    themeBox: { x: t.x, width: t.width },
+    gapPx: Math.round(t.x - (i.x + i.width)),
   };
 })()`;
 
@@ -273,6 +355,29 @@ async function main() {
       const toggledOpen = Boolean(toggleStep.result && toggleStep.result.value);
       await new Promise((r) => setTimeout(r, 200));
 
+      // Step 1b: if the bug icon is rendered (feature ON — see ci.yml), it
+      // must stay fully on-screen and sit immediately beside the theme
+      // toggle (v2.17.0). Skipped entirely when the feature is off (the icon
+      // simply does not render) rather than treated as a failure.
+      const iconStep = await send('Runtime.evaluate', { expression: READ_BUG_ICON, returnByValue: true });
+      const iconInfo = iconStep.result && iconStep.result.value;
+      if (iconInfo && iconInfo.present) {
+        if (iconInfo.error) {
+          containmentOffenders.push({ width, reason: `bug icon: ${iconInfo.error}` });
+        } else {
+          const { iconBox, innerWidth: iw, gapPx } = iconInfo;
+          if (iconBox.x < 0 || iconBox.x + iconBox.width > iw) {
+            containmentOffenders.push({ width, reason: `bug icon clipped (x=${Math.round(iconBox.x)}, width=${Math.round(iconBox.width)}, viewport=${iw})` });
+          }
+          // A handful of px covers the shared-border/no-gap construction
+          // (App.tsx) — anything wider suggests another control slipped
+          // between the two, or the group broke apart onto separate rows.
+          if (gapPx < -1 || gapPx > 2) {
+            containmentOffenders.push({ width, reason: `bug icon is not immediately beside the theme toggle (gap ${gapPx}px)` });
+          }
+        }
+      }
+
       // Step 2: open the "i" popover itself.
       const helpStep = await send('Runtime.evaluate', { expression: CLICK_HELP, returnByValue: true });
       const helpClicked = Boolean(helpStep.result && helpStep.result.value);
@@ -300,7 +405,7 @@ async function main() {
       } else if (!v || v.error) {
         containmentOffenders.push({ width, reason: (v && v.error) || 'no result' });
       } else {
-        const { box, innerWidth, hasReportButton, reportBox } = v;
+        const { box, innerWidth } = v;
         const leftEdge = box.x;
         const rightEdge = box.x + box.width;
         if (leftEdge < POPOVER_MARGIN_PX) {
@@ -308,11 +413,6 @@ async function main() {
         }
         if (rightEdge > innerWidth - POPOVER_MARGIN_PX) {
           containmentOffenders.push({ width, reason: `right edge at ${Math.round(rightEdge)}px exceeds viewport ${innerWidth}px (margin ${POPOVER_MARGIN_PX}px)` });
-        }
-        if (!hasReportButton) {
-          containmentOffenders.push({ width, reason: 'Report a bug row not found in the popover (feature off, or markup regressed)' });
-        } else if (reportBox && (reportBox.x < 0 || reportBox.x + reportBox.width > innerWidth)) {
-          containmentOffenders.push({ width, reason: `Report a bug row itself clipped (x=${Math.round(reportBox.x)}, width=${Math.round(reportBox.width)}, viewport=${innerWidth})` });
         }
       }
     }
@@ -347,15 +447,96 @@ async function main() {
     }
   }
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+
+  // Third pass (v2.17.0 round 3) — see the file header comment. Forces each
+  // theme mode and sweeps 8px-step width grids across the known wrap
+  // thresholds, non-coarse and coarse, diffing ON against OFF live when
+  // OFF_BASE is given, else against the fallback tables above.
+  async function navigateAndWaitForHeader(url) {
+    await send('Page.navigate', { url });
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise((r) => setTimeout(r, 300));
+      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+      if (r.result && typeof r.result.value === 'number') return true;
+    }
+    return false;
+  }
+  async function setThemeModeAndReload(url, mode) {
+    // Navigate first so localStorage is set on the RIGHT origin (ON and OFF
+    // are different ports/origins with independent storage), then reload so
+    // the pre-paint inline script (client/index.html) picks the mode up the
+    // same way a real visitor's stored choice would be.
+    const loaded = await navigateAndWaitForHeader(url);
+    if (!loaded) return false;
+    await send('Runtime.evaluate', { expression: `localStorage.setItem('theme', ${JSON.stringify(mode)})` });
+    return navigateAndWaitForHeader(url);
+  }
+  async function measureHeightsAcrossWidths(widths) {
+    const out = {};
+    for (const width of widths) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await new Promise((r) => setTimeout(r, 150));
+      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
+      out[width] = r.result && typeof r.result.value === 'number' ? r.result.value : null;
+    }
+    return out;
+  }
+
+  const fineOffenders = [];
+  const fineMode = OFF_BASE ? 'live ON-vs-OFF diff' : 'fallback table';
+  for (const mode of THEME_MODES) {
+    const onReady = await setThemeModeAndReload(BASE, mode);
+    if (!onReady) { fineOffenders.push({ mode, reason: 'ON header never rendered after forcing theme + reload' }); continue; }
+    const onNonCoarse = await measureHeightsAcrossWidths(FINE_WIDTHS);
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+    const onCoarse = await measureHeightsAcrossWidths(FINE_COARSE_WIDTHS);
+    await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+
+    let offNonCoarse = null;
+    let offCoarse = null;
+    if (OFF_BASE) {
+      const offReady = await setThemeModeAndReload(OFF_BASE, mode);
+      if (!offReady) {
+        fineOffenders.push({ mode, reason: 'OFF header never rendered after forcing theme + reload' });
+      } else {
+        offNonCoarse = await measureHeightsAcrossWidths(FINE_WIDTHS);
+        await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+        await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+        offCoarse = await measureHeightsAcrossWidths(FINE_COARSE_WIDTHS);
+        await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      }
+    }
+
+    for (const width of FINE_WIDTHS) {
+      const expected = offNonCoarse ? offNonCoarse[width] : fineNonCoarseExpected(width);
+      const actual = onNonCoarse[width];
+      if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
+        fineOffenders.push({ mode, coarse: false, width, expected, actual });
+      }
+    }
+    for (const width of FINE_COARSE_WIDTHS) {
+      const expected = offCoarse ? offCoarse[width] : fineCoarseExpected(width);
+      const actual = onCoarse[width];
+      if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
+        fineOffenders.push({ mode, coarse: true, width, expected, actual });
+      }
+    }
+  }
+  // Leave the session pointed back at BASE in its default mode so a reused
+  // CDP target (unlikely, but cheap to guard) is not left mid-experiment.
+  await setThemeModeAndReload(BASE, 'auto');
+
   ws.close();
 
   console.log(`header layout guard (CDP :${usedPort})`);
   console.log(`  heights (non-coarse): ${JSON.stringify(measuredHeights)}`);
   console.log(`  heights (coarse):     ${JSON.stringify(measuredCoarseHeights)}`);
   console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
+  console.log(`  fine wrap-threshold sweep (${fineMode}, ${THEME_MODES.join('/')}): ${fineOffenders.length === 0 ? 'OK' : `${fineOffenders.length} offender(s)`}`);
 
-  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0) {
-    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
+  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0 && fineOffenders.length === 0) {
+    console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types, every theme mode, fine and coarse width grids), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
     process.exit(0);
   }
   if (coarseOffenders.length) {
@@ -374,6 +555,16 @@ async function main() {
     console.error(`  FAIL — ${containmentOffenders.length} popover containment violation(s):`);
     for (const o of containmentOffenders) {
       console.error(`    ${o.width}px: ${o.reason}`);
+    }
+  }
+  if (fineOffenders.length) {
+    console.error(`  FAIL — ${fineOffenders.length} fine wrap-threshold offender(s) (${fineMode}):`);
+    for (const o of fineOffenders) {
+      if (o.width === undefined) {
+        console.error(`    mode=${o.mode}: ${o.reason}`);
+      } else {
+        console.error(`    mode=${o.mode} coarse=${o.coarse} ${o.width}px: expected ${o.expected}±${TOLERANCE_PX}, got ${o.actual}`);
+      }
     }
   }
   process.exit(1);

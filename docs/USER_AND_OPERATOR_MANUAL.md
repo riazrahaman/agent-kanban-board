@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v2.16.3
+**System:** Agent Kanban Board v2.17.0
 
 ---
 
@@ -236,7 +236,7 @@ flowchart TD
         View --- Identity["Agent ID + API Token (auto-claim identity)"]
         Identity --- Help["'i' Help Popover"]
         Help --- Status["READ-ONLY Badge / claim status / N tasks"]
-        Status --- Theme["Theme Switcher (Light / Dark)"]
+        Status --- Theme["Theme Switcher (Auto / Light / Dark)"]
         Theme --- Rail["Signal Rail Toggle (mobile only, below md)"]
     end
 
@@ -358,7 +358,7 @@ audit trail records only real transitions and real log/comment calls.
 - **Activity Feed:** Live streaming log of the 20 most recent agent actions across all tasks with relative timestamps (`12s`, `4m`).
 
 ### 5.5 Theme Customization
-Click the **Light / Dark** button in the header to switch color themes. Your explicit choice always wins over the operating system preference and is persisted in browser `localStorage`; with no stored choice the dashboard follows the OS `prefers-color-scheme`. Native form controls (including the project filter's option popup) follow the active theme via `color-scheme`.
+Click the theme button in the header to cycle **Auto -> Light -> Dark -> Auto**. The label shows the current mode (`AUTO`/`LIGHT`/`DARK`). Auto follows the operating system's `prefers-color-scheme` and live-updates the instant the OS setting changes, with no reload needed; it is the default for a visitor with no stored choice. An explicit Light or Dark choice always wins over the OS preference and is persisted in browser `localStorage`. Native form controls (including the project filter's option popup) follow the active theme via `color-scheme`.
 
 The light theme uses a warm cream palette; the dark theme uses a midnight-navy blueprint palette adopted from the Stack Field Guide (https://stack-field-guide.riazrahaman.com/#map), with bright ice-white text and crisp slate-blue hairlines. Both meet WCAG AA contrast for body text.
 
@@ -394,13 +394,12 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 
 The view takes the live server `version` as a prop, so the version shown there can never go stale. It inherits the active theme (including the active dark palette) and the responsive layout automatically.
 
-### 5.8 Reporting a Bug (v2.16.0+, footer link added in v2.16.3)
+### 5.8 Reporting a Bug (v2.16.0+, header icon entry point added in v2.17.0)
 
-When the operator has configured the feature, there are three entry points, all opening the same short form (title, description, a Cloudflare Turnstile captcha):
+When the operator has configured the feature, there are two entry points, both opening the same short form (title, description, a Cloudflare Turnstile captcha):
 
-1. **Footer link (v2.16.3+):** a slim "Report a bug" text link in the hairline-topped footer at the very end of the page content, below the board/portfolio/about area. Reachable at every width without opening any other control — added because the popover was still a 3-tap discovery path on a phone (open the `⋯` disclosure, then the "i" popover, then the row).
-2. **Header "i" help popover:** the small italic affordance next to the agent id / api token fields — a **"Report a bug"** row appears below a hairline divider. Clicking it closes the popover before opening the form.
-3. **About view:** the same entry also appears as a button alongside the other calls to action.
+1. **Header icon:** a small bug-outline icon button sits directly in the header, immediately beside the theme toggle. This replaced two earlier, more hidden entry points (v2.17.0): a row inside the header's "i" help popover (v2.16.0) and a slim footer link (v2.16.3) — both removed once the icon made the feature a single direct tap away at every width.
+2. **About view:** the same entry also appears as a button alongside the other calls to action.
 
 Submitting files a public, labelled (`user-report`) GitHub issue directly from the server; no account, no attachments, and no contact field is collected.
 

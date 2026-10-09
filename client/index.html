@@ -9,8 +9,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>Agent Kanban Board</title>
     <script>
-      // Apply the saved theme (or OS preference) before first paint so there is
-      // no flash of the wrong theme. Must match lib/theme.ts resolveTheme.
+      // Apply the saved theme mode (or OS preference, for 'auto' / no stored
+      // key / a garbage value) before first paint so there is no flash of the
+      // wrong theme in any of the three modes. Must match lib/theme.ts
+      // parseStoredMode + resolveMode: only the exact literals 'light' and
+      // 'dark' are explicit choices, everything else (including an explicit
+      // 'auto') follows prefers-color-scheme.
       (function () {
         try {
           var stored = localStorage.getItem('theme')

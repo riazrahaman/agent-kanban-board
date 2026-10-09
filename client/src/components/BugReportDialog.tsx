@@ -28,6 +28,7 @@ type TurnstileWidget = {
       callback: (token: string) => void
       'error-callback'?: () => void
       'expired-callback'?: () => void
+      size?: 'normal' | 'compact' | 'flexible'
     },
   ) => string
   reset: (widgetId?: string) => void
@@ -99,6 +100,12 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
           callback: (token) => setTurnstileToken(token),
           'error-callback': () => setTurnstileToken(null),
           'expired-callback': () => setTurnstileToken(null),
+          // 'flexible' fills the container's width (down to Cloudflare's own
+          // ~300px floor) instead of a fixed 300x65 box — on a 320px phone
+          // viewport a fixed-width widget can itself force the sheet wider
+          // than the viewport. Still defensive-only below that floor; see
+          // the widgetContainerRef wrapper's overflow-hidden/max-w-full.
+          size: 'flexible',
         })
       })
       .catch(() => {
@@ -174,12 +181,24 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Report a bug"
+        // When closed, take the panel out of the accessibility tree and out
+        // of tab order immediately (not just after the 200ms slide-out
+        // finishes) — `inert` is purely an interaction/a11y property, so it
+        // does not affect the close animation's visibility.
+        inert={!open ? true : undefined}
         className={[
-          'fixed right-0 top-0 z-50 flex h-screen w-full max-w-md flex-col',
+          'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col',
           'border-l border-line bg-surface transition-transform duration-200',
-          'overflow-y-auto overscroll-contain',
+          // `box-border` + an explicit `max-w-[100vw]` on top of `max-w-md`:
+          // belt-and-suspenders so this panel can never itself measure wider
+          // than the viewport, however narrow, regardless of border/padding
+          // box-model surprises. `overflow-x-hidden` is the same guard the
+          // WebKit `translate-x-full` fix below relies on (see the comment
+          // on html/body in index.css) applied again at the panel itself.
+          'box-border max-w-[100vw] overflow-x-hidden',
           open ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
+        style={{ height: '100dvh' }}
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-4">
           <h2 className="font-serif text-lg text-ink">Report a bug</h2>
@@ -193,7 +212,15 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
           </button>
         </div>
 
-        <div className="flex-1 p-4">
+        {/* Scrollable body: everything except the submit button, which is
+            pinned in its own shrink-0 footer below (see the form="..." wiring
+            on the button) so it — and the Turnstile "Success" state right
+            above it — stay reachable by scrolling the SHEET even when a
+            phone's bottom chrome (e.g. Safari's floating toolbar) covers the
+            last ~50px of the viewport. `overflow-y-auto overscroll-contain`
+            was previously on the <aside> itself; moving it to just this
+            region keeps the header and footer always visible. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           <p className="border border-line bg-muted-bg p-2.5 text-[11px] leading-snug text-muted">
             Reports are public on GitHub. Do not include passwords, tokens or personal data.
           </p>
@@ -215,7 +242,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
           </div>
 
           {!success && (
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <form id="bug-report-form" onSubmit={handleSubmit} className="mt-4 space-y-4">
               <div>
                 <div className="flex items-center justify-between">
                   <label
@@ -280,29 +307,58 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
                   type="text"
                   tabIndex={-1}
                   autoComplete="off"
+                  // v2.17.0: text-base (16px) for the same reason as the other
+                  // fields in this dialog — a sub-16px input font size makes
+                  // iOS Safari zoom the viewport on focus. This field is
+                  // off-screen and never focused by a real user, but a
+                  // same-origin script or assistive tech could still land
+                  // focus on it, so it carries the same defense as the rest.
+                  className="text-base"
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
                 />
               </div>
 
-              <div ref={widgetContainerRef} />
+              {/* `overflow-hidden max-w-full` is a defensive cap on top of
+                  Turnstile's own `size: 'flexible'` render option — if
+                  Cloudflare's iframe ever renders at its ~300px floor on a
+                  viewport narrower than that, it is clipped rather than
+                  forcing the sheet (and the document) wider than the
+                  viewport. */}
+              <div ref={widgetContainerRef} className="max-w-full overflow-hidden" />
 
               {error && (
                 <p role="alert" className="font-mono text-xs text-fail break-words [overflow-wrap:anywhere]">
                   {error}
                 </p>
               )}
-
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className="w-full bg-ink text-bg px-3 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-opacity hover:opacity-85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
-              >
-                {submitting ? 'Filing…' : 'Submit report'}
-              </button>
             </form>
           )}
         </div>
+
+        {/* Pinned footer, not part of the scrollable body: on a phone whose
+            browser chrome floats a toolbar over the bottom of the viewport
+            (observed on iOS Safari), a submit button living at the end of a
+            long scrollable form can end up permanently under that toolbar
+            with no way to scroll it into view, because the toolbar is not
+            counted in `100dvh` while it is showing. Pinning it in its own
+            shrink-0 flex child — reachable by constrution since it is never
+            part of the scrolled content — plus a safe-area-aware bottom
+            padding keeps it tappable regardless of the toolbar's height.
+            `form="bug-report-form"` associates it with the <form> above by
+            id so it still submits natively despite living outside it. */}
+        {!success && (
+          <div className="shrink-0 border-t border-line p-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))]">
+            <button
+              type="submit"
+              form="bug-report-form"
+              disabled={!canSubmit}
+              className="w-full bg-ink text-bg px-3 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-opacity hover:opacity-85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
+            >
+              {submitting ? 'Filing…' : 'Submit report'}
+            </button>
+          </div>
+        )}
       </aside>
     </>
   )

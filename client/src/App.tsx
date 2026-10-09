@@ -15,7 +15,16 @@ import {
   readStoredRailOpen,
   writeStoredRailOpen,
 } from './lib/uiSettings'
-import { isDark, nextTheme, resolveTheme, THEME_STORAGE_KEY } from './lib/theme'
+import {
+  isDark,
+  modeLabel,
+  nextMode,
+  parseStoredMode,
+  resolveMode,
+  themeToggleTitle,
+  THEME_STORAGE_KEY,
+  type ThemeMode,
+} from './lib/theme'
 import Board from './components/Board'
 import BoardFilters from './components/BoardFilters'
 import About from './components/About'
@@ -26,7 +35,6 @@ import SignalRail from './components/SignalRail'
 import TaskSheet from './components/TaskSheet'
 import BugReportDialog from './components/BugReportDialog'
 import HeaderHelp from './components/HeaderHelp'
-import AppFooter from './components/AppFooter'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
@@ -136,21 +144,46 @@ export default function App() {
       projects: project ? [project] : undefined,
        })
 
-    const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window !== 'undefined') {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      return resolveTheme(localStorage.getItem(THEME_STORAGE_KEY), prefersDark)
-      }
-    return 'dark'
-      })
+    // v2.17.0 (theme-auto): tri-state — 'auto' follows the OS preference and
+    // is the default for a visitor with no stored choice; 'light'/'dark' are
+    // explicit and win outright. `themeMode` is what is stored; `theme` is
+    // the resolved value actually applied to the DOM.
+    const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+      if (typeof window === 'undefined') return 'auto'
+      return parseStoredMode(localStorage.getItem(THEME_STORAGE_KEY))
+    })
+    // Live OS preference, kept current by the matchMedia listener below so
+    // Auto mode re-paints the instant the OS setting changes — no reload
+    // needed. Only read when themeMode is 'auto'; an explicit light/dark
+    // choice ignores it entirely.
+    const [prefersDark, setPrefersDark] = useState<boolean>(() =>
+      typeof window === 'undefined'
+        ? true
+        : window.matchMedia('(prefers-color-scheme: dark)').matches,
+    )
+    const theme = resolveMode(themeMode, prefersDark)
 
     // Apply the class before paint so the first frame already matches the
     // resolved theme (no light flash for dark users, no dark flash for light).
     useLayoutEffect(() => {
     const root = document.documentElement
     root.classList.toggle('dark', isDark(theme))
-    localStorage.setItem(THEME_STORAGE_KEY, theme)
-     }, [theme])
+    // Stored explicitly in all three modes, including 'auto' — see
+    // lib/theme.ts's doc comment for why that is simpler than removing the
+    // key, and client/index.html's pre-paint script for the matching read.
+    localStorage.setItem(THEME_STORAGE_KEY, themeMode)
+     }, [theme, themeMode])
+
+    // Auto mode must live-update when the OS setting changes (not just on
+    // next load). `change` fires on this MediaQueryList whenever
+    // `prefers-color-scheme` flips while the page is open.
+    useEffect(() => {
+      if (typeof window === 'undefined') return
+      const mq = window.matchMedia('(prefers-color-scheme: dark)')
+      const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches)
+      mq.addEventListener('change', onChange)
+      return () => mq.removeEventListener('change', onChange)
+    }, [])
 
      // Re-runs on project change: the fetch AND the SSE subscription are both
     // scoped server-side (§2.2), so a scoped board never receives another
@@ -426,6 +459,27 @@ export default function App() {
 
   const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
 
+  // v2.17.0 round 3 (tester-caught WebKit header-wrap defect — see the
+  // icon+theme wrapper's JSX comment below for the full mechanism): the bug
+  // icon's own footprint (27px mouse / 44px coarse pointer) has to come
+  // from somewhere in the header-controls row or that row wraps one line
+  // earlier with the icon on than off. CSS flex line-breaking decides wraps
+  // using each item's unshrunk basis (its width property), so a min-width
+  // floor on an already-shrinkable item changes nothing about WHERE the row
+  // wraps (verified empirically with a fine-grained Chromium + WebKit width
+  // sweep — a min-width floor never moved a wrap point in either engine).
+  // Only an actual reduction of the specified width moves it, so the token
+  // input (short placeholder, lots of slack vs its sm:w-36 box) absorbs it
+  // instead of the agent id input (sm:w-64 is sized tight to its own
+  // longer placeholder — responsive.test.mjs pins it for that reason).
+  // Scoped to md (the row is only tight there) and reset at xl (agent id
+  // drops to xl:w-52 and the row gap drops to xl:gap-2, so there is slack
+  // again) — confirmed by the fine sweep in check-header-layout.mjs: no
+  // reduction is needed at or above 1280px.
+  const tokenInputBugIconClawback = bugReportEnabled
+    ? 'md:w-[calc(9rem-27px)] md:pointer-coarse:w-[calc(9rem-44px)] xl:w-36'
+    : ''
+
   return (
      <div className="flex h-screen flex-col bg-bg text-ink">
         <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
@@ -459,7 +513,7 @@ export default function App() {
           >
             {headerOpen ? 'Close' : '⋯'}
           </button>
-          <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-2 md:order-none md:ml-auto md:w-auto md:flex-nowrap md:gap-3">
+          <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-2 md:order-none md:ml-auto md:w-auto md:flex-nowrap md:gap-3 xl:gap-2">
              <div
               role="group"
               aria-label="Switch between the board, the portfolio and the about page"
@@ -489,7 +543,7 @@ export default function App() {
             </div>
             <div
               data-testid="header-controls"
-              className={`min-w-0 flex-wrap items-center gap-2 md:flex md:gap-3 ${
+              className={`min-w-0 flex-wrap items-center gap-2 md:flex md:gap-3 xl:gap-2 ${
                 headerOpen ? 'flex w-full basis-full' : 'hidden'
               }`}
             >
@@ -505,7 +559,7 @@ export default function App() {
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             className="w-36 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 sm:py-1 pointer-coarse:min-h-11"
+             className="w-36 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"
             />
             <input
              type="password"
@@ -515,17 +569,24 @@ export default function App() {
              onKeyDown={(e) => {
                if (e.key === 'Enter') commitToken()
                }}
-             placeholder="api token"
+             // v2.17.0 round 4 (tester-caught clip, coarse pointer, 768-1100px,
+             // feature ON): "api token" (16px mono, needs ~86-89px) was
+             // clipped by 2-5px against this input's ~84px inner width once
+             // the bug-icon clawback above shrinks it to 100px. Shortened to
+             // "token" for BOTH feature on and off — not gated on
+             // bugReportEnabled — so the placeholder's own width is never a
+             // second, feature-dependent variable in the ON==OFF header
+             // invariant this input already carries (see
+             // tokenInputBugIconClawback above). aria-label (the accessible/
+             // descriptive name) is unchanged.
+             placeholder="token"
              aria-label="API token for mutating requests"
              title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
              autoComplete="off"
              spellCheck={false}
-             className="w-28 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11"
+             className={`w-28 min-w-0 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11 ${tokenInputBugIconClawback}`}
             />
-            <HeaderHelp
-              bugReportEnabled={bugReportEnabled}
-              onReportBug={() => setBugReportOpen(true)}
-            />
+            <HeaderHelp />
             {!tokenSaved && (
              <span
               className="hidden font-mono text-[10px] uppercase tracking-wider text-muted sm:inline"
@@ -564,15 +625,74 @@ export default function App() {
            >
              Signal
            </button>
-           <button
-            type="button"
-             onClick={() => setTheme(nextTheme)}
-            className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
-            aria-label="Toggle theme"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-           >
-             {theme === 'dark' ? 'Light' : 'Dark'}
-           </button>
+           {/* v2.17.0: the bug icon sits immediately beside the theme toggle
+               in one nowrap flex group (shrink-0) so the two are always
+               adjacent and never split apart by the row's own wrapping —
+               and so the pair's combined width is the ONE thing that has to
+               clear scripts/check-header-layout.mjs's header-height guard,
+               not two independently-wrapping controls. No gap and a shared
+               border (the icon's own `border-r-0` butts flush against the
+               theme button's left border) instead of two separately
+               bordered-and-gapped boxes. The wrapper itself carries no
+               border/padding of its own, so with the icon absent (flag off)
+               the theme button renders exactly as it did before this
+               feature existed — zero layout change.
+
+               Tester-caught regression (v2.17.0 round 2): a plain `-ml-2`
+               margin trick here only clawed back 8px — less than the
+               icon's own footprint (27px mouse / 44px coarse, the latter
+               from `pointer-coarse:min-w-11`) — so the header-controls row
+               (data-testid="header-controls", a `flex-wrap` row) wrapped
+               one row earlier with the icon ON than OFF in a real browser,
+               in narrow bands invisible to check-header-layout.mjs's
+               coarse-grained width list and to headless-Chrome-only
+               verification (confirmed with Playwright WebKit iPhone
+               emulation AND a fine Chromium width sweep — both engines, not
+               WebKit-only). A margin claw-back that size would have to dig
+               into the PRECEDING sibling's own box, not just the row gap,
+               so it was dropped. The real fix is on the api-token input
+               below: its width is cut by exactly this icon's footprint
+               (pointer-type-aware) only across the md–lg band where the
+               row is otherwise tight (see its comment) so the two headers
+               stay byte-for-byte identical in height at every width. */}
+           <div className="flex shrink-0 items-stretch">
+             {bugReportEnabled && (
+               <button
+                 type="button"
+                 onClick={() => setBugReportOpen(true)}
+                 aria-label="Report a bug"
+                 title="Report a bug"
+                 className="flex items-center justify-center border border-r-0 border-line bg-surface px-1.5 py-1.5 text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+               >
+                 <svg
+                   viewBox="0 0 16 16"
+                   width="14"
+                   height="14"
+                   fill="none"
+                   stroke="currentColor"
+                   strokeWidth="1.3"
+                   strokeLinecap="round"
+                   strokeLinejoin="round"
+                   aria-hidden="true"
+                 >
+                   <ellipse cx="8" cy="9.2" rx="3.4" ry="4.1" />
+                   <path d="M8 5.1V3.2M5.6 4.4 4.4 3.1M10.4 4.4 11.6 3.1" />
+                   <path d="M4.6 7.3h-2M4.6 9.6h-1.8M4.6 12h-2" />
+                   <path d="M11.4 7.3h2M11.4 9.6h1.8M11.4 12h2" />
+                   <path d="M5.2 6.3a2.9 2.9 0 0 1 5.6 0" />
+                 </svg>
+               </button>
+             )}
+             <button
+               type="button"
+               onClick={() => setThemeMode(nextMode)}
+               className="w-16 shrink-0 border border-line bg-surface py-1.5 text-center font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
+               aria-label="Toggle theme"
+               title={themeToggleTitle(themeMode)}
+             >
+               {modeLabel(themeMode)}
+             </button>
+           </div>
             </div>
           </div>
         </header>
@@ -682,8 +802,6 @@ export default function App() {
            )}
          </ErrorBoundary>
        </main>
-
-       <AppFooter bugReportEnabled={bugReportEnabled} onReportBug={() => setBugReportOpen(true)} />
 
        <TaskSheet task={openTask} onClose={() => setOpenTaskId(null)} />
        <BugReportDialog

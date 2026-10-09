@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,105 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [2.17.0] — 2026-10-08
+
+Feature: Auto theme. Fix: iOS Safari overflow/zoom/bottom-clearance bugs in
+the Report-a-bug sheet. Changed: the Report-a-bug entry point moves from the
+header popover + footer link to a single header icon beside the theme
+toggle; the footer link is removed entirely.
+
+### Added
+- **Auto theme**: the theme control is now three states — Auto (follows the
+  OS `prefers-color-scheme`, live-updating via a `matchMedia` `change`
+  listener with no reload needed), Light, Dark — cycled by the same compact
+  header button (Auto → Light → Dark → Auto), labelled `AUTO`/`LIGHT`/`DARK`.
+  The button has a fixed `w-16` width (not just "similar-width" labels): an
+  independent tester found that LIGHT renders a few px wider than AUTO/DARK
+  in real WebKit, which was enough to tip the header-controls row into an
+  extra wrapped line in a narrow width band a plain visual check never
+  landed on — a fixed width removes the mode itself as a variable. Auto is
+  the default for a visitor with no stored choice; existing stored `'light'`/
+  `'dark'` values are honoured unchanged. `'auto'` is now stored explicitly
+  in `localStorage` rather than by removing the key, so every mode
+  round-trips through one read path. `client/src/lib/theme.ts` gained
+  `parseStoredMode`, `resolveMode`, `nextMode`, `modeLabel` and
+  `themeToggleTitle` (replacing `resolveTheme`/`nextTheme`); the pre-paint
+  inline script in `client/index.html` mirrors the same stored-value
+  handling so there is no flash of the wrong theme in any of the three
+  modes on first load.
+- **Report-a-bug header icon**: a small inline-SVG bug icon button now sits
+  directly in the header, immediately beside the theme toggle, sharing its
+  border/surface tokens and a single shared border with it (no gap) so the
+  pair's combined footprint stays small enough to clear
+  `scripts/check-header-layout.mjs`'s header-height guard at every width —
+  the guard requires the header to measure IDENTICALLY with the feature ON
+  vs OFF, instead of relying on the entry point costing zero width by being
+  tucked inside a popover. `aria-label`/`title="Report a bug"`, native
+  `<button>`, `pointer-coarse:min-h-11 pointer-coarse:min-w-11` touch
+  target, ~28px square on a mouse. Rendered only once
+  `GET /api/bug-reports/config` confirms the feature.
+
+### Changed
+- **Report-a-bug entry points**: now exactly two — the new header icon
+  (above) and the existing About page CTA. Both the header "i" popover row
+  (v2.16.0) and the footer link (v2.16.3,
+  `client/src/components/AppFooter.tsx`) are removed; `HeaderHelp.tsx`
+  reverts to explaining only the agent-id/api-token fields (its `max-lg:fixed`
+  viewport-containment fix for the popover's own positioning is unrelated
+  and stays).
+
+### Fixed
+- **Header-controls row wrapped one line earlier with the bug icon ON than
+  OFF (WebKit, round 3)**: an independent tester's deterministic Playwright
+  WebKit repro (`devices['iPhone 15']`, theme LIGHT, 1100px viewport: 155px
+  header ON vs 101px OFF) showed the icon-plus-theme-toggle pair's width
+  wasn't fully absorbed — the earlier round-2 `-ml-2` claw-back only
+  covered part of the icon's own footprint (27px on a mouse, 44px on
+  `pointer-coarse:min-w-11`), and the LIGHT label's few extra px (see the
+  Auto theme entry above) widened the bad band further. Fixed on two axes:
+  the theme toggle is now a fixed `w-16` width (mode no longer affects row
+  width at all), and the api-token input absorbs the icon's exact remaining
+  footprint via a `bugReportEnabled`-only width reduction, scoped to the
+  one breakpoint band where the row is actually tight and reset at `xl`
+  where it has slack again (`client/src/App.tsx`). Verified with a live
+  Chromium + Playwright WebKit fine sweep (every 8px from 320-1920, both
+  pointer types, all three theme modes): ON and OFF now measure byte-for-
+  byte identical at every point checked.
+  `scripts/check-header-layout.mjs` gained a third pass that forces each
+  theme mode and sweeps 8px steps across the known wrap thresholds,
+  diffing a feature-ON server against a feature-OFF one live when CI
+  supplies both (`ci.yml` now starts a second, flag-off server for this)
+  rather than trusting a hand-verified table.
+- **api-token placeholder clipped on coarse pointers (round 4)**: fixing the
+  above left one cosmetic gap — a tester caught the round-3 width cut
+  (100px wide on a coarse pointer, 768-1100px, feature ON, vs 144px off)
+  clipping the "api token" placeholder by 2-5px (16px mono needs ~86-89px;
+  the shrunk input's inner width is ~84px). Shortened the placeholder to
+  "token" for BOTH feature states — not gated on `bugReportEnabled` — so
+  the placeholder's own width is never a second, feature-dependent
+  variable on top of the input's own width cut; the accessible name
+  (`aria-label="API token for mutating requests"`) is unchanged. No width
+  or class changed, so the ON==OFF header-height invariant above is
+  untouched.
+- **Report-a-bug sheet on iOS Safari**: a real-device recording showed the
+  sheet panning horizontally with zoomed, clipped content, and the
+  Turnstile widget/Submit button pinned under Safari's floating bottom
+  toolbar. Applied defensively (Playwright WebKit does not reproduce iOS's
+  OS-level chrome behaviour — the horizontal-overflow and OS-zoom causes
+  could not be repro'd outside a physical iPhone; see the card notes for
+  exactly what was and wasn't verified): `overflow-x-hidden` +
+  `max-w-[100vw]` on the sheet itself, plus the same `overflow-x: hidden` on
+  `html, body` as a second line of defense, against a `position:fixed`
+  panel (or an absolutely-positioned descendant like the honeypot's
+  `-left-[9999px]` offset) potentially widening WebKit's document scroll
+  area; `inert` on the closed sheet; `height: 100dvh` so mobile chrome
+  cannot clip it; the Turnstile widget now renders with `size: 'flexible'`
+  plus a capped mount point so it cannot force the sheet wider than the
+  viewport; and the submit button moved into its own pinned footer OUTSIDE
+  the scrollable body (`form="bug-report-form"`) with
+  `padding-bottom: calc(1rem + env(safe-area-inset-bottom))`, so it stays
+  reachable above a floating toolbar regardless of scroll position.
 
 ## [2.16.3] — 2026-10-08
 
