@@ -208,7 +208,7 @@ export function formatReclaimMessage(event, cfg = notifierConfig(), opts = {}) {
   // first, in this order, before any hard truncation; the Board line is NEVER
   // truncated (it is appended last, unconditionally).
   const headerRows = [
-    `🔻 <b>Task reclaimed to BACKLOG</b>`,
+    `🔻 <b>Task reclaimed to READY</b>`,
     '',
     line('Project', `<b>${safe(project)}</b>`),
     line('Task', `<b>${safe(task.id || prev.id)}</b>`),
@@ -301,7 +301,7 @@ export function formatReclaimMessage(event, cfg = notifierConfig(), opts = {}) {
       const taskLine = line('Task', `<b>${safe(task.id || prev.id)}</b>`) || '';
       const titleRaw = safe(task.title || prev.title);
       // header = banner + '' + Project + Task + Title(truncated)
-      const banner = `🔻 <b>Task reclaimed to BACKLOG</b>`;
+      const banner = `🔻 <b>Task reclaimed to READY</b>`;
       const headPrefix = `${banner}\n\n${projectLine}\n${taskLine}\n`;
       const titlePrefix = `<b>Title:</b> `;
       const titleBudget = Math.max(0, headRoom - headPrefix.length - titlePrefix.length);

@@ -65,14 +65,14 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     store.setStorage(null);
   });
 
-  it('Test 1: An active task with live heartbeats IS reaped back to BACKLOG when now - last_progress_at >= KANBAN_PROGRESS_STALL_MS', async () => {
+  it('Test 1: An active task with live heartbeats IS reaped back to READY when now - last_progress_at >= KANBAN_PROGRESS_STALL_MS', async () => {
     const baseNow = Date.now();
-    await store.createTask({ id: 'stall-1', title: 'Stalled task', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'stall-1', title: 'Stalled task', status: 'READY', round: 1 });
     await store.claimTask('stall-1', 'zombie-agent', undefined, { now: baseNow });
 
     // Verify initial task state
     let t = store.getTask('stall-1');
-    assert.equal(t.status, 'BUILDING');
+    assert.equal(t.status, 'IN_PROGRESS');
     assert.equal(t.assigned_agent, 'zombie-agent');
     assert.ok(t.last_progress_at, 'has last_progress_at recorded');
 
@@ -89,7 +89,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     assert.ok(res.reclaimed.includes('default/stall-1'), 'stalled task was reaped by the sweep');
 
     t = store.getTask('stall-1');
-    assert.equal(t.status, 'BACKLOG', 'task returned to BACKLOG');
+    assert.equal(t.status, 'READY', 'task returned to READY');
     assert.equal(t.assigned_agent, null, 'owner cleared');
     assert.equal(t.claim_expires_at, null, 'lease cleared');
     assert.equal(t.reclaim_count, 1, 'reclaim_count incremented');
@@ -101,7 +101,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     assert.ok(lastLog, 'log appended');
     assert.equal(lastLog.reason, 'progress_stalled', 'agent_logs reason is progress_stalled');
     assert.equal(lastLog.reclaimed_from, 'zombie-agent', 'reclaimed_from is zombie-agent');
-    assert.equal(lastLog.message, 'PROGRESS STALLED — task reclaimed to BACKLOG by system reaper.');
+    assert.equal(lastLog.message, 'PROGRESS STALLED — task reclaimed to READY by system reaper.');
 
     const audit = auditEntries.find((e) => e.task?.id === 'stall-1' && e.kind === 'reclaimed');
     assert.ok(audit, 'audit event found');
@@ -110,7 +110,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
 
   it('Test 3: An active task with recent progress (e.g. POST /logs or PATCH updated last_progress_at) is NOT reaped', async () => {
     const baseNow = Date.now();
-    await store.createTask({ id: 'active-1', title: 'Active progress task', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'active-1', title: 'Active progress task', status: 'READY', round: 1 });
     await store.claimTask('active-1', 'active-agent', undefined, { now: baseNow });
 
     // Progress occurs via appendLog
@@ -127,7 +127,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     assert.ok(!res.reclaimed.includes('default/active-1'), 'task with recent progress must not be reaped');
 
     t = store.getTask('active-1');
-    assert.equal(t.status, 'BUILDING');
+    assert.equal(t.status, 'IN_PROGRESS');
     assert.equal(t.assigned_agent, 'active-agent');
   });
 
@@ -135,7 +135,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     process.env.KANBAN_PROGRESS_STALL_MS = '0';
     try {
       const baseNow = Date.now();
-      await store.createTask({ id: 'disabled-1', title: 'Disabled stall check', status: 'BACKLOG', round: 1 });
+      await store.createTask({ id: 'disabled-1', title: 'Disabled stall check', status: 'READY', round: 1 });
       await store.claimTask('disabled-1', 'idle-agent', undefined, { now: baseNow });
 
       // Stalled progress in the past
@@ -147,7 +147,7 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
       assert.ok(!res.reclaimed.includes('default/disabled-1'), 'task should NOT be reaped when stall check is disabled');
 
       const t = store.getTask('disabled-1');
-      assert.equal(t.status, 'BUILDING');
+      assert.equal(t.status, 'IN_PROGRESS');
       assert.equal(t.assigned_agent, 'idle-agent');
     } finally {
       process.env.KANBAN_PROGRESS_STALL_MS = String(STALL_TIMEOUT_MS);

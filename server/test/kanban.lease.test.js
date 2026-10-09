@@ -40,7 +40,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -115,7 +115,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
         });
       assert.equal(claim.response.status, 200);
       assert.equal(claim.body.assigned_agent, 'alpha');
-      assert.equal(claim.body.status, 'BUILDING', 'BACKLOG -> BUILDING on claim');
+      assert.equal(claim.body.status, 'IN_PROGRESS', 'READY -> IN_PROGRESS on claim');
       assert.equal(typeof claim.body.claim_expires_at, 'string');
       assert.ok(Date.parse(claim.body.claim_expires_at) > t0, 'lease deadline is in the future');
       const expected = t0 + TTL_MS;
@@ -197,7 +197,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       const res = await store.reapExpiredClaims({ now: future });
       assert.ok(res.reclaimed.includes('default/reap-1'), 'the expired task was reclaimed');
       const reclaimed = store.getTask('reap-1');
-      assert.equal(reclaimed.status, 'BACKLOG', 'status forced back to BACKLOG');
+      assert.equal(reclaimed.status, 'READY', 'status forced back to READY');
       assert.equal(reclaimed.assigned_agent, null, 'ownership cleared');
       assert.equal(reclaimed.claim_expires_at, null, 'lease cleared');
       assert.equal(reclaimed.reclaim_count, 1, 'reclaim_count incremented');
@@ -217,7 +217,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       // A sweep at "now" (well inside the TTL) must not reclaim THIS task.
       const res = await store.reapExpiredClaims({ now: Date.now() });
       assert.ok(!res.reclaimed.includes('default/reap-2'), 'no fresh lease is reclaimed');
-      assert.equal(store.getTask('reap-2').status, 'BUILDING', 'task stays BUILDING');
+      assert.equal(store.getTask('reap-2').status, 'IN_PROGRESS', 'task stays IN_PROGRESS');
       assert.equal(store.getTask('reap-2').assigned_agent, 'fine', 'ownership retained');
       });
 
@@ -229,7 +229,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await jsonRequest(baseUrl, '/api/tasks/reap-blk/claim', {
         method: 'POST', headers: headers(undefined, 'blocked-owner'), body: JSON.stringify({ agent_id: 'blocked-owner' }),
         });
-      // Move BUILDING -> BLOCKED (runner is privileged for BLOCKED).
+      // Move IN_PROGRESS -> BLOCKED (runner is privileged for BLOCKED).
       await jsonRequest(baseUrl, '/api/tasks/reap-blk', {
         method: 'PATCH', headers: headers('runner'), body: JSON.stringify({ status: 'BLOCKED' }),
          });
@@ -243,15 +243,18 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await jsonRequest(baseUrl, '/api/tasks/reap-done/claim', {
         method: 'POST', headers: headers(undefined, 'done-owner'), body: JSON.stringify({ agent_id: 'done-owner' }),
         });
-      // Drive the builder->reviewer->tester loop to legal terminal DONE.
+      // Drive the builder->reviewer->tester->releaser loop to legal terminal DONE.
       await jsonRequest(baseUrl, '/api/tasks/reap-done', {
         method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_REVIEW' }),
         });
       await jsonRequest(baseUrl, '/api/tasks/reap-done', {
-        method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'IN_TEST' }),
+        method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'VALIDATION' }),
         });
       await jsonRequest(baseUrl, '/api/tasks/reap-done', {
-        method: 'PATCH', headers: headers('tester'), body: JSON.stringify({ status: 'DONE' }),
+        method: 'PATCH', headers: headers('tester'), body: JSON.stringify({ status: 'READY_TO_SHIP' }),
+        });
+      await jsonRequest(baseUrl, '/api/tasks/reap-done', {
+        method: 'PATCH', headers: headers('releaser'), body: JSON.stringify({ status: 'DONE' }),
         });
       blk = store.getTask('reap-blk');
       const doneTask = store.getTask('reap-done');
@@ -290,7 +293,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       const r = await store.reapExpiredClaims({ now: Date.now() }).catch((e) => (threw = e));
       assert.ok(threw instanceof Error && /disk failure/.test(threw.message), 'the failing write surfaces');
            // Memory-after-persistence: the task must still be the active claim.
-      assert.equal(store.getTask('reap-fc').status, 'BUILDING', 'task unchanged in memory');
+      assert.equal(store.getTask('reap-fc').status, 'IN_PROGRESS', 'task unchanged in memory');
       assert.equal(store.getTask('reap-fc').assigned_agent, 'holder', 'ownership retained');
       assert.equal(store.getTask('reap-fc').version, v, 'version unchanged after a failed reclaim');
         // Restore a good store so later tests are hermetic.
@@ -313,7 +316,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await store.renewLease('reap-race', 'holder', { caller: { role: 'builder' }, now: t + 10 });
       const res = await store.reapExpiredClaims({ now: t + 10 });
       assert.ok(!res.reclaimed.includes('default/reap-race'), 'renew landed first -> it is not reaped');
-      assert.equal(store.getTask('reap-race').status, 'BUILDING', 'surviving lease stays BUILDING');
+      assert.equal(store.getTask('reap-race').status, 'IN_PROGRESS', 'surviving lease stays IN_PROGRESS');
       assert.equal(store.getTask('reap-race').assigned_agent, 'holder', 'ownership retained');
       });
 
@@ -333,7 +336,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       const beat = await store.renewLease('reap-race2', 'holder', { caller: { role: 'builder' }, now: t + 10 });
       assert.equal(beat.status, 409, 'renew after a reclaim is rejected');
       assert.equal(beat.reason, 'not_claimed', 'the task is no longer claimed');
-      assert.equal(store.getTask('reap-race2').status, 'BACKLOG');
+      assert.equal(store.getTask('reap-race2').status, 'READY');
       assert.equal(store.getTask('reap-race2').assigned_agent, null);
       });
 
@@ -346,7 +349,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       process.env.KANBAN_GIT_DIR = gitDir;
       store.setStorage(null);
       await store.loadStore();
-      await store.createTask({ id: 'git-lease', title: 'Git lease', status: 'BACKLOG', round: 1 });
+      await store.createTask({ id: 'git-lease', title: 'Git lease', status: 'READY', round: 1 });
       await store.claimTask('git-lease', 'g', undefined, {});
           // The card on disk must carry the lease fields.
       const cardPath = path.join(gitDir, 'git-lease.yml');
@@ -359,7 +362,7 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
       await store.reapExpiredClaims({ now: Date.now() });
       const parsedAfter = yaml.parse(await readFile(cardPath, 'utf8'));
       assert.equal(parsedAfter.assigned_agent, null, 'reclaim cleared ownership on the card');
-      assert.equal(parsedAfter.status, 'BACKLOG');
+      assert.equal(parsedAfter.status, 'READY');
       assert.equal(typeof parsedAfter.reclaim_count, 'number', 'card carries reclaim_count');
       assert.equal(parsedAfter.reclaim_count, 1, 'reclaim_count persisted as 1');
       await rm(gitDir, { recursive: true, force: true });
@@ -411,14 +414,14 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
      });
 
   it('14. the holder log extension keeps an active card off the reaper', async () => {
-    await store.createTask({ id: 'lease-log-3', title: 'Log keeps lease', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lease-log-3', title: 'Log keeps lease', status: 'READY', round: 1 });
     await store.claimTask('lease-log-3', 'worker-b', undefined, {});
     // Pin the lease to just about to expire, then log as the holder.
     await setExpiry('lease-log-3', Date.now() + 500);
     await store.appendLog('lease-log-3', 'worker-b', 'still alive', undefined, {});
     const swept = await store.reapExpiredClaims({ now: Date.now() + 1000 });
     assert.ok(!swept.reclaimed.includes('default/lease-log-3'), 'extended lease survived the sweep');
-    assert.equal(store.getTask('lease-log-3').status, 'BUILDING');
+    assert.equal(store.getTask('lease-log-3').status, 'IN_PROGRESS');
     assert.equal(store.getTask('lease-log-3').assigned_agent, 'worker-b');
      });
 });
@@ -432,7 +435,7 @@ describe('lease hardening (v2.3.11)', () => {
     const T0 = 1_000_000;
     store.setNowFn(() => T0);
     try {
-      await store.createTask({ id: 'ttl-default', title: 'TTL default', status: 'BACKLOG', round: 1 });
+      await store.createTask({ id: 'ttl-default', title: 'TTL default', status: 'READY', round: 1 });
       await store.claimTask('ttl-default', 'ttl-prober', undefined, {});
       const t = store.getTask('ttl-default');
       assert.equal(t.claim_expires_at, new Date(T0 + 600_000).toISOString(),
@@ -444,7 +447,7 @@ describe('lease hardening (v2.3.11)', () => {
   });
 
   it('16. a status PATCH by the holder extends the lease (proof of life beyond logs)', async () => {
-    await store.createTask({ id: 'lease-patch-1', title: 'Holder patch extends', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lease-patch-1', title: 'Holder patch extends', status: 'READY', round: 1 });
     await store.claimTask('lease-patch-1', 'worker-c', undefined, {});
     // Pin the lease to just about to expire, then PATCH as the holder.
     await setExpiry('lease-patch-1', Date.now() + 500);
@@ -459,7 +462,7 @@ describe('lease hardening (v2.3.11)', () => {
   });
 
   it('17. a status PATCH by a non-holder never extends or steals the lease', async () => {
-    await store.createTask({ id: 'lease-patch-2', title: 'Stranger patch', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lease-patch-2', title: 'Stranger patch', status: 'READY', round: 1 });
     await store.claimTask('lease-patch-2', 'worker-d', undefined, {});
     const before = store.getTask('lease-patch-2').claim_expires_at;
     const patched = await store.patchTask(

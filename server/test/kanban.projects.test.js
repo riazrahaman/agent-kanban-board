@@ -189,8 +189,8 @@ describe('§2.1 multi-project namespacing', () => {
     // small delay so mtime is observable
     await new Promise((r) => setTimeout(r, 15));
     const res = await jsonRequest(baseUrl, '/api/tasks/task-1?project=atlas', {
-      method: 'PATCH', headers: headers('builder'),
-      body: JSON.stringify({ status: 'BUILDING', title: 'Atlas card v2' }),
+      method: 'PATCH', headers: headers('planner'),
+      body: JSON.stringify({ status: 'READY', title: 'Atlas card v2' }),
      });
     assert.equal(res.response.status, 200);
     const after = (await stat(alphaFile)).mtimeMs;

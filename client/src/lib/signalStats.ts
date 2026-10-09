@@ -1,5 +1,5 @@
 import type { Task } from '../types.ts'
-import { ACTIVE_STATUSES, CANONICAL_STATUSES } from './status.ts'
+import { ACTIVE_STATUSES, CANONICAL_STATUSES, normalizeStatus } from './status.ts'
 
 export type SignalStats = {
   active: number
@@ -21,8 +21,8 @@ export type SignalStats = {
  */
 export function computeSignalStats(tasks: Task[], _now: Date = new Date()): SignalStats {
   const active = tasks.filter((t) =>
-     (ACTIVE_STATUSES as readonly string[]).includes(t.status),
-    ).length
+    (ACTIVE_STATUSES as readonly string[]).includes(normalizeStatus(t.status)),
+  ).length
 
   const blocked = tasks.filter((t) => t.status === CANONICAL_STATUSES.BLOCKED).length
 

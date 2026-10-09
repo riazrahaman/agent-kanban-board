@@ -44,7 +44,7 @@ test('groupTasks is deterministic and bucketed by normalized status', () => {
   assert.deepEqual(first, second, 'same input -> same output')
 
   assert.deepEqual(first.BACKLOG.map((t) => t.id), ['a', 'c'])
-  assert.deepEqual(first.BUILDING.map((t) => t.id), ['b', 'd', 'e'])
+  assert.deepEqual(first.IN_PROGRESS.map((t) => t.id), ['b', 'd', 'e'])
   assert.deepEqual(first.ISSUES.map((t) => t.id), ['e'], 'issues mirror into ISSUES bucket')
   assert.equal(first.DONE.length, 0)
 })
@@ -105,7 +105,7 @@ test('getVisibleColumns excludes UNKNOWN column when no tasks have unknown statu
   ])
   const cols = getVisibleColumns(grouped)
   assert.equal(cols.some((c) => c.status === 'UNKNOWN'), false)
-  assert.equal(cols.length, 7)
+  assert.equal(cols.length, 10)
 })
 
 test('getVisibleColumns includes UNKNOWN column when at least one task has unknown status', () => {
@@ -115,6 +115,6 @@ test('getVisibleColumns includes UNKNOWN column when at least one task has unkno
   ])
   const cols = getVisibleColumns(grouped)
   assert.equal(cols.some((c) => c.status === 'UNKNOWN'), true)
-  assert.equal(cols.length, 8)
+  assert.equal(cols.length, 11)
 })
 

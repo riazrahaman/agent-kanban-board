@@ -31,7 +31,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -231,7 +231,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   // --- renewLease with explicit lease_ms ---
 
   it('9. renewLease with explicit lease_ms changes the window for future heartbeats', async () => {
-    await store.createTask({ id: 'lw-9', title: 'Renew change', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-9', title: 'Renew change', status: 'READY', round: 1 });
     await store.claimTask('lw-9', 'iota', undefined, { lease_ms: 120000 });
     let t = store.getTask('lw-9');
     assert.equal(t.claim_lease_ms, 120000);
@@ -252,7 +252,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   });
 
   it('10. renewLease without lease_ms extends by the card own stored window', async () => {
-    await store.createTask({ id: 'lw-10', title: 'Renew default', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-10', title: 'Renew default', status: 'READY', round: 1 });
     await store.claimTask('lw-10', 'kappa', undefined, { lease_ms: 300000 });
     const t0 = Date.now();
     const r = await store.renewLease('lw-10', 'kappa', { caller: { role: 'builder' } });
@@ -270,7 +270,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   it('11. nextClaim respects lease_ms and persists claim_lease_ms', async () => {
     // Isolate in its own project so leftover BACKLOG cards from earlier tests
     // cannot win the priority/FIFO selection.
-    await store.createTask({ id: 'lw-11', title: 'Next claim lease', status: 'BACKLOG', round: 1 }, 'lw11proj');
+    await store.createTask({ id: 'lw-11', title: 'Next claim lease', status: 'READY', round: 1 }, 'lw11proj');
     const t0 = Date.now();
     const r = await store.nextClaim({ agentId: 'lambda', role: 'builder', project: 'lw11proj', lease_ms: 300000 });
     assert.equal(r.status, 200);
@@ -286,7 +286,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   // --- claim_lease_ms cleared on reclaim ---
 
   it('12. reclaim clears claim_lease_ms to null', async () => {
-    await store.createTask({ id: 'lw-12', title: 'Reclaim clears', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-12', title: 'Reclaim clears', status: 'READY', round: 1 });
     await store.claimTask('lw-12', 'mu', undefined, { lease_ms: 300000 });
     let t = store.getTask('lw-12');
     assert.equal(t.claim_lease_ms, 300000);
@@ -305,7 +305,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
     // the public maybeUnlockDependents sweep, which runs when a BLOCKED card's
     // last dependency reaches DONE. Seed a BLOCKED card carrying a stale lease +
     // window, complete its dependency, and assert the unlock clears the window.
-    await store.createTask({ id: 'lw-13-dep', title: 'Dep', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-13-dep', title: 'Dep', status: 'READY', round: 1 });
     await store.createTask(
       { id: 'lw-13', title: 'Blocked', status: 'BLOCKED', round: 1, depends_on: ['lw-13-dep'] },
     );
@@ -317,13 +317,15 @@ describe('v2.12.0 lease window (§2.4b)', () => {
     await store.getStorage(t.project).saveTask(t, store.getProjectBucket(t.project));
     assert.equal(store.getTask('lw-13').claim_lease_ms, 300000);
     // Drive the dependency to DONE, then run the unlock sweep.
-    await store.patchTask('lw-13-dep', { status: 'BUILDING' }, { caller: { agent_id: 'sys', role: 'admin' } });
-    await store.patchTask('lw-13-dep', { status: 'IN_REVIEW' }, { caller: { agent_id: 'sys', role: 'admin' } });
-    await store.patchTask('lw-13-dep', { status: 'IN_TEST' }, { caller: { agent_id: 'sys', role: 'admin' } });
-    await store.patchTask('lw-13-dep', { status: 'DONE' }, { caller: { agent_id: 'sys', role: 'admin' } });
+    await store.patchTask('lw-13-dep', { status: 'PLANNING' }, { caller: { agent_id: 'sys', role: 'planner' } });
+    await store.patchTask('lw-13-dep', { status: 'IN_PROGRESS' }, { caller: { agent_id: 'sys', role: 'builder' } });
+    await store.patchTask('lw-13-dep', { status: 'IN_REVIEW' }, { caller: { agent_id: 'sys', role: 'builder' } });
+    await store.patchTask('lw-13-dep', { status: 'VALIDATION' }, { caller: { agent_id: 'sys', role: 'reviewer' } });
+    await store.patchTask('lw-13-dep', { status: 'READY_TO_SHIP' }, { caller: { agent_id: 'sys', role: 'tester' } });
+    await store.patchTask('lw-13-dep', { status: 'DONE' }, { caller: { agent_id: 'sys', role: 'releaser' } });
     await store.maybeUnlockDependents('lw-13-dep', { now: Date.now() });
     t = store.getTask('lw-13');
-    assert.equal(t.status, 'BACKLOG', 'unblocked back to BACKLOG');
+    assert.equal(t.status, 'READY', 'unblocked back to READY');
     assert.equal(t.assigned_agent, null);
     assert.equal(t.claim_lease_ms, null, 'claim_lease_ms cleared on unlock');
   });
@@ -396,7 +398,7 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   });
 
   it('17. bulk heartbeat does NOT revive a lapsed lease', async () => {
-    await store.createTask({ id: 'lw-17', title: 'Lapsed not revived', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-17', title: 'Lapsed not revived', status: 'READY', round: 1 });
     await store.claimTask('lw-17', 'lapsed-agent', undefined, {});
     // Force the lease into the past.
     await setExpiry('lw-17', Date.now() - 5000);
@@ -410,8 +412,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   });
 
   it('18. bulk heartbeat with project scope only renews tasks in that project', async () => {
-    await store.createTask({ id: 'lw-18a', title: 'In scope', status: 'BACKLOG', round: 1, project: 'atlas' });
-    await store.createTask({ id: 'lw-18b', title: 'Out of scope', status: 'BACKLOG', round: 1, project: 'orion' });
+    await store.createTask({ id: 'lw-18a', title: 'In scope', status: 'READY', round: 1, project: 'atlas' });
+    await store.createTask({ id: 'lw-18b', title: 'Out of scope', status: 'READY', round: 1, project: 'orion' });
     await store.claimTask('lw-18a', 'scoped-agent', 'atlas', {});
     await store.claimTask('lw-18b', 'scoped-agent', 'orion', {});
     const r = await store.renewAllLeases('scoped-agent', { project: 'atlas' });
@@ -425,8 +427,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
 
   it('19. a holder PATCH renews all other leases held by the same agent', async () => {
     // Create two tasks claimed by the same agent.
-    await store.createTask({ id: 'lw-19a', title: 'Sibling A', status: 'BACKLOG', round: 1 });
-    await store.createTask({ id: 'lw-19b', title: 'Sibling B', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-19a', title: 'Sibling A', status: 'READY', round: 1 });
+    await store.createTask({ id: 'lw-19b', title: 'Sibling B', status: 'READY', round: 1 });
     await store.claimTask('lw-19a', 'sibling-agent', undefined, {});
     await store.claimTask('lw-19b', 'sibling-agent', undefined, {});
     const beforeB = Date.parse(store.getTask('lw-19b').claim_expires_at);
@@ -441,8 +443,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   });
 
   it('20. a holder log append renews all other leases held by the same agent', async () => {
-    await store.createTask({ id: 'lw-20a', title: 'Log A', status: 'BACKLOG', round: 1 });
-    await store.createTask({ id: 'lw-20b', title: 'Log B', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-20a', title: 'Log A', status: 'READY', round: 1 });
+    await store.createTask({ id: 'lw-20b', title: 'Log B', status: 'READY', round: 1 });
     await store.claimTask('lw-20a', 'log-agent', undefined, {});
     await store.claimTask('lw-20b', 'log-agent', undefined, {});
     const beforeB = Date.parse(store.getTask('lw-20b').claim_expires_at);
@@ -455,8 +457,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   it('21. holder-write-renews-all can be disabled via env', async () => {
     process.env.KANBAN_HOLDER_WRITE_RENEWS_ALL = '0';
     try {
-      await store.createTask({ id: 'lw-21a', title: 'Disabled A', status: 'BACKLOG', round: 1 });
-      await store.createTask({ id: 'lw-21b', title: 'Disabled B', status: 'BACKLOG', round: 1 });
+      await store.createTask({ id: 'lw-21a', title: 'Disabled A', status: 'READY', round: 1 });
+      await store.createTask({ id: 'lw-21b', title: 'Disabled B', status: 'READY', round: 1 });
       await store.claimTask('lw-21a', 'disabled-agent', undefined, {});
       await store.claimTask('lw-21b', 'disabled-agent', undefined, {});
       const beforeB = store.getTask('lw-21b').claim_expires_at;
@@ -471,8 +473,8 @@ describe('v2.12.0 lease window (§2.4b)', () => {
   });
 
   it('22. a new claim renews all other leases held by the same agent (applyClaim side effect)', async () => {
-    await store.createTask({ id: 'lw-22a', title: 'Claim A', status: 'BACKLOG', round: 1 });
-    await store.createTask({ id: 'lw-22b', title: 'Claim B', status: 'BACKLOG', round: 1 });
+    await store.createTask({ id: 'lw-22a', title: 'Claim A', status: 'READY', round: 1 });
+    await store.createTask({ id: 'lw-22b', title: 'Claim B', status: 'READY', round: 1 });
     // Claim A first.
     await store.claimTask('lw-22a', 'claim-agent', undefined, {});
     const beforeA = Date.parse(store.getTask('lw-22a').claim_expires_at);

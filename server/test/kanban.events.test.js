@@ -227,6 +227,13 @@ describe('§2.2 scoped + diff SSE', () => {
       const [updatedEvt] = await stream.waitFor((e) => e.event === 'task.updated');
       assert.equal(updatedEvt.data.task.title, 'Gamma card v2');
       assert.equal(updatedEvt.data.prev.title, 'Gamma card', 'carries the previous revision');
+      await jsonRequest(baseUrl, '/api/tasks/gamma-1?project=gamma', {
+        method: 'PATCH', headers: headers('planner'),
+        body: JSON.stringify({ status: 'READY' }),
+      });
+      const updatedEvents = await stream.waitFor((e) => e.event === 'task.updated', { min: 2 });
+      const readyEvt = updatedEvents[updatedEvents.length - 1];
+      assert.equal(readyEvt.data.task.status, 'READY');
 
       const claim = await jsonRequest(baseUrl, '/api/tasks/gamma-1/claim?project=gamma', {
         method: 'POST', headers: headers('builder', 'agent-x'),
@@ -264,11 +271,14 @@ describe('§2.2 scoped + diff SSE', () => {
       body: JSON.stringify({ id: 'sweep-1', title: 'Old card', status: 'BACKLOG', round: 1 }),
       });
     const steps = [
-      { role: 'builder', status: 'BUILDING' },
+      { role: 'planner', status: 'READY' },
+      { role: 'planner', status: 'PLANNING' },
+      { role: 'builder', status: 'IN_PROGRESS' },
       { role: 'builder', status: 'IN_REVIEW' },
-      { role: 'reviewer', status: 'IN_TEST' },
-      { role: 'tester', status: 'DONE' },
-      ];
+      { role: 'reviewer', status: 'VALIDATION' },
+      { role: 'tester', status: 'READY_TO_SHIP' },
+      { role: 'releaser', status: 'DONE' },
+    ];
     for (const { role, status } of steps) {
       const r = await jsonRequest(baseUrl, '/api/tasks/sweep-1?project=sweepproj', {
         method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
@@ -332,11 +342,14 @@ describe('§2.2 scoped + diff SSE', () => {
     try {
       await settle();
       const steps = [
-        { role: 'builder', status: 'BUILDING' },
+        { role: 'planner', status: 'READY' },
+        { role: 'planner', status: 'PLANNING' },
+        { role: 'builder', status: 'IN_PROGRESS' },
         { role: 'builder', status: 'IN_REVIEW' },
-        { role: 'reviewer', status: 'IN_TEST' },
-        { role: 'tester', status: 'DONE' },
-        ];
+        { role: 'reviewer', status: 'VALIDATION' },
+        { role: 'tester', status: 'READY_TO_SHIP' },
+        { role: 'releaser', status: 'DONE' },
+      ];
       for (const { role, status } of steps) {
         const r = await jsonRequest(baseUrl, '/api/tasks/dep-root?project=depproj', {
           method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),

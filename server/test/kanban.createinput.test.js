@@ -121,10 +121,10 @@ test('3. an admin may create a task directly in an active status', async () => {
   const { response, body } = await jsonRequest('/api/tasks', {
     method: 'POST',
     headers: headers('admin'),
-    body: taskBody('ci-3', 'Imported work', { status: 'BUILDING' }),
+    body: taskBody('ci-3', 'Imported work', { status: 'IN_PROGRESS' }),
   });
   assert.equal(response.status, 201);
-  assert.equal(body.status, 'BUILDING');
+  assert.equal(body.status, 'IN_PROGRESS');
 });
 
 test('4. BACKLOG and BLOCKED stay open to unprivileged creation', async () => {
@@ -154,10 +154,10 @@ test('5. a caller-supplied assigned_agent is ignored at create', async () => {
   assert.equal(store.getTask('ci-5').assigned_agent, null);
 });
 
-test('6. a created BACKLOG card is still claimable (no phantom contention)', async () => {
+test('6. a created READY card is still claimable (no phantom contention)', async () => {
   await jsonRequest('/api/tasks', {
     method: 'POST',
-    body: taskBody('ci-6', 'Claim me', { assigned_agent: 'phantom-owner' }),
+    body: taskBody('ci-6', 'Claim me', { status: 'READY', assigned_agent: 'phantom-owner' }),
   });
   const { response, body } = await jsonRequest('/api/tasks/ci-6/claim', {
     method: 'POST',

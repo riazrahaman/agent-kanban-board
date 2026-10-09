@@ -186,7 +186,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
     const text = formatReclaimMessage(event, notifierConfig(BASE_ENV), { now });
 
     for (const expected of [
-      'Task reclaimed to BACKLOG',
+      'Task reclaimed to READY',
       'kanbann',
       'w3-insights',
       'Investigate missed tactics',
@@ -282,7 +282,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
     const created = await store.createTask({
       id: 'notify-1',
       title: 'Notifier end to end',
-      status: 'BACKLOG',
+      status: 'READY',
       round: 1,
       project: 'kanbann',
     });
@@ -314,7 +314,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
     await store.createTask({
       id: 'notify-2',
       title: 'Reclaim survives a dead webhook',
-      status: 'BACKLOG',
+      status: 'READY',
       round: 1,
       project: 'kanbann',
     });
@@ -325,7 +325,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
 
     assert.ok(res.reclaimed.includes('kanbann/notify-2'), 'reclaim still succeeded');
     const t = store.getTask('notify-2', 'kanbann');
-    assert.equal(t.status, 'BACKLOG', 'task really returned to BACKLOG');
+    assert.equal(t.status, 'READY', 'task really returned to READY');
     assert.equal(t.assigned_agent, null, 'owner cleared');
     assert.equal(t.reclaim_count, 1, 'reclaim bookkeeping intact');
   });
@@ -339,7 +339,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
     await store.createTask({
       id: 'notify-3',
       title: 'Silent when off',
-      status: 'BACKLOG',
+      status: 'READY',
       round: 1,
       project: 'kanbann',
     });
@@ -366,7 +366,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
       await store.createTask({
         id: 'notify-4',
         title: 'Token must not leak',
-        status: 'BACKLOG',
+        status: 'READY',
         round: 1,
         project: 'kanbann',
       });

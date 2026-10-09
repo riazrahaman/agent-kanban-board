@@ -42,7 +42,7 @@ async function jsonRequest(baseUrl, route, options = {}) {
 async function createTask(baseUrl, project, id, extra = {}) {
   const r = await jsonRequest(baseUrl, `/api/tasks?project=${project}`, {
     method: 'POST', headers: headers(),
-    body: JSON.stringify({ id, title: id, status: 'BACKLOG', round: 1, ...extra }),
+    body: JSON.stringify({ id, title: id, status: 'READY', round: 1, ...extra }),
     });
   assert.equal(r.response.status, 201, `created ${project}/${id}`);
   return r.body;
@@ -50,11 +50,14 @@ async function createTask(baseUrl, project, id, extra = {}) {
 
 async function driveToDone(baseUrl, project, id) {
   const steps = [
-    { role: 'builder', status: 'BUILDING' },
+    { role: 'planner', status: 'READY' },
+    { role: 'planner', status: 'PLANNING' },
+    { role: 'builder', status: 'IN_PROGRESS' },
     { role: 'builder', status: 'IN_REVIEW' },
-    { role: 'reviewer', status: 'IN_TEST' },
-    { role: 'tester', status: 'DONE' },
-    ];
+    { role: 'reviewer', status: 'VALIDATION' },
+    { role: 'tester', status: 'READY_TO_SHIP' },
+    { role: 'releaser', status: 'DONE' },
+  ];
   for (const { role, status } of steps) {
     const r = await jsonRequest(baseUrl, `/api/tasks/${id}?project=${project}`, {
       method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
@@ -109,7 +112,7 @@ describe('§2.9 cross-project metrics', () => {
     assert.equal(mx.task_count, 2);
     assert.equal(mx.done_count, 1);
     assert.equal(mx.by_status.DONE, 1);
-    assert.equal(mx.by_status.BACKLOG, 1);
+    assert.equal(mx.by_status.READY, 1);
 
     const my = find(body, 'my');
     assert.equal(my.task_count, 1);

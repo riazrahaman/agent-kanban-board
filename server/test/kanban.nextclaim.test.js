@@ -24,7 +24,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -179,7 +179,7 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     assert.equal(r.response.status, 200);
     assert.equal(r.body.id, 'q1');
     assert.equal(r.body.assigned_agent, 'qagent', 'the winner is assigned');
-    assert.equal(r.body.status, 'BUILDING', 'BACKLOG -> BUILDING via the shared core');
+    assert.equal(r.body.status, 'IN_PROGRESS', 'READY -> IN_PROGRESS via the shared core');
     assert.ok(typeof r.body.claim_expires_at === 'string', 'the lease is set by applyClaim');
     // A second next-claim no longer offers q1 (it is held).
     const again = await claimNext(baseUrl, 'qagent2');

@@ -17,9 +17,12 @@ import { verifyStreamTicket } from '../streamTicket.js';
 import { authFailuresExceeded, recordAuthFailure } from './rateLimit.js';
 
 export const VALID_ROLES = new Set([
+  'planner',
   'builder',
   'reviewer',
   'tester',
+  'validator',
+  'releaser',
   'runner',
   'system',
   'human',

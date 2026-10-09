@@ -34,13 +34,18 @@ describe('v2.5.0 column colors', () => {
     const m = await importModule('columnColors.ts')
     assert.deepEqual(m.DEFAULT_COLUMN_COLORS, {
       BACKLOG: 'muted',
-      BUILDING: 'live',
+      READY: 'line',
+      PLANNING: 'block',
+      IN_PROGRESS: 'live',
       IN_REVIEW: 'warn',
-      IN_TEST: 'test',
-      BLOCKED: 'fail',
+      VALIDATION: 'test',
+      READY_TO_SHIP: 'pass',
       DONE: 'pass',
+      BLOCKED: 'fail',
       UNKNOWN: 'line',
       ISSUES: 'warn',
+      BUILDING: 'live',
+      IN_TEST: 'test',
     })
   })
 

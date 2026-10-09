@@ -6,7 +6,15 @@ import type { ProjectMetrics } from '../types'
  */
 
 /** The columns that make up "work in flight" — between backlog and done. */
-export const WIP_STATUSES = ['BUILDING', 'IN_REVIEW', 'IN_TEST'] as const
+export const WIP_STATUSES = [
+  'PLANNING',
+  'IN_PROGRESS',
+  'IN_REVIEW',
+  'VALIDATION',
+  'READY_TO_SHIP',
+  'BUILDING',
+  'IN_TEST',
+] as const
 
 export function wipOf(m: Pick<ProjectMetrics, 'by_status'>): number {
   return WIP_STATUSES.reduce((acc, s) => acc + (m.by_status[s] ?? 0), 0)

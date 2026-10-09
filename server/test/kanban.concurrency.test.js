@@ -255,7 +255,7 @@ describe('§2.6 optimistic-concurrency', () => {
 
   it('claim with a stale version -> 409 distinct from claim-contention 409', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
-      method: 'POST', headers: headers(), body: taskBody('oc-claim', 'Claim race'),
+      method: 'POST', headers: headers(), body: taskBody('oc-claim', 'Claim race', { status: 'READY' }),
        });
 
       // First claim (no version guard) succeeds and bumps to v2.

@@ -28,7 +28,7 @@ function headers(role = 'admin', agentId = 'trash-admin') {
 }
 
 function taskBody(id, title, extra = {}) {
-  return { id, title, status: 'BACKLOG', round: 1, ...extra };
+  return { id, title, status: 'READY', round: 1, ...extra };
 }
 
 async function jsonRequest(baseUrl, route, { method = 'GET', headers: hdrs = {}, body } = {}) {
@@ -101,11 +101,11 @@ describe('KB-12 soft-delete trash sink (ENH-03, v2.5.6)', { concurrency: 1 }, ()
     } finally { server.close(); }
   });
 
-  it('2. restoreFromTrash returns the card to BACKLOG with a fresh claim state', async () => {
+  it('2. restoreFromTrash returns the card to READY with a fresh claim state', async () => {
     await store.createTask(taskBody('tr-2', 'restore me'));
     await store.claimTask('tr-2', 'worker-a', 'default');
     const owned = store.getTask('tr-2', 'default');
-    assert.equal(owned.status, 'BUILDING');
+    assert.equal(owned.status, 'IN_PROGRESS');
     assert.equal(owned.assigned_agent, 'worker-a');
 
     await store.deleteTask('tr-2', { caller: { agent_id: 'trash-admin', role: 'admin' } });
@@ -113,7 +113,7 @@ describe('KB-12 soft-delete trash sink (ENH-03, v2.5.6)', { concurrency: 1 }, ()
 
     const res = await store.restoreFromTrash('tr-2', { caller: { agent_id: 'trash-admin', role: 'admin' } });
     assert.equal(res.status, 200);
-    assert.equal(res.task.status, 'BACKLOG');
+    assert.equal(res.task.status, 'READY');
     assert.equal(res.task.assigned_agent, null);
     assert.equal(res.task.claim_expires_at, null);
     assert.deepEqual(res.task.stage_owners, {});

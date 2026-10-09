@@ -16,13 +16,19 @@ type Props = {
 
 const COLUMN_ACCENTS: Record<string, string> = {
   BACKLOG: 'border-t-2 border-t-muted/40',
-  BUILDING: 'border-t-2 border-t-live',
+  READY: 'border-t-2 border-t-line',
+  PLANNING: 'border-t-2 border-t-block',
+  IN_PROGRESS: 'border-t-2 border-t-live',
   IN_REVIEW: 'border-t-2 border-t-warn',
-  IN_TEST: 'border-t-2 border-t-test',
-  BLOCKED: 'border-t-2 border-t-fail',
+  VALIDATION: 'border-t-2 border-t-test',
+  READY_TO_SHIP: 'border-t-2 border-t-pass',
   DONE: 'border-t-2 border-t-pass',
+  BLOCKED: 'border-t-2 border-t-fail',
   UNKNOWN: 'border-t-2 border-t-line',
   ISSUES: 'border-t-2 border-t-warn',
+  // Backward compatibility aliases
+  BUILDING: 'border-t-2 border-t-live',
+  IN_TEST: 'border-t-2 border-t-test',
 }
 
 // A bucket is unchanged when the id+version signature of its members is
