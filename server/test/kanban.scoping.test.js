@@ -43,7 +43,7 @@ async function jsonRequest(baseUrl, route, options = {}) {
 async function createTask(baseUrl, project, id, title, extra = {}) {
   const r = await jsonRequest(baseUrl, `/api/tasks?project=${project}`, {
     method: 'POST', headers: headers(),
-    body: JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra }),
+    body: JSON.stringify({ id, title, status: 'READY', round: 1, ...extra }),
     });
   assert.equal(r.response.status, 201, `created ${project}/${id}`);
   return r.body;
@@ -100,7 +100,7 @@ describe('project scoping + audit attribution regressions', () => {
       'the atlas lease was reclaimed, and is reported by composite key',
       );
     const after = store.getTask('reap-atlas', 'atlas');
-    assert.equal(after.status, 'BACKLOG', 'status forced back to BACKLOG');
+    assert.equal(after.status, 'READY', 'status forced back to READY');
     assert.equal(after.assigned_agent, null, 'ownership cleared');
     });
 

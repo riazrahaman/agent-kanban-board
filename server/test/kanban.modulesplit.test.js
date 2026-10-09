@@ -58,23 +58,31 @@ describe('ENH-11 store module split', () => {
   it('(b) state-machine module: statuses, transitions, role matrix', () => {
     assert.deepEqual(stateMachine.STATUSES, {
       BACKLOG: 'BACKLOG',
-      BUILDING: 'BUILDING',
+      READY: 'READY',
+      PLANNING: 'PLANNING',
+      IN_PROGRESS: 'IN_PROGRESS',
       IN_REVIEW: 'IN_REVIEW',
-      IN_TEST: 'IN_TEST',
-      BLOCKED: 'BLOCKED',
+      VALIDATION: 'VALIDATION',
+      READY_TO_SHIP: 'READY_TO_SHIP',
       DONE: 'DONE',
+      BLOCKED: 'BLOCKED',
     });
     assert.equal(stateMachine.normalizeStatus('todo'), 'BACKLOG');
-    assert.equal(stateMachine.normalizeStatus('in_progress'), 'BUILDING');
+    assert.equal(stateMachine.normalizeStatus('building'), 'IN_PROGRESS');
+    assert.equal(stateMachine.normalizeStatus('in_test'), 'VALIDATION');
     assert.equal(stateMachine.normalizeStatus('nope'), null);
-    assert.equal(stateMachine.canTransition('BACKLOG', 'BUILDING'), true);
-    assert.equal(stateMachine.canTransition('DONE', 'BUILDING'), false);
+    assert.equal(stateMachine.canTransition('BACKLOG', 'READY'), true);
+    assert.equal(stateMachine.canTransition('READY', 'IN_PROGRESS'), true);
+    assert.equal(stateMachine.canTransition('DONE', 'IN_PROGRESS'), false);
     assert.equal(stateMachine.canTransition('BACKLOG', 'BACKLOG'), true, 'self-transition allowed');
-    assert.equal(stateMachine.canRoleTransition('builder', 'BACKLOG', 'IN_REVIEW'), true);
-    assert.equal(stateMachine.canRoleTransition('builder', 'BUILDING', 'IN_TEST'), false);
-    assert.equal(stateMachine.canRoleTransition('reviewer', 'IN_REVIEW', 'IN_TEST'), true);
-    assert.equal(stateMachine.canRoleTransition('tester', 'IN_TEST', 'DONE'), true);
-    assert.equal(stateMachine.canRoleTransition('admin', 'DONE', 'BUILDING'), true, 'privileged bypass');
+    assert.equal(stateMachine.canRoleTransition('builder', 'READY', 'IN_PROGRESS'), true);
+    assert.equal(stateMachine.canRoleTransition('builder', 'IN_PROGRESS', 'IN_REVIEW'), true);
+    assert.equal(stateMachine.canRoleTransition('builder', 'IN_PROGRESS', 'VALIDATION'), false);
+    assert.equal(stateMachine.canRoleTransition('reviewer', 'IN_REVIEW', 'VALIDATION'), true);
+    assert.equal(stateMachine.canRoleTransition('tester', 'VALIDATION', 'READY_TO_SHIP'), true);
+    assert.equal(stateMachine.canRoleTransition('tester', 'VALIDATION', 'DONE'), false);
+    assert.equal(stateMachine.canRoleTransition('releaser', 'READY_TO_SHIP', 'DONE'), true);
+    assert.equal(stateMachine.canRoleTransition('admin', 'DONE', 'IN_PROGRESS'), true, 'privileged bypass');
   });
 
   it('(c) task-identity module: ids, branch normaliser, scope, backfill', () => {

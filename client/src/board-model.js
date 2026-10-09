@@ -8,9 +8,12 @@ function toCompletedTimestamp(task) {
 export function groupTasks(tasks) {
   const grouped = {
     BACKLOG: [],
-    BUILDING: [],
+    READY: [],
+    PLANNING: [],
+    IN_PROGRESS: [],
     IN_REVIEW: [],
-    IN_TEST: [],
+    VALIDATION: [],
+    READY_TO_SHIP: [],
     BLOCKED: [],
     DONE: [],
     UNKNOWN: [],
@@ -19,7 +22,11 @@ export function groupTasks(tasks) {
 
   for (const task of tasks) {
     const normalized = normalizeStatus(task.status)
-    grouped[normalized].push(task)
+    if (grouped[normalized]) {
+      grouped[normalized].push(task)
+    } else {
+      grouped.UNKNOWN.push(task)
+    }
     if (task.issues && task.issues.length > 0) grouped.ISSUES.push(task)
   }
 
@@ -38,11 +45,14 @@ export function groupTasks(tasks) {
 
 export const COLUMNS = [
   { status: 'BACKLOG', title: 'Backlog', stepNumber: '01' },
-  { status: 'BUILDING', title: 'Building', stepNumber: '02' },
-  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '03' },
-  { status: 'IN_TEST', title: 'In Test', stepNumber: '04' },
+  { status: 'READY', title: 'Ready', stepNumber: '02' },
+  { status: 'PLANNING', title: 'Planning', stepNumber: '03' },
+  { status: 'IN_PROGRESS', title: 'In Progress', stepNumber: '04' },
+  { status: 'IN_REVIEW', title: 'In Review', stepNumber: '05' },
+  { status: 'VALIDATION', title: 'Validation', stepNumber: '06' },
+  { status: 'READY_TO_SHIP', title: 'Ready to Ship', stepNumber: '07' },
+  { status: 'DONE', title: 'Done', stepNumber: '08' },
   { status: 'BLOCKED', title: 'Blocked' },
-  { status: 'DONE', title: 'Done' },
   { status: 'UNKNOWN', title: 'Unknown' },
   { status: 'ISSUES', title: 'Issues' },
 ]

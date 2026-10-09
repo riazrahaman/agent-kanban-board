@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,34 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.0.0] — 2026-10-09
+
+Major release: AgentOS 8-State Kanban Workflow Migration (ADR-004).
+
+Upgrades the canonical task lifecycle from the 5-state model to the AgentOS 8-state workflow:
+`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`).
+
+### Added
+- **Canonical States**: `READY`, `PLANNING`, `IN_PROGRESS`, `VALIDATION`, `READY_TO_SHIP`.
+- **Role Permissions**:
+  - `planner`: `BACKLOG → READY`, `READY → PLANNING`, `PLANNING → IN_PROGRESS`, and return to `READY`.
+  - `builder`: `→ IN_PROGRESS`, `→ IN_REVIEW`.
+  - `reviewer`: `→ VALIDATION`, or return to `IN_PROGRESS`.
+  - `tester` / `validator`: `→ READY_TO_SHIP`, or return to `IN_PROGRESS` (cannot finalize to `DONE`).
+  - `releaser`: `READY_TO_SHIP → DONE`.
+  - `runner` / privileged roles: administers `BLOCKED` transitions.
+- **Claim Contract on READY**:
+  - Only `READY` tasks can be claimed (claiming `BACKLOG` returns `409 not_ready`).
+  - Claiming a `READY` task as builder lifts to `IN_PROGRESS` and stamps `stage_owners.IN_PROGRESS`.
+  - Claiming a `READY` task as planner lifts to `PLANNING`.
+  - Expired active leases are reaped back to `READY`.
+- **Transparent Backwards-Compatibility**:
+  - Legacy statuses `BUILDING`, `IN_TEST`, and `TODO` continue to be accepted on API inputs and normalized transparently (`BUILDING → IN_PROGRESS`, `IN_TEST → VALIDATION`, `TODO → BACKLOG`).
+  - Stored records in JSON and Git backends have their status and `stage_owners` keys migrated idempotently on `loadStore()`.
+- **UI Enhancements**:
+  - 8 ordered columns (`01` through `08`), plus `Blocked`, `Unknown`, and `Issues`.
+  - Updated color accents and status badges adhering strictly to `DESIGN.md`.
 
 ## [2.17.0] — 2026-10-08
 

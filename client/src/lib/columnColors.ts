@@ -53,13 +53,19 @@ export const ACCENT_CLASS: Record<ColumnColorToken, string> = {
 // Stock palette as shipped (mirrors server STOCK_COLUMN_COLORS).
 export const DEFAULT_COLUMN_COLORS: ColumnColors = Object.freeze({
   BACKLOG: 'muted',
-  BUILDING: 'live',
+  READY: 'line',
+  PLANNING: 'block',
+  IN_PROGRESS: 'live',
   IN_REVIEW: 'warn',
-  IN_TEST: 'test',
-  BLOCKED: 'fail',
+  VALIDATION: 'test',
+  READY_TO_SHIP: 'pass',
   DONE: 'pass',
+  BLOCKED: 'fail',
   UNKNOWN: 'line',
   ISSUES: 'warn',
+  // Backward compatibility aliases
+  BUILDING: 'live',
+  IN_TEST: 'test',
 })
 
 /** Swatch background for the palette UI (literal classes). */

@@ -22,7 +22,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {

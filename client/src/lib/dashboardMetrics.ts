@@ -1,5 +1,5 @@
 import type { Task } from '../types'
-import { ACTIVE_STATUSES, CANONICAL_STATUSES } from './status'
+import { ACTIVE_STATUSES, CANONICAL_STATUSES, normalizeStatus } from './status'
 import { formatDuration } from './portfolioMetrics'
 
 export type DashboardMetrics = {
@@ -28,7 +28,7 @@ export function computeDashboardMetrics(tasks: Task[], now: number = Date.now())
   const cycleTimes: number[] = []
 
   for (const task of tasks) {
-    const status = task.status
+    const status = normalizeStatus(task.status)
     if (status === CANONICAL_STATUSES.BACKLOG) {
       backlog++
     } else if ((ACTIVE_STATUSES as readonly string[]).includes(status)) {

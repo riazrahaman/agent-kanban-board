@@ -24,7 +24,7 @@ function headers(role, agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -38,21 +38,22 @@ async function jsonRequest(baseUrl, route, options = {}) {
   return { response, body };
 }
 
-/** Drive a task to DONE through the legal builder->reviewer->tester loop. */
+/** Drive a task to DONE through the legal builder->reviewer->tester->releaser loop. */
 async function driveToDone(baseUrl, id) {
   for (const { role, status } of [
-    { role: 'builder', status: 'BUILDING' },
-     { role: 'builder', status: 'IN_REVIEW' },
-      { role: 'reviewer', status: 'IN_TEST' },
-       { role: 'tester', status: 'DONE' },
-        ]) {
-     const r = await jsonRequest(baseUrl, `/api/tasks/${id}`, {
-        method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
-          });
-      if (r.response.status !== 200) {
-        throw new Error(`driveToDone ${id} -> ${status}: ${r.response.status} ${r.body?.error || ''}`);
-          }
-        }
+    { role: 'builder', status: 'IN_PROGRESS' },
+    { role: 'builder', status: 'IN_REVIEW' },
+    { role: 'reviewer', status: 'VALIDATION' },
+    { role: 'tester', status: 'READY_TO_SHIP' },
+    { role: 'releaser', status: 'DONE' },
+  ]) {
+    const r = await jsonRequest(baseUrl, `/api/tasks/${id}`, {
+      method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
+    });
+    if (r.response.status !== 200) {
+      throw new Error(`driveToDone ${id} -> ${status}: ${r.response.status} ${r.body?.error || ''}`);
+    }
+  }
 }
 
 describe('KB-11 dependency-gated claiming (§2.5)', () => {
@@ -98,9 +99,9 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
       assert.equal(claim.response.status, 409, 'claim of a dep-unmet task is rejected');
       assert.equal(claim.body.reason, 'dependency_unsatisfied');
       assert.deepEqual(claim.body.unresolved_dependencies, ['dep-b']);
-      // The task remains BACKLOG and unowned.
+      // The task remains READY and unowned.
       const a = store.getTask('dep-a');
-      assert.equal(a.status, 'BACKLOG');
+      assert.equal(a.status, 'READY');
       assert.equal(a.assigned_agent, null);
       });
 
@@ -136,7 +137,7 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
          });
       assert.equal(claim.response.status, 200, 'claim succeeds when deps are DONE');
       assert.equal(claim.body.assigned_agent, 'agent3');
-      assert.equal(claim.body.status, 'BUILDING');
+      assert.equal(claim.body.status, 'IN_PROGRESS');
       assert.ok(typeof claim.body.claim_expires_at === 'string' && claim.body.claim_expires_at, 'lease set on claim');
       assert.ok(Date.parse(claim.body.claim_expires_at) > Date.now() - 1000, 'lease is a recent future ISO string');
       });
@@ -161,18 +162,18 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
       assert.equal(store.getTask('dang-a').assigned_agent, null, 'dangling-dep task is never assigned');
       });
 
-  it('6. auto-promote on last-dep DONE (BLOCKED -> BACKLOG, owner/lease cleared)', async () => {
-      // A depends on B and C. B, C start BACKLOG; A starts BLOCKED (unowned).
+  it('6. auto-promote on last-dep DONE (BLOCKED -> READY, owner/lease cleared)', async () => {
+      // A depends on B and C. B, C start READY; A starts BLOCKED (unowned).
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('ap-b', 'AP B') });
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('ap-c', 'AP C') });
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('ap-a', 'AP A', { depends_on: ['ap-b', 'ap-c'], status: 'BLOCKED' }) });
       // Complete B only; A must stay BLOCKED (C outstanding).
       await driveToDone(baseUrl, 'ap-b');
       assert.equal(store.getTask('ap-a').status, 'BLOCKED', 'A stays BLOCKED while a dep is outstanding');
-      // Complete C; A is the last-dep-completes case -> auto-unblocked to BACKLOG.
+      // Complete C; A is the last-dep-completes case -> auto-unblocked to READY.
       await driveToDone(baseUrl, 'ap-c');
       const a = store.getTask('ap-a');
-      assert.equal(a.status, 'BACKLOG', 'A auto-promoted to BACKLOG when the last dep completes');
+      assert.equal(a.status, 'READY', 'A auto-promoted to READY when the last dep completes');
       assert.equal(a.assigned_agent, null, 'auto-promoted task is unowned');
       assert.equal(a.claim_expires_at, null, 'auto-promoted task has no active lease');
       assert.ok(a.agent_logs.some((l) => /unblocked/i.test(l.message)), 'an unblock log was written');
@@ -185,7 +186,7 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
         // DONE is terminal: a transition OUT of DONE to a non-DONE status is illegal
     // (the terminal guard), so it is rejected and the completion hook never re-fires.
       const patchDone = await jsonRequest(baseUrl, '/api/tasks/ap-c', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
            });
       assert.equal(patchDone.response.status, 409, 'a DONE task cannot leave its terminal state');
         // ap-a was promoted exactly once (one unblock log).
@@ -201,7 +202,7 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
       // Drive both deps to DONE with the GOOD store first.
       await driveToDone(baseUrl, 'fc-e');
       await driveToDone(baseUrl, 'fc-f');
-      // fc-d is auto-promoted to BACKLOG by the above (good store). Now bind a
+      // fc-d is auto-promoted to READY by the above (good store). Now bind a
    // failing store and force a fresh BLOCKED dependent whose unlock will throw.
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('runner'), body: taskBody('fc-d2', 'FC D2', { depends_on: ['fc-e'], status: 'BLOCKED' }) });
       const d2 = store.getTask('fc-d2');
@@ -239,7 +240,7 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
           });
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('hook-t', 'Hook target') });
       const done = await jsonRequest(baseUrl, '/api/tasks/hook-t', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
           });
       assert.equal(done.response.status, 200);
       await driveToDone(baseUrl, 'hook-t');
@@ -290,34 +291,34 @@ describe('KB-11b dependency-gated PATCH (§2.5) — PATCH is not a side door aro
      store.setStorage(null);
          });
 
-  it('11. PATCHing a dep-carrying BACKLOG task into an active stage is a tagged 409', async () => {
+  it('11. PATCHing a dep-carrying READY task into an active stage is a tagged 409', async () => {
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-dep', 'PG DEP') });
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-child', 'PG CHILD', { depends_on: ['pg-dep'] }) });
      const r = await jsonRequest(baseUrl, '/api/tasks/pg-child', {
-        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
           });
       assert.equal(r.response.status, 409, 'the PATCH must be rejected like a claim would be');
       assert.equal(r.body.reason, 'dependency_unsatisfied', 'the reason is the dependency gate, not contention');
       assert.ok(Array.isArray(r.body.unresolved_dependencies), 'unresolved dependencies are listed for the caller');
       assert.ok(r.body.unresolved_dependencies.includes('pg-dep'), 'the unfinished dependency is named');
-      assert.equal(store.getTask('pg-child').status, 'BACKLOG', 'the card stays BACKLOG');
+      assert.equal(store.getTask('pg-child').status, 'READY', 'the card stays READY');
       });
 
   it('12. the same PATCH succeeds once the dependency is DONE', async () => {
       await driveToDone(baseUrl, 'pg-dep');
      const r = await jsonRequest(baseUrl, '/api/tasks/pg-child', {
-        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
           });
       assert.equal(r.response.status, 200, 'a satisfied dependency unblocks the PATCH');
-      assert.equal(store.getTask('pg-child').status, 'BUILDING');
+      assert.equal(store.getTask('pg-child').status, 'IN_PROGRESS');
       });
 
   it('13. createTask with an active status and an unmet dep is still ungated (deliberate)', async () => {
-     // Import paths may land a card straight in BUILDING; the orphan grace window
+     // Import paths may land a card straight in IN_PROGRESS; the orphan grace window
      // handles the ownerless case. kanban.archive.test.js relies on this too.
      const r = await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST', headers: headers('admin'),
-        body: taskBody('pg-import', 'PG IMPORT', { status: 'BUILDING', depends_on: ['ghost-dep'] }),
+        body: taskBody('pg-import', 'PG IMPORT', { status: 'IN_PROGRESS', depends_on: ['ghost-dep'] }),
           });
       assert.equal(r.response.status, 201, 'createTask is not the claim path — it stays ungated');
       });
@@ -325,10 +326,10 @@ describe('KB-11b dependency-gated PATCH (§2.5) — PATCH is not a side door aro
   it('14. dep-free transitions are unaffected (regression)', async () => {
       await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', headers: headers('builder'), body: taskBody('pg-free', 'PG FREE') });
      const r = await jsonRequest(baseUrl, '/api/tasks/pg-free', {
-        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('admin'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
           });
       assert.equal(r.response.status, 200, 'a dep-free card moves into an active stage freely');
-      assert.equal(store.getTask('pg-free').status, 'BUILDING');
+      assert.equal(store.getTask('pg-free').status, 'IN_PROGRESS');
       });
 });
 

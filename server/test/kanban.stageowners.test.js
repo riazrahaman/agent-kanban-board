@@ -22,7 +22,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -77,7 +77,7 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
     assert.deepEqual(res.body.stage_owners, {});
   });
 
-  it('2. claim (builder) records stage_owners.BUILDING === agentId', async () => {
+  it('2. claim (builder) records stage_owners.IN_PROGRESS === agentId', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST', headers: headers(), body: taskBody('so-2', 'Stage owners two'),
     });
@@ -85,7 +85,7 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
       method: 'POST', headers: headers(undefined, 'builder-a'), body: JSON.stringify({ agent_id: 'builder-a' }),
     });
     assert.equal(claim.response.status, 200);
-    assert.equal(claim.body.stage_owners.BUILDING, 'builder-a');
+    assert.equal(claim.body.stage_owners.IN_PROGRESS, 'builder-a');
   });
 
   it('3. builder PATCH IN_REVIEW records the builder agent id', async () => {
@@ -102,7 +102,7 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
     assert.equal(res.body.stage_owners.IN_REVIEW, 'builder-b');
   });
 
-  it('4. reviewer PATCH IN_TEST records the reviewer agent id', async () => {
+  it('4. reviewer PATCH VALIDATION records the reviewer agent id', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST', headers: headers(), body: taskBody('so-4', 'Stage owners four'),
     });
@@ -113,13 +113,13 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
       method: 'PATCH', headers: headers('builder', 'builder-c'), body: JSON.stringify({ status: 'IN_REVIEW' }),
     });
     const res = await jsonRequest(baseUrl, '/api/tasks/so-4', {
-      method: 'PATCH', headers: headers('reviewer', 'reviewer-a'), body: JSON.stringify({ status: 'IN_TEST' }),
+      method: 'PATCH', headers: headers('reviewer', 'reviewer-a'), body: JSON.stringify({ status: 'VALIDATION' }),
     });
     assert.equal(res.response.status, 200);
-    assert.equal(res.body.stage_owners.IN_TEST, 'reviewer-a');
+    assert.equal(res.body.stage_owners.VALIDATION, 'reviewer-a');
   });
 
-  it('5. tester PATCH DONE records the tester agent id', async () => {
+  it('5. tester PATCH READY_TO_SHIP and releaser PATCH DONE records agents', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST', headers: headers(), body: taskBody('so-5', 'Stage owners five'),
     });
@@ -130,22 +130,26 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
       method: 'PATCH', headers: headers('builder', 'builder-d'), body: JSON.stringify({ status: 'IN_REVIEW' }),
     });
     await jsonRequest(baseUrl, '/api/tasks/so-5', {
-      method: 'PATCH', headers: headers('reviewer', 'reviewer-b'), body: JSON.stringify({ status: 'IN_TEST' }),
+      method: 'PATCH', headers: headers('reviewer', 'reviewer-b'), body: JSON.stringify({ status: 'VALIDATION' }),
     });
-    const res = await jsonRequest(baseUrl, '/api/tasks/so-5', {
-      method: 'PATCH', headers: headers('tester', 'tester-a'), body: JSON.stringify({ status: 'DONE' }),
+    const resShip = await jsonRequest(baseUrl, '/api/tasks/so-5', {
+      method: 'PATCH', headers: headers('tester', 'tester-a'), body: JSON.stringify({ status: 'READY_TO_SHIP' }),
     });
-    assert.equal(res.response.status, 200);
-    assert.equal(res.body.stage_owners.DONE, 'tester-a');
+    assert.equal(resShip.response.status, 200);
+    const resDone = await jsonRequest(baseUrl, '/api/tasks/so-5', {
+      method: 'PATCH', headers: headers('releaser', 'releaser-a'), body: JSON.stringify({ status: 'DONE' }),
+    });
+    assert.equal(resDone.response.status, 200);
+    assert.equal(resDone.body.stage_owners.DONE, 'releaser-a');
   });
 
-  it('6. all four stage keys present at the end, assigned_agent still the original claimer', async () => {
+  it('6. all stage keys present at the end, assigned_agent still the original claimer', async () => {
     const t = store.getTask('so-5');
     assert.deepEqual(t.stage_owners, {
-      BUILDING: 'builder-d',
+      IN_PROGRESS: 'builder-d',
       IN_REVIEW: 'builder-d',
-      IN_TEST: 'reviewer-b',
-      DONE: 'tester-a',
+      VALIDATION: 'reviewer-b',
+      DONE: 'releaser-a',
     });
     assert.equal(t.assigned_agent, 'builder-d', 'lease holder unchanged by transitions');
   });

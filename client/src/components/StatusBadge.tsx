@@ -6,7 +6,12 @@ type Props = { status: TaskStatus | string }
 export default function StatusBadge({ status }: Props) {
   const style = statusStyle(status)
   const { normalized } = style
-  const isRunning = normalized === 'BUILDING' || normalized === 'IN_TEST'
+  const isRunning =
+    normalized === 'PLANNING' ||
+    normalized === 'IN_PROGRESS' ||
+    normalized === 'VALIDATION' ||
+    normalized === 'BUILDING' ||
+    normalized === 'IN_TEST'
   const marker = normalized === 'IN_REVIEW' ? '▲ ' : isRunning ? '• ' : ''
 
   return (

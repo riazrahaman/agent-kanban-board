@@ -9,6 +9,8 @@ import { escapeHtml } from './utils/sanitize.js';
 import {
   STATUSES,
   VALID_STATUS_LIST,
+  ACTIVE_STATUSES,
+  ACTIVE_STATUS_SET,
   normalizeStatus,
   isValidStatus,
   VALID_TRANSITIONS,
@@ -39,6 +41,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export {
   STATUSES,
   VALID_STATUS_LIST,
+  ACTIVE_STATUSES,
+  ACTIVE_STATUS_SET,
   normalizeStatus,
   isValidStatus,
   VALID_TRANSITIONS,
@@ -156,11 +160,7 @@ function countActiveClaims(agentId) {
   let count = 0;
   for (const t of tasks) {
     if (t.assigned_agent !== agentId) continue;
-    if (
-      t.status === STATUSES.BUILDING ||
-      t.status === STATUSES.IN_REVIEW ||
-      t.status === STATUSES.IN_TEST
-    ) {
+    if (ACTIVE_STATUS_SET.has(t.status)) {
       count += 1;
     }
   }
@@ -491,19 +491,38 @@ export async function loadStore() {
   // Legacy backfill: every record gains a canonical project + age anchors so the
   // index and archive ageing are total on legacy data.
   const nowIso = new Date().toISOString();
-  for (const t of loaded) {
+  function migrateRecord(t) {
+    if (!t || typeof t !== 'object') return;
     t.project = t.project && isValidProjectId(t.project) ? t.project : dp;
     if (!t.created_at) t.created_at = t.updated || nowIso;
+    // Migrate legacy status names (BUILDING -> IN_PROGRESS, IN_TEST -> VALIDATION)
+    if (t.status) {
+      const norm = normalizeStatus(t.status);
+      if (norm) t.status = norm;
+    }
+    // Migrate stage_owners keys
+    if (t.stage_owners && typeof t.stage_owners === 'object') {
+      const migratedOwners = {};
+      for (const [k, v] of Object.entries(t.stage_owners)) {
+        const normKey = normalizeStatus(k) || k;
+        migratedOwners[normKey] = v;
+      }
+      t.stage_owners = migratedOwners;
+    }
     if (t.status === STATUSES.DONE && !t.completed_at) {
       t.completed_at = t.updated || t.created_at || nowIso;
-     }
-     // §2.6: legacy records that predate versioning start at version 1 so the
-     // CAS guard is total and a first patch bumps to 2.
-     if (!Number.isInteger(t.version)) t.version = 1;
-     // §2.4: backfill lease fields so the reaper math is total on legacy data.
-     if (t.claim_expires_at === undefined) t.claim_expires_at = null;
-     if (t.reclaim_count === undefined) t.reclaim_count = 0;
-     }
+    }
+    // §2.6: legacy records that predate versioning start at version 1 so the
+    // CAS guard is total and a first patch bumps to 2.
+    if (!Number.isInteger(t.version)) t.version = 1;
+    // §2.4: backfill lease fields so the reaper math is total on legacy data.
+    if (t.claim_expires_at === undefined) t.claim_expires_at = null;
+    if (t.reclaim_count === undefined) t.reclaim_count = 0;
+  }
+
+  for (const t of loaded) {
+    migrateRecord(t);
+  }
 
   rebuildIndex(loaded);
 
@@ -512,7 +531,10 @@ export async function loadStore() {
   for (const p of projectSet) {
     try {
       const a = await getStorage(p).loadArchive();
-      if (a && a.length) archive[p] = a;
+      if (a && a.length) {
+        for (const item of a) migrateRecord(item);
+        archive[p] = a;
+      }
     } catch (err) {
       console.warn(`[kanban] archive load error for ${p}: ${err.message}`);
     }
@@ -536,7 +558,10 @@ export async function loadStore() {
   for (const p of projectSet) {
     try {
       const tl = await getStorage(p).loadTrash();
-      if (tl && tl.length) trash[p] = tl;
+      if (tl && tl.length) {
+        for (const item of tl) migrateRecord(item);
+        trash[p] = tl;
+      }
     } catch (err) {
       console.warn(`[kanban] trash load error for ${p}: ${err.message}`);
     }
@@ -732,7 +757,7 @@ export function onChange(listener) {
 // (muted/live/warn/test/fail/pass/block/line) — raw hex never crosses the wire,
 // so every choice keeps the validated WCAG contrast of the design system.
 
-export const COLUMN_COLOR_KEYS = [...VALID_STATUS_LIST, 'UNKNOWN', 'ISSUES'];
+export const COLUMN_COLOR_KEYS = [...VALID_STATUS_LIST, 'UNKNOWN', 'ISSUES', 'BUILDING', 'IN_TEST'];
 
 export const COLUMN_COLOR_TOKENS = [
   'muted',
@@ -748,13 +773,19 @@ export const COLUMN_COLOR_TOKENS = [
 // The stock palette as shipped (mirrors Column.tsx COLUMN_ACCENTS).
 export const STOCK_COLUMN_COLORS = Object.freeze({
   BACKLOG: 'muted',
-  BUILDING: 'live',
+  READY: 'line',
+  PLANNING: 'block',
+  IN_PROGRESS: 'live',
   IN_REVIEW: 'warn',
-  IN_TEST: 'test',
-  BLOCKED: 'fail',
+  VALIDATION: 'test',
+  READY_TO_SHIP: 'pass',
   DONE: 'pass',
+  BLOCKED: 'fail',
   UNKNOWN: 'line',
   ISSUES: 'warn',
+  // Backward compatibility aliases
+  BUILDING: 'live',
+  IN_TEST: 'test',
 });
 
 export function onSettings(listener) {
@@ -1424,16 +1455,12 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       // §2.5: dependency gate on transitions INTO an active stage. The claim
       // path already refuses a dependent task whose blockers are not DONE
       // (`applyClaim`); a status-only PATCH must not become a side door around
-      // that contract. Any entry into BUILDING / IN_REVIEW / IN_TEST is gated
+      // that contract. Any entry into ACTIVE_STATUSES is gated
       // here, so PATCH and claim agree on what may go active. Transitions
-      // within/through DONE, BLOCKED and BACKLOG stay ungated: unblocking
+      // within/through DONE, READY_TO_SHIP, BLOCKED, READY, and BACKLOG stay ungated: unblocking
       // (maybeUnlockDependentsInner) and backtracking are lock-internal or
       // non-claiming moves.
-      if (
-        nextStatus === STATUSES.BUILDING ||
-        nextStatus === STATUSES.IN_REVIEW ||
-        nextStatus === STATUSES.IN_TEST
-      ) {
+      if (ACTIVE_STATUS_SET.has(nextStatus)) {
         const gate = dependencyGate(candidate);
         if (!gate.ok) {
           return {
@@ -1447,16 +1474,14 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       candidate.status = nextStatus;
 
       // §2.x: record the acting agent for the newly-entered stage. Only on a
-      // real change (nextStatus !== wasStatus) and only for the four active
-      // stages. `assigned_agent` stays the lease holder — this is a per-stage
+      // real change (nextStatus !== wasStatus) and only for the active
+      // stages plus terminal DONE. `assigned_agent` stays the lease holder — this is a per-stage
       // provenance map, not a reassignment.
       const actor = caller?.agent_id || caller?.agentId || null;
       if (
         nextStatus !== wasStatus &&
         actor &&
-        (nextStatus === STATUSES.BUILDING ||
-          nextStatus === STATUSES.IN_REVIEW ||
-          nextStatus === STATUSES.IN_TEST ||
+        (ACTIVE_STATUS_SET.has(nextStatus) ||
           nextStatus === STATUSES.DONE)
       ) {
         const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
@@ -1656,15 +1681,17 @@ export {
 };
 
 /**
- * BUG-03 (v2.5.8): statuses a client may NOT create directly. These are work
- * states whose only legitimate entry is a claim (BUILDING) or a role-gated
- * transition. BACKLOG is the normal create status and BLOCKED is a parking
- * state, so both stay open to unprivileged creation.
+ * BUG-03 (v2.5.8): statuses a client may NOT create directly without privilege.
+ * These are work states whose only legitimate entry is a claim or a role-gated
+ * transition. BACKLOG and READY are open backlog/planning-ready states, and BLOCKED
+ * is a parking state, so they stay open to unprivileged creation.
  */
 const IMPORT_GATED_STATUSES = new Set([
-  STATUSES.BUILDING,
+  STATUSES.PLANNING,
+  STATUSES.IN_PROGRESS,
   STATUSES.IN_REVIEW,
-  STATUSES.IN_TEST,
+  STATUSES.VALIDATION,
+  STATUSES.READY_TO_SHIP,
   STATUSES.DONE,
 ]);
 
@@ -1788,6 +1815,24 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
     }
   }
 
+  // (2.5) status gate — only READY (or already-held active task for renewal) may be claimed.
+  if (!renew) {
+    if (task.status === STATUSES.BACKLOG) {
+      return {
+        error: `Cannot claim task ${task.id}: task is in BACKLOG. Promote to READY first.`,
+        status: 409,
+        reason: 'not_ready',
+      };
+    }
+    if (task.status !== STATUSES.READY && !ACTIVE_STATUS_SET.has(task.status)) {
+      return {
+        error: `Cannot claim task ${task.id}: status ${task.status} is not claimable`,
+        status: 409,
+        reason: 'status_not_claimable',
+      };
+    }
+  }
+
   // (3) write the claim / renewal.
   const candidate = structuredClone(task);
   // A fresh claim assigns ownership; a renewal (renew=true) only extends the
@@ -1806,14 +1851,14 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   else if (leaseMs !== null) candidate.claim_lease_ms = leaseMs;
   candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
   if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
-  if (!renew && candidate.status === STATUSES.BACKLOG) {
-    candidate.status = STATUSES.BUILDING;
-    // §2.x: the fresh claim promotes BACKLOG → BUILDING; record the builder as
-    // the stage owner for BUILDING (the lease holder stays in `assigned_agent`).
+  if (!renew && candidate.status === STATUSES.READY) {
+    const targetStatus = role === 'planner' ? STATUSES.PLANNING : STATUSES.IN_PROGRESS;
+    candidate.status = targetStatus;
+    // Record stage owner for the target status
     const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
       ? candidate.stage_owners
       : {};
-    candidate.stage_owners = { ...owners, BUILDING: agentId };
+    candidate.stage_owners = { ...owners, [targetStatus]: agentId };
   }
   candidate.updated = isoFromMs(nowMs);
   candidate.version = nextVersionFor(task);
@@ -1904,7 +1949,7 @@ function runCompletionHooks(id) {
  */
 async function unlockTaskInner(task, nowMs, completedRef) {
   const candidate = structuredClone(task);
-  candidate.status = STATUSES.BACKLOG;
+  candidate.status = STATUSES.READY;
   candidate.assigned_agent = null;
   candidate.claim_expires_at = null;
   candidate.claim_lease_ms = null;
@@ -2059,13 +2104,7 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
     if (excludeKey !== null && compositeKey(t.project, t.id) === excludeKey) continue;
     if (project !== null && t.project !== project) continue;
     if (t.assigned_agent !== agentId) continue;
-    if (
-      t.status !== STATUSES.BUILDING &&
-      t.status !== STATUSES.IN_REVIEW &&
-      t.status !== STATUSES.IN_TEST
-    ) {
-      continue;
-    }
+    if (!ACTIVE_STATUS_SET.has(t.status)) continue;
     const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
     if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
     try {
@@ -2152,13 +2191,9 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       candidate.claim_expires_at = null;
       candidate.claim_lease_ms = null;
       // An ownerless card may not stay in an active stage (the reaper would
-      // normalise it anyway) — return it to BACKLOG so it is claimable again.
-      if (
-        candidate.status === STATUSES.BUILDING ||
-        candidate.status === STATUSES.IN_REVIEW ||
-        candidate.status === STATUSES.IN_TEST
-      ) {
-        candidate.status = STATUSES.BACKLOG;
+      // normalise it anyway) — return it to READY so it is claimable again.
+      if (ACTIVE_STATUS_SET.has(candidate.status)) {
+        candidate.status = STATUSES.READY;
       }
     } else {
       candidate.assigned_agent = agentId;
@@ -2166,12 +2201,12 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       candidate.claim_lease_ms = leaseWindowFor(candidate);
       candidate.claim_expires_at = isoFromMs(nowMs + candidate.claim_lease_ms);
       if (!Number.isInteger(candidate.reclaim_count)) candidate.reclaim_count = 0;
-      if (candidate.status === STATUSES.BACKLOG) {
-        candidate.status = STATUSES.BUILDING;
+      if (candidate.status === STATUSES.BACKLOG || candidate.status === STATUSES.READY) {
+        candidate.status = STATUSES.IN_PROGRESS;
         const owners = candidate.stage_owners && typeof candidate.stage_owners === 'object'
           ? candidate.stage_owners
           : {};
-        candidate.stage_owners = { ...owners, BUILDING: agentId };
+        candidate.stage_owners = { ...owners, [STATUSES.IN_PROGRESS]: agentId };
       }
     }
     candidate.updated = isoFromMs(nowMs);
@@ -2181,7 +2216,7 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
     candidate.agent_logs.push({
       timestamp: candidate.updated,
       message: release
-        ? `Assignment cleared by ${actor} (released to BACKLOG).`
+        ? `Assignment cleared by ${actor} (released to READY).`
         : `${agentId} was assigned this task by ${actor}.`,
       agent_id: escapeHtml(actor),
     });
@@ -2250,16 +2285,14 @@ export function getMilestones(project) {
        * one lock.
        */
   async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
-    const activeStatus = task.status === STATUSES.BUILDING
-      || task.status === STATUSES.IN_REVIEW
-      || task.status === STATUSES.IN_TEST;
+    const activeStatus = ACTIVE_STATUS_SET.has(task.status);
     if (!task.assigned_agent && !activeStatus) {
       // Not currently held and not active — nothing to reclaim. Idempotent.
       return { task, status: 200, reclaimed: false };
     }
     const fromAgent = task.assigned_agent;
     const candidate = structuredClone(task);
-    candidate.status = STATUSES.BACKLOG;
+    candidate.status = STATUSES.READY;
     candidate.assigned_agent = null;
     candidate.claim_expires_at = null;
     candidate.claim_lease_ms = null;
@@ -2270,12 +2303,12 @@ export function getMilestones(project) {
     candidate.agent_logs.push({
       timestamp: candidate.updated,
       message: !fromAgent
-        ? 'Task had no owner — reclaimed to BACKLOG by system normalizer.'
+        ? 'Task had no owner — reclaimed to READY by system normalizer.'
         : (reason === 'progress_stalled'
-          ? 'PROGRESS STALLED — task reclaimed to BACKLOG by system reaper.'
+          ? 'PROGRESS STALLED — task reclaimed to READY by system reaper.'
           : (reason === 'lease_expired'
-            ? 'LEASE EXPIRED — task reclaimed to BACKLOG by system reaper.'
-            : `Task reclaimed to BACKLOG by system (${reason}).`)),
+            ? 'LEASE EXPIRED — task reclaimed to READY by system reaper.'
+            : `Task reclaimed to READY by system (${reason}).`)),
       agent_id: 'system',
       reason: !fromAgent ? reason : (reason || 'lease_expired'),
       reclaimed_from: fromAgent,
@@ -2323,9 +2356,7 @@ export function getMilestones(project) {
       const stallMs = getProgressStallMs();
       const candidateReasons = new Map();
       const candidates = tasks.filter((t) => {
-        const active = t.status === STATUSES.BUILDING
-          || t.status === STATUSES.IN_REVIEW
-          || t.status === STATUSES.IN_TEST;
+        const active = ACTIVE_STATUS_SET.has(t.status);
         if (!active) return false;
         if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
           // Orphan: active with no owner/lease. Normally this is a status-only
@@ -2384,49 +2415,49 @@ export function getMilestones(project) {
           ids.push(compositeKey(t.project, t.id));
         }
       }
-           if (reclaimed > 0) notify();
-           return { reclaimed: ids, now: nowMs };
-           });
-       }
+      if (reclaimed > 0) notify();
+      return { reclaimed: ids, now: nowMs };
+    });
+  }
 
-       /**
-       * §2.7 nextClaim — atomically select the highest-priority, unclaimed,
-       * dependency-satisfied BACKLOG task and claim it for `agentId`, all inside one
-       * mutation-lock critical section. Priority order: high < medium < low, tie-broke
-       * by creation order (array index, FIFO), then by id for total determinism.
-       *
-       * Only BACKLOG + unclaimed + gate-passing tasks are candidates, so the winner
-       * never hits a dependency 409. Two concurrent calls get distinct winners (the
-       * first claims it → the second sees it held and skips it). No 409 storm.
-       *
-       * Returns `{ task, status: 200 }` on a claim, or `{ unavailable: true,
-       * status: 204 }` when nothing is claimable (a cheap poll target for agents).
-       */
-       export async function nextClaim({ agentId, role, project, now, lease_ms: requestedLease } = {}) {
-       return withMutationLock(async () => {
-       if (!agentId || typeof agentId !== 'string') {
-         return { error: 'agent_id is required', status: 400 };
-        }
-        // `role` is validation-only (the route checks it against VALID_ROLES) and
-        // is recorded on the claim, but it does not filter candidates.
-       void role;
+  /**
+   * §2.7 nextClaim — atomically select the highest-priority, unclaimed,
+   * dependency-satisfied READY task and claim it for `agentId`, all inside one
+   * mutation-lock critical section. Priority order: high < medium < low, tie-broke
+   * by creation order (array index, FIFO), then by id for total determinism.
+   *
+   * Only READY + unclaimed + gate-passing tasks are candidates, so the winner
+   * never hits a dependency 409. Two concurrent calls get distinct winners (the
+   * first claims it → the second sees it held and skips it). No 409 storm.
+   *
+   * Returns `{ task, status: 200 }` on a claim, or `{ unavailable: true,
+   * status: 204 }` when nothing is claimable (a cheap poll target for agents).
+   */
+  export async function nextClaim({ agentId, role, project, now, lease_ms: requestedLease } = {}) {
+    return withMutationLock(async () => {
+      if (!agentId || typeof agentId !== 'string') {
+        return { error: 'agent_id is required', status: 400 };
+      }
+      // `role` is validation-only (the route checks it against VALID_ROLES) and
+      // is recorded on the claim, but it does not filter candidates.
+      void role;
 
-        // §2.1/§2.7: an agent bound to one project must never be handed another
-        // project's card. An invalid project id matches nothing rather than
-        // silently widening to the whole portfolio.
-       const hasScope = project !== undefined && project !== null && project !== '';
-       if (hasScope && !isValidProjectId(project)) {
-         return { unavailable: true, status: 204 };
-         }
-       const scoped = hasScope ? project : null;
+      // §2.1/§2.7: an agent bound to one project must never be handed another
+      // project's card. An invalid project id matches nothing rather than
+      // silently widening to the whole portfolio.
+      const hasScope = project !== undefined && project !== null && project !== '';
+      if (hasScope && !isValidProjectId(project)) {
+        return { unavailable: true, status: 204 };
+      }
+      const scoped = hasScope ? project : null;
 
-        const candidates = tasks.filter((t) => {
-         if (scoped !== null && t.project !== scoped) return false;
-         if (t.assigned_agent !== null) return false;
-         if (t.status !== STATUSES.BACKLOG) return false;
-         if (!dependencyGate(t).ok) return false;
-         return true;
-         });
+      const candidates = tasks.filter((t) => {
+        if (scoped !== null && t.project !== scoped) return false;
+        if (t.assigned_agent !== null) return false;
+        if (t.status !== STATUSES.READY) return false;
+        if (!dependencyGate(t).ok) return false;
+        return true;
+      });
        if (candidates.length === 0) {
          return { unavailable: true, status: 204 };
          }
@@ -3212,7 +3243,7 @@ export async function restoreFromTrash(id, { caller = {}, project } = {}) {
     }
 
     const restored = structuredClone(trashed);
-    restored.status = STATUSES.BACKLOG;
+    restored.status = STATUSES.READY;
     restored.assigned_agent = null;
     restored.claim_expires_at = null;
     restored.claim_lease_ms = null;

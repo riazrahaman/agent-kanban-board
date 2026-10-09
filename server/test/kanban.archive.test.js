@@ -31,7 +31,7 @@ function headers(role = 'builder', agentId) {
 }
 
 function taskBody(id, title, extra = {}) {
-  return JSON.stringify({ id, title, status: 'BACKLOG', round: 1, ...extra });
+  return JSON.stringify({ id, title, status: 'READY', round: 1, ...extra });
 }
 
 async function jsonRequest(baseUrl, route, options = {}) {
@@ -39,32 +39,33 @@ async function jsonRequest(baseUrl, route, options = {}) {
   let body = null;
   try {
     body = await response.json();
-      } catch {
-      body = null;
-      }
+  } catch {
+    body = null;
+  }
   return { response, body };
 }
 
 /**
- * Drives a task BACKLOG -> ... -> DONE through the legal loop. Each step uses
- * the role that owns that transition (builder, reviewer, tester).
+ * Drives a task READY -> ... -> DONE through the legal loop. Each step uses
+ * the role that owns that transition (builder, reviewer, tester, releaser).
  */
 async function driveToDone(baseUrl, id, project) {
   const steps = [
-    { role: 'builder', status: 'BUILDING' },
+    { role: 'builder', status: 'IN_PROGRESS' },
     { role: 'builder', status: 'IN_REVIEW' },
-    { role: 'reviewer', status: 'IN_TEST' },
-    { role: 'tester', status: 'DONE' },
-    ];
+    { role: 'reviewer', status: 'VALIDATION' },
+    { role: 'tester', status: 'READY_TO_SHIP' },
+    { role: 'releaser', status: 'DONE' },
+  ];
   for (const { role, status } of steps) {
     const r = await jsonRequest(baseUrl, `/api/tasks/${id}?project=${project}`, {
       method: 'PATCH', headers: headers(role), body: JSON.stringify({ status }),
-        });
+    });
     if (r.response.status !== 200) {
       throw new Error(`driveToDone ${id}: ${status} failed with ${r.response.status} ${r.body?.error || ''}`);
-        }
-      }
     }
+  }
+}
 
 /** Backdate a task's completion anchor so it is immediately archive-eligible. */
 async function backdateTask(id, daysAgo = 31, project = 'default') {

@@ -151,10 +151,13 @@ describe('opt-* features (v2.11.0)', () => {
     await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', body: taskBody('ms-r2', { milestone: 'Alpha' }) });
     await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', body: taskBody('ms-r3', { milestone: 'Beta' }) });
     // Drive ms-r1 to DONE so Alpha shows 1/2.
+    await jsonRequest(baseUrl, '/api/tasks', { method: 'PATCH', role: 'planner', body: { status: 'READY' } }); // ms-r1 via patch or update taskBody
+    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'planner', body: { status: 'READY' } });
     await jsonRequest(baseUrl, '/api/tasks/ms-r1/claim', { method: 'POST', body: { agent_id: 'bld' } });
     await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'builder', body: { status: 'IN_REVIEW' } });
-    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'reviewer', body: { status: 'IN_TEST' } });
-    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'tester', body: { status: 'DONE' } });
+    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'reviewer', body: { status: 'VALIDATION' } });
+    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'tester', body: { status: 'READY_TO_SHIP' } });
+    await jsonRequest(baseUrl, '/api/tasks/ms-r1', { method: 'PATCH', role: 'releaser', body: { status: 'DONE' } });
 
     const res = await jsonRequest(baseUrl, '/api/milestones?project=default');
     assert.equal(res.response.status, 200);
@@ -171,7 +174,7 @@ describe('opt-* features (v2.11.0)', () => {
   // -----------------------------------------------------------------------
   // opt-operator-assignment
   // -----------------------------------------------------------------------
-  it('assign: privileged caller assigns a BACKLOG task to an agent (lifts to BUILDING + lease)', async () => {
+  it('assign: privileged caller assigns a BACKLOG task to an agent (lifts to IN_PROGRESS + lease)', async () => {
     await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', body: taskBody('as-1') });
     const res = await jsonRequest(baseUrl, '/api/tasks/as-1/assign', {
       method: 'POST',
@@ -180,12 +183,12 @@ describe('opt-* features (v2.11.0)', () => {
     });
     assert.equal(res.response.status, 200);
     assert.equal(res.body.assigned_agent, 'assigned-bot');
-    assert.equal(res.body.status, 'BUILDING');
+    assert.equal(res.body.status, 'IN_PROGRESS');
     assert.ok(res.body.claim_expires_at);
-    assert.equal(res.body.stage_owners.BUILDING, 'assigned-bot');
+    assert.equal(res.body.stage_owners.IN_PROGRESS, 'assigned-bot');
   });
 
-  it('assign: releasing (agent_id null) clears owner + lease and returns an active card to BACKLOG', async () => {
+  it('assign: releasing (agent_id null) clears owner + lease and returns an active card to READY', async () => {
     await jsonRequest(baseUrl, '/api/tasks', { method: 'POST', body: taskBody('as-2') });
     await jsonRequest(baseUrl, '/api/tasks/as-2/assign', { method: 'POST', role: 'admin', body: { agent_id: 'bot-a' } });
     const res = await jsonRequest(baseUrl, '/api/tasks/as-2/assign', {
@@ -196,7 +199,7 @@ describe('opt-* features (v2.11.0)', () => {
     assert.equal(res.response.status, 200);
     assert.equal(res.body.assigned_agent, null);
     assert.equal(res.body.claim_expires_at, null);
-    assert.equal(res.body.status, 'BACKLOG');
+    assert.equal(res.body.status, 'READY');
   });
 
   it('assign: a non-privileged role is refused 403 and a missing task 404', async () => {

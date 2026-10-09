@@ -257,7 +257,7 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
       },
       cfg
     );
-    assert.ok(text.includes('Task reclaimed to BACKLOG'), 'renders the reclaim alert');
+    assert.ok(text.includes('Task reclaimed to READY'), 'renders the reclaim alert');
     assert.ok(!text.includes('<b>Branch:</b>'), 'no Branch row when there is no branch');
     assert.ok(!text.includes('task/br-none'), 'never prints a fabricated ref');
 

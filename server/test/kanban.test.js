@@ -100,32 +100,63 @@ describe('PI-03 kanban contract', () => {
       assert.equal(result.response.status, 201);
       assert.equal(result.body.status, 'BACKLOG');
 
+      // BACKLOG -> READY (requires planner or privileged)
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers(null), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers(null), body: JSON.stringify({ status: 'READY' }),
       });
       assert.equal(result.response.status, 403, 'missing role must not become admin');
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('planner'), body: JSON.stringify({ status: 'READY' }),
       });
       assert.equal(result.response.status, 200);
+
+      // READY -> PLANNING (planner)
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('planner'), body: JSON.stringify({ status: 'PLANNING' }),
+      });
+      assert.equal(result.response.status, 200);
+
+      // PLANNING -> IN_PROGRESS (builder)
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
+      });
+      assert.equal(result.response.status, 200);
+
+      // IN_PROGRESS -> IN_REVIEW (builder)
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
         method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_REVIEW' }),
       });
       assert.equal(result.response.status, 200);
+
+      // IN_REVIEW -> VALIDATION (reviewer)
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'IN_TEST' }),
+        method: 'PATCH', headers: headers('reviewer'), body: JSON.stringify({ status: 'VALIDATION' }),
       });
       assert.equal(result.response.status, 200);
+
+      // VALIDATION -> READY_TO_SHIP (tester/validator)
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'DONE' }),
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'READY_TO_SHIP' }),
       });
-      assert.equal(result.response.status, 403, 'Builder cannot finish a card');
+      assert.equal(result.response.status, 403, 'Builder cannot validate');
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('tester'), body: JSON.stringify({ status: 'READY_TO_SHIP' }),
+      });
+      assert.equal(result.response.status, 200);
+
+      // READY_TO_SHIP -> DONE (releaser, tester cannot finish card)
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
         method: 'PATCH', headers: headers('tester'), body: JSON.stringify({ status: 'DONE' }),
       });
-      assert.equal(result.response.status, 200);
+      assert.equal(result.response.status, 403, 'Tester cannot finish a card directly to DONE');
       result = await jsonRequest(baseUrl, '/api/tasks/flow', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('releaser'), body: JSON.stringify({ status: 'DONE' }),
+      });
+      assert.equal(result.response.status, 200);
+
+      // DONE is terminal
+      result = await jsonRequest(baseUrl, '/api/tasks/flow', {
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
       });
       assert.equal(result.response.status, 409, 'DONE is terminal');
 
@@ -184,7 +215,7 @@ describe('PI-03 kanban contract', () => {
   describe('KB-03 claim contention', () => {
     it('allows one winner even for concurrent claims and permits idempotent reclaim', async () => {
       await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: taskBody('claim', 'Claim'),
+        method: 'POST', headers: headers(), body: taskBody('claim', 'Claim', { status: 'READY' }),
       });
       const claims = await Promise.all(['alpha', 'beta'].map((agentId) => jsonRequest(
         baseUrl,
@@ -321,19 +352,19 @@ describe('PI-03 kanban contract', () => {
       store.setStorage(new store.GitYamlStorage(gitDir));
       await store.loadStore();
       const result = await jsonRequest(baseUrl, '/api/tasks', {
-        method: 'POST', headers: headers(), body: taskBody('git-task', 'Git card'),
+        method: 'POST', headers: headers(), body: taskBody('git-task', 'Git card', { status: 'READY' }),
       });
       assert.equal(result.response.status, 201);
       const cardPath = path.join(gitDir, 'git-task.yml');
       assert.ok(existsSync(cardPath));
-      assert.equal(yaml.parse(await readFile(cardPath, 'utf8')).status, 'BACKLOG');
+      assert.equal(yaml.parse(await readFile(cardPath, 'utf8')).status, 'READY');
       const transition = await jsonRequest(baseUrl, '/api/tasks/git-task', {
-        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'BUILDING' }),
+        method: 'PATCH', headers: headers('builder'), body: JSON.stringify({ status: 'IN_PROGRESS' }),
       });
       assert.equal(transition.response.status, 200);
       const log = await execFileAsync('git', ['log', '--format=%s', '-2'], { cwd: gitDir });
-      assert.match(log.stdout, /ops\(git-task\): kanban BUILDING/);
-      assert.match(log.stdout, /ops\(git-task\): kanban BACKLOG/);
+      assert.match(log.stdout, /ops\(git-task\): kanban IN_PROGRESS/);
+      assert.match(log.stdout, /ops\(git-task\): kanban READY/);
       await rm(gitDir, { recursive: true, force: true });
     });
 

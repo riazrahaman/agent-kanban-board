@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 2.17.0
+version: 3.0.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -71,7 +71,9 @@ Verified endpoint scoping behavior:
 
 ## 3. The Orchestration Lifecycle
 
-The state machine is enforced via role-based transitions. The Orchestrator operates as `admin` for all status resets and transitions.
+The AgentOS 8-state machine is enforced via role-based transitions:
+`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`).
+The Orchestrator operates as `admin` for status resets, unblocking, and lifecycle management.
 
 ### Stage A: Feature Setup
 1. **GitHub Issue**: Check for an existing issue or file a new one (`gh issue create --title "<title>" --body "..."`). Note the issue number `#<N>`.
@@ -93,43 +95,49 @@ The state machine is enforced via role-based transitions. The Orchestrator opera
    - Determine the active branch with `git rev-parse --abbrev-ref HEAD` and pass that exact string.
    - Set `"issues": ["#<N>"]` in the task body so the task is structurally linked to GitHub and mirrors into the `ISSUES` swimlane.
    - Setting `branch` explicitly is critical for human operators and re-claim alerts.
-   - `BACKLOG` and `BLOCKED` are open statuses. Creating a task directly into `BUILDING`, `IN_REVIEW`, `IN_TEST`, or `DONE` requires a privileged credential and returns `403`.
-4. Record `task_id` and initial `version` from the response.
+   - `BACKLOG`, `READY`, and `BLOCKED` are open statuses. Creating a task directly into active or release stages (`PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`, `DONE`) requires a privileged credential and returns `403`.
+4. **Promotion to READY**:
+   - `PATCH /tasks/:id?project=X` with `{ status: "READY" }` (Role: `planner` or `admin`). Only `READY` tasks can be claimed.
+5. Record `task_id` and initial `version` from the response.
 
 ### Stage B: The Execution Cycle
 
-**Enter an active stage by CLAIMING, never by a status-only PATCH.** `PATCH /tasks/:id` writes `status` but leaves `assigned_agent` and `claim_expires_at` unset, producing an ownerless active task that the reaper normalizes back to `BACKLOG`. `POST /tasks/:id/claim` sets the owner and lease, promoting `BACKLOG` → `BUILDING`.
+**Enter an active stage by CLAIMING from READY, never by a status-only PATCH from BACKLOG.** `POST /tasks/:id/claim` sets the owner and lease, promoting `READY` → `IN_PROGRESS` (or `READY` → `PLANNING` for planner role).
 
-1. **BUILDING**:
-   - `POST /tasks/:id/claim?project=X` (`agent_id` = orchestrator id, header `X-Agent-Role: builder`). This establishes ownership, sets `claim_expires_at`, promotes `BACKLOG` → `BUILDING`, and stamps `stage_owners.BUILDING`.
+1. **IN_PROGRESS**:
+   - `POST /tasks/:id/claim?project=X` (`agent_id` = orchestrator id, header `X-Agent-Role: builder`). This establishes ownership, sets `claim_expires_at`, promotes `READY` → `IN_PROGRESS`, and stamps `stage_owners.IN_PROGRESS`.
    - `POST /tasks/:id/logs?project=X` (Log: "Starting build phase...").
    - Start the heartbeat loop (§4).
    - **Dispatch BUILDER**: Pass `task_id`, `repo_path`, `branch`, `kanban_url`, `kanban_token`, and `admin_token`. The builder PATCHes status and appends logs — it must NOT attempt to claim.
    - Await Builder completion and verification evidence.
 
-2. **REVIEWING**:
-   - `PATCH /tasks/:id?project=X` (Status: `IN_REVIEW`, Role: `admin`, with `expected_version`). The card is already owned from the BUILDING claim; do NOT re-claim.
+2. **IN_REVIEW**:
+   - `PATCH /tasks/:id?project=X` (Status: `IN_REVIEW`, Role: `builder` or `admin`, with `expected_version`). The card is already owned from the claim; do NOT re-claim.
    - `POST /tasks/:id/logs?project=X` (Log: "Submitting for review...").
    - **Dispatch REVIEWER**: Pass `diff` or `commit_range`.
    - Await Reviewer response (`Approve` | `Blocking Findings`).
-   - If **Findings**: Append findings to logs → Transition status back to `BUILDING` → Re-dispatch Builder.
+   - If **Findings**: Append findings to logs → Transition status back to `IN_PROGRESS` → Re-dispatch Builder.
 
-3. **TESTING**:
-   - `PATCH /tasks/:id?project=X` (Status: `IN_TEST`, Role: `admin`, with `expected_version`).
-   - `POST /tasks/:id/logs?project=X` (Log: "Running test suite...").
-   - **Dispatch TESTER**: Pass test suite commands and verification scope.
+3. **VALIDATION**:
+   - `PATCH /tasks/:id?project=X` (Status: `VALIDATION`, Role: `reviewer` or `admin`, with `expected_version`).
+   - `POST /tasks/:id/logs?project=X` (Log: "Running test suite and validation...").
+   - **Dispatch TESTER / VALIDATOR**: Pass test suite commands and verification scope.
    - Await Tester result (`Pass` | `Fail`).
    - If **Fail**:
-     - `PATCH /tasks/:id?project=X` (Status: `BACKLOG`, Role: `admin`) to reset.
-     - `POST /tasks/:id/logs?project=X` (Log: "Tester failed. Resetting to Backlog.").
-     - Restart from step 1.
+     - `PATCH /tasks/:id?project=X` (Status: `IN_PROGRESS`, Role: `tester` or `admin`) to reject back to builder, or `READY` to reset.
+     - `POST /tasks/:id/logs?project=X` (Log: "Tester failed. Returning to IN_PROGRESS.").
+     - Restart build loop.
+
+4. **READY_TO_SHIP**:
+   - `PATCH /tasks/:id?project=X` (Status: `READY_TO_SHIP`, Role: `tester`, `validator`, or `admin`, with `expected_version`).
+   - `POST /tasks/:id/logs?project=X` (Log: "Validated. Ready to ship.").
 
 ### Stage C: Closure
-Validated by a `test_pass` signal:
-1. **Docs & Versioning**: Dispatch worker to update README/docs/CHANGELOG and bump version numbers in lockstep.
+Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
+1. **Docs & Versioning**: Update README/docs/CHANGELOG and bump version numbers in lockstep.
 2. **Merge**: `git checkout main && git merge --no-ff <branch>`
 3. **Tag & Push**: `git tag -a v<version> -m "release <version>" && git push origin main --tags`
-4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `admin`, with `expected_version`) + log completion metadata.
+4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `releaser` or `admin`, with `expected_version`) + log completion metadata.
 5. **Close GitHub Issue**: `gh issue close <N> --comment "Resolved in v<version>: ..."`
 6. **Deployment Check**: Confirm live deployment status (e.g. `railway status` and `GET /api/health`).
 7. **Report**: Summarize completion to user (commit hash, test outputs, completion status).

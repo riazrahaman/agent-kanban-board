@@ -193,15 +193,16 @@ describe('Pipeline C — incremental aggregate cache equals brute force', () => 
     const p = 'aggproj';
 
     // create
-    await store.createTask({ id: 'a', title: 'A', status: 'BACKLOG', round: 1, project: p });
-    await store.createTask({ id: 'b', title: 'B', status: 'BACKLOG', round: 1, project: p });
+    await store.createTask({ id: 'a', title: 'A', status: 'READY', round: 1, project: p });
+    await store.createTask({ id: 'b', title: 'B', status: 'READY', round: 1, project: p });
     assertMetricsEqual(store.getMetrics(), null);
 
     // patch a -> DONE (produces a completion cycle)
-    await store.patchTask('a', { status: 'BUILDING' }, { project: p, caller: { role: 'builder' } });
+    await store.patchTask('a', { status: 'IN_PROGRESS' }, { project: p, caller: { role: 'builder' } });
     await store.patchTask('a', { status: 'IN_REVIEW' }, { project: p, caller: { role: 'builder' } });
-    await store.patchTask('a', { status: 'IN_TEST' }, { project: p, caller: { role: 'reviewer' } });
-    await store.patchTask('a', { status: 'DONE' }, { project: p, caller: { role: 'tester' } });
+    await store.patchTask('a', { status: 'VALIDATION' }, { project: p, caller: { role: 'reviewer' } });
+    await store.patchTask('a', { status: 'READY_TO_SHIP' }, { project: p, caller: { role: 'tester' } });
+    await store.patchTask('a', { status: 'DONE' }, { project: p, caller: { role: 'releaser' } });
     assertMetricsEqual(store.getMetrics(), null);
     assertMetricsEqual(store.getMetrics(p), p);
 
