@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.0.0        
+**System Version:** 3.1.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -38,8 +38,8 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Persistence (YAML)** | `yaml` | ^2.9.0 | High-performance YAML parsing and stringification for Git-backed cards. |
 | **Cross-Origin Control** | `cors` | ^2.8.5 | Restricts browser access strictly to the configured frontend origin. |
 | **Version Control Integration** | `child_process.execFile` (promisified) | Native | Direct execution of `git add` and `git commit` without external Git wrapper overhead. |
-| **Test Suite** | `node:test` + `node:assert/strict` | Native | Zero-dependency, native Node test runner with suite lifecycle hooks (`before`, `after`, `describe`, `it`). |
-| **Health & Readiness** | `server/routes/health.js` | Native | `GET /api/health` (+ `/healthz`) is a liveness probe that always returns 200 with store/reaper/backup state; `GET /api/health/ready` returns 503 until the store has loaded, and `render.yaml` health-checks that path. |
+| **Health & Readiness** | `server/routes/health.js` | Native | `GET /api/health` (+ `/healthz`) is a liveness probe that always returns 200 with store/reaper/backup state and `credential_map` (§2.10); `GET /api/health/ready` returns 503 until the store has loaded, and `render.yaml` health-checks that path. |
+| **Credential Coverage (§2.10)** | `server/utils/credentialMap.js` | Native | Boot-time comparison of `KANBAN_PROJECT_TOKENS` against known store projects; exposes `credential_map: { status, covered, missing, extra }` on `GET /api/health` to alert on truncated token maps without taking down the board. |
 
 ### 2.2 Frontend Client
 
@@ -393,6 +393,13 @@ flowchart TD
 | **Abuse / DoS by Request Flood** | A05 / A10 | Per-project fixed-window rate limiting on mutations (`KANBAN_RATE_LIMIT_PER_MIN`), with `X-RateLimit-*` budget headers on `429`. |
 | **Path Traversal Attacks** | A01: Broken Access Control | `isValidTaskId` validates task IDs strictly against `/^[A-Za-z0-9_-]+$/`. `GitYamlStorage` enforces directory prefix checks against resolved filenames. |
 | **Information Leakage** | A05: Security Misconfiguration | Global Express error handler catches all unhandled exceptions, logs internally, and returns generic `{ "error": "Internal Server Error" }` without leaking stack traces. |
+| **Truncated Token Map Outage** | A07: Identification and Authentication Failures | §2.10 boot check (`reportCredentialCoverage`) detects when `KANBAN_PROJECT_TOKENS` drops existing store projects. Loud error in boot logs and non-fatal `credential_map` on `GET /api/health` prevent silent 403 outages. |
+
+### 7.1 Credential-Map Coverage Check (§2.10)
+
+When per-project token isolation is configured via `KANBAN_PROJECT_TOKENS`, a valid JSON payload that omits projects locks those projects out while allowing the server to boot without warnings. To make truncated configuration visible immediately:
+1. **Boot Check**: At server startup, `reportCredentialCoverage()` compares the projects declared in `KANBAN_PROJECT_TOKENS` against projects present in the store. An under-covered map emits a prominent error to console logs naming the missing projects, alongside recovery instructions. The check is non-fatal to ensure already-covered projects continue serving without downtime.
+2. **Health Probe**: `GET /api/health` exposes `credential_map: { status, covered, missing, extra }`, allowing automated uptime monitoring probes to alert on partial credential coverage without inspecting server logs. Token values are never logged or exposed.
 
 ---
 
