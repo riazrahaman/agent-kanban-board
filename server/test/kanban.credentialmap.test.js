@@ -133,10 +133,12 @@ describe('GET /api/health credential_map integration', () => {
   let tmpDir;
   let server;
   let baseUrl;
+  const BOARD_TOKEN = 'test-board-token';
 
   before(async () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-cred-health-'));
     store.setStorage(null);
+    process.env.KANBAN_AUTH_TOKEN = BOARD_TOKEN;
     process.env.KANBAN_DATA_DIR = tmpDir;
     process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
     await store.loadStore();
@@ -152,6 +154,7 @@ describe('GET /api/health credential_map integration', () => {
 
   after(async () => {
     delete process.env.KANBAN_PROJECT_TOKENS;
+    delete process.env.KANBAN_AUTH_TOKEN;
     await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
     delete process.env.KANBAN_DATA_DIR;
@@ -159,17 +162,19 @@ describe('GET /api/health credential_map integration', () => {
     store.setStorage(null);
   });
 
+  const auth = { headers: { 'x-api-token': BOARD_TOKEN } };
+
   it('exposes credential_map reflecting configuration over HTTP', async () => {
     // 1. Unset
     delete process.env.KANBAN_PROJECT_TOKENS;
-    let res = await fetch(`${baseUrl}/api/health`);
+    let res = await fetch(`${baseUrl}/api/health`, auth);
     let data = await res.json();
     assert.equal(data.credential_map.status, 'unset');
     assert.equal(data.credential_map.covered, 0);
 
     // 2. Undercovered (missing alpha)
     process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ beta: 'tok-beta' });
-    res = await fetch(`${baseUrl}/api/health`);
+    res = await fetch(`${baseUrl}/api/health`, auth);
     data = await res.json();
     assert.equal(data.credential_map.status, 'undercovered');
     assert.deepEqual(data.credential_map.missing, ['alpha']);
@@ -177,7 +182,7 @@ describe('GET /api/health credential_map integration', () => {
 
     // 3. OK
     process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ alpha: 'tok-alpha' });
-    res = await fetch(`${baseUrl}/api/health`);
+    res = await fetch(`${baseUrl}/api/health`, auth);
     data = await res.json();
     assert.equal(data.credential_map.status, 'ok');
     assert.equal(data.credential_map.covered, 1);
@@ -185,8 +190,64 @@ describe('GET /api/health credential_map integration', () => {
 
     // 4. Malformed
     process.env.KANBAN_PROJECT_TOKENS = '{malformed json';
-    res = await fetch(`${baseUrl}/api/health`);
+    res = await fetch(`${baseUrl}/api/health`, auth);
     data = await res.json();
     assert.equal(data.credential_map.status, 'malformed');
+  });
+
+  // --- §2.10 name disclosure ---------------------------------------------
+  // /api/health is exempt from read auth so the platform healthcheck can reach
+  // it. That exemption is also what an anonymous visitor gets, so the names it
+  // used to return were public on any hosted board. Counts stay public; names
+  // require a credential.
+
+  it('withholds project NAMES from an anonymous caller but still reports counts', async () => {
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ ghost: 'tok-ghost' });
+    const res = await fetch(`${baseUrl}/api/health`);
+    const data = await res.json();
+
+    // The signal a probe needs survives.
+    assert.equal(data.credential_map.status, 'undercovered');
+    assert.equal(data.credential_map.covered, 1);
+    assert.equal(data.credential_map.missing_count, 1);
+    assert.equal(data.credential_map.extra_count, 1);
+
+    // The names do not.
+    assert.equal('missing' in data.credential_map, false);
+    assert.equal('extra' in data.credential_map, false);
+
+    const body = JSON.stringify(data);
+    assert.equal(body.includes('ghost'), false, 'anonymous response leaked a token-map name');
+    assert.equal(body.includes('"alpha"'), false, 'anonymous response leaked a store project');
+  });
+
+  it('withholds names from a caller presenting an INVALID token', async () => {
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ ghost: 'tok-ghost' });
+    const res = await fetch(`${baseUrl}/api/health`, {
+      headers: { 'x-api-token': 'definitely-not-the-token' },
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200, 'health must stay reachable — it is the platform probe');
+    assert.equal('missing' in data.credential_map, false);
+    assert.equal('extra' in data.credential_map, false);
+    assert.equal(data.credential_map.extra_count, 1, 'counts still reported for an invalid token');
+  });
+
+  it('releases the names to a caller holding a valid token', async () => {
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ ghost: 'tok-ghost' });
+    const res = await fetch(`${baseUrl}/api/health`, auth);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data.credential_map.missing, ['alpha']);
+    assert.deepEqual(data.credential_map.extra, ['ghost']);
+  });
+
+  it('never discloses a token VALUE, identified or not', async () => {
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({ ghost: 'tok-super-secret' });
+    for (const opts of [undefined, auth]) {
+      const res = await fetch(`${baseUrl}/api/health`, opts);
+      const body = await res.text();
+      assert.equal(body.includes('tok-super-secret'), false);
+    }
   });
 });
