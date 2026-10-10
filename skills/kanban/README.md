@@ -50,7 +50,7 @@ It is not a code generator and it does not replace your CI. It is a protocol tha
 ## Requirements
 
 - An agent runtime that loads `SKILL.md` skills. Primary target: [opencode](https://opencode.ai).
-- A running agent-kanban-board v3.0.0 or later (v3.1.0+ recommended for boot-time credential map checks); v3 also accepts legacy v2 statuses. No board yet? The skill can deploy one locally (Node.js + npm).
+- A running agent-kanban-board v3.0.0 or later (v3.2.1+ recommended for proxy rate-limiting, strict payload error handling, and credential-map protections); v3 also accepts legacy v2 statuses. No board yet? The skill can deploy one locally (Node.js + npm).
 - `git` and the GitHub CLI (`gh`) for the issue, branch, merge and tag steps.
 
 ## Install
@@ -93,7 +93,7 @@ Three fields are mandatory: `kanban_url`, `kanban_token`, `project_name`. The sk
 
 `.opencode/` holds tokens. Add it to `.gitignore` before writing the file, and never stage it.
 
-On start, the orchestrator calls `GET /projects` to verify connectivity and that the project exists, and `GET /api/health` to confirm the board is `v3.0.0` or later and inspects `credential_map` (v3.1.0+) to verify project token coverage. If `project_name` or `kanban_token` can't be determined, it halts and asks you instead of guessing.
+On start, the orchestrator calls `GET /projects` to verify connectivity and that the project exists, and `GET /api/health` to confirm the board is `v3.0.0` or later and inspects `credential_map` (v3.1.0+; project names withheld from unauthenticated probes in v3.2.0+) to verify project token coverage. If `project_name` or `kanban_token` can't be determined, it halts and asks you instead of guessing.
 
 **No board yet?** If `kanban_url` is missing, the skill deploys one locally:
 
@@ -137,6 +137,8 @@ A Build → Review → Test cycle that repeats **3 times** halts and reports blo
 - **Optimistic locking:** every PATCH sends the fresh current `expected_version` (re-read before each PATCH; intermediate claims, logs, and heartbeats increment card version). Distinguish `409 Version mismatch` (retry with fresh version) from `409 Invalid state transition` (reaper reset after lease loss; re-claim). Stale writes get `409`.
 - **Leases & Progress:** default claim TTL is 10 min (`KANBAN_CLAIM_TTL_MS` = 600,000). Heartbeat at least every 2 minutes while holding a card; logs from the holder also extend the lease. Progress stall timeout (`KANBAN_PROGRESS_STALL_MS`, default 30 min) reaps abandoned claims even if heartbeated. A claim can request its own window with `{"lease_ms": <ms>}`, clamped between 60,000 and 7,200,000.
 - **Evidence or it didn't happen:** no stage transition without command output, test results or a commit hash.
+- **Rate limiting & proxies (v3.2.1+):** the board rate-limits invalid authentication attempts (default 60/min) per client IP using Express's `req.ip`. Reverse proxy setups should configure `KANBAN_TRUST_PROXY` to ensure accurate client IP isolation. If `429 Too Many Requests` is encountered, respect the `Retry-After` header before retrying.
+- **Payload standards (v3.2.1+):** the server strictly translates body errors: unsupported `Content-Encoding` yields `415`, while malformed or oversized payloads return `400`. Always send standard uncompressed `application/json` payloads under 100KB.
 
 ## Project scoping (the #1 gotcha)
 
@@ -150,6 +152,8 @@ Without it, calls silently resolve against the `default` project.
 - **`404` on `GET /tasks/:id`** → same cause, missing `?project=`.
 - **`409 Invalid state transition from BACKLOG to <X>`** → the lease expired and the reaper reset the card. Re-claim and re-walk the stages. Check `git status` / `git log` on the task branch first: uncommitted work may still be on disk, but it was never committed.
 - **`409` on PATCH with a version mismatch** → someone else wrote first. Re-read the card and retry with the current `version`.
+- **`415 Unsupported Media Type` (`unsupported_encoding`)** → request used an unrecognized `Content-Encoding` header. Send uncompressed UTF-8 JSON.
+- **`429 Too Many Requests` (`authentication rate limit exceeded`)** → too many failed token attempts from this IP. Wait for `Retry-After`, verify token credentials, and check `KANBAN_TRUST_PROXY` if behind a reverse proxy.
 - **Card keeps bouncing back to `BACKLOG`** → it was moved into an active stage by PATCH instead of claimed, or heartbeats/progress stopped.
 
 ## Optional: Telegram reclaim alerts
