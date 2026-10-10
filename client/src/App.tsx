@@ -483,8 +483,15 @@ export default function App() {
     : ''
 
   return (
-     <div className="app-shell flex h-screen flex-col bg-bg text-ink">
-        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
+     // v3.2.4 (GH #103 follow-up): `.app-shell` (index.css) is a
+     // `position: fixed; inset: 0` full-bleed box, NOT `h-screen` — see the
+     // comment there for why a body-relative height left a dead strip above
+     // iOS Safari's floating bottom bar. The header's top padding adds
+     // env(safe-area-inset-top) (0 on desktop, so header height there is
+     // unchanged) so its surface can sit behind the status bar under
+     // viewport-fit=cover while its controls stay clear of it.
+     <div className="app-shell flex flex-col bg-bg text-ink">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
           <div className="flex shrink-0 items-center gap-3">
             <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
             <div className="flex items-baseline gap-2">
@@ -808,7 +815,7 @@ export default function App() {
                       }}
                       aria-hidden="true"
                     />
-                    <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface md:hidden">
+                    <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface pt-[env(safe-area-inset-top,0px)] md:hidden">
                       <SignalRail tasks={tasks} onOpen={handleOpen} />
                     </div>
                   </>

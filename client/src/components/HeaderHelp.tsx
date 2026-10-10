@@ -64,7 +64,7 @@ export default function HeaderHelp() {
           // to the original anchored dropdown (verified to fit at
           // 1024/1280/1440/1920 in real Chrome). `max-w-[calc(100vw-1.5rem)]`
           // is an unconditional safety net at every width.
-          className="z-50 border-2 border-ink/70 bg-surface p-3 text-left max-w-[calc(100vw-1.5rem)] max-lg:fixed max-lg:inset-x-3 max-lg:top-auto max-lg:bottom-4 max-lg:w-auto max-lg:max-h-[calc(100dvh-2rem)] max-lg:overflow-y-auto lg:absolute lg:right-0 lg:top-[calc(100%+6px)] lg:w-80"
+          className="z-50 border-2 border-ink/70 bg-surface p-3 text-left max-w-[calc(100vw-1.5rem)] max-lg:fixed max-lg:inset-x-3 max-lg:top-auto max-lg:bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] max-lg:w-auto max-lg:max-h-[calc(100dvh-2rem)] max-lg:overflow-y-auto lg:absolute lg:right-0 lg:top-[calc(100%+6px)] lg:w-80"
         >
           <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
             Operator fields

@@ -106,10 +106,12 @@ export default function TaskSheet({ task, onClose }: Props) {
         onClick={onClose}
       />
 
+      {/* pt safe-area (v3.2.4): the shell can now sit behind the status bar
+          (viewport-fit=cover), so this top-0 sheet keeps its header clear. */}
       <aside
         ref={sheetRef}
         className={[
-          'fixed right-0 top-0 z-50 flex h-screen w-full max-w-md flex-col',
+          'fixed right-0 top-0 z-50 flex h-screen w-full max-w-md flex-col pt-[env(safe-area-inset-top,0px)]',
           'border-l border-line bg-surface transition-transform duration-200',
           'overflow-y-auto overscroll-contain',
           open ? 'translate-x-0' : 'translate-x-full',

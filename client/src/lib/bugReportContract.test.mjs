@@ -117,8 +117,8 @@ test('the sheet cannot widen the document: overflow-x clipped at both the panel 
   const cssSource = readFileSync(join(CLIENT_SRC, 'index.css'), 'utf8')
   assert.match(
     cssSource,
-    /html,\s*\nbody\s*\{\s*\n\s*overflow-x:\s*hidden;/,
-    'index.css must clip overflow-x at the document root as a second line of defense',
+    /html,\s*\nbody\s*\{\s*\n\s*overflow:\s*hidden;/,
+    'index.css must clip overflow at the document root as a second line of defense (v3.2.4: both axes — the shell is position:fixed, so the document itself never scrolls)',
   )
 })
 

@@ -64,7 +64,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
         <div
           role="dialog"
           aria-label="Column colors"
-          className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:absolute sm:right-0 sm:top-[calc(100%+6px)] sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-4 max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
+          className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:absolute sm:right-0 sm:top-[calc(100%+6px)] sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
         >
           {COLUMN_ORDER.map((column) => {
             const current = colors?.[column] ?? DEFAULT_COLUMN_COLORS[column]

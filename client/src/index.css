@@ -107,12 +107,25 @@ body,
   height: 100%;
   background-color: var(--bg);
   color: var(--ink);
-  /* v3.2.3 (GH #103 follow-up): iOS ignores the viewport meta tag's
-     user-scalable=no since ~iOS 10, but honours touch-action. Omitting the
-     pinch-zoom keyword blocks pinch/double-tap zoom; pan-x pan-y preserves
-     both scroll axes for every descendant via the touch-action intersection
-     rule (GH #87) — it can only remove pinch-zoom, never narrow which axis
-     a nested scroller uses. JS backup: lib/pinchZoomGuard.ts. */
+}
+
+/* Pinch/double-tap zoom block (GH #103 follow-up; v3.2.3, fixed in v3.2.4).
+   iOS ignores the viewport meta tag's user-scalable=no since ~iOS 10 but
+   honours touch-action. v3.2.3 set it on html/body/#root only, which did
+   NOTHING on the board: touch-action is not inherited, and WebKit resets the
+   effective value to `auto` at every scroll container (Pointer Events
+   "determining supported touch behavior": intersect only up to the nearest
+   ancestor with a default touch behavior). Cards live inside .board-scroll
+   and a column list, both scroll containers, so pinch stayed allowed there.
+   Universal selector = every element, scroll containers included, so no
+   reset point can re-enable zoom. `pan-x pan-y` only drops the zoom
+   keyword; it never narrows a scroll axis (an x+y scroller keeps both), so
+   GH #87's swipe fix is unaffected. Interactive elements get the same value
+   (NOT `manipulation`, which is pan-x pan-y PLUS pinch-zoom). JS layer:
+   lib/pinchZoomGuard.ts. */
+*,
+*::before,
+*::after {
   touch-action: pan-x pan-y;
 }
 
@@ -138,43 +151,51 @@ html {
    html/body, so this cannot clip anything intentional. */
 html,
 body {
-  overflow-x: hidden;
+  overflow: hidden;
+  overscroll-behavior: none;
   background-color: var(--bg);
   color: var(--ink);
-  min-height: 100%;
-}
-
-button,
-input,
-select,
-textarea,
-a {
-  touch-action: manipulation;
 }
 
 /* Mobile browsers grow/shrink the visual viewport as the URL bar shows and
-   hides; `100vh` is the *largest* viewport, so an h-screen layout overflows the
-   bottom on phones. `dvh` tracks the viewport that is actually visible. The
-   @supports guard keeps the 100vh fallback for older engines. */
+   hides; `100vh` is the *largest* viewport, so a fixed `h-screen` panel
+   (TaskSheet) overflows the bottom on phones. `dvh` tracks the viewport that
+   is actually visible. The @supports guard keeps the 100vh fallback. */
 @supports (height: 100dvh) {
   .h-screen {
     height: 100dvh;
   }
 }
 
-/* v3.2.3 (GH #103 follow-up, round 1): `lvh` (the large viewport — as tall
-   as the screen gets, chrome collapsed, doesn't shrink for Safari's floating
-   bottom toolbar) fixes the dead strip left by a `dvh` shell that stops
-   exactly at the toolbar's top edge — see CHANGELOG 3.2.3 for the full
-   reasoning and why pairing it with the column's bottom padding matters.
-   Scoped to `.app-shell` (App.tsx's root only), NOT `.h-screen` globally:
-   `.h-screen` is also used by `fixed` panels (TaskSheet, and BugReportDialog
-   via its own inline `100dvh`) that must stay within the actually-visible
-   area — growing THEM to `lvh` would push their pinned footers behind the
-   floating toolbar with no way to scroll to them, the opposite of the fix. */
+/* Full-bleed app shell (GH #103 follow-up; v3.2.4). v3.2.3 gave the shell
+   `height: 100lvh` but it still stopped above Safari's floating bottom bar:
+   html/body were `height: 100%` (the SMALL viewport) and body's
+   `overflow-x: hidden` made body a scroll container (overflow-y computes to
+   auto), so body clipped the taller lvh shell at the small-viewport edge,
+   leaving the dead strip seen on device. A `position: fixed` box is laid out
+   against the viewport, not body, so no ancestor overflow can clip it.
+   `inset: 0` pins it to the viewport edges; `min-height: 100lvh` (where
+   supported) makes it at least the LARGE viewport — as tall as the screen
+   with browser chrome collapsed — so it reaches behind a translucent bottom
+   bar whichever of the two Safari treats as "the viewport" for fixed boxes.
+   On desktop both equal the window height, so mouse layouts are unchanged.
+   Content reaching behind the bar stays reachable because the scrollable
+   lists (Column/About/Portfolio) carry `calc(5rem + safe-area)` bottom
+   padding on coarse narrow screens. The header adds
+   env(safe-area-inset-top) padding (App.tsx) so with viewport-fit=cover the
+   shell can also sit behind the status bar; env() is 0 on desktop, so the
+   header-height guard (scripts/check-header-layout.mjs) is unaffected.
+   Fixed overlays (TaskSheet, BugReportDialog) keep dvh sizing so their
+   pinned footers stay in the visible area. */
+.app-shell {
+  position: fixed;
+  inset: 0;
+  height: auto;
+}
+
 @supports (height: 100lvh) {
   .app-shell {
-    height: 100lvh;
+    min-height: 100lvh;
   }
 }
 

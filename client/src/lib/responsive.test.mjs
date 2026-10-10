@@ -49,12 +49,14 @@ test('App header wraps (flex-wrap) instead of forcing a single row', () => {
   )
 })
 
-test('App shell uses h-screen', () => {
-  assert.match(
-    appSource,
-    /className="[^"]*\bh-screen\b[^"]*"/,
-    'the App shell must use `h-screen` (index.css upgrades it to 100dvh where supported)',
-  )
+// v3.2.4 (GH #103 follow-up): the shell is no longer `h-screen` (a
+// body-relative height that body's overflow clipped at the small viewport,
+// leaving a dead strip above iOS Safari's floating bar) but the
+// `position: fixed; inset: 0` `.app-shell` — see index.css.
+test('App shell is the fixed full-bleed .app-shell, not h-screen', () => {
+  const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
+  assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
+  assert.doesNotMatch(shellTag, /\bh-screen\b/, 'the shell must not use h-screen — .app-shell sizes it from the viewport edges')
 })
 
 test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', () => {
@@ -668,20 +670,27 @@ test('index.css overrides .h-screen inside @supports (height:100dvh)', () => {
   )
 })
 
-// v3.2.3 (GH #103 follow-up, round 1): lvh is scoped to a DEDICATED
-// `.app-shell` class, not `.h-screen` globally. `.h-screen` is also used by
-// `fixed` panels (TaskSheet's <aside>) that must stay within the
-// actually-visible area — a global lvh override pushed TaskSheet's pinned
-// log-entry footer behind Safari's floating toolbar with no way to scroll to
-// it (the round-1 regression this guards against).
-test('index.css scopes the 100lvh override to .app-shell, NOT .h-screen globally', () => {
+// v3.2.3 (round 1) scoped lvh to a DEDICATED `.app-shell` class, not
+// `.h-screen` globally: `.h-screen` is also used by `fixed` panels
+// (TaskSheet's <aside>) that must stay within the actually-visible area — a
+// global lvh override pushed TaskSheet's pinned footer behind Safari's
+// floating toolbar. v3.2.4 makes the shell `position: fixed; inset: 0` with
+// `min-height: 100lvh`: fixed boxes are laid out against the viewport, so
+// body's overflow can no longer clip the shell at the small viewport (the
+// dead strip still visible on a real iPhone running 3.2.3).
+test('index.css makes .app-shell a fixed, inset:0 box at least 100lvh tall, NOT .h-screen globally', () => {
+  const shellIdx = cssSource.search(/^\.app-shell\s*\{/m)
+  assert.ok(shellIdx >= 0, 'index.css must declare a top-level `.app-shell` rule')
+  const shellBlock = cssSource.slice(shellIdx, cssSource.indexOf('}', shellIdx) + 1)
+  assert.match(shellBlock, /position:\s*fixed/, '.app-shell must be position: fixed so no ancestor overflow can clip it')
+  assert.match(shellBlock, /inset:\s*0/, '.app-shell must be pinned to all four viewport edges')
+
   const dvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100dvh\s*\)/)
   const lvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100lvh\s*\)/)
-  assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist')
+  assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist (TaskSheet uses h-screen)')
   assert.ok(lvhIdx >= 0, 'index.css must contain an `@supports (height:100lvh)` block')
-  assert.ok(lvhIdx > dvhIdx, 'the 100lvh block must come AFTER the 100dvh block so it wins on engines supporting both')
   const lvhBlock = cssSource.slice(lvhIdx, cssSource.indexOf('}\n}', lvhIdx) + 3)
-  assert.match(lvhBlock, /\.app-shell\s*\{[\s\S]*?height:\s*100lvh/, 'the 100lvh block must override .app-shell')
+  assert.match(lvhBlock, /\.app-shell\s*\{[\s\S]*?min-height:\s*100lvh/, 'the 100lvh block must give .app-shell min-height: 100lvh')
   assert.doesNotMatch(
     lvhBlock,
     /\.h-screen/,
@@ -689,17 +698,23 @@ test('index.css scopes the 100lvh override to .app-shell, NOT .h-screen globally
   )
 })
 
-test('App.tsx root shell carries .app-shell; TaskSheet\'s fixed <aside> does not', () => {
-  const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
-  assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
-  assert.match(shellTag, /\bh-screen\b/, 'the shell must keep h-screen (the 100dvh fallback) alongside app-shell')
+test('html/body never scroll: overflow hidden both axes, no page overscroll', () => {
+  const idx = cssSource.search(/^html,\s*\nbody\s*\{\s*\n\s*overflow:/m)
+  assert.ok(idx >= 0, 'index.css must declare `html, body { overflow: hidden; ... }`')
+  const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
+  assert.match(block, /overflow:\s*hidden/)
+  assert.match(block, /overscroll-behavior:\s*none/, 'no rubber-band of the whole page')
+})
 
+test('TaskSheet\'s fixed <aside> does not carry app-shell and keeps its header clear of the status bar', () => {
   const asideTag = taskSheetSource.match(/<aside\b[\s\S]{0,400}?\}\s*>/)?.[0] ?? ''
+  assert.ok(asideTag, 'TaskSheet.tsx must render the <aside> element')
   assert.doesNotMatch(
     asideTag,
     /app-shell/,
     'TaskSheet\'s <aside> must NOT carry app-shell — it is a fixed panel that must stay within the visible (dvh) area, not grow to the large (lvh) viewport',
   )
+  assert.match(asideTag, /pt-\[env\(safe-area-inset-top,0px\)\]/, 'TaskSheet\'s top-0 <aside> must pad for the top safe-area inset')
 })
 
 test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are not inflated', () => {
@@ -715,30 +730,38 @@ test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are n
   )
 })
 
-test('index.css gives html/body/#root touch-action: pan-x pan-y to block pinch/double-tap zoom without blocking scroll', () => {
-  const idx = cssSource.search(/html,\s*\n\s*body,\s*\n\s*#root\s*\{/)
-  assert.ok(idx >= 0, 'index.css must declare an `html, body, #root` rule')
+// v3.2.4 (GH #103 follow-up): v3.2.3 put `touch-action: pan-x pan-y` on
+// html/body/#root only, and pinch-zoom still worked on a real iPhone.
+// touch-action is NOT inherited, and WebKit resets the effective value to
+// `auto` at every scroll container (it intersects only up to the nearest
+// ancestor with a default touch behavior) — every card sits inside two
+// (.board-scroll, the column list), so the root rule never reached them.
+// The rule must therefore hit EVERY element via the universal selector.
+test('index.css applies touch-action: pan-x pan-y to EVERY element (universal), not just the root', () => {
+  const idx = cssSource.search(/^\*,\s*\n\*::before,\s*\n\*::after\s*\{/m)
+  assert.ok(idx >= 0, 'index.css must declare a top-level `*, *::before, *::after` rule')
   const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
   assert.match(
     block,
-    /touch-action:\s*pan-x pan-y/,
-    'html/body/#root must carry `touch-action: pan-x pan-y` — iOS honours this (unlike user-scalable=no) and, per the touch-action intersection rule, it can only ever REMOVE pinch-zoom from a descendant\'s effective value, never narrow which scroll axis a nested scroller is allowed to use',
+    /touch-action:\s*pan-x pan-y\s*;/,
+    'the universal rule must carry `touch-action: pan-x pan-y` — omitting pinch-zoom blocks pinch and double-tap zoom while keeping both scroll axes',
   )
-  // The exact regression this guards against: `pan-x` or `pan-y` ALONE here
-  // would, per the same intersection rule Board.tsx/Column.tsx already rely
-  // on (GH #87), knock out the OTHER axis for every scrollable descendant —
-  // vertical column scrolling, horizontal board scrolling, or sheet/dialog
-  // scrolling, depending on which single axis was chosen.
-  assert.doesNotMatch(
-    block,
-    /touch-action:\s*pan-x\s*;/,
-    'must not be the single-axis `pan-x` alone — that would block all vertical scrolling everywhere (column lists, sheets, dialogs)',
-  )
-  assert.doesNotMatch(
-    block,
-    /touch-action:\s*pan-y\s*;/,
-    'must not be the single-axis `pan-y` alone — that would block the board\'s horizontal column scroll',
-  )
+  // Single-axis values would, per the GH #87 intersection rule, knock out
+  // the other scroll axis for every scroller in the app.
+  assert.doesNotMatch(block, /touch-action:\s*pan-x\s*;/, 'must not be single-axis pan-x (kills vertical scrolling)')
+  assert.doesNotMatch(block, /touch-action:\s*pan-y\s*;/, 'must not be single-axis pan-y (kills the horizontal column scroll)')
+})
+
+test('index.css never re-enables zoom via touch-action: manipulation / auto / pinch-zoom', () => {
+  // `manipulation` = pan-x pan-y PLUS pinch-zoom; v3.2.3 set it on
+  // buttons/inputs/links, re-allowing pinch for any gesture starting on one.
+  assert.doesNotMatch(cssSource, /touch-action:\s*manipulation/, 'manipulation includes pinch-zoom')
+  assert.doesNotMatch(cssSource, /touch-action:\s*auto/, 'auto includes pinch-zoom')
+  assert.doesNotMatch(cssSource, /touch-action:[^;]*pinch-zoom/, 'no rule may grant pinch-zoom')
+  const twTouchUtility = new RegExp('\\b' + 'touch-' + '(auto|manipulation|pinch-zoom)\\b')
+  for (const [name, src] of [['App.tsx', appSource], ['Board.tsx', boardSource], ['Column.tsx', columnSource], ['TaskSheet.tsx', taskSheetSource]]) {
+    assert.doesNotMatch(src, twTouchUtility, `${name} must not use a Tailwind touch-* utility that grants pinch-zoom`)
+  }
 })
 
 // ---------------------------------------------------------------------------
