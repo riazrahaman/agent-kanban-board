@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { createRequire } from 'node:module';
 import * as store from '../store.js';
+import { parseProjectTokens } from '../middleware/auth.js';
+import { checkCredentialCoverage } from '../utils/credentialMap.js';
 
 const require = createRequire(import.meta.url);
 // Single source of truth for the deployed version: server/package.json.
@@ -25,6 +27,14 @@ router.get('/', asyncHandler(async (req, res) => {
   const live = store.getTasks();
   const reaperEnabled = store.isReaperEnabled();
 
+  // §2.10: surface credential-map coverage so a monitoring probe sees a
+  // truncated token map without reading logs. Read-only; exposes project NAMES
+  // and counts only, never a token value.
+  const coverage = checkCredentialCoverage(
+    store.getProjectSummaries().map((s) => s.project),
+    parseProjectTokens()
+  );
+
   res.json({
     status: loaded && reaperEnabled ? 'ok' : 'degraded',
     uptime_seconds: Math.round(process.uptime()),
@@ -37,6 +47,12 @@ router.get('/', asyncHandler(async (req, res) => {
       running: store.isReaperRunning(),
     },
     backup: store.backupStatus(),
+    credential_map: {
+      status: coverage.status,
+      covered: coverage.covered.length,
+      missing: coverage.missing,
+      extra: coverage.extra,
+    },
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   });

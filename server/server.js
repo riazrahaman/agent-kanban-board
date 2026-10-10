@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
+import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, getProjectSummaries, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
 import { startWebhooks, stopWebhooks } from './webhooks.js';
 import tasksRouter from './routes/tasks.js';
@@ -16,7 +16,8 @@ import agentsRouter from './routes/agents.js';
 import { onAudit } from './store.js';
 import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
-import { createAuthMiddleware } from './middleware/auth.js';
+import { createAuthMiddleware, parseProjectTokens } from './middleware/auth.js';
+import { reportCredentialCoverage } from './utils/credentialMap.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 
@@ -256,6 +257,23 @@ export async function startServer(
   host = resolveHost()
 ) {
   await loadStore();
+
+  // §2.10: compare the projects named in KANBAN_PROJECT_TOKENS against the
+  // projects that actually have a store file. A valid-but-truncated map is the
+  // dangerous shape — JSON.parse succeeds, the server looks healthy, and every
+  // uncovered project 403s silently. This makes that loud at boot. It never
+  // throws: a coverage gap is an operator signal, not a reason to refuse to
+  // start, and the covered projects must keep serving.
+  try {
+    const parsed = parseProjectTokens();
+    reportCredentialCoverage(
+      getProjectSummaries().map((s) => s.project),
+      parsed
+    );
+  } catch (err) {
+    console.warn(`[kanban auth] credential-map check skipped: ${err.message}`);
+  }
+
   const rl = rateLimitConfig();
   console.info(
     rl.enabled
