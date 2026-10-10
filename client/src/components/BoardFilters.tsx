@@ -59,7 +59,7 @@ export default function BoardFilters({
           type="text"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Filter by title, desc, id…"
+          placeholder="Filter tasks…"
           aria-label="Filter tasks by search term"
           className="w-full border border-line bg-surface px-2.5 py-1.5 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11 pointer-coarse:pr-11"
         />

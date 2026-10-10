@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.2.0        
+**System Version:** 3.2.1        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 

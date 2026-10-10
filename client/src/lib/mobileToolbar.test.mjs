@@ -242,15 +242,20 @@ const portfolioSource = readFileSync(join(CLIENT_SRC, 'components', 'Portfolio.t
 const signalRailSource = readFileSync(join(CLIENT_SRC, 'components', 'SignalRail.tsx'), 'utf8')
 const COARSE_TARGET = /\bpointer-coarse:min-h-11\b/
 
-test('touch devices get >=16px text in every form control (no iOS focus zoom)', () => {
+test('touch devices get >=16px text in text inputs (no iOS focus zoom) and compact font on selects', () => {
   const idx = cssSource.search(/@media \(any-pointer: coarse\) \{/)
   assert.ok(idx >= 0, 'index.css must carry an @media (any-pointer: coarse) block')
   const block = cssSource.slice(idx, cssSource.indexOf('}\n}', idx) + 3)
   for (const tag of ['input', 'select', 'textarea']) {
     assert.match(block, new RegExp(`\\b${tag}\\b`), `the coarse-pointer rule must cover <${tag}>`)
   }
-  const size = Number(block.match(/font-size:\s*(\d+)px/)?.[1])
-  assert.ok(size >= 16, `coarse-pointer form controls need >= 16px, got ${size}`)
+  const inputMatch = block.match(/(?:input|textarea)[\s\S]*?font-size:\s*(\d+)px/)?.[1]
+  const inputSize = Number(inputMatch)
+  assert.ok(inputSize >= 16, `coarse-pointer text inputs need >= 16px, got ${inputSize}`)
+  const selectMatch = block.match(/select[\s\S]*?font-size:\s*(\d+)px/)?.[1]
+  const selectSize = Number(selectMatch)
+  assert.equal(selectSize, 13, `coarse-pointer selects use compact 13px font, got ${selectSize}`)
+  assert.match(block, /font-family:\s*var\(--font-sans\)\s*!important/, 'must use proportional font with !important')
   // It must be unlayered: Tailwind emits `text-[11px]` inside @layer utilities,
   // and only an unlayered rule reliably outranks it. Brace depth 0 = top level.
   const before = cssSource.slice(0, idx)

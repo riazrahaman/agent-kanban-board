@@ -145,10 +145,14 @@ body {
    the `text-[11px]` utilities, which Tailwind emits inside @layer utilities. */
 @media (any-pointer: coarse) {
   input,
-  select,
   textarea {
     font-size: 16px;
-    font-family: var(--font-sans);
+    font-family: var(--font-sans) !important;
+  }
+
+  select {
+    font-size: 13px;
+    font-family: var(--font-sans) !important;
   }
 }
 

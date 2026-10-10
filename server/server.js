@@ -224,19 +224,27 @@ export function createApp(opts = {}) {
   // Global error handler: omit internal stack traces (A05).
   //
   // express.json() (mounted above, on EVERY route) throws a body-parser
-  // error for malformed JSON or an oversized body BEFORE any route handler
-  // runs; left untranslated, both fell through to the generic 500 branch
-  // below — a client error reported as a server error, with no way to tell
-  // "you sent broken JSON" from "the server is actually broken". Both error
-  // types carry a stable `err.type` from body-parser itself, so this checks
-  // that rather than inspecting `err.message` (which is not a public
-  // contract and could change under a dependency bump).
+  // error for malformed JSON, an oversized body, or unsupported encoding BEFORE
+  // any route handler runs; left untranslated, these fell through to the generic
+  // 500 branch below — a client error reported as a server error, with no way
+  // to tell "you sent broken payload/encoding" from "the server is broken".
+  // Both error types carry a stable `err.type` from body-parser itself, so
+  // this checks that rather than inspecting `err.message`.
+  const BODY_PARSER_ERROR_MAP = {
+    'entity.parse.failed': { status: 400, error: 'invalid_json' },
+    'entity.too.large': { status: 413, error: 'payload_too_large' },
+    'encoding.unsupported': { status: 415, error: 'unsupported_encoding' },
+    'request.size.invalid': { status: 400, error: 'request_size_invalid' },
+    'request.aborted': { status: 400, error: 'request_aborted' },
+  };
+
   app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.parse.failed') {
-      return res.status(400).json({ error: 'invalid_json' });
+    if (err && err.type && BODY_PARSER_ERROR_MAP[err.type]) {
+      const mapped = BODY_PARSER_ERROR_MAP[err.type];
+      return res.status(mapped.status).json({ error: mapped.error });
     }
-    if (err && err.type === 'entity.too.large') {
-      return res.status(413).json({ error: 'payload_too_large' });
+    if (err && typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
+      return res.status(err.status).json({ error: err.code || err.type || 'client_error' });
     }
     console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
     res.status(500).json({ error: 'Internal Server Error' });

@@ -80,7 +80,7 @@ export default function ProjectPicker({ value, projects, onChange }: Props) {
         aria-haspopup="listbox"
         aria-expanded={open}
         onKeyDown={onTriggerKeyDown}
-        className="flex min-w-0 max-w-[10rem] items-center gap-1 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none pointer-coarse:min-h-11"
+        className="flex min-w-0 max-w-[8.5rem] sm:max-w-[10rem] items-center gap-1 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink focus:outline-none pointer-coarse:min-h-11"
       >
         <span className="truncate">{selected.label}</span>
         <span aria-hidden="true">▾</span>

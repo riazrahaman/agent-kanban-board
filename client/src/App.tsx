@@ -556,7 +556,7 @@ export default function App() {
              onKeyDown={(e) => {
                if (e.key === 'Enter') commitAgent()
                }}
-             placeholder="agent id (auto-claim)"
+             placeholder="agent id"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
              className="w-36 min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 sm:flex-initial xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"

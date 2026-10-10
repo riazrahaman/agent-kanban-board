@@ -71,7 +71,7 @@ test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', ()
 })
 
 test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, sm:w-36 tokenDraft)', () => {
-  const agentInput = appSource.match(/placeholder="agent id \(auto-claim\)"[\s\S]*?className="([^"]*)"/)?.[1]
+  const agentInput = appSource.match(/placeholder="agent id"[\s\S]*?className="([^"]*)"/)?.[1]
   assert.ok(agentInput, 'App.tsx must render agentDraft input')
   assert.match(
     agentInput,
@@ -601,8 +601,13 @@ test('Board layout stretches vertically and tightens mobile padding (GH #99)', (
   )
   assert.match(
     boardSource,
-    /\bp-2 pb-1 sm:p-4\b/,
-    'Board scroll container must use tightened mobile padding to eliminate dead space',
+    /p-2 pb-\[calc\(1rem\+env\(safe-area-inset-bottom,0px\)\)\] sm:p-4/,
+    'Board scroll container must use safe-area aware padding on mobile to clear bottom inset',
+  )
+  assert.match(
+    columnSource,
+    /pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\] sm:pb-2/,
+    'Column cards scroll container must provide bottom clearance on mobile to scroll past Safari floating bar',
   )
   assert.match(
     columnSource,
@@ -611,8 +616,8 @@ test('Board layout stretches vertically and tightens mobile padding (GH #99)', (
   )
   assert.match(
     cssSource,
-    /font-family:\s*var\(--font-sans\)/,
-    'index.css must apply proportional font-sans to coarse pointer form controls',
+    /font-family:\s*var\(--font-sans\)\s*!important/,
+    'index.css must apply proportional font-sans to coarse pointer form controls with !important',
   )
 })
 

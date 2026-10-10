@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.2.0
+version: 3.2.1
 ---
 
 # Kanban Orchestrator Protocol
