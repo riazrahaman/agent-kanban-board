@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.1.1
+version: 3.2.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -48,9 +48,9 @@ If `kanban_url` is not provided in `.opencode/config.json` or environment variab
 
 **Version & Credential-Map Check**: Call `GET /api/health` and inspect the response:
 1. **Board Version Gate**: Read the `version` field from the response to verify the board is **v3.0.0 or later** (semver `>= 3.0.0`). Note that `GET /projects` does not return a version field; only `GET /api/health` reports the server version (present on both v2.16.2 and v3.0.0+). If the version is below 3.0.0, **HALT immediately** and ask the user to upgrade their agent-kanban-board instance to v3.0.0+. The skill requires v3.0.0+ for proper status handling (v3 accepts legacy v2 statuses for compatibility).
-2. **Credential-Map Coverage Verification (§2.10)**: When connecting to `agent-kanban-board` v3.1.0+, `GET /api/health` includes a `credential_map: {status, covered, missing, extra}` payload:
+2. **Credential-Map Coverage Verification (§2.10)**: When connecting to `agent-kanban-board` v3.1.0+, `GET /api/health` includes a `credential_map: {status, covered, missing_count, extra_count}` payload (plus `missing` and `extra` project name arrays when authenticated with a valid token in v3.2.0+):
    - Check if `credential_map.status` is `"undercovered"` or `"malformed"`.
-   - Check if your configured `project_name` is listed in `credential_map.missing` (`missing.includes(project_name)`).
+   - When authenticated, check if your configured `project_name` is listed in `credential_map.missing` (`missing?.includes(project_name)`). Unauthenticated probes alert on `credential_map.missing_count > 0`.
    - If your project is missing or the credential map is undercovered, **warn or halt immediately**: the board has stored tasks for the project but lacks an active token entry in `KANBAN_PROJECT_TOKENS`. Future task mutations will fail with `403 Forbidden: token is not authorized for project '<project_name>'`. Alert the operator to restore the missing token in the server's environment configuration (e.g. Railway / Render).
 
 **Security**: Never commit configuration files. `.opencode/` holds authentication tokens. Confirm it is added to `.gitignore` before writing, and never stage `.opencode/` in git commits.
