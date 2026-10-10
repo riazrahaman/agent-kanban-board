@@ -16,15 +16,18 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
-## [3.1.0] — 2026-10-09
+## [3.1.0] — 2026-10-10
 
-Boot-time credential-map coverage check.
+Boot-time credential-map coverage check and bundled orchestrator skill sync.
 
 ### Added
 - **Credential-map coverage check (§2.10)**: at boot the server compares the projects named
   in `KANBAN_PROJECT_TOKENS` against the projects that have a store file, and reports any
   disparity. `GET /api/health` exposes it as `credential_map: {status, covered, missing,
   extra}` so a monitoring probe can detect a truncated map without reading logs.
+- **Bundled Orchestrator Skill (v3.1.0)**: updated `skills/kanban/` to v3.1.0 to include
+  boot-time credential-map inspection and warning/halting on missing project coverage.
+- **Documentation**: added design system handover reference and AgentOS 8-state migration instructions.
 
 ### Why
 - On 2026-10-08 a deployment typo overwrote `KANBAN_PROJECT_TOKENS` on the kanbann service,
