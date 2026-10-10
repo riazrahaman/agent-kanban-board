@@ -66,7 +66,7 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
   return (
     <div
       className={[
-        'flex w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
+        'flex h-full w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
         topAccent,
         isDone ? 'opacity-70' : '',
       ].join(' ')}

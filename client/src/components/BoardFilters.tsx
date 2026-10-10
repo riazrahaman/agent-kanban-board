@@ -193,7 +193,7 @@ export default function BoardFilters({
         )}
       </div>
 
-      <div className="ml-auto w-full text-right font-mono text-[10px] uppercase tracking-wider text-muted sm:w-auto">
+      <div className="ml-auto shrink-0 text-right font-mono text-[10px] uppercase tracking-wider text-muted sm:w-auto">
         {isFiltered ? (
           <span>
             {filteredCount} of {totalCount} tasks

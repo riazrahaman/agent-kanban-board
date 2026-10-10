@@ -593,6 +593,29 @@ test('Board scroll container snaps horizontally and scrolls x (snap-x, scroll-pl
   )
 })
 
+test('Board layout stretches vertically and tightens mobile padding (GH #99)', () => {
+  assert.match(
+    boardSource,
+    /className="relative flex h-full min-w-0 flex-1 items-stretch"/,
+    'Board container must use items-stretch so columns extend to bottom',
+  )
+  assert.match(
+    boardSource,
+    /\bp-2 pb-1 sm:p-4\b/,
+    'Board scroll container must use tightened mobile padding to eliminate dead space',
+  )
+  assert.match(
+    columnSource,
+    /flex h-full w-\[85vw\]/,
+    'Column must carry h-full so it fills the scroller height',
+  )
+  assert.match(
+    cssSource,
+    /font-family:\s*var\(--font-sans\)/,
+    'index.css must apply proportional font-sans to coarse pointer form controls',
+  )
+})
+
 // ---------------------------------------------------------------------------
 // index.css
 // ---------------------------------------------------------------------------

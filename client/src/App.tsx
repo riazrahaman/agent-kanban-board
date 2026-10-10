@@ -559,7 +559,7 @@ export default function App() {
              placeholder="agent id (auto-claim)"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             className="w-36 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"
+             className="w-36 min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 sm:flex-initial xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"
             />
             <input
              type="password"
@@ -769,7 +769,7 @@ export default function App() {
                       onClose={handleCloseMetrics}
                     />
                   )}
-                  <div className="min-w-0 flex-1 overflow-hidden">
+                  <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
                     <Board
                       tasks={filteredTasks}
                       onOpen={handleOpen}
