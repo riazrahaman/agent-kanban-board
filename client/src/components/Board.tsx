@@ -72,7 +72,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
   }
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 items-center">
+    <div className="relative flex h-full min-w-0 flex-1 items-stretch">
       {/* Explicit affordance for pointer users: the styled scrollbar below is
           always visible, but a trackpad-less mouse can't easily drag it, and
           these also make "there is more to the right" unmistakable.
@@ -84,7 +84,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         disabled={!canLeft}
         aria-label="Scroll columns left"
         title="Scroll columns left"
-        className="z-20 hidden h-11 w-8 shrink-0 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden ml-2 disabled:pointer-events-none disabled:opacity-0"
+        className="z-20 hidden h-11 w-8 shrink-0 self-center items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden ml-2 disabled:pointer-events-none disabled:opacity-0"
       >
         ‹
       </button>
@@ -95,7 +95,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         )}
         <div
           ref={scrollRef}
-          className="board-scroll flex h-full w-full snap-x snap-proximity scroll-pl-4 gap-4 overflow-x-auto p-4 overscroll-x-contain"
+          className="board-scroll flex h-full w-full snap-x snap-proximity scroll-pl-4 gap-4 overflow-x-auto p-2 pb-1 sm:p-4 overscroll-x-contain"
         >
           {visibleColumns.map((col) => (
             <Column
@@ -121,7 +121,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         disabled={!canRight}
         aria-label="Scroll columns right"
         title="Scroll columns right"
-        className="z-20 hidden h-11 w-8 shrink-0 items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden mr-2 disabled:pointer-events-none disabled:opacity-0"
+        className="z-20 hidden h-11 w-8 shrink-0 self-center items-center justify-center border-2 border-ink bg-surface font-mono text-lg font-bold text-ink transition-colors hover:bg-ink hover:text-surface active:scale-[0.95] md:flex pointer-coarse:hidden mr-2 disabled:pointer-events-none disabled:opacity-0"
       >
         ›
       </button>

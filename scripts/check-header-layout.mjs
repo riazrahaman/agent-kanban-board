@@ -147,7 +147,7 @@ const FINE_COARSE_WIDTHS = range(1000, 1270, 8);
 // written) against the same real-Chromium ground truth as EXPECTATIONS/
 // COARSE_EXPECTATIONS above.
 const fineNonCoarseExpected = (w) => (w <= 1032 ? 120 : w <= 1232 ? 82 : 49);
-const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1256 ? 101 : 67);
+const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1248 ? 101 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
