@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.0.2
+version: 3.1.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -46,7 +46,12 @@ If `kanban_url` is not provided in `.opencode/config.json` or environment variab
 
 **Verification Step**: Once mandatory fields are acquired, perform `GET /projects` using the `kanban_token` in headers to verify connectivity and project existence.
 
-**Version Check**: Call `GET /api/health` and read the `version` field from the response to verify the board is **v3.0.0 or later** (semver `>= 3.0.0`). Note that `GET /projects` does not return a version field; only `GET /api/health` reports the server version (present on both v2.16.2 and v3.0.0+). If the version is below 3.0.0, **HALT immediately** and ask the user to upgrade their agent-kanban-board instance to v3.0.0+. The skill requires v3.0.0+ for proper status handling (v3 accepts legacy v2 statuses for compatibility).
+**Version & Credential-Map Check**: Call `GET /api/health` and inspect the response:
+1. **Board Version Gate**: Read the `version` field from the response to verify the board is **v3.0.0 or later** (semver `>= 3.0.0`). Note that `GET /projects` does not return a version field; only `GET /api/health` reports the server version (present on both v2.16.2 and v3.0.0+). If the version is below 3.0.0, **HALT immediately** and ask the user to upgrade their agent-kanban-board instance to v3.0.0+. The skill requires v3.0.0+ for proper status handling (v3 accepts legacy v2 statuses for compatibility).
+2. **Credential-Map Coverage Verification (§2.10)**: When connecting to `agent-kanban-board` v3.1.0+, `GET /api/health` includes a `credential_map: {status, covered, missing, extra}` payload:
+   - Check if `credential_map.status` is `"undercovered"` or `"malformed"`.
+   - Check if your configured `project_name` is listed in `credential_map.missing` (`missing.includes(project_name)`).
+   - If your project is missing or the credential map is undercovered, **warn or halt immediately**: the board has stored tasks for the project but lacks an active token entry in `KANBAN_PROJECT_TOKENS`. Future task mutations will fail with `403 Forbidden: token is not authorized for project '<project_name>'`. Alert the operator to restore the missing token in the server's environment configuration (e.g. Railway / Render).
 
 **Security**: Never commit configuration files. `.opencode/` holds authentication tokens. Confirm it is added to `.gitignore` before writing, and never stage `.opencode/` in git commits.
 
@@ -68,7 +73,7 @@ Verified endpoint scoping behavior:
 | `GET /tasks/:id` (no `?project=`) | None | Fails with `404 Not Found` |
 | `GET /tasks?project=X` | Query parameter: `?project=X` | Lists tasks within project |
 | `GET /projects` | No scoping needed | Global project list |
-| `GET /api/health` | No scoping needed | Server health and version probe (`version` field) |
+| `GET /api/health` | No scoping needed | Server health, version probe (`version`), and credential-map status (`credential_map` v3.1.0+) |
 
 **Rule**: Append `?project=<project_name>` to every path addressing a specific task (`/:id`, `/:id/logs`, `/:id/claim`, `/:id/heartbeat`). A `403` referencing project `'default'` indicates a missing query parameter.
 
