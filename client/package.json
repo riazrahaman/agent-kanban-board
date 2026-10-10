@@ -22,7 +22,7 @@
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^7.3.6"
+    "vite": "^8.3.3"
   },
   "overrides": {
     "esbuild": "^0.25.0",
