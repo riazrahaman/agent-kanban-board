@@ -14,6 +14,8 @@ import {
   writeStoredView,
   readStoredRailOpen,
   writeStoredRailOpen,
+  readStoredHeaderOpen,
+  writeStoredHeaderOpen,
 } from './lib/uiSettings'
 import {
   isDark,
@@ -83,8 +85,8 @@ export default function App() {
   // v2.9.1: on phones the header's secondary controls collapse behind a "⋯"
   // disclosure. Left expanded they wrapped to ~8 rows and ate most of the
   // viewport, squeezing the board to an unusable sliver (see
-  // mobile-rendering-issues.md Issue 1).
-  const [headerOpen, setHeaderOpen] = useState(false)
+  // mobile-rendering-issues.md Issue 1). Persisted in localStorage (v3.2.2).
+  const [headerOpen, setHeaderOpen] = useState<boolean>(() => readStoredHeaderOpen())
     // Deployed server version, shown in the header so operators can tell at a
     // glance which build is live. Sourced from /api/health (server/package.json).
     const [version, setVersion] = useState<string | null>(null)
@@ -504,11 +506,17 @@ export default function App() {
               switcher below stays visible because navigation is primary. */}
           <button
             type="button"
-            onClick={() => setHeaderOpen((v) => !v)}
+            onClick={() => {
+              setHeaderOpen((v) => {
+                const next = !v
+                writeStoredHeaderOpen(next)
+                return next
+              })
+            }}
             aria-pressed={headerOpen}
             aria-expanded={headerOpen}
             aria-label="Toggle board controls"
-            title="Show/hide the board controls (project, identity, theme)"
+            title="Show/hide the board controls (project, identity, theme, bug report)"
             className="ml-auto border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 md:hidden"
           >
             {headerOpen ? 'Close' : '⋯'}

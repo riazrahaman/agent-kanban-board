@@ -23,6 +23,7 @@ export const METRICS_STORAGE_KEY = 'kanban.showMetrics'
 export const VIEW_STORAGE_KEY = 'kanban.view'
 export const RAIL_STORAGE_KEY = 'kanban.railOpen'
 export const MOBILE_FILTERS_STORAGE_KEY = 'kanban.mobileFiltersOpen'
+export const HEADER_STORAGE_KEY = 'kanban.headerOpen'
 
 export function isValidView(val: unknown): val is AppView {
   return val === 'board' || val === 'portfolio' || val === 'about'
@@ -149,6 +150,25 @@ export function writeStoredMobileFiltersOpen(open: boolean): void {
   try {
     if (open) localStorage.setItem(MOBILE_FILTERS_STORAGE_KEY, 'true')
     else localStorage.removeItem(MOBILE_FILTERS_STORAGE_KEY)
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** Read persisted header disclosure open state. */
+export function readStoredHeaderOpen(): boolean {
+  try {
+    return localStorage.getItem(HEADER_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+/** Persist header disclosure open state. */
+export function writeStoredHeaderOpen(open: boolean): void {
+  try {
+    if (open) localStorage.setItem(HEADER_STORAGE_KEY, 'true')
+    else localStorage.removeItem(HEADER_STORAGE_KEY)
   } catch {
     // Non-fatal
   }

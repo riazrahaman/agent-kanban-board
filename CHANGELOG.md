@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,22 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.2.2] — 2026-10-10
+
+Mobile viewport full-bleed background, bottom clearance reclamation, zoom restriction, and header controls persistence.
+
+### Fixed
+- **Mobile zoom restriction (GH #103)**:
+  - Added `maximum-scale=1.0, user-scalable=no` to `<meta name="viewport">` in `client/index.html`.
+  - Added `touch-action: manipulation;` in `client/src/index.css` across interactive controls to prevent unwanted double-tap zoom and pin view scale.
+- **Full-bleed Safari background & title bar integration (GH #103)**:
+  - Extended theme background colors to `html, body` elements in `client/src/index.css` (`background-color: var(--bg); min-height: 100%`).
+  - Added dynamic `<meta name="theme-color">` tags for light (`#f6f2e8`) and dark (`#0c1017`) modes in `client/index.html` with synchronous theme bootstrap script to paint Safari's floating status/title bar seamlessly in the page background color.
+- **Reclaimed bottom column clearance (GH #103)**:
+  - Replaced excessive `pb-[calc(5rem+env(safe-area-inset-bottom,0px))]` in `client/src/components/Column.tsx` and `pb-[calc(1rem+...)]` in `client/src/components/Board.tsx` with tight `pb-2 sm:pb-2`, removing empty voids on mobile screens while keeping dynamic `100dvh` container bounds above floating browser chrome.
+- **Header controls accessibility & state persistence (GH #103)**:
+  - Header controls disclosure state (`⋯`) on narrow viewports (<768px) is now persisted to `localStorage` under `kanban.headerOpen`. Once expanded, theme switches and bug report controls remain open across page reloads and tab navigations.
 
 ## [3.2.1] — 2026-10-10
 

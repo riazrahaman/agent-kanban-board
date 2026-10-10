@@ -601,13 +601,13 @@ test('Board layout stretches vertically and tightens mobile padding (GH #99)', (
   )
   assert.match(
     boardSource,
-    /p-2 pb-\[calc\(1rem\+env\(safe-area-inset-bottom,0px\)\)\] sm:p-4/,
-    'Board scroll container must use safe-area aware padding on mobile to clear bottom inset',
+    /p-2 pb-2 sm:p-4/,
+    'Board scroll container must use compact mobile padding to reclaim vertical space',
   )
   assert.match(
     columnSource,
-    /pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\] sm:pb-2/,
-    'Column cards scroll container must provide bottom clearance on mobile to scroll past Safari floating bar',
+    /pb-2 sm:pb-2/,
+    'Column cards scroll container must avoid artificial 5rem padding so cards use full height',
   )
   assert.match(
     columnSource,
