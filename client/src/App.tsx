@@ -483,7 +483,7 @@ export default function App() {
     : ''
 
   return (
-     <div className="flex h-screen flex-col bg-bg text-ink">
+     <div className="app-shell flex h-screen flex-col bg-bg text-ink">
         <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
           <div className="flex shrink-0 items-center gap-3">
             <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
@@ -567,21 +567,13 @@ export default function App() {
              placeholder="agent id"
              aria-label="Bind this board to an agent id for auto-claim"
              title="Bind this browser to an agent id to heartbeat + auto-claim its tasks. Press Enter or click away to bind. Empty = monitor only."
-             // v3.2.3 (GH #103 follow-up): below sm, this carried `flex-1`
-             // (flex: 1 1 0%, i.e. a ZERO flex-basis) inside the header's
-             // flex-wrap row alongside ProjectPicker and the token input,
-             // which both keep their own non-zero basis (their declared
-             // width). CSS distributes a wrapped line's shrink DEFICIT
-             // proportionally to each item's basis — a 0 basis gets 0 share
-             // of the deficit — so on a real 390px phone this input was
-             // squeezed to ~76px (room for ~2 characters, "ag") while its
-             // siblings kept their full width. `flex-initial` (flex: 0 1
-             // auto, matching the sm:flex-initial already used from sm up)
-             // gives it the same real basis as its siblings, so flex-wrap's
-             // own line-breaking — not flex-shrink collapsing it toward
-             // zero — is what decides whether it fits on the row; verified
-             // with Playwright WebKit (390/360/430, touch) via computed
-             // getBoundingClientRect, not just a className read.
+             // v3.2.3 (GH #103 follow-up): was `flex-1` (zero flex-basis)
+             // below sm, so this got 0 share of the row's shrink deficit and
+             // was squeezed to ~76px ("ag") on a real 390px phone while its
+             // fixed-basis siblings kept full width. `flex-initial` gives it
+             // the same real basis as them — verified via Playwright WebKit
+             // computed getBoundingClientRect (144px), not just a className
+             // read. Guarded by responsive.test.mjs so it cannot regress.
              className="w-36 min-w-0 flex-initial border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"
             />
             <input

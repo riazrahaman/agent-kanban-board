@@ -22,6 +22,7 @@ const TASK_CARD_PATH = join(CLIENT_SRC, 'components', 'TaskCard.tsx')
 const TASK_SHEET_PATH = join(CLIENT_SRC, 'components', 'TaskSheet.tsx')
 const ERROR_BOUNDARY_PATH = join(CLIENT_SRC, 'components', 'ErrorBoundary.tsx')
 const ABOUT_PATH = join(CLIENT_SRC, 'components', 'About.tsx')
+const PORTFOLIO_PATH = join(CLIENT_SRC, 'components', 'Portfolio.tsx')
 const CSS_PATH = join(CLIENT_SRC, 'index.css')
 
 const appSource = readFileSync(APP_PATH, 'utf8')
@@ -31,6 +32,7 @@ const taskCardSource = readFileSync(TASK_CARD_PATH, 'utf8')
 const taskSheetSource = readFileSync(TASK_SHEET_PATH, 'utf8')
 const errorBoundarySource = readFileSync(ERROR_BOUNDARY_PATH, 'utf8')
 const aboutSource = readFileSync(ABOUT_PATH, 'utf8')
+const portfolioSource = readFileSync(PORTFOLIO_PATH, 'utf8')
 const cssSource = readFileSync(CSS_PATH, 'utf8')
 
 // ---------------------------------------------------------------------------
@@ -95,6 +97,32 @@ test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, 
     tokenInput,
     /\bsm:w-36\b/,
     'tokenDraft input must use sm:w-36 on tablet/desktop viewports',
+  )
+})
+
+// v3.2.3 (GH #103 follow-up, round 1): regression guard for the crushed
+// agent-id field. `flex-1` (flex: 1 1 0%, a zero basis) got 0 share of a
+// flex-wrap row's shrink deficit while its fixed-basis siblings
+// (ProjectPicker, the token input) kept full width, squeezing this input to
+// ~76px ("ag") on a real 390px phone. `flex-initial` plus the `w-36` floor
+// is what keeps it usable; see App.tsx's comment on this input.
+test('agentDraft input stays flex-initial (not flex-1) with a usable min width', () => {
+  const agentInput = appSource.match(/placeholder="agent id"[\s\S]*?className="([^"]*)"/)?.[1]
+  assert.ok(agentInput, 'App.tsx must render agentDraft input')
+  assert.match(
+    agentInput,
+    /\bflex-initial\b/,
+    'agentDraft input must be flex-initial so it carries a real (non-zero) flex-basis',
+  )
+  assert.doesNotMatch(
+    agentInput,
+    /(?<!sm:)(?<!-)\bflex-1\b/,
+    'agentDraft input must NOT be (unscoped) flex-1 — a zero flex-basis is what caused it to collapse to ~76px on a real phone',
+  )
+  assert.match(
+    agentInput,
+    /\bw-36\b/,
+    'agentDraft input must keep its w-36 (144px) base width as the usable floor below sm',
   )
 })
 
@@ -604,19 +632,17 @@ test('Board layout stretches vertically and tightens mobile padding (GH #99)', (
     /p-2 pb-2 sm:p-4/,
     'Board scroll container must use compact mobile padding to reclaim vertical space',
   )
-  // v3.2.3 (GH #103 follow-up): the "avoid artificial 5rem padding" contract
-  // this test originally guarded against is deliberately reverted here. It
-  // was true only paired with the `dvh` shell active at the time (see
-  // index.css's `.h-screen` comment): with that shell, 5rem of padding WAS
-  // pure dead scroll space, nothing scrollable lived below it. The shell is
-  // now `100lvh` (does not shrink when Safari's floating toolbar shows), so
-  // the same padding now gives the last card real room to scroll clear of
-  // that toolbar instead. `md:pb-2` keeps desktop/tablet (no floating
-  // toolbar, no safe-area concern) exactly as dense as before.
+  // v3.2.3 (GH #103 follow-up, round 1): the "avoid artificial 5rem padding"
+  // contract this test originally guarded against is deliberately reverted
+  // here, now keyed on `pointer-coarse:` + `max-md:` rather than a bare
+  // width breakpoint (CLAUDE.md's touch-ergonomics convention) so a mouse
+  // window resized under 768px — no floating toolbar — doesn't get 80px of
+  // dead scroll space. See index.css's `.app-shell` comment for the
+  // dvh-vs-lvh reasoning this padding depends on.
   assert.match(
     columnSource,
-    /pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\] md:pb-2/,
-    'Column cards scroll container must reserve safe-area + ~5rem of bottom scroll room below md, for iOS Safari\'s floating toolbar, and reset to dense pb-2 at md+',
+    /max-md:pointer-coarse:pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\]/,
+    'Column cards scroll container must reserve safe-area + ~5rem of bottom scroll room on coarse pointers below md, for iOS Safari\'s floating toolbar',
   )
   assert.match(
     columnSource,
@@ -642,17 +668,38 @@ test('index.css overrides .h-screen inside @supports (height:100dvh)', () => {
   )
 })
 
-// v3.2.3 (GH #103 follow-up): lvh is sized AFTER the dvh block (source order)
-// so it wins on every engine that supports both, without removing the dvh
-// fallback above — see index.css's comment for the full dvh-vs-lvh reasoning.
-test('index.css further overrides .h-screen to 100lvh (the LARGE viewport, does not shrink for the floating toolbar)', () => {
+// v3.2.3 (GH #103 follow-up, round 1): lvh is scoped to a DEDICATED
+// `.app-shell` class, not `.h-screen` globally. `.h-screen` is also used by
+// `fixed` panels (TaskSheet's <aside>) that must stay within the
+// actually-visible area — a global lvh override pushed TaskSheet's pinned
+// log-entry footer behind Safari's floating toolbar with no way to scroll to
+// it (the round-1 regression this guards against).
+test('index.css scopes the 100lvh override to .app-shell, NOT .h-screen globally', () => {
   const dvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100dvh\s*\)/)
   const lvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100lvh\s*\)/)
   assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist')
   assert.ok(lvhIdx >= 0, 'index.css must contain an `@supports (height:100lvh)` block')
   assert.ok(lvhIdx > dvhIdx, 'the 100lvh block must come AFTER the 100dvh block so it wins on engines supporting both')
   const lvhBlock = cssSource.slice(lvhIdx, cssSource.indexOf('}\n}', lvhIdx) + 3)
-  assert.match(lvhBlock, /\.h-screen\s*\{[\s\S]*?height:\s*100lvh/, 'the 100lvh block must override .h-screen')
+  assert.match(lvhBlock, /\.app-shell\s*\{[\s\S]*?height:\s*100lvh/, 'the 100lvh block must override .app-shell')
+  assert.doesNotMatch(
+    lvhBlock,
+    /\.h-screen/,
+    'the 100lvh block must NOT target .h-screen — TaskSheet (and any other fixed panel) uses that class and must stay at 100dvh',
+  )
+})
+
+test('App.tsx root shell carries .app-shell; TaskSheet\'s fixed <aside> does not', () => {
+  const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
+  assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
+  assert.match(shellTag, /\bh-screen\b/, 'the shell must keep h-screen (the 100dvh fallback) alongside app-shell')
+
+  const asideTag = taskSheetSource.match(/<aside\b[\s\S]{0,400}?\}\s*>/)?.[0] ?? ''
+  assert.doesNotMatch(
+    asideTag,
+    /app-shell/,
+    'TaskSheet\'s <aside> must NOT carry app-shell — it is a fixed panel that must stay within the visible (dvh) area, not grow to the large (lvh) viewport',
+  )
 })
 
 test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are not inflated', () => {
@@ -873,6 +920,15 @@ test('TaskSheet header and both composer forms are pinned against the region', (
       `the ${label} must keep \`shrink-0\` so the description region absorbs the compression`,
     )
   }
+
+  // v3.2.3 (GH #103 follow-up, round 1): the log composer is the sheet's
+  // LOWEST pinned element (below the comment composer), so — like
+  // BugReportDialog's submit footer — it needs safe-area clearance above
+  // iOS Safari's floating bottom toolbar.
+  assert.ok(
+    log.includes('pb-[calc(1rem_+_env(safe-area-inset-bottom))]'),
+    'the log composer must carry the same safe-area bottom padding as BugReportDialog\'s pinned footer',
+  )
 })
 
 test('TaskSheet resets its scroll offset when a different card is opened', () => {
@@ -887,6 +943,18 @@ test('TaskSheet resets its scroll offset when a different card is opened', () =>
 // components/About.tsx
 // ---------------------------------------------------------------------------
 
+// v3.2.3 (GH #103 follow-up, round 1): same floating-toolbar clearance as
+// Column.tsx/About.tsx — Portfolio also sits inside the `.app-shell`.
+test('Portfolio scroll container reserves bottom clearance for the floating toolbar', () => {
+  const scrollContainer = portfolioSource.match(/<div className="([^"]*overflow-auto[^"]*)">/)?.[1]
+  assert.ok(scrollContainer, 'Portfolio.tsx must render an overflow-auto scroll container')
+  assert.match(
+    scrollContainer,
+    /max-md:pointer-coarse:pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\]/,
+    'Portfolio.tsx scroll container must reserve safe-area + ~5rem of bottom scroll room on coarse pointers below md',
+  )
+})
+
 test('About page responsive layout invariants', async (t) => {
   await t.test('About scroll container uses overflow-x-hidden', () => {
     const scrollContainer = aboutSource.match(/<div className="([^"]*overflow-y-auto[^"]*)">/)?.[1]
@@ -895,6 +963,13 @@ test('About page responsive layout invariants', async (t) => {
       scrollContainer,
       /\boverflow-x-hidden\b/,
       'About.tsx scroll container must include `overflow-x-hidden` to prevent horizontal clipping',
+    )
+    // v3.2.3 (GH #103 follow-up, round 1): same floating-toolbar clearance
+    // as Column.tsx/Portfolio.tsx.
+    assert.match(
+      scrollContainer,
+      /max-md:pointer-coarse:pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\]/,
+      'About.tsx scroll container must reserve safe-area + ~5rem of bottom scroll room on coarse pointers below md',
     )
   })
 

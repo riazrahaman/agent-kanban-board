@@ -358,7 +358,11 @@ export default function TaskSheet({ task, onClose }: Props) {
 
             <form
               onSubmit={handleSubmit}
-              className="shrink-0 space-y-2 border-t border-line p-4 bg-surface"
+              // v3.2.3 (GH #103 follow-up, round 1): matches BugReportDialog's
+              // pinned-footer safe-area padding — this is the sheet's lowest
+              // fixed element, so it needs the same clearance above iOS
+              // Safari's floating bottom toolbar.
+              className="shrink-0 space-y-2 border-t border-line p-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] bg-surface"
             >
               <input
                 type="text"

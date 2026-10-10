@@ -98,23 +98,14 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
       </div>
       <div
         data-status={status}
-        // v3.2.3 (GH #103 follow-up): below md, the shell is now `100lvh`
-        // (index.css) rather than `100dvh`, so this column has real extra
-        // height to scroll into behind iOS Safari's floating bottom toolbar
-        // — this padding is what lets the last card actually reach that
-        // space instead of stopping at the column's own min-content edge.
-        // `env(safe-area-inset-bottom, 0px)` covers the home-indicator
-        // safe area; the `5rem` on top of it covers the toolbar itself.
-        // md+ resets to the dense `pb-2` of pre-3.2.1 desktop: there is no
-        // floating toolbar on a desktop/tablet pointer, so the extra space
-        // would just be wasted scroll room (and was never part of the
-        // original mobile-only report). See index.css's `.h-screen` comment
-        // for why 5rem of padding alone (the exact amount reverted here,
-        // first added in v3.2.1) was wrong THAT time — it was paired with a
-        // `dvh` shell with no equivalent extra height to scroll into, so it
-        // was pure empty space rather than space the floating toolbar
-        // actually covers.
-        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-2"
+        // v3.2.3 (GH #103 follow-up, round 1): the `.app-shell` (index.css)
+        // gives this column real extra height to scroll into behind iOS
+        // Safari's floating bottom toolbar; this padding is what lets the
+        // last card reach it. Keyed on `pointer-coarse:` + `max-md:`
+        // (CLAUDE.md's touch-ergonomics convention), not a width breakpoint
+        // alone: a mouse window resized under 768px has no floating toolbar
+        // and would otherwise get 80px of dead scroll space for nothing.
+        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
       >
         {tasks.map((task) => (
           <TaskCard

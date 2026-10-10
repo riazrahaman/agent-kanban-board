@@ -89,7 +89,10 @@ export default function Portfolio({ onSelectProject, refreshKey, pollMs = 10000 
   const head = 'px-3 py-2 text-right font-mono text-[10px] uppercase tracking-wider text-muted'
 
   return (
-    <div className="min-w-0 flex-1 overflow-auto">
+    // v3.2.3 (GH #103 follow-up, round 1): same floating-toolbar clearance as
+    // Column.tsx's card list — this view also sits inside the `.app-shell`
+    // (index.css) and needs room for its last row to clear the bar.
+    <div className="min-w-0 flex-1 overflow-auto max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
       <table className="w-full border-collapse">
         <thead className="sticky top-0 bg-surface">
           <tr className="border-b border-line">

@@ -107,36 +107,20 @@ body,
   height: 100%;
   background-color: var(--bg);
   color: var(--ink);
-  /* v3.2.3 (GH #103 follow-up): iOS Safari has ignored `user-scalable=no` /
-     `maximum-scale=1` in the viewport meta tag since ~iOS 10 (an Apple
-     accessibility fix) — confirmed on a real iPhone (iOS 26) that v3.2.2's
-     meta tag alone did not stop pinch-zoom. `touch-action` is what iOS
-     actually honours: omitting the `pinch-zoom` keyword (present in
-     `manipulation`, used below on buttons/inputs) blocks the page-level
-     pinch-to-zoom AND double-tap-to-zoom gestures. `pan-x pan-y` keeps BOTH
-     scroll axes available to every descendant: the browser computes a
-     touched element's EFFECTIVE touch-action as the intersection of its own
-     value and every ancestor's (see the GH #87 note on Board.tsx/Column.tsx
-     for the same rule working against a single-axis `pan-x`/`pan-y` value),
-     so a root-level `pan-x pan-y` can only ever remove `pinch-zoom` from a
-     descendant's effective value — it cannot narrow which scroll axis a
-     nested `overflow-x-auto`/`overflow-y-auto` container is allowed to use.
-     Belt-and-braces JS (gesturestart/change/end + a double-tap guard) lives
-     in lib/pinchZoomGuard.ts, installed once from main.tsx. */
+  /* v3.2.3 (GH #103 follow-up): iOS ignores the viewport meta tag's
+     user-scalable=no since ~iOS 10, but honours touch-action. Omitting the
+     pinch-zoom keyword blocks pinch/double-tap zoom; pan-x pan-y preserves
+     both scroll axes for every descendant via the touch-action intersection
+     rule (GH #87) — it can only remove pinch-zoom, never narrow which axis
+     a nested scroller uses. JS backup: lib/pinchZoomGuard.ts. */
   touch-action: pan-x pan-y;
 }
 
-/* iOS Safari's WebKit "Text Autosizer" independently inflates the font-size
-   of multi-line text blocks in narrow columns (exactly what an 85vw task
-   card's title is) to keep long-form reading comfortable on a small screen —
-   unrelated to, and layered on top of, the `any-pointer: coarse` input-zoom
-   rule further down this file. It does not touch short, single-line text
-   (the `text-[10px]`/`text-[11px]` mono status badges), which is why a
-   card's title read far larger than its badges on a real iPhone despite both
-   being fixed, explicit Tailwind sizes in the same component — a disparity
-   invisible in Playwright WebKit (a desktop engine; it has no text autosizer
-   to begin with) and in any non-WebKit browser. Disabling it hands sizing
-   back entirely to the explicit `text-*` utilities already in the markup. */
+/* iOS Safari's WebKit "Text Autosizer" independently inflates multi-line
+   text in narrow columns (a task card's title) but not short single-line
+   text (the mono badges beside it) — why titles read oversized vs badges on
+   a real iPhone despite both being fixed Tailwind sizes. Hands sizing back
+   to the explicit `text-*` utilities already in the markup. */
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -178,33 +162,18 @@ a {
   }
 }
 
-/* v3.2.3 (GH #103 follow-up): `dvh` tracks whatever height is visible RIGHT
-   NOW — it shrinks the instant Safari's floating bottom toolbar appears, so
-   the shell (and everything sized from it via `h-full`/`flex-1`) stopped
-   exactly at the toolbar's top edge. That is correct for "never render
-   UNDER a toolbar the user can't see past" but wrong for "let the page
-   extend behind a *floating, translucent* toolbar the way a native app
-   does" — it left a visible seam between the last column content and the
-   toolbar (the "dead strip" in the GH #103 follow-up report), because
-   nothing in the shell occupied that space at all.
-   `lvh` is the LARGE viewport — as tall as the screen ever gets, i.e. with
-   the browser chrome collapsed — and does not shrink when the toolbar
-   shows. Sizing the shell to `lvh` instead makes that extra strip part of
-   the live, themed layout again (same `--bg`, no separate void), and the
-   column's own bottom padding below (`pb-[calc(5rem+env(safe-area-inset-
-   bottom))]` in Column.tsx) is what actually lets the last card scroll up
-   clear of the floating toolbar once it is rendered in that space.
-   This combination matters, and got it backwards once already: v3.2.1 paired
-   5rem of column padding with a `dvh` shell, and the result was the OPPOSITE
-   failure — a shell already clipped tight to the visible area, plus 5rem of
-   additional padding on top of that, produced pure empty scroll space
-   bounded on both sides by nothing (not the toolbar, not content), which
-   v3.2.2 "fixed" by deleting the padding instead of fixing the shell height
-   — reintroducing the dead-strip bug this comment opens with. `lvh` is the
-   piece that was missing both times: the padding is only correct once the
-   shell is tall enough to need it. */
+/* v3.2.3 (GH #103 follow-up, round 1): `lvh` (the large viewport — as tall
+   as the screen gets, chrome collapsed, doesn't shrink for Safari's floating
+   bottom toolbar) fixes the dead strip left by a `dvh` shell that stops
+   exactly at the toolbar's top edge — see CHANGELOG 3.2.3 for the full
+   reasoning and why pairing it with the column's bottom padding matters.
+   Scoped to `.app-shell` (App.tsx's root only), NOT `.h-screen` globally:
+   `.h-screen` is also used by `fixed` panels (TaskSheet, and BugReportDialog
+   via its own inline `100dvh`) that must stay within the actually-visible
+   area — growing THEM to `lvh` would push their pinned footers behind the
+   floating toolbar with no way to scroll to them, the opposite of the fix. */
 @supports (height: 100lvh) {
-  .h-screen {
+  .app-shell {
     height: 100lvh;
   }
 }
