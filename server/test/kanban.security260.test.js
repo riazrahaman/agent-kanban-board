@@ -741,4 +741,34 @@ describe('ENH-09 auth failure rate limiting', () => {
     });
     assert.equal(ok2.response.status, 201, 'IP 2 is unaffected');
   });
+
+  it('rotating leftmost X-Forwarded-For cannot bypass auth rate limit when proxy is trusted (GH #90)', async () => {
+    process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '2';
+    resetAuthLimits();
+
+    // With trust proxy enabled, Express resolves req.ip from trusted hops.
+    // An attacker rotating spoofed leftmost entries cannot dodge the limiter.
+    for (let i = 0; i < 2; i += 1) {
+      await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authHeader('wrong'),
+          'X-Forwarded-For': `198.51.100.${i + 1}, 10.0.0.99`,
+        },
+        body: taskBody('x', 'x'),
+      });
+    }
+
+    const blocked = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader('wrong'),
+        'X-Forwarded-For': '198.51.100.999, 10.0.0.99',
+      },
+      body: taskBody('x', 'x'),
+    });
+    assert.equal(blocked.response.status, 429, 'Spoofed leftmost XFF cannot bypass rate limit');
+  });
 });

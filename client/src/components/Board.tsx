@@ -95,7 +95,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         )}
         <div
           ref={scrollRef}
-          className="board-scroll flex h-full w-full snap-x snap-proximity scroll-pl-4 gap-4 overflow-x-auto p-2 pb-1 sm:p-4 overscroll-x-contain"
+          className="board-scroll flex h-full w-full snap-x snap-proximity scroll-pl-4 gap-4 overflow-x-auto p-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:p-4 overscroll-x-contain"
         >
           {visibleColumns.map((col) => (
             <Column

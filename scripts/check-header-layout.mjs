@@ -50,6 +50,12 @@
  *     either way, which is why an earlier pass toggling it produced neither
  *     number cleanly. `Emulation.setTouchEmulationEnabled` is what actually
  *     flips the media query (verified below) — see the second pass.
+ *     NOTE ON REAL TOUCH HARDWARE (GH #91): The coarse-pointer pass uses CDP
+ *     touch emulation (Emulation.setTouchEmulationEnabled) to trigger
+ *     `pointer: coarse` in headless Chromium. Real mobile devices (iOS Safari,
+ *     WebKit, physical digitizers, dynamic address bars) still require hand
+ *     verification for hardware-specific nuances (e.g. safe-area insets and
+ *     keyboard viewport displacement).
  *
  * Both are two-sided on purpose (not just a ceiling): dropping BELOW
  * baseline can mean content silently went missing just as much as growing
@@ -82,6 +88,13 @@
  *
  * <off-base-url> is optional: a second server with the bug-report feature
  * OFF, for a live ON-vs-OFF diff in the third pass (see ci.yml).
+ *
+ * NOTE ON CI FEATURE ENVIRONMENT (GH #91): In CI, the primary test server
+ * must be run with the bug-report environment variables configured
+ * (KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET, TURNSTILE_SITE_KEY).
+ * If the primary server were booted with the feature OFF, the test would merely diff
+ * feature-off against feature-off and vacuously pass, defeating the purpose of
+ * verifying that the rendered bug report button costs net-zero header height.
  *
  * Exit 0 = every width stays within tolerance on all three guards.
  * Exit 1 = a header-height, wrap-threshold or popover-containment regression.
@@ -167,12 +180,12 @@ function candidatePorts() {
     if (!existsDir(full)) continue;
     for (const f of readdirSafe(full)) {
       if (!f.endsWith('.log')) continue;
-      logs.push({ file: f, mtime: statMtime(full + '/' + f) });
+      logs.push({ file: f, path: full + '/' + f, mtime: statMtime(full + '/' + f) });
     }
   }
   logs.sort((a, b) => b.mtime - a.mtime);
-  for (const { file } of logs.slice(0, 6)) {
-    const txt = readSafe(homeDir() + '/.config/browser-harness/tmp/' + file);
+  for (const log of logs.slice(0, 6)) {
+    const txt = readSafe(log.path);
     for (const m of [...txt.matchAll(/ws:\/\/127\.0\.0\.1:(\d+)/g)].slice(-3)) {
       const p = Number(m[1]);
       if (!list.includes(p)) list.push(p);

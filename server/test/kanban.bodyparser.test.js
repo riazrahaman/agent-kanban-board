@@ -166,4 +166,17 @@ describe('global body-parser error translation', () => {
     assert.equal(res.status, 400);
     assert.equal(body.error, 'invalid_payload');
   });
+
+  it('POST with unsupported Content-Encoding -> 415 unsupported_encoding (GH #91)', async () => {
+    const { res, body } = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'unsupported-bogus-encoding',
+      },
+      body: '{"foo":"bar"}',
+    });
+    assert.equal(res.status, 415);
+    assert.deepEqual(body, { error: 'unsupported_encoding' });
+  });
 });

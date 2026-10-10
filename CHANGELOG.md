@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,25 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.2.1] — 2026-10-10
+
+Mobile typography & Safari floating bottom bar clearance, auth rate-limiter trust-proxy hardening, and body-parser error handling.
+
+### Fixed
+- **Mobile typography & input ergonomics (GH #101)**:
+  - Form controls under `@media (any-pointer: coarse)` now apply `font-family: var(--font-sans) !important`, overriding Tailwind's `.font-mono` specificity so text fields render in clean proportional font without clipping.
+  - Native `<select>` elements now use `font-size: 13px !important` on coarse pointers instead of bloated 16px text (since iOS selects open native wheel pickers and never trigger focus-zoom).
+  - Shortened filter search placeholder to `"Filter tasks…"` (from `"Filter by title, desc, id…"`) and agent input placeholder to `"agent id"` (from `"agent id (auto-claim)"`), permanently preventing character truncation on 390px viewports.
+  - Reduced `ProjectPicker` mobile trigger max-width to `max-w-[8.5rem] sm:max-w-[10rem]`, granting breathing room for adjacent inputs.
+- **Safari floating bottom bar clearance (GH #101)**:
+  - Added `viewport-fit=cover` to `<meta name="viewport">` in `client/index.html` so iOS WebKit exposes `safe-area-inset-bottom`.
+  - Added `pb-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:pb-2` to the `Column` card scroll container and updated `Board.tsx` scroll padding. When scrolled, cards now clear Safari's floating bottom navigation bar with ample margin (matching reference floating bar patterns).
+- **Auth rate limiter trust-proxy fix (GH #90)**:
+  - Updated `clientIp(req)` in `server/middleware/rateLimit.js` to derive the client IP from Express's `req.ip` (honouring `KANBAN_TRUST_PROXY` / `app.set('trust proxy')`) with raw socket fallback, rather than trusting the raw leftmost `X-Forwarded-For` entry. Rotating spoofed leftmost headers can no longer bypass the auth-failure rate limiter.
+- **Body-parser error translation & test docs (GH #91)**:
+  - Added `BODY_PARSER_ERROR_MAP` and status check in `server/server.js` global error handler translating rarer body-parser errors (`encoding.unsupported` -> 415, `request.size.invalid` -> 400, `request.aborted` -> 400) instead of falling through to 500.
+  - Updated `scripts/check-header-layout.mjs` candidate log path resolution to read from the discovered directory rather than hardcoding tmp, and added in-script notes documenting touch emulation vs physical hardware and why feature-off on the primary server fails in CI.
 
 ## [3.2.0] — 2026-10-10
 

@@ -142,13 +142,9 @@ function authLimitPerWindow() {
 }
 
 function clientIp(req) {
-  // Trust X-Forwarded-For when present (common behind a reverse proxy); fall
-  // back to the raw socket address. Only the first hop is used.
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.trim() !== '') {
-    return fwd.split(',')[0].trim();
-  }
-  return req.socket?.remoteAddress || req.ip || 'unknown';
+  // Rely on Express's req.ip which honours KANBAN_TRUST_PROXY (app.set('trust proxy')).
+  // Raw socket fallback preserves compatibility for non-Express / mock harnesses.
+  return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 function pruneAuthExpired(now, span) {
