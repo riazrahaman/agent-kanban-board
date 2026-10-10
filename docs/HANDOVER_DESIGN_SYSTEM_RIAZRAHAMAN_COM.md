@@ -1,7 +1,7 @@
 # Design System & Layout Handover: Multi-Column Documentation Layout
 
 > **Target Site**: `https://riazrahaman.com`  
-> **Source Reference**: `https://agent-kanban.riazrahaman.com` ([`client/src/components/About.tsx`](file:///Users/riazrahaman/Documents/agend-grid/agent-kanban-board/client/src/components/About.tsx) and [`client/src/index.css`](file:///Users/riazrahaman/Documents/agend-grid/agent-kanban-board/client/src/index.css))  
+> **Source Reference**: `https://agent-kanban.riazrahaman.com` ([`client/src/components/About.tsx`](../client/src/components/About.tsx) and [`client/src/index.css`](../client/src/index.css))  
 > **Purpose**: Complete design system, tokens, component blueprints, and layout contracts to replicate the 3-column layout on wide screens with flawless mobile degradation.
 
 ---
