@@ -604,10 +604,19 @@ test('Board layout stretches vertically and tightens mobile padding (GH #99)', (
     /p-2 pb-2 sm:p-4/,
     'Board scroll container must use compact mobile padding to reclaim vertical space',
   )
+  // v3.2.3 (GH #103 follow-up): the "avoid artificial 5rem padding" contract
+  // this test originally guarded against is deliberately reverted here. It
+  // was true only paired with the `dvh` shell active at the time (see
+  // index.css's `.h-screen` comment): with that shell, 5rem of padding WAS
+  // pure dead scroll space, nothing scrollable lived below it. The shell is
+  // now `100lvh` (does not shrink when Safari's floating toolbar shows), so
+  // the same padding now gives the last card real room to scroll clear of
+  // that toolbar instead. `md:pb-2` keeps desktop/tablet (no floating
+  // toolbar, no safe-area concern) exactly as dense as before.
   assert.match(
     columnSource,
-    /pb-2 sm:pb-2/,
-    'Column cards scroll container must avoid artificial 5rem padding so cards use full height',
+    /pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\] md:pb-2/,
+    'Column cards scroll container must reserve safe-area + ~5rem of bottom scroll room below md, for iOS Safari\'s floating toolbar, and reset to dense pb-2 at md+',
   )
   assert.match(
     columnSource,
@@ -630,6 +639,58 @@ test('index.css overrides .h-screen inside @supports (height:100dvh)', () => {
     cssSource,
     /@supports\s*\(\s*height:\s*100dvh\s*\)\s*\{[\s\S]*?\.h-screen\s*\{[\s\S]*?height:\s*100dvh/,
     'index.css must contain an `@supports (height:100dvh)` block that overrides `.h-screen` with `height: 100dvh` (100vh overflows under mobile URL bars)',
+  )
+})
+
+// v3.2.3 (GH #103 follow-up): lvh is sized AFTER the dvh block (source order)
+// so it wins on every engine that supports both, without removing the dvh
+// fallback above — see index.css's comment for the full dvh-vs-lvh reasoning.
+test('index.css further overrides .h-screen to 100lvh (the LARGE viewport, does not shrink for the floating toolbar)', () => {
+  const dvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100dvh\s*\)/)
+  const lvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100lvh\s*\)/)
+  assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist')
+  assert.ok(lvhIdx >= 0, 'index.css must contain an `@supports (height:100lvh)` block')
+  assert.ok(lvhIdx > dvhIdx, 'the 100lvh block must come AFTER the 100dvh block so it wins on engines supporting both')
+  const lvhBlock = cssSource.slice(lvhIdx, cssSource.indexOf('}\n}', lvhIdx) + 3)
+  assert.match(lvhBlock, /\.h-screen\s*\{[\s\S]*?height:\s*100lvh/, 'the 100lvh block must override .h-screen')
+})
+
+test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are not inflated', () => {
+  assert.match(
+    cssSource,
+    /-webkit-text-size-adjust:\s*100%/,
+    'index.css must set -webkit-text-size-adjust: 100% to stop iOS Safari inflating prose text in narrow columns',
+  )
+  assert.match(
+    cssSource,
+    /(?<!-webkit-)text-size-adjust:\s*100%/,
+    'index.css must also set the standard (non-prefixed) text-size-adjust: 100%',
+  )
+})
+
+test('index.css gives html/body/#root touch-action: pan-x pan-y to block pinch/double-tap zoom without blocking scroll', () => {
+  const idx = cssSource.search(/html,\s*\n\s*body,\s*\n\s*#root\s*\{/)
+  assert.ok(idx >= 0, 'index.css must declare an `html, body, #root` rule')
+  const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
+  assert.match(
+    block,
+    /touch-action:\s*pan-x pan-y/,
+    'html/body/#root must carry `touch-action: pan-x pan-y` — iOS honours this (unlike user-scalable=no) and, per the touch-action intersection rule, it can only ever REMOVE pinch-zoom from a descendant\'s effective value, never narrow which scroll axis a nested scroller is allowed to use',
+  )
+  // The exact regression this guards against: `pan-x` or `pan-y` ALONE here
+  // would, per the same intersection rule Board.tsx/Column.tsx already rely
+  // on (GH #87), knock out the OTHER axis for every scrollable descendant —
+  // vertical column scrolling, horizontal board scrolling, or sheet/dialog
+  // scrolling, depending on which single axis was chosen.
+  assert.doesNotMatch(
+    block,
+    /touch-action:\s*pan-x\s*;/,
+    'must not be the single-axis `pan-x` alone — that would block all vertical scrolling everywhere (column lists, sheets, dialogs)',
+  )
+  assert.doesNotMatch(
+    block,
+    /touch-action:\s*pan-y\s*;/,
+    'must not be the single-axis `pan-y` alone — that would block the board\'s horizontal column scroll',
   )
 })
 
