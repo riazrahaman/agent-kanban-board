@@ -1,6 +1,6 @@
 # Agent Kanban Board
 
-A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
+A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`)), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
 
 Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
 
@@ -72,21 +72,23 @@ cp -r skills/kanban ~/.config/opencode/skills/kanban
 The board enforces a strict lifecycle state machine and role-based permissions:
 
 ```
-BACKLOG ──► BUILDING ──► IN_REVIEW ──► IN_TEST ──► DONE
-               ▲              │           │
-               └── (rejection)┘           │
-               ▲                          │
-               └───────── (failure) ──────┘
+BACKLOG ──► READY ──► PLANNING ──► IN_PROGRESS ──► IN_REVIEW ──► VALIDATION ──► READY_TO_SHIP ──► DONE
+              ▲           ▲              ▲             │              │              │
+              │           │              └─────────────┴──────────────┴──────────────┘ (rejection/return)
+              └───────────┴──────────────────────────────────────────────────────────── (unclaim/return)
 ```
 
-- **`BLOCKED`** can be set from any active state (`BUILDING`, `IN_REVIEW`, `IN_TEST`). Resuming moves back to `BUILDING`.
+- **`BLOCKED`** can be set from any active state (`PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`). Resuming restores the previous state.
 - **Illegal transitions** (e.g., jumping directly from `BACKLOG` to `DONE`) return `409 Conflict`.
 - **Role Ownership Rules**:
-  - **Builder**: May advance `BACKLOG → BUILDING` or `BUILDING → IN_REVIEW`. Cannot mark `DONE`.
-  - **Reviewer**: May approve `IN_REVIEW → IN_TEST` or return `IN_REVIEW → BUILDING`. Cannot mark `DONE`.
-  - **Tester**: May advance `IN_TEST → DONE` or return `IN_TEST → BUILDING`.
+  - **Planner**: Advances `BACKLOG → READY`, `READY → PLANNING`, `PLANNING → IN_PROGRESS`, or returns to `READY`.
+  - **Builder**: Advances `READY → IN_PROGRESS` (via claim), `IN_PROGRESS → IN_REVIEW`. Cannot mark `DONE`.
+  - **Reviewer**: Advances `IN_REVIEW → VALIDATION`, or returns `IN_REVIEW → IN_PROGRESS`. Cannot mark `DONE`.
+  - **Validator / Tester**: Advances `VALIDATION → READY_TO_SHIP`, or returns `VALIDATION → IN_PROGRESS`. Cannot mark `DONE`.
+  - **Releaser**: Advances `READY_TO_SHIP → DONE`.
+  - **Runner / Admin**: May administer `BLOCKED` state transitions and orchestrate recoveries.
   - Callers provide their role via request body (`{"role": "builder"}`) or header (`X-Agent-Role: builder`); a missing role cannot pass a status transition. Unauthorized role transitions return `403 Forbidden`.
-- **Claim Contention**: Once an agent claims a task (`POST /api/tasks/:id/claim`), a second agent cannot claim or hijack it (`409 Conflict`) until released.
+- **Claim Contention**: Only `READY` tasks can be claimed (`POST /api/tasks/:id/claim`). Once an agent claims a task, a second agent cannot claim or hijack it (`409 Conflict`) until released or expired. Claiming a `READY` task as builder automatically lifts to `IN_PROGRESS`; claiming as planner lifts to `PLANNING`.
 
 ---
 
@@ -335,7 +337,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/tasks/archive/sweep` | Run the archive sweep now (returns `{ moved, projects }`) | Auth required |
 | `GET` | `/api/events` | Server-Sent Events stream of per-task diff events (default); `?mode=snapshot` for whole-board snapshots, `?prime=1` to get an initial `event: tasks` snapshot, `?project=` scopes | Public |
 | `GET` | `/api/metrics` | Cross-project metrics (`?project=` scopes; cycle time, `by_status`, contention) | Public |
-| `GET` | `/api/health`, `/healthz` | Read-only liveness probe (always 200) | Public |
+| `GET` | `/api/health`, `/healthz` | Read-only liveness probe (always 200; includes version and boot-time `credential_map` coverage check status, covered/missing/extra project counts §2.10) | Public |
 | `GET` | `/api/health/ready` | Readiness probe — 200 once the store has loaded, 503 before (used by the deploy healthcheck) | Public |
 | `POST` | `/api/auth/session` | HMAC session-token handshake (requires `KANBAN_AUTH_SECRET`) | Proof-of-secret |
 | `POST` | `/api/auth/revoke` | Revoke the caller's own HMAC session token immediately (jti deny-list) | Bearer session token |
@@ -370,7 +372,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (508 tests, including the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (198 tests, including the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (528 tests, including the v3.1.0 credential-map coverage check suite (§2.10; Map/object input flexibility, store-project deduplication, log redaction, non-fatal errors, live /api/health probe integration), the v3.0.0 AgentOS 8-state workflow test suite (state machine transitions, role permissions, backward-compatible alias normalization, transparent store migration), the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (198 tests, including the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 CI additionally drives a real headless Chrome over the DevTools protocol
 (`scripts/check-card-layout.mjs`, `scripts/check-browser-smoke.mjs`, and —
@@ -440,7 +442,7 @@ tracked as `opt-*` backlog cards on the live board. Honest status per item:
 2. ~~**Operator Assignment**~~ — **shipped in v2.11.0**: a privileged caller
    can assign a task to a named agent (or release it) with
    `POST /api/tasks/:id/assign`; a plain assignment sets the owner + lease and
-   lifts a BACKLOG card to BUILDING.
+   lifts to IN_PROGRESS (or appropriate active state).
 3. ~~**Custom Column Colors**~~ — **shipped in v2.5.0**: per-column accent
    overrides via `PUT /api/settings`, persisted per project and applied live
    over SSE.
