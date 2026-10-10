@@ -152,6 +152,26 @@ function authorizeRead(req) {
   return false;
 }
 
+/**
+ * §2.10 — does this request present a credential the board accepts?
+ *
+ * `isProbePath` deliberately exempts `/api/health` from read auth, so an
+ * anonymous caller reaches that route even when `KANBAN_READ_AUTH=token` is on.
+ * The route needs to tell an identified caller from an anonymous one on its own,
+ * because the middleware has already waved it through: this is that check.
+ *
+ * It only *identifies*; it never rejects. A `false` result must not be treated
+ * as an auth failure anywhere — callers use it to decide how much of a response
+ * to disclose, not whether to serve one.
+ *
+ * Side effect matches the middleware's: on success `req.caller.role` may be
+ * refined from a stream ticket. No failure is recorded, so calling this on a
+ * probe path can never trip the auth-failure rate limiter.
+ */
+export function hasReadCredential(req) {
+  return authorizeRead(req);
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createRequire } from 'node:module';
 import * as store from '../store.js';
-import { parseProjectTokens } from '../middleware/auth.js';
+import { parseProjectTokens, hasReadCredential } from '../middleware/auth.js';
 import { checkCredentialCoverage } from '../utils/credentialMap.js';
 
 const require = createRequire(import.meta.url);
@@ -28,12 +28,22 @@ router.get('/', asyncHandler(async (req, res) => {
   const reaperEnabled = store.isReaperEnabled();
 
   // §2.10: surface credential-map coverage so a monitoring probe sees a
-  // truncated token map without reading logs. Read-only; exposes project NAMES
-  // and counts only, never a token value.
+  // truncated token map without reading logs. Read-only; never exposes a token
+  // value.
+  //
+  // Project NAMES are withheld from anonymous callers. This route is exempt from
+  // read auth (`isProbePath`) so it stays reachable by the platform healthcheck,
+  // which means it is also reachable by anyone who finds a hosted board — even
+  // with `KANBAN_READ_AUTH=token` on. `missing` names store projects, which
+  // `GET /api/projects` already publishes; `extra` is the sharper one, naming
+  // token-map entries that have NO store file and so appear nowhere else. Counts
+  // are enough for a probe to alert on, so anonymous callers get counts and an
+  // identified caller gets the names.
   const coverage = checkCredentialCoverage(
     store.getProjectSummaries().map((s) => s.project),
     parseProjectTokens()
   );
+  const identified = hasReadCredential(req);
 
   res.json({
     status: loaded && reaperEnabled ? 'ok' : 'degraded',
@@ -50,8 +60,11 @@ router.get('/', asyncHandler(async (req, res) => {
     credential_map: {
       status: coverage.status,
       covered: coverage.covered.length,
-      missing: coverage.missing,
-      extra: coverage.extra,
+      missing_count: coverage.missing.length,
+      extra_count: coverage.extra.length,
+      ...(identified
+        ? { missing: coverage.missing, extra: coverage.extra }
+        : {}),
     },
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
