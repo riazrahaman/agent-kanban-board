@@ -138,6 +138,15 @@ describe('v2.14.4 UI Settings persistence', () => {
     assert.equal(m.readStoredMobileFiltersOpen(), false)
   })
 
+  it('headerOpen persistence round-trips correctly', async () => {
+    const m = await importModule('uiSettings.ts')
+    assert.equal(m.readStoredHeaderOpen(), false)
+    m.writeStoredHeaderOpen(true)
+    assert.equal(m.readStoredHeaderOpen(), true)
+    m.writeStoredHeaderOpen(false)
+    assert.equal(m.readStoredHeaderOpen(), false)
+  })
+
   it('gracefully degrades when localStorage throws (e.g. private browsing)', async () => {
     globalThis.localStorage = {
       getItem: () => {
@@ -156,12 +165,14 @@ describe('v2.14.4 UI Settings persistence', () => {
     assert.equal(m.readStoredView(), 'board')
     assert.equal(m.readStoredRailOpen(), false)
     assert.equal(m.readStoredMobileFiltersOpen(), false)
+    assert.equal(m.readStoredHeaderOpen(), false)
     assert.doesNotThrow(() => {
       m.writeStoredFilters({ search: 'test' })
       m.writeStoredShowMetrics(true)
       m.writeStoredView('about')
       m.writeStoredRailOpen(true)
       m.writeStoredMobileFiltersOpen(true)
+      m.writeStoredHeaderOpen(true)
       m.resetStoredFilters()
     })
   })

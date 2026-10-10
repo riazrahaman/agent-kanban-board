@@ -122,6 +122,17 @@ body,
 html,
 body {
   overflow-x: hidden;
+  background-color: var(--bg);
+  color: var(--ink);
+  min-height: 100%;
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  touch-action: manipulation;
 }
 
 /* Mobile browsers grow/shrink the visual viewport as the URL bar shows and
