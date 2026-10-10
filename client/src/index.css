@@ -107,6 +107,23 @@ body,
   height: 100%;
   background-color: var(--bg);
   color: var(--ink);
+  /* v3.2.3 (GH #103 follow-up): iOS ignores the viewport meta tag's
+     user-scalable=no since ~iOS 10, but honours touch-action. Omitting the
+     pinch-zoom keyword blocks pinch/double-tap zoom; pan-x pan-y preserves
+     both scroll axes for every descendant via the touch-action intersection
+     rule (GH #87) — it can only remove pinch-zoom, never narrow which axis
+     a nested scroller uses. JS backup: lib/pinchZoomGuard.ts. */
+  touch-action: pan-x pan-y;
+}
+
+/* iOS Safari's WebKit "Text Autosizer" independently inflates multi-line
+   text in narrow columns (a task card's title) but not short single-line
+   text (the mono badges beside it) — why titles read oversized vs badges on
+   a real iPhone despite both being fixed Tailwind sizes. Hands sizing back
+   to the explicit `text-*` utilities already in the markup. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* Defensive against a WebKit/iOS Safari quirk (v2.17.0, mobile-dialog fixes):
@@ -142,6 +159,22 @@ a {
 @supports (height: 100dvh) {
   .h-screen {
     height: 100dvh;
+  }
+}
+
+/* v3.2.3 (GH #103 follow-up, round 1): `lvh` (the large viewport — as tall
+   as the screen gets, chrome collapsed, doesn't shrink for Safari's floating
+   bottom toolbar) fixes the dead strip left by a `dvh` shell that stops
+   exactly at the toolbar's top edge — see CHANGELOG 3.2.3 for the full
+   reasoning and why pairing it with the column's bottom padding matters.
+   Scoped to `.app-shell` (App.tsx's root only), NOT `.h-screen` globally:
+   `.h-screen` is also used by `fixed` panels (TaskSheet, and BugReportDialog
+   via its own inline `100dvh`) that must stay within the actually-visible
+   area — growing THEM to `lvh` would push their pinned footers behind the
+   floating toolbar with no way to scroll to them, the opposite of the fix. */
+@supports (height: 100lvh) {
+  .app-shell {
+    height: 100lvh;
   }
 }
 

@@ -144,7 +144,10 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
   }
 
   return (
-    <div className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+    // v3.2.3 (GH #103 follow-up, round 1): same floating-toolbar clearance
+    // as Column.tsx/Portfolio.tsx — this view also sits inside the
+    // `.app-shell` (index.css).
+    <div className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
       <div className="mx-auto w-full max-w-[1536px] px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex justify-start lg:justify-center gap-8 xl:gap-12">
           {/* Left Navigation: Table of Contents */}

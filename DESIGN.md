@@ -163,7 +163,17 @@ than a border to nest, keeping the hairline budget low.
 ```
 
 - `h-screen` is overridden to `100dvh` under `@supports (height:100dvh)` so
-  mobile URL bars don't push the layout off-screen.
+  mobile URL bars don't push the layout off-screen. This root shell div ALSO
+  carries a dedicated `.app-shell` class, further overridden to `100lvh`
+  under `@supports (height:100lvh)` (v3.2.3) — the LARGE viewport (chrome
+  collapsed) rather than the dynamic one, so the shell stays as tall as the
+  screen ever gets and doesn't leave a dead strip of unthemed background
+  when iOS Safari's floating bottom toolbar is showing. The `100lvh`
+  override is scoped to `.app-shell`, NOT to `.h-screen` globally: `h-screen`
+  is also used by `fixed` panels (TaskSheet's drawer) that must stay within
+  the actually-visible area, or their pinned footers end up behind the
+  floating toolbar with no way to scroll to them (a round-1 review catch).
+  See CHANGELOG 3.2.3 for the full dvh-vs-lvh reasoning.
 - The header is the only place the display serif appears; every control in it is
   mono, uppercase, `text-[11px]`, and hairline-bordered
   (`border border-line bg-surface px-2.5 py-1.5 … hover:bg-muted-bg`).
@@ -251,7 +261,12 @@ unmapped priority falls back to `medium` so a render can never throw.
   badge group takes its own full-width line (`w-full sm:w-auto`) so the id owns
   the row.
 - Title: `text-sm font-medium leading-snug text-ink break-words`; double-click to
-  edit in place.
+  edit in place. On a real iPhone this rendered visibly larger than the
+  `text-[10px]`/`text-[11px]` mono badges beside it despite both being fixed
+  sizes — iOS Safari's WebKit text autosizer inflates multi-line prose in
+  narrow columns independently of any explicit `text-*` class. Fixed
+  globally (v3.2.3) via `text-size-adjust: 100%` in `index.css`, not by
+  resizing the title itself.
 - Footer: `border-t border-line/60 pt-2`, assigned agent in mono (`unassigned` is
   `text-muted/60 italic`), issues chip in `bg-warn-bg text-warn`.
 - Memoised by `id + version` (a version bump is a content change).
@@ -467,7 +482,13 @@ keyframes exist; add animation sparingly.
 | `lg` | Additional header labels reveal |
 
 Guarded by `client/src/lib/mobileToolbar.test.mjs` and `responsive.test.mjs`,
-which also assert the `100dvh` override exists.
+which also assert the `100dvh` `.h-screen` override, the `.app-shell`-scoped
+`100lvh` override (and that it does NOT target `.h-screen` globally — see
+§5), the root `touch-action: pan-x pan-y` (blocks iOS pinch zoom without
+narrowing which axis any nested scroller can use — see §5 and §7.7-adjacent
+`pinchZoomGuard.ts`), and the `text-size-adjust: 100%` override (stops
+WebKit's text autosizer from inflating prose independently of the
+`any-pointer: coarse` input-zoom rule) all exist.
 
 ---
 
