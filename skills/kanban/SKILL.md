@@ -132,7 +132,7 @@ The Orchestrator operates as `admin` for status resets, unblocking, and lifecycl
    - **Dispatch TESTER / VALIDATOR**: Pass test suite commands and verification scope.
    - Await Tester result (`Pass` | `Fail`).
    - If **Fail**:
-     - `PATCH /tasks/:id?project=X` (Status: `IN_PROGRESS`, Role: `tester` or `admin`) to reject back to builder, or `READY` to reset.
+     - `PATCH /tasks/:id?project=X` (Status: `IN_PROGRESS`, Role: `tester` or `admin`, with `expected_version`) to reject back to the builder. (`VALIDATION → READY` is not a legal transition; `IN_PROGRESS` is the only way back.)
      - `POST /tasks/:id/logs?project=X` (Log: "Tester failed. Returning to IN_PROGRESS.").
      - Restart build loop.
 
@@ -163,10 +163,10 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
   Do not cache `version` statically across multiple intermediate writes.
 - **Two Distinct 409 Errors** (inspect response body):
   - `"Version mismatch"` (with `details.expected` / `details.provided`): The provided `expected_version` is stale. Re-read the current version and retry the `PATCH`.
-  - `"Invalid state transition from A to B"`: The lease lapsed and the background reaper reset the card to `BACKLOG`. Recover by re-claiming (`POST /claim`) and re-walking stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
+  - `"Invalid state transition from A to B"`: The lease lapsed (or the card stopped making progress for `KANBAN_PROGRESS_STALL_MS`, or it was ownerless past the orphan grace) and the background reaper reset the card to `READY` with its owner and lease cleared. Recover by re-claiming it from `READY` (`POST /tasks/:id/claim?project=X`, which puts it back into `IN_PROGRESS`, or `PLANNING` for a planner) and re-walking the stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
 - **Claim to Own, PATCH to Move**: Never enter active stages via status-only PATCH.
 - **Heartbeat & Leases**: Claim TTL is `KANBAN_CLAIM_TTL_MS` (default 600,000 ms = 10 min). Issue `POST /tasks/:id/heartbeat?project=X` at least every 2 minutes while holding a card. A claim may also request an explicit window with `{"lease_ms": <ms>}` (clamped to `KANBAN_MIN_LEASE_MS` 60,000 and `KANBAN_MAX_LEASE_MS` 7,200,000). Logs from the holder also extend the lease.
-- **3-Cycle Limit**: If a cycle (Build → Review → Test) repeats 3 times, halt and report blockers.
+- **3-Cycle Limit**: If a cycle (IN_PROGRESS → IN_REVIEW → VALIDATION) repeats 3 times, halt and report blockers.
 - **Evidence-Based Success**: Never transition stages without explicit command output, test results, or commit hashes.
 - **Rate Limiting & Proxy Configuration**: In `v3.2.1+`, the board limits invalid authentication attempts (`KANBAN_AUTH_RATE_LIMIT_PER_MIN`, default 60/min) tracked per client IP using Express's `req.ip`. Reverse proxy deployments must set `KANBAN_TRUST_PROXY` to the expected proxy depth (e.g., `1`, `loopback`, or `true`) so client IPs isolate accurately. If you receive `429 Too Many Requests: authentication rate limit exceeded`, respect the `Retry-After` header before retrying, and verify token configurations to avoid lockout.
 - **Payload & Encoding Standards**: In `v3.2.1+`, the server strictly translates body-parser errors: unsupported `Content-Encoding` returns `415 Unsupported Media Type` (`error: "unsupported_encoding"`), while payload corruption or length violations return `400 Bad Request` (`request_size_invalid`, `request_aborted`). Orchestrators and workers must send standard uncompressed JSON payloads (`Content-Type: application/json; charset=utf-8`) under 100KB.
