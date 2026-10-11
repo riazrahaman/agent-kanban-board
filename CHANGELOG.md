@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,17 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.2.5] — 2026-10-11
+
+Diagnosability fix for the live Report-a-bug 502s. Production diagnosis: GitHub was answering `401 Bad credentials` on every filing attempt because Railway's `KANBAN_REPORT_GITHUB_TOKEN` was a 19-character placeholder, not a real token — and the server logged nothing on that path, so the deploy logs gave no clue at all. (Separately, Railway's start command was fixed from `npm --prefix server start` to `node server/server.js`: npm exits non-zero on `SIGTERM`, so Railway was emailing "Deploy Crashed" on every clean redeploy even though nothing had crashed — this is now documented, not a code change.)
+
+### Fixed
+- **Silent `could_not_file` failures now log a diagnosis** (`server/routes/bugReports.js`): every GitHub-filing failure (every non-201 outcome and every network error) leaves exactly ONE `[kanban bug-report]` console line — GitHub's HTTP status, its `message` field (truncated to ~160 chars), the `x-accepted-github-permissions` and `x-ratelimit-remaining` headers, the number of attempts made, the configured repo, and a short human hint keyed on status (401 → token invalid/expired/placeholder, 403 → missing Issues:write or secondary rate limit, 404 → wrong repo/no access, 410 → issues disabled, 422 → validation, 5xx/network → GitHub outage). A successful filing logs the issue number only, at info level. Turnstile verification failures log the same way, with Cloudflare's `error-codes` array and which specific check failed (success:false / action mismatch / hostname mismatch, with the hostname). Logging is rate-limited per process (one identical line per 60s) so a flood can't fill the log, and a redaction pass strips the configured secrets from any line as defense in depth. Never logged: the GitHub token, the Authorization header, the Turnstile secret, the report's title/description, or the client IP.
+- **Startup warning for a placeholder-shaped credential**: when the feature is enabled but `KANBAN_REPORT_GITHUB_TOKEN` doesn't start with a real GitHub token prefix (`github_pat_`/`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`) and isn't at least 36 characters, or `KANBAN_REPORT_REPO` isn't shaped like `owner/name`, or `TURNSTILE_SITE_KEY` doesn't look like an opaque Turnstile key, the server logs one `[kanban bug-report] WARNING: ... does not look like ...` line at boot — without ever printing the value or its length. The feature stays on; this is a nudge, not a gate.
+
+### Docs
+- README and both `docs/USER_AND_OPERATOR_MANUAL.md` copies gain a "Troubleshooting: Could Not File The Report" section (the log-line format, the status→hint→fix table, and how to generate a fine-grained PAT scoped to one repo with Issues: Read and write) and a Railway deployment note: the start command must be `node server/server.js`, never `npm start`/`npm --prefix server start`, and a Railway dashboard override of the custom start command takes precedence over `railway.json` silently.
 
 ## [3.2.4] — 2026-10-11
 
