@@ -247,6 +247,34 @@ body {
     height: auto;
   }
 
+  /* The phone-only sticky column bar (Board.tsx) sits above the strip. */
+  .board-root {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Short columns stay short: without this every column stretches to the
+     tallest one and a 3-card READY column is drawn as a tall empty box. */
+  .board-scroll {
+    align-items: flex-start;
+  }
+
+  /* "Which column am I in" bar, pinned under the sticky page header.
+     --app-header-h is the header's height while it is sticky, else 0
+     (App.tsx). The columns' own headers can't do this: sticky binds to the
+     nearest scroll container, which for them is the horizontal strip. */
+  .column-indicator {
+    position: sticky;
+    top: var(--app-header-h, 0px);
+  }
+
+  /* While an overlay locks the page, <body> is pinned at -scrollY, which
+     would carry the sticky header off-screen behind the backdrop; shift it
+     back by the same amount (--scroll-lock-y, lib/scrollLock.ts). */
+  html.scroll-locked .app-header:not([data-controls-open='true']) {
+    transform: translateY(var(--scroll-lock-y, 0px));
+  }
+
   .column-list {
     overflow: visible;
     flex: none;

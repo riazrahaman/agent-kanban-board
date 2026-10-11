@@ -1115,3 +1115,14 @@ test('overlay scroll lock: html.scroll-locked pins body; App locks for TaskSheet
   assert.match(cssSource, /html\.scroll-locked body\s*\{[^}]*position:\s*fixed/)
   assert.match(appSource, /useDocumentScrollLock\(openTask !== null \|\| bugReportOpen \|\| railDrawerShown\)/)
 })
+
+test('phone layout (review round 2): short columns stay short, sticky column bar, header kept visible while locked', () => {
+  const block = phoneBlock()
+  assert.match(block, /\n  \.board-scroll \{\s*align-items:\s*flex-start;/, 'without this every column stretches to the tallest one')
+  assert.match(block, /\.board-root\s*\{\s*flex-direction:\s*column;/)
+  const ind = rule(block, '.column-indicator')
+  assert.match(ind, /position:\s*sticky/)
+  assert.match(ind, /top:\s*var\(--app-header-h,\s*0px\)/)
+  assert.match(block, /html\.scroll-locked \.app-header:not\(\[data-controls-open='true'\]\)\s*\{\s*transform:\s*translateY\(var\(--scroll-lock-y,\s*0px\)\)/)
+  assert.match(appSource, /setProperty\('--app-header-h', headerOpen \? '0px' : `\$\{header\.offsetHeight\}px`\)/, 'App publishes the sticky header height (0 while the controls are open and it is not sticky)')
+})

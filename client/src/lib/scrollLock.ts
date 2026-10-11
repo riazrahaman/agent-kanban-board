@@ -11,7 +11,10 @@ export const PHONE_LAYOUT_QUERY = '(max-width: 47.99rem) and (pointer: coarse)'
 export const SCROLL_LOCK_CLASS = 'scroll-locked'
 
 type DocLike = {
-  documentElement: { classList: { add(c: string): void; remove(c: string): void } }
+  documentElement: {
+    classList: { add(c: string): void; remove(c: string): void }
+    style: { setProperty(name: string, value: string): void; removeProperty(name: string): void }
+  }
   body: { style: { top: string } }
 }
 type WinLike = {
@@ -36,6 +39,8 @@ export function lockDocumentScroll(doc: DocLike = document, win: WinLike = windo
   if (lockCount === 0) {
     savedY = win.scrollY
     doc.body.style.top = `-${savedY}px`
+    // Lets the sticky header be shifted back into view while locked (index.css).
+    doc.documentElement.style.setProperty('--scroll-lock-y', `${savedY}px`)
     doc.documentElement.classList.add(SCROLL_LOCK_CLASS)
   }
   lockCount++
@@ -46,6 +51,7 @@ export function lockDocumentScroll(doc: DocLike = document, win: WinLike = windo
     lockCount--
     if (lockCount === 0) {
       doc.documentElement.classList.remove(SCROLL_LOCK_CLASS)
+      doc.documentElement.style.removeProperty('--scroll-lock-y')
       doc.body.style.top = ''
       win.scrollTo(0, savedY)
     }
@@ -57,15 +63,48 @@ export function scrollLockCount(): number {
   return lockCount
 }
 
+type MediaQueryLike = {
+  matches: boolean
+  addEventListener?(type: 'change', listener: () => void): void
+  removeEventListener?(type: 'change', listener: () => void): void
+}
+
 /**
- * Locks the document scroll while `active`, but only in the phone layout —
- * everywhere else the document never scrolls (the shell scrolls internally),
- * so there is nothing to lock and <body> is left untouched.
+ * Holds a scroll lock exactly while `mq` (the phone-layout query) matches,
+ * following live changes — e.g. rotating the device across the 768px
+ * breakpoint while an overlay is open. Leaving the phone layout releases the
+ * lock (which always restores the scroll position, so <body> is never left
+ * fixed at a negative top in the desktop layout); entering it (an overlay
+ * opened in landscape, then rotated to portrait) applies it. Returns a
+ * dispose function that releases any held lock.
+ */
+export function bindScrollLockToQuery(mq: MediaQueryLike | undefined, lock: () => () => void): () => void {
+  let release: (() => void) | null = null
+  const sync = () => {
+    const want = mq?.matches ?? false
+    if (want && !release) release = lock()
+    else if (!want && release) {
+      release()
+      release = null
+    }
+  }
+  sync()
+  mq?.addEventListener?.('change', sync)
+  return () => {
+    mq?.removeEventListener?.('change', sync)
+    release?.()
+    release = null
+  }
+}
+
+/**
+ * Locks the document scroll while `active`, but only while the phone layout
+ * applies — everywhere else the document never scrolls (the shell scrolls
+ * internally), so there is nothing to lock and <body> is left untouched.
  */
 export function useDocumentScrollLock(active: boolean): void {
   useEffect(() => {
     if (!active) return
-    if (!(window.matchMedia?.(PHONE_LAYOUT_QUERY).matches ?? false)) return
-    return lockDocumentScroll()
+    return bindScrollLockToQuery(window.matchMedia?.(PHONE_LAYOUT_QUERY), () => lockDocumentScroll())
   }, [active])
 }
