@@ -46,6 +46,15 @@ Second and third real-iPhone follow-ups (GH #103). A screen recording of the liv
   - While the `⋯` controls are open, the bar's top is `max(--app-header-h, env(safe-area-inset-top))`, so it never sits under the status bar.
   - The board is keyed by project, so "Show N more" expansion resets when you switch projects.
   - Rotating portrait → landscape → portrait with an overlay open no longer loses the saved scroll position. Crossing the breakpoint unpins `<body>` without scrolling and carries the position; re-entering portrait re-pins at it; only the real close restores it.
+- **Phone Signal Rail drawer trapped itself** (tester finding, reproduced in Chromium and WebKit): the drawer's only toggle lives in the `⋯` header controls, which the open drawer covers. The drawer (z-40, over its z-30 backdrop, both above the z-20 header in every state) had no close control and ignored Escape, so the only exit was a ~70px backdrop sliver. It is now a modal dialog with its own CLOSE button (44px on touch, focused on open). Escape, the button and the backdrop all close it, focus returns to the toggle without scrolling the page, and it pads both safe-area insets.
+- **HeaderHelp did not close on an outside tap on iOS**: it listened for `mousedown`, which iOS does not fire for a tap on a non-clickable area. It now uses `pointerdown`, like the project picker.
+- **Docs, skill and comments said reclaim/normalize/restore goes to BACKLOG**: the code returns a card to `READY` in all three cases.
+  - **Bundled skill:** `skills/kanban/SKILL.md` now says the reaper resets to `READY`, so the error is "Invalid state transition from READY to <X>" and recovery is re-claiming from `READY`. It also no longer suggests `VALIDATION → READY` after a failed validation; that isn't a legal transition, and `IN_PROGRESS` is the only way back. `skills/kanban/README.md` is updated to match.
+  - **Other docs:** README (trash restore, `KANBAN_ORPHAN_GRACE_MS`) and the manual (orphan grace, Telegram note), in both `docs/` and `docs/with-images/`. The file-by-file server count is 532 → 534.
+  - **`ONBOARDING.md`:** it still taught the v2 flow; its example now runs verbatim on 3.2.4.
+  - **`docs/skillport/SKILLPORT_DOCS.md`:** moved to v3.
+  - **`DESIGN.md` §6/§7.2:** the status palette and column accents now cover the nine v3 statuses, and the alias table is the right way round.
+  - **Server comments:** `store.js` (`reclaimTaskInner`, `applyClaim`, bulk heartbeat, trash restore, orphan grace, `assignTask`), the `notifier.js` header and the `routes/tasks.js` next-claim comment. Comment lines only; no behaviour change.
 - **About page was stale against v3** (audited against the code):
   - **Lifecycle walk:** it showed the pre-v3 five states (`BUILDING`/`IN_TEST`). It now walks the v3 8-state machine plus `BLOCKED`, with the role that moves a card into each state; `READY` is the only claimable state.
   - **Reclaim target:** the reaper, notifier, FAQ and reclaim-flow copy said cards return to `BACKLOG`. In v3 they return to `READY`, and progress-stalled claims are reclaimed too.
@@ -96,6 +105,15 @@ Second and third real-iPhone follow-ups (GH #103). A screen recording of the liv
   - **Column bar:** has exactly one live region, containing only the column name; its top is 0px with `⋯` open (no safe-area inset in emulation).
   - **Show more:** expanded DONE resets to 25 cards after switching demo → live.
   - **Regression:** the round-2 suite still passes.
+- **Rail drawer** (Chromium and WebKit, 360/390/430, opened from the `⋯` row at scrollY 60):
+  - While open, the header toggle is covered as expected and the CLOSE button is on top (44px, 6px from the top).
+  - Each of the three close paths (button, Escape, backdrop tap) closes the drawer, releases the lock (no `scroll-locked` class, body unpinned), restores scrollY to exactly 60, returns focus to the toggle, and leaves the toggle clickable again.
+- **Other overlays reachable from the `⋯` row:**
+  - **HeaderHelp:** on top, closes on Escape and on an outside tap.
+  - **Project picker:** on top, closes on Escape.
+  - **Bug dialog:** its Close button is on top, Escape closes it, and the scroll lock is released.
+  - **Theme toggle:** cycles.
+  - None of them traps.
 - **Not verifiable without an iPhone**:
   - Whether the scrolling document actually renders behind iOS 26 Safari's translucent floating toolbar.
   - Whether the address bar collapses or expands on scroll as on other sites.
@@ -111,7 +129,8 @@ Second and third real-iPhone follow-ups (GH #103). A screen recording of the liv
 - `menuPlacement.test.mjs` (7 cases): placement maths (desktop right-alignment preserved, the left-edge iPhone case, a sweep of trigger positions across 320–1280px viewports, shrink-to-fit) plus source contracts for ProjectPicker and ColumnColorsControl. These cover fixed + measured placement with no `right-0` anchoring, capped `100dvh`/safe-area max-height, internal scroll, 44px/14px touch options, truncation with tooltip, and `pointerdown` outside-tap close.
 - `scrollLock.test.mjs` +2 for the round-3 rotation round trip and `release(false)`; `phoneBoard.test.mjs` +3 for the column bar's live region, its safe-area top and the project-keyed reset.
 - `about.test.mjs`: pins the v3 lifecycle (order and roles) and adds guards against legacy status names, reclaim-to-BACKLOG wording, a stale stack, the 5-minute lease and an unscoped claim curl. The ADR count is checked against `docs/decisions`.
-- Client: 253 (was 213; `aboutContent.ts` updated). Server: unchanged at 534.
+- `responsive.test.mjs` +2: the rail drawer contract (dialog semantics, 44px CLOSE, Escape + backdrop + button close, focus moves in and returns with `preventScroll`, safe-area padding, stacking above the header) and HeaderHelp's `pointerdown` outside-tap close.
+- Client: 255 (was 213; `aboutContent.ts` updated). Server: unchanged at 534.
 
 ## [3.2.3] — 2026-10-10
 
