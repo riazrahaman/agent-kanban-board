@@ -182,6 +182,15 @@ than a border to nest, keeping the hairline budget low.
     in the document. The hooks are semantic classes (`app-main`,
     `board-pane`, `board-frame`, `board-root`, `board-viewport`,
     `kanban-column`, `column-list`, `portfolio-view`, `about-view`).
+    Because every column shares the document's one vertical scroll
+    position: the strip aligns columns to the top (short columns stay
+    short); phones render 25 cards per column plus a 44px "Show N more"
+    (counts stay full totals); a sticky current-column bar sits under the
+    page header (`top: var(--app-header-h)`) — the columns' own headers
+    can't be sticky against the document because they live inside the
+    horizontal scroll container; and when the snapped column changes the
+    page re-aligns to that column's top if it is hidden under the sticky
+    chrome (never while the user is scrolling vertically).
     Full-height overlays (TaskSheet, BugReportDialog, the rail drawer) lock
     the document scroll (`lib/scrollLock.ts`) and restore its position.
 - With `viewport-fit=cover` the header adds `env(safe-area-inset-top)` to
