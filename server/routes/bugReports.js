@@ -28,6 +28,18 @@ import path from 'node:path';
  *                                          https://api.github.com) — lets
  *                                          tests/demo point at a local stub
  *                                          (see scripts/stub-github-issues.mjs).
+ *
+ * Failure logging (v3.2.5): every GitHub-filing or Turnstile-verification
+ * failure gets ONE rate-limited `[kanban bug-report]` console line (status,
+ * GitHub's `message`, the accepted-permissions/rate-limit-remaining headers,
+ * attempt count, repo, and a human hint — or the Turnstile `error-codes`).
+ * This is what makes a bad credential visible in `railway logs` instead of
+ * silently 502ing every report. NEVER logged: the GitHub token, the
+ * Authorization header, the Turnstile secret, the report's title/
+ * description/contact, or the client IP. A startup warning also fires if
+ * KANBAN_REPORT_GITHUB_TOKEN/KANBAN_REPORT_REPO/TURNSTILE_SITE_KEY don't
+ * look shaped like real credentials (see looksLikeGithubToken et al.) — it
+ * does not disable the feature, only flags a likely placeholder.
  */
 
 // Strips C0/DEL control characters but keeps newlines/tabs — descriptions are
@@ -133,6 +145,60 @@ function isConfigured() {
   );
 }
 
+// ---------------------------------------------------------------------
+// Config-SHAPE checks + safe failure logging (v3.2.5, GH incident: Railway's
+// KANBAN_REPORT_GITHUB_TOKEN was a 19-char placeholder, GitHub answered 401
+// 'Bad credentials' on every report, and the server logged nothing — the
+// Railway deploy logs gave no clue at all). These checks never print the
+// credential itself (not even partially or its length), only whether its
+// SHAPE looks like a real one, so a placeholder gets a boot-time nudge
+// instead of a silent per-request 401/403/404 nobody notices.
+// ---------------------------------------------------------------------
+const LOG_PREFIX = '[kanban bug-report]';
+
+const GITHUB_TOKEN_PREFIXES = ['github_pat_', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
+const GITHUB_TOKEN_MIN_LENGTH = 36;
+
+export function looksLikeGithubToken(token) {
+  if (typeof token !== 'string') return false;
+  return GITHUB_TOKEN_PREFIXES.some((p) => token.startsWith(p)) && token.length >= GITHUB_TOKEN_MIN_LENGTH;
+}
+
+/** "owner/name" — one slash, no whitespace, non-empty on both sides. */
+export function looksLikeRepoShape(repo) {
+  return typeof repo === 'string' && /^[^\s/]+\/[^\s/]+$/.test(repo);
+}
+
+/** Loose shape check: Cloudflare Turnstile site keys are a short opaque
+ * token with no whitespace; this does not try to validate the real format,
+ * only catch an obviously-wrong value (empty, too short, containing spaces). */
+export function looksLikeTurnstileSiteKey(key) {
+  return typeof key === 'string' && /^[0-9a-zA-Z_-]{10,}$/.test(key);
+}
+
+function truncate(str, max) {
+  const s = String(str ?? '');
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** Short human hint keyed on the GitHub HTTP status, for the failure log line. */
+function hintForStatus(status) {
+  switch (status) {
+    case 401:
+      return 'token invalid/expired/placeholder';
+    case 403:
+      return 'token lacks Issues:write or secondary rate limit';
+    case 404:
+      return 'repo name wrong or token has no access to that repo';
+    case 410:
+      return 'issues disabled';
+    case 422:
+      return 'validation (label)';
+    default:
+      return 'GitHub outage';
+  }
+}
+
 /**
  * @param {object} deps
  * @param {typeof fetch} [deps.fetch] injectable so tests never hit the
@@ -148,16 +214,67 @@ export function createBugReportsRouter(deps = {}) {
   const BOARD_VERSION = boardVersion();
   const router = express.Router();
 
-  // One-time startup warning: TURNSTILE_HOSTNAMES is optional, but an operator
-  // who configured the feature and forgot it gets a nudge instead of a silent
-  // gap in the hostname allowlist check. Evaluated once at router creation
-  // (≈ process startup), not per-request.
-  if (isConfigured() && !process.env.TURNSTILE_HOSTNAMES) {
-    console.warn(
-      '[kanban bug-reports] TURNSTILE_HOSTNAMES is unset: siteverify responses are ' +
-        'accepted from any hostname. Set it to a comma-separated allow-list to pin ' +
-        'reports to your deployed origin(s).',
-    );
+  // One-time startup warnings. Evaluated once at router creation (≈ process
+  // startup), not per-request. None of these disable the feature — an
+  // operator who typo'd a value still gets a working-ish feature plus a
+  // loud nudge, rather than either a silent 401 flood or a hard crash.
+  if (isConfigured()) {
+    // TURNSTILE_HOSTNAMES is optional, but an operator who configured the
+    // feature and forgot it gets a nudge instead of a silent gap in the
+    // hostname allowlist check.
+    if (!process.env.TURNSTILE_HOSTNAMES) {
+      console.warn(
+        '[kanban bug-reports] TURNSTILE_HOSTNAMES is unset: siteverify responses are ' +
+          'accepted from any hostname. Set it to a comma-separated allow-list to pin ' +
+          'reports to your deployed origin(s).',
+      );
+    }
+    if (!looksLikeGithubToken(process.env.KANBAN_REPORT_GITHUB_TOKEN)) {
+      console.warn(
+        `${LOG_PREFIX} WARNING: KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token (placeholder?)`,
+      );
+    }
+    if (!looksLikeRepoShape(process.env.KANBAN_REPORT_REPO)) {
+      console.warn(
+        `${LOG_PREFIX} WARNING: KANBAN_REPORT_REPO does not look like "owner/name" (placeholder or misconfigured?)`,
+      );
+    }
+    if (!looksLikeTurnstileSiteKey(process.env.TURNSTILE_SITE_KEY)) {
+      console.warn(
+        `${LOG_PREFIX} WARNING: TURNSTILE_SITE_KEY does not look like a Cloudflare Turnstile site key (placeholder?)`,
+      );
+    }
+  }
+
+  // Per-process log de-duplication: the SAME kind of event (same status/
+  // network-vs-not/repo, or the same Turnstile check) logs at most once per
+  // LOG_WINDOW_MS, so a spam flood — or a real GitHub outage making every
+  // request fail the same way — cannot fill the deploy log. Keyed coarsely
+  // (not on the full rendered line, which varies by `attempts`) so the dedup
+  // actually catches repeats.
+  const LOG_WINDOW_MS = 60 * 1000;
+  const lastLoggedAt = new Map();
+
+  // Defense in depth: GitHub's own `message` field is logged verbatim (it is
+  // operator-useful diagnostic text, e.g. "Bad credentials"), but it is text
+  // we do not control — if our configured secrets were ever echoed back
+  // (buggy upstream, or a test mock standing in for one), strip them before
+  // anything reaches console/stdout. Short values are skipped to avoid a
+  // trivial secret (or an unset one) redacting unrelated text.
+  function redactSecrets(str) {
+    let out = String(str);
+    for (const secret of [process.env.KANBAN_REPORT_GITHUB_TOKEN, process.env.TURNSTILE_SECRET]) {
+      if (secret && secret.length >= 8) out = out.split(secret).join('[redacted]');
+    }
+    return out;
+  }
+
+  function logRateLimited(key, level, line) {
+    const nowTs = now();
+    const last = lastLoggedAt.get(key);
+    if (last !== undefined && nowTs - last < LOG_WINDOW_MS) return;
+    lastLoggedAt.set(key, nowTs);
+    console[level](redactSecrets(line));
   }
 
   router.get('/config', (req, res) => {
@@ -242,15 +359,32 @@ export function createBugReportsRouter(deps = {}) {
         signal: AbortSignal.timeout(8000),
       });
     } catch {
+      logRateLimited(
+        'turnstile:network',
+        'warn',
+        `${LOG_PREFIX} turnstile verification unavailable: network error reaching Cloudflare siteverify`,
+      );
       return { ok: false, status: 502, code: 'verification_unavailable' };
     }
 
-    if (!res.ok) return { ok: false, status: 502, code: 'verification_unavailable' };
+    if (!res.ok) {
+      logRateLimited(
+        'turnstile:http',
+        'warn',
+        `${LOG_PREFIX} turnstile verification unavailable: siteverify responded HTTP ${res.status}`,
+      );
+      return { ok: false, status: 502, code: 'verification_unavailable' };
+    }
 
     let data;
     try {
       data = await res.json();
     } catch {
+      logRateLimited(
+        'turnstile:badjson',
+        'warn',
+        `${LOG_PREFIX} turnstile verification unavailable: siteverify response was not valid JSON`,
+      );
       return { ok: false, status: 502, code: 'verification_unavailable' };
     }
 
@@ -259,14 +393,34 @@ export function createBugReportsRouter(deps = {}) {
     // answers success:false with error-codes:["timeout-or-duplicate"], which
     // is exactly what a real secret returns for a token siteverify has
     // already consumed. Both are reported the same way to the caller.
-    if (data.success !== true) return { ok: false, status: 403, code: 'invalid_captcha' };
-    if (data.action !== 'bug-report') return { ok: false, status: 403, code: 'invalid_captcha_action' };
+    if (data.success !== true) {
+      const codes = Array.isArray(data['error-codes']) ? data['error-codes'] : [];
+      logRateLimited(
+        `turnstile:success-false:${codes.join(',')}`,
+        'warn',
+        `${LOG_PREFIX} turnstile check failed: success=false error-codes=${JSON.stringify(codes)}`,
+      );
+      return { ok: false, status: 403, code: 'invalid_captcha' };
+    }
+    if (data.action !== 'bug-report') {
+      logRateLimited(
+        'turnstile:action-mismatch',
+        'warn',
+        `${LOG_PREFIX} turnstile check failed: action mismatch (expected "bug-report", got ${JSON.stringify(data.action)})`,
+      );
+      return { ok: false, status: 403, code: 'invalid_captcha_action' };
+    }
 
     const allowlist = (process.env.TURNSTILE_HOSTNAMES || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     if (allowlist.length > 0 && !allowlist.includes(data.hostname)) {
+      logRateLimited(
+        'turnstile:hostname-mismatch',
+        'warn',
+        `${LOG_PREFIX} turnstile check failed: hostname mismatch (got ${JSON.stringify(data.hostname)})`,
+      );
       return { ok: false, status: 403, code: 'invalid_captcha_hostname' };
     }
 
@@ -310,6 +464,46 @@ export function createBugReportsRouter(deps = {}) {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // Reads the `message` field + the two diagnostic headers off a failed
+  // GitHub response, for the failure log line ONLY — never surfaced to the
+  // HTTP caller (the client always gets the generic `could_not_file`).
+  // Safe to call at most once per response (consumes the body).
+  async function describeGithubResponse(res) {
+    let message = '';
+    try {
+      const data = await res.json();
+      if (data && typeof data.message === 'string') message = data.message;
+    } catch {
+      // Body already consumed, empty, or not JSON — leave message blank.
+    }
+    return {
+      message: truncate(message, 160),
+      acceptedPermissions: res.headers?.get?.('x-accepted-github-permissions') ?? 'n/a',
+      rateLimitRemaining: res.headers?.get?.('x-ratelimit-remaining') ?? 'n/a',
+    };
+  }
+
+  // ONE line per failed /api/bug-reports request that could not be filed
+  // (not one line per retry attempt) — see the module header for the full
+  // "never log" list (no token, no Authorization header, no report text, no
+  // client IP, no Turnstile secret). `attempts` is the total number of
+  // outbound GitHub calls this request made, including the uncounted
+  // label-stripping retry.
+  function logGithubOutcome({ attempts, repo, networkError, status, message, acceptedPermissions, rateLimitRemaining }) {
+    const hint = networkError ? 'GitHub outage' : hintForStatus(status);
+    const statusLabel = networkError ? 'network error' : `status=${status}`;
+    const key = `github:${networkError ? 'network' : status}:${repo}`;
+    const line =
+      `${LOG_PREFIX} could_not_file: github ${statusLabel} message=${JSON.stringify(message || '')} ` +
+      `accepted-permissions=${acceptedPermissions ?? 'n/a'} ratelimit-remaining=${rateLimitRemaining ?? 'n/a'} ` +
+      `attempts=${attempts} repo=${repo || 'unset'} hint=${JSON.stringify(hint)}`;
+    logRateLimited(key, 'error', line);
+  }
+
+  function logGithubSuccess(issueNumber) {
+    console.info(`${LOG_PREFIX} filed issue #${issueNumber}`);
+  }
+
   async function fileGithubIssue(title, description, userAgent, viewport) {
     const token = process.env.KANBAN_REPORT_GITHUB_TOKEN;
     const repo = process.env.KANBAN_REPORT_REPO;
@@ -320,12 +514,19 @@ export function createBugReportsRouter(deps = {}) {
 
     let payload = { title: safeTitle, body, labels: ['user-report'] };
     let strippedLabelOnce = false;
+    let attempts = 0;
+
+    const giveUp = (info) => {
+      logGithubOutcome({ attempts, repo, ...info });
+      return { ok: false, status: 502, code: 'could_not_file' };
+    };
 
     for (let attempt = 1; attempt <= 3; attempt++) {
+      attempts += 1;
       const outcome = await postIssue(repo, apiUrl, token, payload);
 
       if (!outcome.network) {
-        if (attempt >= 3) return { ok: false, status: 502, code: 'could_not_file' };
+        if (attempt >= 3) return giveUp({ networkError: true });
         await sleep(delays[attempt - 1] ?? 1500);
         continue;
       }
@@ -334,7 +535,8 @@ export function createBugReportsRouter(deps = {}) {
 
       if (res.status === 201) {
         const data = await res.json().catch(() => null);
-        if (!data) return { ok: false, status: 502, code: 'could_not_file' };
+        if (!data) return giveUp({ status: 201, message: 'malformed success response' });
+        logGithubSuccess(data.number);
         return { ok: true, issue_number: data.number, issue_url: data.html_url };
       }
 
@@ -348,17 +550,21 @@ export function createBugReportsRouter(deps = {}) {
       const secondaryRateLimited =
         res.status === 429 || (res.status === 403 && retryAfterMs(res) !== null);
       if (res.status >= 500 || secondaryRateLimited) {
-        if (attempt >= 3) return { ok: false, status: 502, code: 'could_not_file' };
+        if (attempt >= 3) {
+          const info = await describeGithubResponse(res);
+          return giveUp({ status: res.status, ...info });
+        }
         const delay = retryAfterMs(res) ?? delays[attempt - 1] ?? 1500;
         await sleep(delay);
         continue;
       }
 
       // Any other 4xx (400/401/404/422-without-fallback/plain 403...): no retry.
-      return { ok: false, status: 502, code: 'could_not_file' };
+      const info = await describeGithubResponse(res);
+      return giveUp({ status: res.status, ...info });
     }
 
-    return { ok: false, status: 502, code: 'could_not_file' };
+    return giveUp({ status: null, message: 'exhausted retries' });
   }
 
   // express.json() already ran globally in server.js before this router is

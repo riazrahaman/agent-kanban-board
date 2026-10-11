@@ -15,6 +15,9 @@ import {
   buildIssueBody,
   fenceDescription,
   getMaxBackticks,
+  looksLikeGithubToken,
+  looksLikeRepoShape,
+  looksLikeTurnstileSiteKey,
   neutralizeMentions,
   sanitizeTitleForGithub,
   stripControlChars,
@@ -923,5 +926,371 @@ describe('bug reports: no secrets in responses', () => {
       const raw = JSON.stringify(res.body);
       assert.doesNotMatch(raw, /ghp_test_token/);
     });
+  });
+});
+
+// ---------------------------------------------------------------------
+// Failure logging (v3.2.5): a report that can't be filed now leaves exactly
+// one diagnostic console line behind, keyed on status/network with a human
+// hint, GitHub's own `message`, and the two permission/rate-limit headers —
+// the server previously logged NOTHING on this path, which is what made a
+// placeholder KANBAN_REPORT_GITHUB_TOKEN on Railway invisible: every report
+// 502'd and the deploy logs gave no clue (GH incident, Oct 2026).
+// ---------------------------------------------------------------------
+
+/** Swaps the given console methods for recording stubs, runs `fn`, restores
+ * the originals even on throw, and returns `{ warn, error, info }` arrays of
+ * the args joined per call. */
+async function captureConsole(fn) {
+  const originals = { warn: console.warn, error: console.error, info: console.info };
+  const lines = { warn: [], error: [], info: [] };
+  console.warn = (...args) => lines.warn.push(args.join(' '));
+  console.error = (...args) => lines.error.push(args.join(' '));
+  console.info = (...args) => lines.info.push(args.join(' '));
+  try {
+    await fn();
+  } finally {
+    console.warn = originals.warn;
+    console.error = originals.error;
+    console.info = originals.info;
+  }
+  return lines;
+}
+
+describe('bug reports: GitHub failure logging', () => {
+  let saved = {};
+  before(() => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+  });
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  // One case per status, unrolled into explicit `it(...)` calls (rather than
+  // a loop over a CASES array) so the static test-case count the About page
+  // asserts against (client/src/lib/about.test.mjs, counting literal
+  // `it(`/`test(` declarations) matches the runner's actual count.
+  async function assertFailureLogged({ status, githubMessage, hint }) {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({ github: () => fakeResponse(status, { message: githubMessage }) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.42' },
+          body: postBody(),
+        });
+        assert.equal(res.res.status, 502);
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine, `expected a could_not_file log line, got: ${JSON.stringify(lines)}`);
+    assert.match(failureLine, new RegExp(`status=${status}\\b`));
+    assert.match(failureLine, new RegExp(githubMessage));
+    assert.match(failureLine, new RegExp(hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(failureLine, /ghp_test_token/);
+    assert.doesNotMatch(failureLine, /203\.0\.113\.42/);
+    assert.doesNotMatch(failureLine, /Board shows blank column/); // report title
+    assert.doesNotMatch(failureLine, /Steps: open the board/); // report description
+  }
+
+  it('a GitHub 401 logs status + message + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 401, githubMessage: 'Bad credentials', hint: 'token invalid/expired/placeholder' });
+  });
+
+  it('a GitHub 403 logs status + message + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({
+      status: 403,
+      githubMessage: 'Resource not accessible by personal access token',
+      hint: 'token lacks Issues:write or secondary rate limit',
+    });
+  });
+
+  it('a GitHub 404 logs status + message + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({
+      status: 404,
+      githubMessage: 'Not Found',
+      hint: 'repo name wrong or token has no access to that repo',
+    });
+  });
+
+  it('a GitHub 410 logs status + message + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 410, githubMessage: 'Issues are disabled for this repo', hint: 'issues disabled' });
+  });
+
+  it('a GitHub 500 logs status + message + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 500, githubMessage: 'internal error', hint: 'GitHub outage' });
+  });
+
+  it('a 422 that exhausts the label-fallback logs the "validation (label)" hint', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({ github: () => fakeResponse(422, { message: 'still invalid' }) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.match(failureLine, /hint="validation \(label\)"/);
+    assert.match(failureLine, /attempts=2/);
+  });
+
+  it('a network error logs "network error" and the "GitHub outage" hint', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({ github: () => new Error('ETIMEDOUT') });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.match(failureLine, /network error/);
+    assert.match(failureLine, /hint="GitHub outage"/);
+    assert.match(failureLine, /attempts=3/);
+  });
+
+  it('includes the GitHub accepted-permissions and rate-limit-remaining headers', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      github: () =>
+        fakeResponse(
+          403,
+          { message: 'blocked' },
+          { 'x-accepted-github-permissions': 'issues=write', 'x-ratelimit-remaining': '12' },
+        ),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.match(failureLine, /accepted-permissions=issues=write/);
+    assert.match(failureLine, /ratelimit-remaining=12/);
+  });
+
+  it('a successful filing logs the issue number only — no title, description, or body text', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({ github: () => fakeResponse(201, okGithubBody({ number: 99 })) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    assert.equal(lines.info.length, 1);
+    assert.match(lines.info[0], /filed issue #99/);
+    assert.doesNotMatch(lines.info[0], /Board shows blank column/);
+  });
+
+  it('rate-limits repeated identical failures to one line per 60s, then logs again after the window', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '100', KANBAN_REPORT_DAILY_CAP: '100' });
+    const fetchImpl = makeFetch({ github: () => fakeResponse(401, { message: 'Bad credentials' }) });
+    let clock = 1_000_000;
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1], now: () => clock }, async (baseUrl) => {
+        const post = () =>
+          jsonRequest(baseUrl, '/api/bug-reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: postBody(),
+          });
+        await post();
+        clock += 1000; // well within the 60s window
+        await post();
+        clock += 61_000; // past the window
+        await post();
+      }),
+    );
+    const failureLines = lines.error.filter((l) => l.includes('could_not_file'));
+    assert.equal(failureLines.length, 2, 'the second identical failure within 60s must be suppressed');
+  });
+});
+
+describe('bug reports: Turnstile failure logging', () => {
+  let saved = {};
+  before(() => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+  });
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('logs the Cloudflare error-codes array on success:false', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      turnstile: () =>
+        fakeResponse(200, { success: false, 'error-codes': ['invalid-input-response', 'timeout-or-duplicate'] }),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.match(line, /success=false/);
+    assert.match(line, /invalid-input-response/);
+    assert.match(line, /timeout-or-duplicate/);
+  });
+
+  it('logs which check failed on an action mismatch, without the token', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({ turnstile: () => fakeResponse(200, okTurnstileBody({ action: 'login' })) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody({ turnstileToken: 'super-secret-captcha-response' }),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.match(line, /action mismatch/);
+    assert.match(line, /login/);
+    assert.doesNotMatch(line, /super-secret-captcha-response/);
+  });
+
+  it('logs the offending hostname on a hostname mismatch', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ TURNSTILE_HOSTNAMES: 'allowed.example.test' });
+    const fetchImpl = makeFetch({
+      turnstile: () => fakeResponse(200, okTurnstileBody({ hostname: 'evil.example.test' })),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.match(line, /hostname mismatch/);
+    assert.match(line, /evil\.example\.test/);
+  });
+});
+
+describe('bug reports: startup config-shape warnings', () => {
+  let saved = {};
+  before(() => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+  });
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('looksLikeGithubToken accepts real-shaped tokens and rejects placeholders', () => {
+    assert.equal(looksLikeGithubToken(`ghp_${'a'.repeat(36)}`), true);
+    assert.equal(looksLikeGithubToken(`github_pat_${'a'.repeat(30)}`), true);
+    assert.equal(looksLikeGithubToken('placeholder-token-19c'), false);
+    assert.equal(looksLikeGithubToken(''), false);
+    assert.equal(looksLikeGithubToken(undefined), false);
+  });
+
+  it('looksLikeRepoShape accepts "owner/name" and rejects everything else', () => {
+    assert.equal(looksLikeRepoShape('riazrahaman/agent-kanban-board'), true);
+    assert.equal(looksLikeRepoShape('not-a-repo'), false);
+    assert.equal(looksLikeRepoShape('owner/name/extra'), false);
+    assert.equal(looksLikeRepoShape('owner / name'), false);
+    assert.equal(looksLikeRepoShape(''), false);
+  });
+
+  it('looksLikeTurnstileSiteKey accepts an opaque key and rejects an obviously-wrong value', () => {
+    assert.equal(looksLikeTurnstileSiteKey('1x00000000000000000000AA'), true);
+    assert.equal(looksLikeTurnstileSiteKey('short'), false);
+    assert.equal(looksLikeTurnstileSiteKey('has a space in it'), false);
+    assert.equal(looksLikeTurnstileSiteKey(''), false);
+  });
+
+  it('a placeholder KANBAN_REPORT_GITHUB_TOKEN warns at startup; a real-shaped one does not', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ KANBAN_REPORT_GITHUB_TOKEN: 'this-is-a-19-char-tok' });
+    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(
+      lines.warn.some((l) => l.includes('KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token')),
+      `expected a placeholder-token warning, got: ${JSON.stringify(lines.warn)}`,
+    );
+
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ KANBAN_REPORT_GITHUB_TOKEN: `ghp_${'a'.repeat(40)}` });
+    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(
+      !lines.warn.some((l) => l.includes('KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token')),
+      `did not expect a placeholder-token warning, got: ${JSON.stringify(lines.warn)}`,
+    );
+  });
+
+  it('a malformed KANBAN_REPORT_REPO warns at startup; "owner/name" does not', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ KANBAN_REPORT_REPO: 'not-owner-slash-name' });
+    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(lines.warn.some((l) => l.includes('KANBAN_REPORT_REPO does not look like')));
+
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ KANBAN_REPORT_REPO: 'owner/repo' });
+    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(!lines.warn.some((l) => l.includes('KANBAN_REPORT_REPO does not look like')));
+  });
+
+  it('a malformed TURNSTILE_SITE_KEY warns at startup; a real-shaped one does not', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ TURNSTILE_SITE_KEY: 'x' });
+    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(lines.warn.some((l) => l.includes('TURNSTILE_SITE_KEY does not look like')));
+
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ TURNSTILE_SITE_KEY: '1x00000000000000000000AA' });
+    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(!lines.warn.some((l) => l.includes('TURNSTILE_SITE_KEY does not look like')));
+  });
+
+  it('none of these shape warnings fire when the feature is unconfigured', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    const lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.deepEqual(lines.warn, []);
   });
 });
