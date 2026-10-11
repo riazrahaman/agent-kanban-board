@@ -73,6 +73,7 @@ test('ProjectPicker source contract: fixed + measured, never the old absolute ri
   assert.match(pickerSource, /useMenuPlacement\(open, triggerRef/, 'the menu must be placed by lib/useMenuPlacement.ts')
   assert.match(hookSource, /placeMenu\(/, 'the hook must clamp via lib/menuPlacement.ts')
   assert.match(hookSource, /getBoundingClientRect\(\)/, 'placement must come from the measured trigger rect')
+  assert.match(hookSource, /addEventListener\('scroll', measure, scrollOpts\)/, 'the phone layout scrolls the document: a fixed menu must re-measure on scroll to follow its trigger')
   const listbox = pickerSource.match(/role="listbox"[\s\S]*?className="([^"]*)"/)?.[1] ?? ''
   assert.match(listbox, /\bfixed\b/, 'the listbox must be position: fixed')
   assert.match(listbox, /\boverflow-y-auto\b/, 'long project lists must scroll inside the menu')

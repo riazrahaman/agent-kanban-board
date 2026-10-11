@@ -7,7 +7,7 @@ import { placeMenu, type MenuPlacement } from './menuPlacement'
  * when `enabledQuery` (a media query, e.g. '(min-width: 640px)') does not
  * match — the caller then falls back to its own CSS placement. Runs in a
  * layout effect so the first painted frame is already in place, and
- * re-measures on window / visual-viewport resize.
+ * re-measures on window / visual-viewport resize and on any scroll.
  */
 export function useMenuPlacement(
   open: boolean,
@@ -40,10 +40,15 @@ export function useMenuPlacement(
       )
     }
     measure()
+    // scroll (capture, so any scroller counts): in the phone layout the
+    // DOCUMENT scrolls, and a fixed menu must follow its trigger.
+    const scrollOpts: AddEventListenerOptions = { capture: true, passive: true }
     window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, scrollOpts)
     window.visualViewport?.addEventListener('resize', measure)
     return () => {
       window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, scrollOpts)
       window.visualViewport?.removeEventListener('resize', measure)
     }
   }, [open, triggerRef, fine, coarse, enabledQuery])
