@@ -144,7 +144,7 @@ The board features pluggable persistence:
    | `KANBAN_MAX_LEASE_MS` | `7200000` | Upper bound a requested `lease_ms` is clamped to (2 h). |
    | `KANBAN_HOLDER_WRITE_RENEWS_ALL` | `1` | When on, a holder's log/PATCH/claim also re-arms all its other leases (scoped to the same project as the write). |
    | `KANBAN_MAX_CLAIMS_PER_AGENT` | *(unlimited)* | Cap on active claims one agent may hold at once. A fresh claim past the cap gets a `409 claim_limit`. Privileged roles (runner/system/human/admin) are exempt. |
-   | `KANBAN_ORPHAN_GRACE_MS` | `300000` | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to BACKLOG. Decoupled from the claim TTL (raising the TTL does not stretch this window). Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
+   | `KANBAN_ORPHAN_GRACE_MS` | `300000` | How long an ownerless ACTIVE task may sit untouched before the reaper normalizes it to READY. Decoupled from the claim TTL (raising the TTL does not stretch this window). Anchored on `updated`, so any later write resets it. `0` reaps orphans immediately. |
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
    | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open. Health probes stay open. |
    | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |

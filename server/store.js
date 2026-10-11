@@ -192,7 +192,7 @@ function getReapIntervalMs() {
  * the reaper treats it as structurally stuck.
  *
  * An active task with no owner/lease is normally created by a status-only PATCH
- * (the documented orchestrator flow: `PATCH {status:'BUILDING', role:'admin'}`).
+ * (the documented orchestrator flow: `PATCH {status:'IN_PROGRESS', role:'admin'}`).
  * That is a *legitimate* intermediate state — per-stage ownership deliberately
  * keeps `assigned_agent` as the lease holder rather than reassigning it — so
  * reaping it on the very next sweep destroys a card that was just written to.
@@ -2163,7 +2163,7 @@ export async function renewAllLeases(agentId, { project: projectArg, caller = {}
  *     / legacy single-token mode), else 403.
  *   - The target agent id must be a non-empty string, else 400.
  * It sets `assigned_agent`, arms a fresh lease, records `stage_owners` for the
- * stage it lands in, and — like a claim — lifts a BACKLOG card to BUILDING so
+ * stage it lands in, and — like a claim — lifts a BACKLOG or READY card to IN_PROGRESS so
  * the assignment is actionable. It does NOT run the dependency gate or the
  * contention check: an operator explicitly overriding ownership is the point.
  * `agent_id: null` releases the assignment (clears owner + lease, returns an

@@ -216,16 +216,18 @@ than a border to nest, keeping the hairline budget low.
 
 ### 6.1 Canonical statuses
 
-Six canonical values (ADR-001, mirrored in `client/src/lib/status.ts`):
+Nine canonical values — the v3 8-state lifecycle plus `BLOCKED` (ADR-004,
+`server/state-machine.js`, mirrored in `client/src/lib/status.ts`):
 
-`BACKLOG · BUILDING · IN_REVIEW · IN_TEST · BLOCKED · DONE`
+`BACKLOG · READY · PLANNING · IN_PROGRESS · IN_REVIEW · VALIDATION · READY_TO_SHIP · DONE · BLOCKED`
 
-`normalizeStatus` (`client/src/status.js`) maps legacy input:
+`normalizeStatus` (`client/src/status.js`) maps legacy v2 input:
 
 | Input | Normalized |
 |---|---|
 | `TODO` | `BACKLOG` |
-| `IN_PROGRESS` | `BUILDING` |
+| `BUILDING` | `IN_PROGRESS` |
+| `IN_TEST` | `VALIDATION` |
 | unknown / empty / non-string | `UNKNOWN` |
 
 ### 6.2 Status stripe + badge
@@ -234,12 +236,13 @@ Every status maps to a **left stripe** and a **badge tint** (`STATUS_STYLES`):
 
 | Status | Stripe | Badge | Accent token |
 |---|---|---|---|
-| `DONE` | `border-l-pass` | `bg-pass-bg text-pass` | green |
-| `IN_TEST` | `border-l-test` | `bg-test-bg text-test` | violet |
+| `DONE`, `READY_TO_SHIP` | `border-l-pass` | `bg-pass-bg text-pass` | green |
+| `VALIDATION` | `border-l-test` | `bg-test-bg text-test` | violet |
 | `IN_REVIEW` | `border-l-warn` | `bg-warn-bg text-warn` | amber |
-| `BUILDING` | `border-l-live` | `bg-live-bg text-live` | blue |
+| `IN_PROGRESS` | `border-l-live` | `bg-live-bg text-live` | blue |
+| `PLANNING` | `border-l-block` | `bg-muted-bg text-muted` | slate stripe |
 | `BLOCKED` | `border-l-block` | `bg-block-bg text-block` | slate |
-| `BACKLOG` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
+| `BACKLOG`, `READY` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
 | `UNKNOWN` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
 
 `StatusBadge` renders it as
@@ -251,7 +254,7 @@ with an `aria-label="Status: <NORMALIZED>"`.
 | Glyph | Appears on | Meaning |
 |---|---|---|
 | `▲ ` | `IN_REVIEW` badge | awaiting review |
-| `• ` | `BUILDING`, `IN_TEST` badge | actively running |
+| `• ` | `PLANNING`, `IN_PROGRESS`, `VALIDATION` badge (and the legacy aliases) | actively running |
 
 ### 6.3 Priority
 
@@ -302,8 +305,9 @@ unmapped priority falls back to `medium` so a render can never throw.
 `flex w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 md:w-72 <topAccent>`
 
 - Top accent: `border-t-2 border-t-<token>`. The stock map (`COLUMN_ACCENTS`) is
-  `BACKLOG muted/40 · BUILDING live · IN_REVIEW warn · IN_TEST test · BLOCKED fail ·
-  DONE pass · UNKNOWN line · ISSUES warn`.
+  `BACKLOG muted/40 · READY line · PLANNING block · IN_PROGRESS live · IN_REVIEW warn ·
+  VALIDATION test · READY_TO_SHIP pass · DONE pass · BLOCKED fail · UNKNOWN line ·
+  ISSUES warn` (legacy `BUILDING`/`IN_TEST` keys alias `IN_PROGRESS`/`VALIDATION`).
 - Per-project overrides (`lib/columnColors.ts`) replace the accent only; the
   eight selectable tokens are `muted · live · warn · test · fail · pass · block ·
   line`, each with a **literal** Tailwind class (the JIT scanner requires literal
@@ -527,7 +531,7 @@ WebKit's text autosizer from inflating prose independently of the
   (`--ink`) / 4.97:1 (`--muted`); dark is 13.1:1 / 8.8:1. Operational foregrounds
   range 4.89:1–8.20:1 (light).
 - Status is encoded three ways — stripe, label, glyph — so it survives greyscale.
-- Interactive icons carry `aria-label` (`Status: BUILDING`, `Live connection`,
+- Interactive icons carry `aria-label` (`Status: IN_PROGRESS`, `Live connection`,
   `Scroll columns left/right`, `Close metrics dashboard`).
 - `color-scheme` keeps native controls legible in both themes.
 - Decorative overlays and gradients are `pointer-events-none` + `aria-hidden` by
