@@ -321,7 +321,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
 | `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | Auth + privileged role required |
 | `GET` | `/api/tasks/trash` | List soft-deleted tasks in the trash sink (project-scoped) | Read |
-| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to BACKLOG | Auth (admin) |
+| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to READY (owner and lease cleared) | Auth (admin) |
 | `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | Auth + privileged role required |
 | `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
 | `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
