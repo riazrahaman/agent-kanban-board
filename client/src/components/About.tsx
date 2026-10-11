@@ -5,6 +5,7 @@ import {
   ARCH_INTRO,
   ARCH_LAYERS,
   CAPABILITIES,
+  CLAIM_CURL,
   CLAIM_FLOW,
   CURL_SNIPPET,
   FAQ,
@@ -128,7 +129,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
   const copyClaim = () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(
-        'curl -s -X POST "$BOARD/api/tasks/next-claim?agent_id=builder-1" \\\n  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"'
+        CLAIM_CURL
       )
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -586,7 +587,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
                   </div>
                   <div className="flex justify-between border-b border-line pb-1.5">
                     <dt className="text-muted">Lease TTL</dt>
-                    <dd className="text-ink">5 min (claim)</dd>
+                    <dd className="text-ink">10 min (claim)</dd>
                   </div>
                   <div className="flex justify-between border-b border-line pb-1.5">
                     <dt className="text-muted">Concurrency</dt>
@@ -616,7 +617,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
                   </button>
                 </div>
                 <pre className="mt-2 overflow-x-auto border border-line bg-muted-bg/30 p-2 font-mono text-[10px] leading-relaxed text-ink">
-                  {`curl -s -X POST "$BOARD/api/tasks/next-claim?agent_id=builder-1"`}
+                  {CLAIM_CURL}
                 </pre>
               </div>
 
