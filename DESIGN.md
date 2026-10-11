@@ -153,8 +153,8 @@ than a border to nest, keeping the hairline budget low.
 ## 5. Layout Shell
 
 ```
-<div class="app-shell flex flex-col bg-bg text-ink">   ← position:fixed; inset:0
-  <header class="…border-b border-line bg-surface…">      ← sticky chrome, mono controls
+<div class="app-shell flex h-screen flex-col bg-bg text-ink">   ← 100dvh (phone: grows, document scrolls)
+  <header class="app-header …border-b border-line bg-surface…">  ← chrome, mono controls (phone: sticky)
   <main class="flex flex-1 overflow-hidden">
     <Board/>            ← horizontal snap-scroll columns
     <SignalRail/>       ← w-80, border-l; slides over below md
@@ -162,23 +162,35 @@ than a border to nest, keeping the hairline budget low.
 </div>
 ```
 
-- The root shell is `.app-shell` (v3.2.4): `position: fixed; inset: 0`,
-  plus `min-height: 100lvh` under `@supports (height:100lvh)`. Being fixed,
-  it is laid out against the viewport, so no ancestor's overflow can clip
-  it — v3.2.3's `height: 100lvh` on an in-flow shell was clipped by body
-  (`height: 100%` = the small viewport, and a scroll container via
-  `overflow-x: hidden`), leaving a dead strip above iOS Safari's floating
-  bottom toolbar. html/body are `overflow: hidden; overscroll-behavior:
-  none` and never scroll. With `viewport-fit=cover` the shell runs behind
-  the translucent toolbar and the status bar; the header adds
-  `env(safe-area-inset-top)` to its top padding (0 on desktop, so header
-  height is unchanged there), and the coarse+narrow `5rem + safe-area`
-  bottom padding on the scrollable lists lets the last card clear the bar.
-  `h-screen` stays `100dvh` under `@supports (height:100dvh)` for `fixed`
-  panels (TaskSheet's drawer) that must stay within the actually-visible
-  area, or their pinned footers end up behind the floating toolbar with no
-  way to scroll to them; top-0 sheets pad `env(safe-area-inset-top)`.
-  Do not put `100lvh` on `.h-screen` globally.
+- Two layouts (v3.2.4), switched only by one media block in `index.css`:
+  - **Desktop / tablet / mouse / landscape** (everything that is not a
+    touch phone below `md`): the shell is `h-screen`, overridden to `100dvh`
+    under `@supports (height:100dvh)`, a flex column whose columns and views
+    scroll internally; html/body are `overflow: hidden; overscroll-behavior:
+    none`. Never `position: fixed` or a forced `100lvh` on the shell — that
+    clips content behind a visible URL bar.
+  - **Phone layout** — `(max-width: 47.99rem) and (pointer: coarse)`, the
+    same condition as `max-md:pointer-coarse:`: the DOCUMENT is the vertical
+    scroller, like a normal website, because only document scrolling lets
+    iOS Safari draw the page behind its translucent floating toolbar (every
+    internal-scroller shell stopped at the toolbar's top edge on a real
+    iPhone). html scrolls; body/#root/shell grow and are never scroll
+    containers; `.app-header` is `position: sticky; top: 0` (non-sticky
+    while the `⋯` controls are open, so that panel scrolls away); each
+    column grows to its full height inside the horizontal snap strip, so
+    the document is as tall as the tallest column; Portfolio and About flow
+    in the document. The hooks are semantic classes (`app-main`,
+    `board-pane`, `board-frame`, `board-root`, `board-viewport`,
+    `kanban-column`, `column-list`, `portfolio-view`, `about-view`).
+    Full-height overlays (TaskSheet, BugReportDialog, the rail drawer) lock
+    the document scroll (`lib/scrollLock.ts`) and restore its position.
+- With `viewport-fit=cover` the header adds `env(safe-area-inset-top)` to
+  its top padding (0 on desktop, so header height is unchanged there), and
+  the coarse+narrow `5rem + safe-area` bottom padding on Column/Portfolio/
+  About lets the last content scroll clear of the floating toolbar.
+  `h-screen` stays `100dvh` for `fixed` panels (TaskSheet's drawer) so their
+  pinned footers stay in the visible area; top-0 sheets pad
+  `env(safe-area-inset-top)`.
 - The header is the only place the display serif appears; every control in it is
   mono, uppercase, `text-[11px]`, and hairline-bordered
   (`border border-line bg-surface px-2.5 py-1.5 … hover:bg-muted-bg`).
@@ -487,9 +499,10 @@ keyframes exist; add animation sparingly.
 | `lg` | Additional header labels reveal |
 
 Guarded by `client/src/lib/mobileToolbar.test.mjs` and `responsive.test.mjs`,
-which also assert the `100dvh` `.h-screen` override, the fixed
-`.app-shell` (`inset: 0`, `min-height: 100lvh`, and that lvh does NOT
-target `.h-screen` globally — see §5), the universal `*` `touch-action:
+which also assert the `100dvh` `.h-screen` override, the plain `h-screen`
+`.app-shell` (no `100lvh`, no fixed/inset shell), the phone-layout block
+(document scroll, sticky header, full-height columns, overlay scroll lock —
+see §5), the universal `*` `touch-action:
 pan-x pan-y` (blocks iOS pinch zoom without narrowing which axis any nested
 scroller can use; it must be on every element because WebKit resets
 touch-action at each scroll container, and `manipulation` — which re-grants
