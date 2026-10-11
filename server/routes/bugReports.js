@@ -29,17 +29,23 @@ import path from 'node:path';
  *                                          tests/demo point at a local stub
  *                                          (see scripts/stub-github-issues.mjs).
  *
- * Failure logging (v3.2.5): every GitHub-filing or Turnstile-verification
- * failure gets ONE rate-limited `[kanban bug-report]` console line (status,
- * GitHub's `message`, the accepted-permissions/rate-limit-remaining headers,
- * attempt count, repo, and a human hint — or the Turnstile `error-codes`).
- * This is what makes a bad credential visible in `railway logs` instead of
- * silently 502ing every report. NEVER logged: the GitHub token, the
- * Authorization header, the Turnstile secret, the report's title/
- * description/contact, or the client IP. A startup warning also fires if
- * KANBAN_REPORT_GITHUB_TOKEN/KANBAN_REPORT_REPO/TURNSTILE_SITE_KEY don't
- * look shaped like real credentials (see looksLikeGithubToken et al.) — it
- * does not disable the feature, only flags a likely placeholder.
+ * Failure logging (v3.2.5): one line per failed request — not one per failed
+ * attempt — for every GitHub-filing or Turnstile-verification failure,
+ * prefixed `[kanban bug-report]` (status, GitHub's `message`, the
+ * accepted-permissions/rate-limit-remaining headers, attempt count, repo,
+ * and a human hint — or the Turnstile `error-codes`), rate-limited to at
+ * most one identical line per 60 seconds per status and repo (see
+ * logRateLimited). This is what makes a bad credential visible in
+ * `railway logs` instead of silently 502ing every report. Every remote/
+ * untrusted value that reaches a log line (GitHub's `message`, the two
+ * headers above, Cloudflare's `error-codes`/`action`/`hostname`) goes
+ * through the shared `safeLogValue` sanitizer first (see its definition).
+ * NEVER logged: the GitHub token, the Authorization header, the Turnstile
+ * secret, the report's title/description/contact, or the client IP. A
+ * startup warning also fires if KANBAN_REPORT_GITHUB_TOKEN/
+ * KANBAN_REPORT_REPO/TURNSTILE_SITE_KEY don't look shaped like real
+ * credentials (see looksLikeGithubToken et al.) — it does not disable the
+ * feature, only flags a likely placeholder.
  */
 
 // Strips C0/DEL control characters but keeps newlines/tabs — descriptions are
@@ -176,14 +182,41 @@ export function looksLikeTurnstileSiteKey(key) {
   return typeof key === 'string' && /^[0-9a-zA-Z_-]{10,}$/.test(key);
 }
 
-function truncate(str, max) {
-  const s = String(str ?? '');
-  return s.length > max ? `${s.slice(0, max)}…` : s;
+// C0 (0x00-0x1F), DEL (0x7F) and C1 (0x80-0x9F) control characters, plus the
+// Unicode LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029) — neither
+// is a control character by Unicode category, but both still break a
+// console line in two, so safeLogValue strips them alongside the rest.
+const CONTROL_AND_LINE_SEP_RE = new RegExp('[\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]', 'g');
+
+/**
+ * The one sanitizer for EVERY remote/untrusted value this router ever logs:
+ * GitHub's `message`, the `x-accepted-github-permissions`/
+ * `x-ratelimit-remaining` headers, Cloudflare's `error-codes`/`action`/
+ * `hostname`, and the configured GitHub API URL if it is ever logged. Strips
+ * every C0/C1 control character and the Unicode line/paragraph separators
+ * (so the value can never inject a raw control byte or split the line),
+ * collapses whitespace, caps the length, then JSON-quotes the result so it
+ * is unambiguously delimited from the next field in the rendered line.
+ *
+ * Callers that also need secret redaction (the GitHub message) MUST redact
+ * the raw value first and pass the redacted string in here — redaction has
+ * to run before this truncates, or a secret straddling the length cut would
+ * leak its surviving prefix.
+ */
+export function safeLogValue(value, maxLength = 160) {
+  let out = String(value ?? '')
+    .replace(CONTROL_AND_LINE_SEP_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (out.length > maxLength) out = out.slice(0, maxLength);
+  return JSON.stringify(out);
 }
 
 /** Short human hint keyed on the GitHub HTTP status, for the failure log line. */
 function hintForStatus(status) {
   switch (status) {
+    case 201:
+      return 'issue may have been filed; check the repo';
     case 401:
       return 'token invalid/expired/placeholder';
     case 403:
@@ -194,6 +227,8 @@ function hintForStatus(status) {
       return 'issues disabled';
     case 422:
       return 'validation (label)';
+    case 429:
+      return 'GitHub rate limit; retry later';
     default:
       return 'GitHub outage';
   }
@@ -224,7 +259,7 @@ export function createBugReportsRouter(deps = {}) {
     // hostname allowlist check.
     if (!process.env.TURNSTILE_HOSTNAMES) {
       console.warn(
-        '[kanban bug-reports] TURNSTILE_HOSTNAMES is unset: siteverify responses are ' +
+        `${LOG_PREFIX} TURNSTILE_HOSTNAMES is unset: siteverify responses are ` +
           'accepted from any hostname. Set it to a comma-separated allow-list to pin ' +
           'reports to your deployed origin(s).',
       );
@@ -255,16 +290,25 @@ export function createBugReportsRouter(deps = {}) {
   const LOG_WINDOW_MS = 60 * 1000;
   const lastLoggedAt = new Map();
 
-  // Defense in depth: GitHub's own `message` field is logged verbatim (it is
-  // operator-useful diagnostic text, e.g. "Bad credentials"), but it is text
-  // we do not control — if our configured secrets were ever echoed back
-  // (buggy upstream, or a test mock standing in for one), strip them before
-  // anything reaches console/stdout. Short values are skipped to avoid a
-  // trivial secret (or an unset one) redacting unrelated text.
+  // GitHub's own `message` field is logged verbatim (it is operator-useful
+  // diagnostic text, e.g. "Bad credentials"), but it is text we do not
+  // control — if our configured secrets were ever echoed back (buggy
+  // upstream, or a test mock standing in for one), strip them out. This runs
+  // on the RAW message BEFORE safeLogValue's control-char strip/truncate (see
+  // its call sites below): redacting after truncation would let a secret
+  // that straddles the length cut leak its surviving prefix. Also catches
+  // the JSON-escaped form of each secret (how it would render if ever
+  // echoed back inside an already-JSON-encoded string), not just the raw
+  // bytes. Short values are skipped to avoid a trivial/unset secret
+  // redacting unrelated text. Kept on the final assembled line too, as
+  // defense in depth against any other field ever carrying a secret.
   function redactSecrets(str) {
     let out = String(str);
     for (const secret of [process.env.KANBAN_REPORT_GITHUB_TOKEN, process.env.TURNSTILE_SECRET]) {
-      if (secret && secret.length >= 8) out = out.split(secret).join('[redacted]');
+      if (!secret || secret.length < 8) continue;
+      out = out.split(secret).join('[redacted]');
+      const escaped = JSON.stringify(secret).slice(1, -1);
+      if (escaped !== secret) out = out.split(escaped).join('[redacted]');
     }
     return out;
   }
@@ -395,10 +439,11 @@ export function createBugReportsRouter(deps = {}) {
     // already consumed. Both are reported the same way to the caller.
     if (data.success !== true) {
       const codes = Array.isArray(data['error-codes']) ? data['error-codes'] : [];
+      const safeCodes = `[${codes.map((c) => safeLogValue(c, 120)).join(',')}]`;
       logRateLimited(
         `turnstile:success-false:${codes.join(',')}`,
         'warn',
-        `${LOG_PREFIX} turnstile check failed: success=false error-codes=${JSON.stringify(codes)}`,
+        `${LOG_PREFIX} turnstile check failed: success=false error-codes=${safeCodes}`,
       );
       return { ok: false, status: 403, code: 'invalid_captcha' };
     }
@@ -406,7 +451,7 @@ export function createBugReportsRouter(deps = {}) {
       logRateLimited(
         'turnstile:action-mismatch',
         'warn',
-        `${LOG_PREFIX} turnstile check failed: action mismatch (expected "bug-report", got ${JSON.stringify(data.action)})`,
+        `${LOG_PREFIX} turnstile check failed: action mismatch (expected "bug-report", got ${safeLogValue(data.action, 120)})`,
       );
       return { ok: false, status: 403, code: 'invalid_captcha_action' };
     }
@@ -419,7 +464,7 @@ export function createBugReportsRouter(deps = {}) {
       logRateLimited(
         'turnstile:hostname-mismatch',
         'warn',
-        `${LOG_PREFIX} turnstile check failed: hostname mismatch (got ${JSON.stringify(data.hostname)})`,
+        `${LOG_PREFIX} turnstile check failed: hostname mismatch (got ${safeLogValue(data.hostname, 120)})`,
       );
       return { ok: false, status: 403, code: 'invalid_captcha_hostname' };
     }
@@ -467,7 +512,10 @@ export function createBugReportsRouter(deps = {}) {
   // Reads the `message` field + the two diagnostic headers off a failed
   // GitHub response, for the failure log line ONLY — never surfaced to the
   // HTTP caller (the client always gets the generic `could_not_file`).
-  // Safe to call at most once per response (consumes the body).
+  // Safe to call at most once per response (consumes the body). Returns the
+  // RAW message, untruncated and unredacted — logGithubOutcome below is
+  // responsible for redacting secrets from it before it is ever sanitized/
+  // truncated by safeLogValue (see the ordering note on redactSecrets).
   async function describeGithubResponse(res) {
     let message = '';
     try {
@@ -477,25 +525,34 @@ export function createBugReportsRouter(deps = {}) {
       // Body already consumed, empty, or not JSON — leave message blank.
     }
     return {
-      message: truncate(message, 160),
+      message,
       acceptedPermissions: res.headers?.get?.('x-accepted-github-permissions') ?? 'n/a',
       rateLimitRemaining: res.headers?.get?.('x-ratelimit-remaining') ?? 'n/a',
     };
   }
 
   // ONE line per failed /api/bug-reports request that could not be filed
-  // (not one line per retry attempt) — see the module header for the full
-  // "never log" list (no token, no Authorization header, no report text, no
-  // client IP, no Turnstile secret). `attempts` is the total number of
-  // outbound GitHub calls this request made, including the uncounted
-  // label-stripping retry.
+  // (not one line per retry attempt, and — via logRateLimited's dedup keyed
+  // on status+repo — at most one per 60s for the same recurring failure) —
+  // see the module header for the full "never log" list (no token, no
+  // Authorization header, no report text, no client IP, no Turnstile
+  // secret). `attempts` is the total number of outbound GitHub calls this
+  // request made, including the uncounted label-stripping retry.
   function logGithubOutcome({ attempts, repo, networkError, status, message, acceptedPermissions, rateLimitRemaining }) {
-    const hint = networkError ? 'GitHub outage' : hintForStatus(status);
+    const hint = networkError
+      ? 'network/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL'
+      : hintForStatus(status);
     const statusLabel = networkError ? 'network error' : `status=${status}`;
     const key = `github:${networkError ? 'network' : status}:${repo}`;
+    // Order matters: redact secrets from the RAW message FIRST, then let
+    // safeLogValue strip control chars and truncate to 160 — truncating
+    // before redacting could cut a secret in half and leak its surviving
+    // prefix past the redaction check.
+    const safeMessage = safeLogValue(redactSecrets(message || ''), 160);
     const line =
-      `${LOG_PREFIX} could_not_file: github ${statusLabel} message=${JSON.stringify(message || '')} ` +
-      `accepted-permissions=${acceptedPermissions ?? 'n/a'} ratelimit-remaining=${rateLimitRemaining ?? 'n/a'} ` +
+      `${LOG_PREFIX} could_not_file: github ${statusLabel} message=${safeMessage} ` +
+      `accepted-permissions=${safeLogValue(acceptedPermissions ?? 'n/a', 120)} ` +
+      `ratelimit-remaining=${safeLogValue(rateLimitRemaining ?? 'n/a', 120)} ` +
       `attempts=${attempts} repo=${repo || 'unset'} hint=${JSON.stringify(hint)}`;
     logRateLimited(key, 'error', line);
   }
@@ -564,7 +621,14 @@ export function createBugReportsRouter(deps = {}) {
       return giveUp({ status: res.status, ...info });
     }
 
-    return giveUp({ status: null, message: 'exhausted retries' });
+    // Unreachable: every branch above returns before the loop can exhaust
+    // its 3 counted attempts (the only `continue` that does not advance
+    // `attempt` — the uncounted label-stripping retry — can fire at most
+    // once per request, and the next pass through always returns). Kept as
+    // an honest internal-error signal rather than a fabricated GitHub
+    // status, in case a future change to the loop ever breaks that
+    // invariant.
+    throw new Error('fileGithubIssue: retry loop exited without a result — this should be unreachable');
   }
 
   // express.json() already ran globally in server.js before this router is

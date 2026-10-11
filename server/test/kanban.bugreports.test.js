@@ -23,6 +23,13 @@ import {
   stripControlChars,
 } from '../routes/bugReports.js';
 
+// Realistic-shaped GitHub token (ghp_ prefix + 36 chars, matching
+// GITHUB_TOKEN_MIN_LENGTH in bugReports.js) so the suite's own fixtures never
+// trip the startup "does not look like a GitHub token (placeholder?)"
+// warning — see the dedicated placeholder-warning tests below for the one
+// case that intentionally uses an unrealistic value.
+const DUMMY_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`;
+
 const ENV_KEYS = [
   'KANBAN_REPORT_GITHUB_TOKEN',
   'KANBAN_REPORT_REPO',
@@ -37,7 +44,7 @@ const ENV_KEYS = [
 ];
 
 function configureEnv(overrides = {}) {
-  process.env.KANBAN_REPORT_GITHUB_TOKEN = 'ghp_test_token';
+  process.env.KANBAN_REPORT_GITHUB_TOKEN = DUMMY_GITHUB_TOKEN;
   process.env.KANBAN_REPORT_REPO = 'owner/repo';
   process.env.TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
   process.env.TURNSTILE_SITE_KEY = '1x00000000000000000000AA';
@@ -184,7 +191,7 @@ describe('bug reports: feature gate', () => {
       assert.equal(cfg.res.status, 200);
       assert.deepEqual(cfg.body, { enabled: true, siteKey: process.env.TURNSTILE_SITE_KEY });
       const raw = JSON.stringify(cfg.body);
-      assert.doesNotMatch(raw, /ghp_test_token/);
+      assert.doesNotMatch(raw, new RegExp(DUMMY_GITHUB_TOKEN));
       assert.doesNotMatch(raw, new RegExp(process.env.TURNSTILE_SECRET));
     });
   });
@@ -924,7 +931,7 @@ describe('bug reports: no secrets in responses', () => {
         body: postBody(),
       });
       const raw = JSON.stringify(res.body);
-      assert.doesNotMatch(raw, /ghp_test_token/);
+      assert.doesNotMatch(raw, new RegExp(DUMMY_GITHUB_TOKEN));
     });
   });
 });
@@ -992,7 +999,7 @@ describe('bug reports: GitHub failure logging', () => {
     assert.match(failureLine, new RegExp(`status=${status}\\b`));
     assert.match(failureLine, new RegExp(githubMessage));
     assert.match(failureLine, new RegExp(hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.doesNotMatch(failureLine, /ghp_test_token/);
+    assert.doesNotMatch(failureLine, new RegExp(DUMMY_GITHUB_TOKEN));
     assert.doesNotMatch(failureLine, /203\.0\.113\.42/);
     assert.doesNotMatch(failureLine, /Board shows blank column/); // report title
     assert.doesNotMatch(failureLine, /Steps: open the board/); // report description
@@ -1026,6 +1033,47 @@ describe('bug reports: GitHub failure logging', () => {
     await assertFailureLogged({ status: 500, githubMessage: 'internal error', hint: 'GitHub outage' });
   });
 
+  it('a GitHub 429 that exhausts retries logs the "GitHub rate limit; retry later" hint', async () => {
+    await assertFailureLogged({
+      status: 429,
+      githubMessage: 'API rate limit exceeded',
+      hint: 'GitHub rate limit; retry later',
+    });
+  });
+
+  it('a 201 with an unreadable body logs the "issue may have been filed" hint and still 502s', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      github: () => ({
+        ok: true,
+        status: 201,
+        json: async () => {
+          throw new Error('body already consumed / not valid JSON');
+        },
+        headers: { get: () => null },
+      }),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+        // The existing 502 behaviour is unchanged even though GitHub itself
+        // answered 201 — we cannot confirm the issue number without a
+        // readable body, so the caller still sees the generic failure.
+        assert.equal(res.res.status, 502);
+        assert.equal(res.body.error, 'could_not_file');
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.match(failureLine, /status=201\b/);
+    assert.match(failureLine, /hint="issue may have been filed; check the repo"/);
+  });
+
   it('a 422 that exhausts the label-fallback logs the "validation (label)" hint', async () => {
     for (const k of ENV_KEYS) delete process.env[k];
     configureEnv();
@@ -1045,7 +1093,7 @@ describe('bug reports: GitHub failure logging', () => {
     assert.match(failureLine, /attempts=2/);
   });
 
-  it('a network error logs "network error" and the "GitHub outage" hint', async () => {
+  it('a network error logs "network error" and the DNS/API-URL hint', async () => {
     for (const k of ENV_KEYS) delete process.env[k];
     configureEnv();
     const fetchImpl = makeFetch({ github: () => new Error('ETIMEDOUT') });
@@ -1061,11 +1109,11 @@ describe('bug reports: GitHub failure logging', () => {
     const failureLine = lines.error.find((l) => l.includes('could_not_file'));
     assert.ok(failureLine);
     assert.match(failureLine, /network error/);
-    assert.match(failureLine, /hint="GitHub outage"/);
+    assert.match(failureLine, /hint="network\/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL"/);
     assert.match(failureLine, /attempts=3/);
   });
 
-  it('includes the GitHub accepted-permissions and rate-limit-remaining headers', async () => {
+  it('includes the GitHub accepted-permissions and rate-limit-remaining headers, safely quoted', async () => {
     for (const k of ENV_KEYS) delete process.env[k];
     configureEnv();
     const fetchImpl = makeFetch({
@@ -1087,8 +1135,115 @@ describe('bug reports: GitHub failure logging', () => {
     );
     const failureLine = lines.error.find((l) => l.includes('could_not_file'));
     assert.ok(failureLine);
-    assert.match(failureLine, /accepted-permissions=issues=write/);
-    assert.match(failureLine, /ratelimit-remaining=12/);
+    // Header values go through the shared safeLogValue sanitizer, which
+    // JSON-quotes its output — see the control-character test below for why.
+    assert.match(failureLine, /accepted-permissions="issues=write"/);
+    assert.match(failureLine, /ratelimit-remaining="12"/);
+  });
+
+  it('strips control characters smuggled in the GitHub permission/rate-limit headers', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      github: () =>
+        fakeResponse(
+          403,
+          { message: 'blocked' },
+          {
+            'x-accepted-github-permissions': 'issues=write\nEvil: injected-header',
+            'x-ratelimit-remaining': '12\r\nEvil: injected-header',
+          },
+        ),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    // safeLogValue deletes control chars outright rather than inserting a
+    // space, so "issues=write" and the smuggled text end up concatenated
+    // with no line break between them — the property this guards is that
+    // no RAW \r/\n survives to fake a second physical log line, not that
+    // the attacker's text is censored.
+    assert.doesNotMatch(failureLine, /[\r\n]/);
+  });
+
+  it('redacts the GitHub token if GitHub ever echoes it back in the `message` field', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      github: () => fakeResponse(401, { message: `Bad credentials: ${DUMMY_GITHUB_TOKEN}` }),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.doesNotMatch(failureLine, new RegExp(DUMMY_GITHUB_TOKEN));
+    assert.match(failureLine, /\[redacted\]/);
+  });
+
+  it('redacts the token even when it straddles the 160-char truncation cut', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const token = DUMMY_GITHUB_TOKEN; // 40 chars
+    // Placed so the token spans the message's 160-char truncation boundary
+    // (150 + 40 = 190; the cut at 160 lands squarely inside the token).
+    // Redacting AFTER truncating (the old, buggy order) would leave the
+    // token's first ~10 characters visible in the log line.
+    const prefix = 'x'.repeat(150);
+    const fetchImpl = makeFetch({
+      github: () => fakeResponse(401, { message: `${prefix}${token}` }),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    // Not even an 8-char fragment of the token should survive.
+    for (let i = 0; i <= token.length - 8; i++) {
+      const fragment = token.slice(i, i + 8);
+      assert.ok(!failureLine.includes(fragment), `leaked token fragment: ${fragment}`);
+    }
+    assert.match(failureLine, /\[redacted\]/);
+  });
+
+  it('collapses a message with newline/CR/escape/NEL/line-separator into one control-char-free log line', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const nasty = `line1\nline2\rline3${String.fromCharCode(0x1b)}line4${String.fromCharCode(0x85)}line5${String.fromCharCode(0x2028)}line6`;
+    const fetchImpl = makeFetch({ github: () => fakeResponse(401, { message: nasty }) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
+    assert.ok(failureLine);
+    assert.doesNotMatch(failureLine, new RegExp('[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]'));
+    assert.match(failureLine, /line1.*line2.*line3.*line4.*line5.*line6/);
   });
 
   it('a successful filing logs the issue number only — no title, description, or body text', async () => {
@@ -1208,6 +1363,67 @@ describe('bug reports: Turnstile failure logging', () => {
     assert.ok(line);
     assert.match(line, /hostname mismatch/);
     assert.match(line, /evil\.example\.test/);
+  });
+
+  it('strips control characters embedded in a Cloudflare error-code before logging', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      turnstile: () => fakeResponse(200, { success: false, 'error-codes': ['bad\ncode\rinjected'] }),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.doesNotMatch(line, /[\r\n]/);
+    assert.match(line, /bad.*code.*injected/);
+  });
+
+  it('strips control characters embedded in the siteverify hostname before logging', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv({ TURNSTILE_HOSTNAMES: 'allowed.example.test' });
+    const fetchImpl = makeFetch({
+      turnstile: () => fakeResponse(200, okTurnstileBody({ hostname: 'evil\n.example.test\rinjected' })),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.doesNotMatch(line, /[\r\n]/);
+  });
+
+  it('strips control characters embedded in a mismatched action before logging', async () => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    configureEnv();
+    const fetchImpl = makeFetch({
+      turnstile: () => fakeResponse(200, okTurnstileBody({ action: 'login\ninjected' })),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/bug-reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: postBody(),
+        });
+      }),
+    );
+    const line = lines.warn.find((l) => l.includes('turnstile check failed'));
+    assert.ok(line);
+    assert.doesNotMatch(line, /[\r\n]/);
   });
 });
 
