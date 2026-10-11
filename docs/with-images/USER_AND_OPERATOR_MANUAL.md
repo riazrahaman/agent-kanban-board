@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.2.4
+**System:** Agent Kanban Board v3.2.5
 
 ---
 
@@ -216,7 +216,9 @@ The server is a stateful long-running Node process (it holds an in-memory cache,
 - `render.yaml` — Render.com web service (Node runtime, disk-backed).
 - `railway.json` — Railway (Railpack builder, healthcheck, start command).
 
-Both rely on the server's own `startCommand` / `npm start` and the fact that it binds `0.0.0.0` whenever `PORT` is injected. Because the in-memory store is backed by files, attach a **persistent volume/disk** and point the storage env vars at it, or all data is lost on redeploy:
+Both rely on a `startCommand` and the fact that the server binds `0.0.0.0` whenever `PORT` is injected. Because the in-memory store is backed by files, attach a **persistent volume/disk** and point the storage env vars at it, or all data is lost on redeploy:
+
+**Railway start command (v3.2.5):** `railway.json` sets `"startCommand": "node server/server.js"` — run that exact command, never `npm start` or `npm --prefix server start`. npm forwards SIGTERM to the child process correctly, but npm itself then exits non-zero, so Railway reports every clean shutdown (including a normal redeploy) as **"Deploy Crashed"** and emails you about it — the server was never actually crashing. If the Railway dashboard's Settings → Deploy → Custom Start Command has its own value set, it **overrides** `railway.json` silently; clear it (or set it to match) so the repo's blueprint is the one that actually runs. Point the healthcheck at `/api/health`.
 
 | Variable | Value | Why |
 |---|---|---|
@@ -654,6 +656,50 @@ If `GET /api/health` reports `"credential_map": { "status": "undercovered" }` or
 - **Cause**: One or more store projects have no token entry in `KANBAN_PROJECT_TOKENS`. Requests to those projects return `403 Forbidden`.
 - **Diagnosis**: Check `GET /api/health` payload `credential_map.missing` for the list of uncovered projects.
 - **Fix**: Update the `KANBAN_PROJECT_TOKENS` environment variable to include the missing projects. Note that platforms like Railway do not preserve variable history across deployments; recover values from a previous deployment record or your secure secrets vault.
+
+### 7.4 Troubleshooting: Could Not File The Report (v3.2.5)
+
+If "Report a bug" reliably returns `could_not_file` (HTTP 502) even though the Turnstile captcha visibly passes, the GitHub issue never got filed. Before v3.2.5 the server logged nothing on this path at all — a Railway deployment with a placeholder `KANBAN_REPORT_GITHUB_TOKEN` (GitHub answering `401 Bad credentials` on every attempt) left no trace in the deploy logs. The server now logs **one line per failed request** (not one per retry attempt), prefixed `[kanban bug-report]`, in its console output (on Railway: `railway logs`), rate-limited to at most one identical line per 60 seconds per status and repo so a flood or an outage can't fill the log:
+
+```
+[kanban bug-report] could_not_file: github status=401 message="Bad credentials" accepted-permissions="n/a" ratelimit-remaining="4999" attempts=1 repo=owner/name hint="token invalid/expired/placeholder"
+```
+
+Read the `status` and `hint` fields to diagnose and fix:
+
+| GitHub status | Hint | Fix |
+| :--- | :--- | :--- |
+| `201` (unreadable body) | issue may have been filed; check the repo | GitHub answered success but the response body couldn't be read, so the issue number is unknown — the server still 502s. Check the repo before retrying; filing may have already happened. |
+| `401` | token invalid/expired/placeholder | `KANBAN_REPORT_GITHUB_TOKEN` is wrong, expired, or a placeholder (the incident this feature was built for: a 19-character non-token string). Generate a real fine-grained PAT (below) and redeploy. |
+| `403` | token lacks Issues:write or secondary rate limit | Either the PAT's repository permission is not **Issues: Read and write**, or GitHub's secondary rate limit kicked in — check `ratelimit-remaining` in the same line. Fix the PAT's permissions, or wait it out. |
+| `404` | repo name wrong or token has no access to that repo | `KANBAN_REPORT_REPO` is misspelled, or the fine-grained PAT's repository access list does not include that repo. |
+| `410` | issues disabled | The target repository has Issues disabled in its GitHub settings. Enable Issues, or point `KANBAN_REPORT_REPO` elsewhere. |
+| `422` | validation (label) | GitHub rejected the request even after the automatic fallback that drops the `user-report` label — uncommon; read the `message` field in the same line. |
+| `429` | GitHub rate limit; retry later | GitHub's primary rate limit was exhausted across all 3 retries. Transient; wait and retry, and check `ratelimit-remaining`. |
+| `5xx` | GitHub outage | Transient; the server already retried up to 3 times with backoff before giving up. If it persists, check <https://www.githubstatus.com/>. |
+| network error | network/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL | The server couldn't reach GitHub at all. Check connectivity, and that `KANBAN_REPORT_GITHUB_API_URL` (if set) is correct. |
+
+A startup warning also catches a misconfigured credential before the first report ever fails, e.g.:
+
+```
+[kanban bug-report] WARNING: KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token (placeholder?)
+```
+
+(the same check also covers `KANBAN_REPORT_REPO` and `TURNSTILE_SITE_KEY`). It fires once at boot when a value's **shape** doesn't match a real credential — the value itself, and its length, are never logged — and it does not disable the feature.
+
+**Generating a fine-grained GitHub PAT:**
+1. Open <https://github.com/settings/personal-access-tokens/new>.
+2. **Repository access** → "Only select repositories" → choose the one repo `KANBAN_REPORT_REPO` points at.
+3. **Permissions** → Repository permissions → set **Issues** to **Read and write**. Leave every other permission at "No access".
+4. Generate the token, copy it (it starts with `github_pat_`), set it as `KANBAN_REPORT_GITHUB_TOKEN` in Railway's variables, and redeploy.
+
+Turnstile verification failures are logged the same way, with Cloudflare's own `error-codes` array instead of a GitHub status, e.g.:
+
+```
+[kanban bug-report] turnstile check failed: success=false error-codes=["invalid-input-response"]
+```
+
+Every remote/untrusted value that reaches one of these lines — GitHub's `message`, the two diagnostic headers, Cloudflare's `error-codes`/`action`/`hostname` — is run through a shared sanitizer first: control characters and the Unicode line/paragraph separators are stripped and the value is length-capped, so an upstream response can never inject a raw control byte or fake a second log line. The GitHub token/Turnstile secret are redacted from the raw GitHub message before that truncation, so a secret straddling the length cut can't leak a surviving prefix. None of these log lines ever contain the GitHub token, the Turnstile secret, the Authorization header, the report's title/description, or the reporter's IP address.
 
 ---
 
