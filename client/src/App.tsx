@@ -819,7 +819,11 @@ export default function App() {
                     />
                   )}
                   <div className="board-frame flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+                    {/* Keyed by project so per-column state (the phone
+                        "Show N more" expansion, the snapped column) resets
+                        when the scope changes instead of leaking across. */}
                     <Board
+                      key={project || 'all-projects'}
                       tasks={filteredTasks}
                       onOpen={handleOpen}
                       showProject={!project}

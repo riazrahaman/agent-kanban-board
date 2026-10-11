@@ -33,11 +33,17 @@ let savedY = 0
  * `position: fixed; top: -scrollY` (via the class + inline top), which keeps
  * the page visually where it was — no jump — and cannot be touch-scrolled.
  * Reference-counted so stacked overlays release only when the last closes.
- * Returns the release function.
+ * `startY` overrides the position to pin at (used when re-locking after a
+ * rotation, when the window has already lost it). Returns the release
+ * function: `release()` restores the saved position; `release(false)`
+ * unpins without scrolling (a breakpoint change, not a close). Either way it
+ * returns the saved position.
  */
-export function lockDocumentScroll(doc: DocLike = document, win: WinLike = window): () => void {
+export type ScrollLockRelease = (restore?: boolean) => number
+
+export function lockDocumentScroll(doc: DocLike = document, win: WinLike = window, startY?: number): ScrollLockRelease {
   if (lockCount === 0) {
-    savedY = win.scrollY
+    savedY = startY ?? win.scrollY
     doc.body.style.top = `-${savedY}px`
     // Lets the sticky header be shifted back into view while locked (index.css).
     doc.documentElement.style.setProperty('--scroll-lock-y', `${savedY}px`)
@@ -45,16 +51,17 @@ export function lockDocumentScroll(doc: DocLike = document, win: WinLike = windo
   }
   lockCount++
   let released = false
-  return () => {
-    if (released) return
+  return (restore = true) => {
+    if (released) return savedY
     released = true
     lockCount--
     if (lockCount === 0) {
       doc.documentElement.classList.remove(SCROLL_LOCK_CLASS)
       doc.documentElement.style.removeProperty('--scroll-lock-y')
       doc.body.style.top = ''
-      win.scrollTo(0, savedY)
+      if (restore) win.scrollTo(0, savedY)
     }
+    return savedY
   }
 }
 
@@ -72,19 +79,31 @@ type MediaQueryLike = {
 /**
  * Holds a scroll lock exactly while `mq` (the phone-layout query) matches,
  * following live changes — e.g. rotating the device across the 768px
- * breakpoint while an overlay is open. Leaving the phone layout releases the
- * lock (which always restores the scroll position, so <body> is never left
- * fixed at a negative top in the desktop layout); entering it (an overlay
- * opened in landscape, then rotated to portrait) applies it. Returns a
- * dispose function that releases any held lock.
+ * breakpoint while an overlay is open:
+ * - leaving the phone layout unpins <body> (never left fixed at a negative
+ *   top in the desktop layout) but KEEPS the saved position instead of
+ *   restoring it — the desktop layout can't scroll, so restoring there would
+ *   silently lose it;
+ * - re-entering the phone layout with the overlay still open re-pins at that
+ *   same saved position;
+ * - entering it for an overlay first opened in landscape applies the lock;
+ * - only the real close (dispose) restores the position — via the held lock,
+ *   or via `restore` if the overlay closes while unpinned.
  */
-export function bindScrollLockToQuery(mq: MediaQueryLike | undefined, lock: () => () => void): () => void {
-  let release: (() => void) | null = null
+export function bindScrollLockToQuery(
+  mq: MediaQueryLike | undefined,
+  lock: (startY?: number) => ScrollLockRelease,
+  restore: (y: number) => void = () => {},
+): () => void {
+  let release: ScrollLockRelease | null = null
+  let carriedY: number | undefined
   const sync = () => {
     const want = mq?.matches ?? false
-    if (want && !release) release = lock()
-    else if (!want && release) {
-      release()
+    if (want && !release) {
+      release = lock(carriedY)
+      carriedY = undefined
+    } else if (!want && release) {
+      carriedY = release(false)
       release = null
     }
   }
@@ -92,8 +111,10 @@ export function bindScrollLockToQuery(mq: MediaQueryLike | undefined, lock: () =
   mq?.addEventListener?.('change', sync)
   return () => {
     mq?.removeEventListener?.('change', sync)
-    release?.()
+    if (release) release(true)
+    else if (carriedY !== undefined) restore(carriedY)
     release = null
+    carriedY = undefined
   }
 }
 
@@ -105,6 +126,10 @@ export function bindScrollLockToQuery(mq: MediaQueryLike | undefined, lock: () =
 export function useDocumentScrollLock(active: boolean): void {
   useEffect(() => {
     if (!active) return
-    return bindScrollLockToQuery(window.matchMedia?.(PHONE_LAYOUT_QUERY), () => lockDocumentScroll())
+    return bindScrollLockToQuery(
+      window.matchMedia?.(PHONE_LAYOUT_QUERY),
+      (startY) => lockDocumentScroll(document, window, startY),
+      (y) => window.scrollTo(0, y),
+    )
   }, [active])
 }

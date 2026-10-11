@@ -24,6 +24,8 @@ await rm(tmpDir, { recursive: true, force: true })
 
 const columnSource = readFileSync(join(__dirname, '..', 'components', 'Column.tsx'), 'utf8')
 const boardSource = readFileSync(join(__dirname, '..', 'components', 'Board.tsx'), 'utf8')
+const appSource = readFileSync(join(__dirname, '..', 'App.tsx'), 'utf8')
+const cssSource = readFileSync(join(__dirname, '..', 'index.css'), 'utf8')
 
 const range = (n) => Array.from({ length: n }, (_, i) => i)
 
@@ -80,4 +82,20 @@ test('Board wiring: cap + column bar + alignment only in the phone layout', () =
   assert.match(boardSource, /performance\.now\(\) - lastUserVScroll < 250\) return/, 'never fight a vertical scroll in progress')
   assert.match(boardSource, /setTimeout\(settle, 150\)/, 'debounced until the horizontal swipe settles')
   assert.match(boardSource, /columnAlignTarget\(/)
+})
+
+test('column bar: aria-live wraps only the column title, not the count or n/N position (review round 3)', () => {
+  const bar = boardSource.slice(boardSource.indexOf('data-testid="column-indicator"'), boardSource.indexOf('</div>', boardSource.indexOf('data-testid="column-indicator"')))
+  const live = [...bar.matchAll(/aria-live="polite"/g)]
+  assert.equal(live.length, 1, 'exactly one live region in the bar')
+  assert.match(bar, /<span aria-live="polite">\{activeColumn\.title\}<\/span>/)
+  assert.doesNotMatch(bar.slice(0, bar.indexOf('className="column-indicator')), /aria-live/, 'the bar container itself must not be live')
+})
+
+test('column bar never sits under the status bar while the header is not sticky (review round 3)', () => {
+  assert.match(cssSource, /\.column-indicator\s*\{[^}]*top:\s*max\(var\(--app-header-h,\s*0px\),\s*env\(safe-area-inset-top,\s*0px\)\)/)
+})
+
+test('"Show N more" expansion resets on project switch: Board is keyed by project (review round 3)', () => {
+  assert.match(appSource, /<Board\s+key=\{project \|\| 'all-projects'\}/)
 })

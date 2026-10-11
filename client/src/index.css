@@ -265,7 +265,9 @@ body {
      nearest scroll container, which for them is the horizontal strip. */
   .column-indicator {
     position: sticky;
-    top: var(--app-header-h, 0px);
+    /* While the ⋯ controls are open the header is not sticky
+       (--app-header-h = 0); never park the bar under the status bar. */
+    top: max(var(--app-header-h, 0px), env(safe-area-inset-top, 0px));
   }
 
   /* While an overlay locks the page, <body> is pinned at -scrollY, which

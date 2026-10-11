@@ -146,12 +146,13 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         <div
           ref={indicatorRef}
           data-testid="column-indicator"
-          aria-live="polite"
           className="column-indicator z-[15] flex items-center justify-between gap-2 border-b border-line bg-bg px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-ink"
         >
           <span className="min-w-0 truncate">
             {activeColumn.stepNumber && <span className="text-muted">{activeColumn.stepNumber} </span>}
-            {activeColumn.title}
+            {/* Only the column name is announced on a swipe; the count and
+                n/N position would make every live update noisy. */}
+            <span aria-live="polite">{activeColumn.title}</span>
             <span className="text-muted"> · {(grouped[activeColumn.status] || []).length}</span>
           </span>
           <span className="shrink-0 tabular-nums text-muted">
