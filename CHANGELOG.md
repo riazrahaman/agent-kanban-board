@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,30 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.2.4] — 2026-10-11
+
+Second real-iPhone follow-up (GH #103): a screen recording of the live 3.2.3 on iOS 26 Safari showed pinch-zoom still working and the board still stopping above the floating bottom toolbar. Both root causes are now fixed in CSS that does not depend on iOS honouring the viewport meta tag.
+
+### Fixed
+- **Pinch-zoom still worked on the board**: `touch-action` is not inherited, and WebKit (per the Pointer Events "determining supported touch behavior" rule) intersects an element's touch-action with its ancestors' only up to the nearest scroll container, where the effective value resets to `auto`. v3.2.3 set `pan-x pan-y` on `html, body, #root` only; every card sits inside two scroll containers (`.board-scroll`, the column list) and body itself was one (`overflow-x: hidden`), so pinch stayed allowed everywhere on the board. Worse, buttons/inputs/links carried `touch-action: manipulation`, which explicitly includes pinch-zoom. `client/src/index.css` now applies `touch-action: pan-x pan-y` to every element (`*, *::before, *::after`) and drops the `manipulation` rule. `pan-x pan-y` only removes the zoom keyword, so no scroll axis is narrowed (GH #87's swipe fix is unaffected).
+- **JS pinch guard hardened** (`client/src/lib/pinchZoomGuard.ts`): besides cancelling WebKit `gesturestart`/`gesturechange`/`gestureend`, it now `preventDefault()`s `touchmove` only when two or more fingers are down (or WebKit reports a `scale` other than 1), and `wheel` only with `ctrlKey` (trackpad pinch). Every listener is `{ passive: false, capture: true }` on both `document` and `window`. One-finger moves and plain wheel scrolling are never cancelled, and there is still no `touchend` double-tap guard.
+- **Dead strip above Safari's floating bottom toolbar**: html/body were `height: 100%` (the small viewport) and body's `overflow-x: hidden` made it a scroll container, so body clipped v3.2.3's taller `100lvh` shell at the small-viewport edge. The shell (`.app-shell`) is now `position: fixed; inset: 0` with `min-height: 100lvh`. A fixed box is laid out against the viewport, so no ancestor overflow can clip it. html/body are `overflow: hidden; overscroll-behavior: none` and never scroll. The header's top padding adds `env(safe-area-inset-top)`, so with `viewport-fit=cover` the shell can also sit behind the status bar. On desktop that inset is 0, so header height is unchanged and `scripts/check-header-layout.mjs` still passes. TaskSheet, BugReportDialog and the mobile Signal Rail drawer pad the top safe-area inset. The HeaderHelp and column-colours bottom sheets clear `safe-area-inset-bottom`. Fixed sheets keep `100dvh` so their pinned footers stay visible.
+
+### Verification
+- Verified in Chrome (playwright-core, `isMobile` + `hasTouch`, 360/390/430 × dark/light, plus 1440 desktop):
+  - Computed `touch-action` is `pan-x pan-y` on every element in the document (398 of 398, including the closed sheets).
+  - The shell rect equals the viewport rect, and the document cannot scroll.
+  - Columns scroll vertically under a real CDP one-finger swipe, and the board scrolls horizontally.
+  - A synthetic two-finger `touchmove` is `defaultPrevented` and a one-finger one is not. Ctrl+wheel is prevented and plain wheel is not.
+  - Tapping a card opens TaskSheet. TaskSheet, BugReportDialog (submit button in view) and the HeaderHelp popover all fit the viewport.
+  - `check-header-layout.mjs` (live ON-vs-OFF diff), `check-card-layout.mjs` and `check-browser-smoke.mjs` all pass.
+- **Not verifiable without an iPhone**: whether iOS Safari actually stops pinch-zoom, whether a `position: fixed; inset: 0` box reaches behind the floating toolbar and status bar, and the real `env(safe-area-inset-*)` values. Chromium emulation honours the viewport meta tag anyway and has no translucent toolbar, and Playwright WebKit is a desktop engine.
+
+### Tests
+- `pinchZoomGuard.test.mjs`: 7 → 10 cases. Covers listeners on document and window (non-passive + capture), 2-finger touchmove prevented, 1-finger not, `scale` handling, and ctrl+wheel vs plain wheel.
+- `responsive.test.mjs`, `mobileToolbar.test.mjs`, `bugReportContract.test.mjs`: new checks for the universal touch-action rule, a ban on `manipulation`/`auto`/`pinch-zoom` touch-action, the fixed `inset: 0` `.app-shell` (no `h-screen`), non-scrolling html/body, header and TaskSheet safe-area-top padding, and `overflow: hidden` at the document root.
+- Client: 218 (was 213; `aboutContent.ts` updated). Server: unchanged at 534.
 
 ## [3.2.3] — 2026-10-10
 
