@@ -659,22 +659,25 @@ If `GET /api/health` reports `"credential_map": { "status": "undercovered" }` or
 
 ### 7.4 Troubleshooting: Could Not File The Report (v3.2.5)
 
-If "Report a bug" reliably returns `could_not_file` (HTTP 502) even though the Turnstile captcha visibly passes, the GitHub issue never got filed. Before v3.2.5 the server logged nothing on this path at all — a Railway deployment with a placeholder `KANBAN_REPORT_GITHUB_TOKEN` (GitHub answering `401 Bad credentials` on every attempt) left no trace in the deploy logs. Every failed attempt now leaves exactly one line, prefixed `[kanban bug-report]`, in the server's console output (on Railway: `railway logs`):
+If "Report a bug" reliably returns `could_not_file` (HTTP 502) even though the Turnstile captcha visibly passes, the GitHub issue never got filed. Before v3.2.5 the server logged nothing on this path at all — a Railway deployment with a placeholder `KANBAN_REPORT_GITHUB_TOKEN` (GitHub answering `401 Bad credentials` on every attempt) left no trace in the deploy logs. The server now logs **one line per failed request** (not one per retry attempt), prefixed `[kanban bug-report]`, in its console output (on Railway: `railway logs`), rate-limited to at most one identical line per 60 seconds per status and repo so a flood or an outage can't fill the log:
 
 ```
-[kanban bug-report] could_not_file: github status=401 message="Bad credentials" accepted-permissions=n/a ratelimit-remaining=4999 attempts=1 repo=owner/name hint="token invalid/expired/placeholder"
+[kanban bug-report] could_not_file: github status=401 message="Bad credentials" accepted-permissions="n/a" ratelimit-remaining="4999" attempts=1 repo=owner/name hint="token invalid/expired/placeholder"
 ```
 
 Read the `status` and `hint` fields to diagnose and fix:
 
 | GitHub status | Hint | Fix |
 | :--- | :--- | :--- |
+| `201` (unreadable body) | issue may have been filed; check the repo | GitHub answered success but the response body couldn't be read, so the issue number is unknown — the server still 502s. Check the repo before retrying; filing may have already happened. |
 | `401` | token invalid/expired/placeholder | `KANBAN_REPORT_GITHUB_TOKEN` is wrong, expired, or a placeholder (the incident this feature was built for: a 19-character non-token string). Generate a real fine-grained PAT (below) and redeploy. |
 | `403` | token lacks Issues:write or secondary rate limit | Either the PAT's repository permission is not **Issues: Read and write**, or GitHub's secondary rate limit kicked in — check `ratelimit-remaining` in the same line. Fix the PAT's permissions, or wait it out. |
 | `404` | repo name wrong or token has no access to that repo | `KANBAN_REPORT_REPO` is misspelled, or the fine-grained PAT's repository access list does not include that repo. |
 | `410` | issues disabled | The target repository has Issues disabled in its GitHub settings. Enable Issues, or point `KANBAN_REPORT_REPO` elsewhere. |
 | `422` | validation (label) | GitHub rejected the request even after the automatic fallback that drops the `user-report` label — uncommon; read the `message` field in the same line. |
-| `5xx` / network error | GitHub outage | Transient; the server already retried up to 3 times with backoff before giving up. If it persists, check <https://www.githubstatus.com/>. |
+| `429` | GitHub rate limit; retry later | GitHub's primary rate limit was exhausted across all 3 retries. Transient; wait and retry, and check `ratelimit-remaining`. |
+| `5xx` | GitHub outage | Transient; the server already retried up to 3 times with backoff before giving up. If it persists, check <https://www.githubstatus.com/>. |
+| network error | network/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL | The server couldn't reach GitHub at all. Check connectivity, and that `KANBAN_REPORT_GITHUB_API_URL` (if set) is correct. |
 
 A startup warning also catches a misconfigured credential before the first report ever fails, e.g.:
 
@@ -696,7 +699,7 @@ Turnstile verification failures are logged the same way, with Cloudflare's own `
 [kanban bug-report] turnstile check failed: success=false error-codes=["invalid-input-response"]
 ```
 
-None of these log lines ever contain the GitHub token, the Turnstile secret, the Authorization header, the report's title/description, or the reporter's IP address.
+Every remote/untrusted value that reaches one of these lines — GitHub's `message`, the two diagnostic headers, Cloudflare's `error-codes`/`action`/`hostname` — is run through a shared sanitizer first: control characters and the Unicode line/paragraph separators are stripped and the value is length-capped, so an upstream response can never inject a raw control byte or fake a second log line. The GitHub token/Turnstile secret are redacted from the raw GitHub message before that truncation, so a secret straddling the length cut can't leak a surviving prefix. None of these log lines ever contain the GitHub token, the Turnstile secret, the Authorization header, the report's title/description, or the reporter's IP address.
 
 ---
 
