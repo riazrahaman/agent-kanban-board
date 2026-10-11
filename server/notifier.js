@@ -1,6 +1,6 @@
 /**
  * §2.11 outbound notifications — Telegram alerts when the reaper returns a task
- * to BACKLOG.
+ * to READY (v3; owner and lease cleared).
  *
  * This module is a pure SUBSCRIBER. It adds zero surface to the mutation path:
  * `store.onDiff` already fans every committed mutation out to listeners, and the
