@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as store from '../store.js';
-import { VALID_ROLES } from '../middleware/auth.js';
+import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard } from '../middleware/projectScope.js';
 
 const router = Router();
@@ -55,6 +55,16 @@ router.get('/', asyncHandler(async (req, res) => {
   // §2.8 lazy sweep before every list read.
   await store.runArchiveSweep();
   const project = resolveProjectFromReq(req);
+  const authorized = getAuthorizedProjects(req);
+
+  if (authorized instanceof Set) {
+    if (project) {
+      if (!authorized.has(project)) return res.json([]);
+      return res.json(store.getTasks(project));
+    }
+    return res.json(store.getTasks().filter((t) => authorized.has(t.project)));
+  }
+
   res.json(store.getTasks(project));
 }));
 

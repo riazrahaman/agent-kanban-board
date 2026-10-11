@@ -46,7 +46,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '563',
+    value: '574',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -171,7 +171,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Real-time push over SSE', code: 'server.js · GET /api/events' },
   { name: 'Periodic data backups', code: 'store.js · runBackup, backupStatus' },
   { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
-  { name: 'Per-project token isolation', code: 'middleware/auth.js, projectScope.js' },
+  { name: 'Per-project token & project-name isolation', code: 'middleware/auth.js, routes/projects.js, routes/health.js' },
   { name: 'Credential-map coverage in health', code: 'utils/credentialMap.js · checkCredentialCoverage, GET /api/health' },
   { name: 'Rate limiting + auth-failure lockout', code: 'middleware/rateLimit.js · createRateLimitMiddleware' },
   { name: 'Reverse-proxy aware client IPs', code: 'server.js · resolveTrustProxy (KANBAN_TRUST_PROXY)' },

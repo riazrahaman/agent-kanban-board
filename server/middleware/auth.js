@@ -123,33 +123,62 @@ function isProbePath(req) {
 }
 
 /**
- * Authorizes a read when read-auth is on: either a valid bearer token (session,
- * per-project, admin or global) or a single-use stream ticket in `?ticket=`.
+ * §2.11 — Returns authorized project scope for a caller:
+ *   - '*' if caller presents admin token (KANBAN_ADMIN_TOKEN) or global board token (KANBAN_AUTH_TOKEN)
+ *   - Set<string> of project names if caller presents a project-scoped token or session token
+ *   - null if unauthenticated or invalid token
  */
-function authorizeRead(req) {
+export function getAuthorizedProjects(req) {
   const ticket = typeof req.query?.ticket === 'string' ? req.query.ticket : null;
   if (ticket) {
     const scope = verifyStreamTicket(ticket);
     if (scope) {
       req.caller = { ...req.caller, role: scope.role ?? req.caller.role };
-      return true;
+      if (scope.project) return new Set([scope.project]);
+      return '*';
     }
   }
+
   const providedToken = extractToken(req);
-  if (!providedToken) return false;
-  if (verifySessionToken(providedToken)) return true;
+  if (!providedToken) return null;
+
+  const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+  if (adminToken && tokensMatch(providedToken, adminToken)) {
+    return '*';
+  }
+
+  const session = verifySessionToken(providedToken);
+  if (session) {
+    if (session.role === 'admin') return '*';
+    if (session.project) return new Set([session.project]);
+    return new Set();
+  }
 
   const projectTokens = parseProjectTokens();
   if (projectTokens?.map) {
-    for (const token of projectTokens.map.values()) {
-      if (tokensMatch(providedToken, token)) return true;
+    const authorized = new Set();
+    for (const [project, token] of projectTokens.map.entries()) {
+      if (tokensMatch(providedToken, token)) {
+        authorized.add(project);
+      }
     }
+    if (authorized.size > 0) return authorized;
   }
-  const adminToken = process.env.KANBAN_ADMIN_TOKEN;
-  if (adminToken && tokensMatch(providedToken, adminToken)) return true;
+
   const requiredToken = process.env.KANBAN_AUTH_TOKEN;
-  if (requiredToken && tokensMatch(providedToken, requiredToken)) return true;
-  return false;
+  if (requiredToken && tokensMatch(providedToken, requiredToken)) {
+    return '*';
+  }
+
+  return null;
+}
+
+/**
+ * Authorizes a read when read-auth is on: either a valid bearer token (session,
+ * per-project, admin or global) or a single-use stream ticket in `?ticket=`.
+ */
+function authorizeRead(req) {
+  return getAuthorizedProjects(req) !== null;
 }
 
 /**

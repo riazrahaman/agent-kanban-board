@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,21 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.3.0] — 2026-10-11
+
+Per-token project name isolation and discovery restriction on shared multi-client boards (§2.11). On multi-tenant deployments configured with `KANBAN_PROJECT_TOKENS`, client-specific tokens are now strictly isolated to their mapped project(s) across project listing, health probes, and task feeds.
+
+### Added
+- **Per-Token Project Name Isolation (`server/middleware/auth.js`)**: Added `getAuthorizedProjects(req)` helper that extracts tokens from `Authorization: Bearer` or `x-api-token` headers and returns `'*'` (for admin/global tokens) or `Set<string>` (for project-scoped tokens).
+- **Portfolio / Projects Scoping (`server/routes/projects.js`)**: `GET /api/projects` filters summaries to return only projects authorized for the presented token. When `KANBAN_PROJECT_TOKENS` is configured, anonymous probes or invalid tokens receive an empty array `[]` (or 401 when `KANBAN_READ_AUTH=token` is active).
+- **Health Probe Credential Map Privacy (`server/routes/health.js`)**: `GET /api/health` credential map `missing` and `extra` arrays are now filtered against the caller's authorized scope. A client presenting a project-scoped token only sees its own project name if missing or extra, preventing cross-tenant leakage. Anonymous callers continue to receive aggregate counts only (`covered`, `missing_count`, `extra_count`).
+- **Unscoped Tasks Isolation (`server/routes/tasks.js`)**: `GET /api/tasks` without a `?project=` parameter filters `store.getTasks()` to only return tasks belonging to projects authorized for the caller's token. Querying an explicit foreign project returns an empty array.
+- **Project Isolation Test Suite (`server/test/kanban.project-isolation.test.js`)**: Comprehensive 11-test suite verifying admin oversight, project token restriction, anonymous suppression, and cross-project leak prevention across all three endpoints.
+
+### Changed
+- **Breaking Change for Unauthenticated Discovery Calls**: Anonymous callers calling `GET /api/projects` on multi-tenant boards with `KANBAN_PROJECT_TOKENS` now receive an empty list `[]` instead of all hosted project summaries. Orchestrators and external tools must provide their `x-api-token` on read and discovery endpoints.
+- **Skill Protocol Synchronized (`skills/kanban/SKILL.md`)**: Bumped skill version to `v3.3.0`. Mandated passing `x-api-token` on `GET /api/projects` in Section 1 preflight checks.
 
 ## [3.2.5] — 2026-10-11
 

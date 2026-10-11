@@ -36,8 +36,7 @@ If none is supplied, the server uses `KANBAN_DEFAULT_PROJECT` (default `default`
 
 ## 3. Authentication
 
-Reads (`GET`, including the SSE stream) are **open**. Every mutation
-(`POST`/`PATCH`/`PUT`/`DELETE`) needs a token **and** a role.
+Reads (`GET`, including the SSE stream) are **open** by default (unless `KANBAN_READ_AUTH=token` is active). However, on multi-tenant boards configured with `KANBAN_PROJECT_TOKENS` (v3.3.0+), providing your token via `Authorization: Bearer <token>` or `X-API-Token: <token>` is required to discover your project in `GET /api/projects` (anonymous requests receive an empty array `[]`). Every mutation (`POST`/`PATCH`/`PUT`/`DELETE`) strictly needs a token **and** a valid agent role.
 
 ### Token sources (set by the board owner as server env vars)
 

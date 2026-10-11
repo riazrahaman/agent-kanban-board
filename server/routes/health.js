@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createRequire } from 'node:module';
 import * as store from '../store.js';
-import { parseProjectTokens, hasReadCredential } from '../middleware/auth.js';
+import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
 import { checkCredentialCoverage } from '../utils/credentialMap.js';
 
 const require = createRequire(import.meta.url);
@@ -27,23 +27,27 @@ router.get('/', asyncHandler(async (req, res) => {
   const live = store.getTasks();
   const reaperEnabled = store.isReaperEnabled();
 
-  // §2.10: surface credential-map coverage so a monitoring probe sees a
+  // §2.10 / §2.11: surface credential-map coverage so a monitoring probe sees a
   // truncated token map without reading logs. Read-only; never exposes a token
   // value.
   //
-  // Project NAMES are withheld from anonymous callers. This route is exempt from
-  // read auth (`isProbePath`) so it stays reachable by the platform healthcheck,
-  // which means it is also reachable by anyone who finds a hosted board — even
-  // with `KANBAN_READ_AUTH=token` on. `missing` names store projects, which
-  // `GET /api/projects` already publishes; `extra` is the sharper one, naming
-  // token-map entries that have NO store file and so appear nowhere else. Counts
-  // are enough for a probe to alert on, so anonymous callers get counts and an
-  // identified caller gets the names.
+  // Project NAMES are withheld from anonymous callers. When authenticated,
+  // admin tokens receive all names, while project-scoped tokens only receive
+  // missing/extra project names within their authorized scope.
   const coverage = checkCredentialCoverage(
     store.getProjectSummaries().map((s) => s.project),
     parseProjectTokens()
   );
-  const identified = hasReadCredential(req);
+  const authorized = getAuthorizedProjects(req);
+  let nameDisclosure = null;
+  if (authorized === '*') {
+    nameDisclosure = { missing: coverage.missing, extra: coverage.extra };
+  } else if (authorized instanceof Set) {
+    nameDisclosure = {
+      missing: coverage.missing.filter((p) => authorized.has(p)),
+      extra: coverage.extra.filter((p) => authorized.has(p)),
+    };
+  }
 
   res.json({
     status: loaded && reaperEnabled ? 'ok' : 'degraded',
@@ -62,9 +66,7 @@ router.get('/', asyncHandler(async (req, res) => {
       covered: coverage.covered.length,
       missing_count: coverage.missing.length,
       extra_count: coverage.extra.length,
-      ...(identified
-        ? { missing: coverage.missing, extra: coverage.extra }
-        : {}),
+      ...(nameDisclosure !== null ? nameDisclosure : {}),
     },
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
