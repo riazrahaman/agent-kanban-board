@@ -1,19 +1,14 @@
-// v3.2.3 (GH #103 follow-up). The module's real behaviour — blocking a pinch
-// zoom on a physical iPhone — cannot be exercised here: Playwright WebKit is
-// a desktop engine with no touch/gesture pipeline (see pinchZoomGuard.ts's
-// header comment for the full reasoning), and this repo's plain node:test
-// runner has no DOM at all. What IS verified: `installPinchZoomGuard`'s DOM
-// *wiring* against a minimal fake `EventTarget`-like document (the right
-// event names, each one `{ passive: false }`, cleanup actually removes
-// them), a source-contract check that main.tsx installs it, and — per round-1
-// review — a source-contract guard that the `touchend` double-tap guard this
-// module originally shipped with does NOT come back: it `preventDefault()`d
-// the second of any two touchends within 350ms regardless of target, which
-// cancelled the following click for a real user double-tapping two
-// different buttons, swiping then quickly tapping a card, or double-tap-
-// selecting a word in a textarea. It was also redundant: root
-// `touch-action: pan-x pan-y` (index.css) already blocks double-tap-zoom —
-// no `pinch-zoom` keyword means no zoom gesture of either kind.
+// GH #103 follow-up (v3.2.3, hardened v3.2.4). The module's real behaviour —
+// blocking a pinch zoom on a physical iPhone — cannot be exercised here:
+// neither Playwright WebKit (a desktop engine) nor Chromium touch emulation
+// implements iOS Safari's pinch pipeline, and node:test has no DOM. What IS
+// verified, against a minimal fake EventTarget: the wiring (touchmove,
+// gesture* on BOTH document and window, each passive:false +
+// capture), the decision logic (2+-finger touchmove prevented, 1-finger
+// NOT), that no wheel listener is ever registered (it killed desktop
+// ctrl+wheel zoom and forced main-thread wheel scrolling), cleanup, that main.tsx
+// installs it, and that the reviewed-out `touchend` double-tap guard (it
+// cancelled real clicks) never comes back.
 // esbuild bundles the TS source into ESM at test time, mirroring
 // authToken.test.mjs / claimCoordinator.test.mjs.
 import assert from 'node:assert/strict'
@@ -66,51 +61,81 @@ function makeFakeDoc() {
 }
 
 const GESTURE_EVENTS = ['gesturestart', 'gesturechange', 'gestureend']
+const ALL_EVENTS = ['touchmove', ...GESTURE_EVENTS]
 
-test('installPinchZoomGuard registers the WebKit gesture events, all non-passive', () => {
+function fire(target, type, init) {
+  let prevented = false
+  for (const { handler } of target.listeners.get(type) ?? []) {
+    handler({ ...init, preventDefault: () => { prevented = true } })
+  }
+  return prevented
+}
+
+test('installPinchZoomGuard registers every listener on BOTH document and window, non-passive + capture', () => {
   const doc = makeFakeDoc()
-  mod.installPinchZoomGuard(doc)
-  for (const type of GESTURE_EVENTS) {
-    const list = doc.listeners.get(type)
-    assert.equal(list?.length, 1, `expected exactly one ${type} listener`)
-    assert.equal(
-      list[0].options?.passive,
-      false,
-      `${type} listener must be { passive: false } or preventDefault() is a silent no-op`,
-    )
+  const win = makeFakeDoc()
+  mod.installPinchZoomGuard(doc, win)
+  for (const target of [doc, win]) {
+    for (const type of ALL_EVENTS) {
+      const list = target.listeners.get(type)
+      assert.equal(list?.length, 1, `expected exactly one ${type} listener`)
+      assert.equal(
+        list[0].options?.passive,
+        false,
+        `${type} listener must be { passive: false } or preventDefault() is a silent no-op`,
+      )
+      assert.equal(list[0].options?.capture, true, `${type} listener must be capture-phase`)
+    }
+    assert.deepEqual([...target.listeners.keys()].sort(), [...ALL_EVENTS].sort(), 'no other listener types')
   }
 })
 
-test('installPinchZoomGuard registers no other listener type (e.g. no touchend)', () => {
+test('a two-finger touchmove is preventDefault()ed (pinch blocked)', () => {
   const doc = makeFakeDoc()
-  mod.installPinchZoomGuard(doc)
-  assert.deepEqual(
-    [...doc.listeners.keys()].sort(),
-    [...GESTURE_EVENTS].sort(),
-    'installPinchZoomGuard must register exactly the three gesture events and nothing else',
-  )
+  mod.installPinchZoomGuard(doc, null)
+  assert.equal(fire(doc, 'touchmove', { touches: { length: 2 } }), true)
+  assert.equal(fire(doc, 'touchmove', { touches: { length: 3 } }), true)
+})
+
+test('a one-finger touchmove is NOT preventDefault()ed (scrolling/swiping untouched)', () => {
+  const doc = makeFakeDoc()
+  mod.installPinchZoomGuard(doc, null)
+  assert.equal(fire(doc, 'touchmove', { touches: { length: 1 } }), false)
+  assert.equal(fire(doc, 'touchmove', { touches: { length: 1 }, scale: 1 }), false)
+})
+
+test('a WebKit touchmove with scale != 1 is preventDefault()ed even if touches is missing', () => {
+  assert.equal(mod.isPinchTouch({ scale: 1.4, preventDefault() {} }), true)
+  assert.equal(mod.isPinchTouch({ scale: 1, preventDefault() {} }), false)
+  assert.equal(mod.isPinchTouch({ preventDefault() {} }), false)
 })
 
 test('each gesture listener calls preventDefault when invoked', () => {
   const doc = makeFakeDoc()
-  mod.installPinchZoomGuard(doc)
+  mod.installPinchZoomGuard(doc, null)
   for (const type of GESTURE_EVENTS) {
-    const [{ handler }] = doc.listeners.get(type)
-    let prevented = false
-    handler({ preventDefault: () => { prevented = true } })
-    assert.equal(prevented, true, `${type} handler must call preventDefault()`)
+    assert.equal(fire(doc, type, {}), true, `${type} handler must call preventDefault()`)
   }
 })
 
-test('the cleanup function removes every listener it installed', () => {
+test('no wheel listener: desktop ctrl+wheel zoom and compositor wheel scrolling stay intact', () => {
   const doc = makeFakeDoc()
-  const cleanup = mod.installPinchZoomGuard(doc)
-  for (const type of GESTURE_EVENTS) {
-    assert.equal(doc.listeners.get(type)?.length, 1)
-  }
+  const win = makeFakeDoc()
+  mod.installPinchZoomGuard(doc, win)
+  assert.equal(doc.listeners.get('wheel'), undefined)
+  assert.equal(win.listeners.get('wheel'), undefined)
+  assert.doesNotMatch(pinchZoomGuardSource, /\['wheel'|addEventListener\(\s*['"]wheel['"]/, 'pinchZoomGuard.ts must never register a wheel listener')
+})
+
+test('the cleanup function removes every listener it installed, from both targets', () => {
+  const doc = makeFakeDoc()
+  const win = makeFakeDoc()
+  const cleanup = mod.installPinchZoomGuard(doc, win)
   cleanup()
-  for (const type of GESTURE_EVENTS) {
-    assert.equal(doc.listeners.get(type)?.length, 0, `${type} listener must be removed by cleanup`)
+  for (const target of [doc, win]) {
+    for (const type of ALL_EVENTS) {
+      assert.equal(target.listeners.get(type)?.length, 0, `${type} listener must be removed by cleanup`)
+    }
   }
 })
 
@@ -137,7 +162,7 @@ test('pinchZoomGuard.ts never re-adds a touchend listener (regression: it cancel
 
 test('installPinchZoomGuard never registers a touchend listener at runtime', () => {
   const doc = makeFakeDoc()
-  mod.installPinchZoomGuard(doc)
+  mod.installPinchZoomGuard(doc, null)
   assert.equal(doc.listeners.get('touchend'), undefined, 'no touchend listener may be installed')
 })
 

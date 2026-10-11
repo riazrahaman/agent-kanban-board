@@ -1,59 +1,104 @@
-// v3.2.3 (GH #103 follow-up): iOS Safari has ignored `user-scalable=no` /
-// `maximum-scale=1` in the viewport meta tag since ~iOS 10 (an Apple
-// accessibility fix) — confirmed on a real iPhone running iOS 26: v3.2.2's
-// meta tag did not stop pinch-zoom at all. The meta tag is left in place
-// (harmless, still honoured by some non-WebKit engines) but it cannot be the
-// fix.
+// Pinch-zoom guard (GH #103 follow-up; v3.2.3, hardened in v3.2.4).
 //
-// What iOS DOES honour is CSS `touch-action` on the page root (see
-// `touch-action: pan-x pan-y` on `html, body, #root` in index.css — omitting
-// the `pinch-zoom` keyword blocks BOTH the page-level pinch gesture AND
-// double-tap-to-zoom, while `pan-x pan-y` keeps every descendant's own
-// scrolling fully intact, per the touch-action intersection rule already
-// documented in index.css/Board.tsx for GH #87). This module is the second
-// line of defense for older/edge-case WebKit behaviour: it explicitly
-// cancels the non-standard `gesturestart`/`gesturechange`/`gestureend`
-// events WebKit fires on a two-finger pinch regardless of `touch-action`.
+// iOS Safari has ignored `user-scalable=no` / `maximum-scale=1` in the
+// viewport meta tag since ~iOS 10 (an Apple accessibility change). The meta
+// tag stays in place (other engines still honour it) but cannot be the fix.
 //
-// An earlier revision also shipped a `touchend`-timestamp double-tap guard,
-// reviewed out (round 1): `touch-action: pan-x pan-y` already covers
-// double-tap-zoom (no `pinch-zoom` keyword means no zoom gesture of either
-// kind), so the extra guard was redundant — and it was actively harmful: it
-// `preventDefault()`d the SECOND of any two touchends within 350ms
-// regardless of target, which cancels the following click for a real user
-// double-tapping two different buttons, swiping then quickly tapping a card,
-// or double-tap-selecting a word in a textarea.
+// WHY v3.2.3 STILL ZOOMED on a real iPhone: it relied on `touch-action:
+// pan-x pan-y` on `html, body, #root` only. touch-action is NOT inherited,
+// and WebKit (following the Pointer Events "determining supported touch
+// behavior" rule) intersects an element's touch-action with its ancestors'
+// only UP TO the nearest scroll container — at every `overflow: auto|scroll`
+// element the effective value resets to `auto`. Every card on the board sits
+// inside `.board-scroll` (overflow-x: auto) and a column list
+// (overflow-y: auto), and body itself became a scroll container through
+// `overflow-x: hidden`, so the root rule never reached a single touch on the
+// board: effective touch-action there was `auto`, pinch included. index.css
+// now applies `pan-x pan-y` to EVERY element (`*`), scroll containers
+// included, which is the primary fix.
 //
-// Playwright WebKit is a DESKTOP engine: it does not implement iOS's
-// touch/gesture pipeline (no `GestureEvent`). None of this module's actual
-// zoom-blocking behaviour is reproducible in this repo's test/CI
-// environment — only its *wiring* (are the right listeners attached, with
-// the right options) is verified here; the rest is unverified-by-repro, the
-// same honest caveat already carried by BugReportDialog's other iOS/WebKit-
-// specific defenses.
+// This module is the JS layer on top, layered so either one suffices:
+//   1. `touchmove` with more than one finger down (or a WebKit `scale` other
+//      than 1) is `preventDefault()`ed — the classic pinch block that still
+//      works on current iOS when the listener is NON-passive (document-level
+//      touch listeners default to passive in Safari 11.1+, which would make
+//      preventDefault a silent no-op). One-finger moves are never touched,
+//      so scrolling and swiping are unaffected.
+//   2. WebKit's non-standard `gesturestart`/`gesturechange`/`gestureend`
+//      events are cancelled.
+// Each is registered on both `document` and `window`, capture phase, so a
+// descendant that stops propagation cannot hide the gesture from the guard.
+//
+// Deliberately NO `wheel` listener (removed in review before 3.2.4 shipped):
+// cancelling ctrl+wheel killed desktop browser zoom (an accessibility
+// regression nobody asked for — the zoom report is iPhone-only), and ANY
+// non-passive wheel listener on document/window forces every wheel scroll on
+// the page onto the main thread.
+//
+// Deliberately NO `touchend` double-tap guard: an earlier revision had one
+// and it was reviewed out — it `preventDefault()`ed the second of any two
+// touchends within 350ms regardless of target, cancelling real clicks
+// (two quick taps on different buttons, swipe-then-tap, double-tap word
+// select). Double-tap zoom is covered by touch-action (no `pinch-zoom`
+// keyword means no zoom gesture of either kind) and by the viewport meta.
+//
+// Verification caveat: neither Playwright WebKit (a desktop engine) nor
+// Chromium touch emulation implements iOS Safari's pinch pipeline, so the
+// actual zoom blocking is unverified-by-repro off-device. What IS verified is
+// the wiring and the decision logic (see pinchZoomGuard.test.mjs).
+
+type Target = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
+
+interface TouchLikeEvent {
+  touches?: { length: number }
+  scale?: number
+  preventDefault(): void
+}
+
+/** True for a touchmove that is (part of) a pinch: two or more fingers, or
+ *  a WebKit TouchEvent carrying a non-1 `scale`. Single-finger moves —
+ *  ordinary scrolling and swiping — always return false. */
+export function isPinchTouch(e: TouchLikeEvent): boolean {
+  if (e.touches && e.touches.length > 1) return true
+  return typeof e.scale === 'number' && e.scale !== 1
+}
 
 /**
- * Installs the pinch-zoom guard on `doc` (defaults to the real `document`)
- * and returns a cleanup function that removes it. Safe to call once at app
- * startup — see main.tsx. Registered `{ passive: false }`: `preventDefault()`
- * on a passive listener is a silent no-op, which would make this module
- * appear to work while doing nothing.
+ * Installs the guard on `doc` and `win` (default: the real document and
+ * window) and returns a cleanup function that removes every listener. Call
+ * once at startup — see main.tsx.
  */
-export function installPinchZoomGuard(doc: Document = document): () => void {
+export function installPinchZoomGuard(
+  doc: Target = document,
+  win: Target | null = typeof window === 'undefined' ? null : window,
+): () => void {
   const preventGesture = (e: Event) => {
     e.preventDefault()
   }
+  const preventPinchMove = (e: Event) => {
+    if (isPinchTouch(e as unknown as TouchLikeEvent)) e.preventDefault()
+  }
 
-  const opts: AddEventListenerOptions = { passive: false }
-  // gesturestart/change/end are WebKit-only (Safari); other engines never
-  // fire them, so adding the listeners is a harmless no-op elsewhere.
-  doc.addEventListener('gesturestart', preventGesture as EventListener, opts)
-  doc.addEventListener('gesturechange', preventGesture as EventListener, opts)
-  doc.addEventListener('gestureend', preventGesture as EventListener, opts)
+  const handlers: Array<[string, EventListener]> = [
+    ['touchmove', preventPinchMove],
+    ['gesturestart', preventGesture],
+    ['gesturechange', preventGesture],
+    ['gestureend', preventGesture],
+  ]
+  // passive:false — preventDefault() on a passive listener is a silent no-op.
+  // capture:true — see the header comment.
+  const opts: AddEventListenerOptions = { passive: false, capture: true }
+  const targets = win ? [doc, win] : [doc]
+
+  for (const target of targets) {
+    for (const [type, handler] of handlers) target.addEventListener(type, handler, opts)
+  }
 
   return () => {
-    doc.removeEventListener('gesturestart', preventGesture as EventListener)
-    doc.removeEventListener('gesturechange', preventGesture as EventListener)
-    doc.removeEventListener('gestureend', preventGesture as EventListener)
+    for (const target of targets) {
+      for (const [type, handler] of handlers) {
+        target.removeEventListener(type, handler, { capture: true })
+      }
+    }
   }
 }

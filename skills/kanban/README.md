@@ -27,7 +27,7 @@ The full protocol lives in [`SKILL.md`](SKILL.md). This README is the human-faci
         ├── PATCH (expected_version) ──→ [IN_REVIEW] ────────────┘
         │    dispatch REVIEWER                 │ approve
         │                                      ↓
-        ├── PATCH (expected_version) ──→ [VALIDATION] ── fail ──→ [IN_PROGRESS / READY]
+        ├── PATCH (expected_version) ──→ [VALIDATION] ── fail ──→ [IN_PROGRESS]
         │    dispatch TESTER / VALIDATOR       │ pass
         │                                      ↓
         ├── PATCH (expected_version) ──→ [READY_TO_SHIP]
@@ -36,7 +36,7 @@ The full protocol lives in [`SKILL.md`](SKILL.md). This README is the human-faci
                                                ↓
                               close issue #N → verify deployment → report
 
-  Heartbeats keep the lease alive. Lease lost or progress stalled → the reaper returns the card to BACKLOG.
+  Heartbeats keep the lease alive. Lease lost or progress stalled → the reaper returns the card to READY (owner cleared); re-claim it from READY.
 ```
 
 ## When to use it
@@ -133,7 +133,7 @@ A Build → Review → Test cycle that repeats **3 times** halts and reports blo
 
 - **Roles:** orchestrator = `admin`; workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
 - **Headers on every request:** `x-agent-id`, `x-agent-role`, `x-api-token`.
-- **Claim to own, PATCH to move.** Enter active stages by claiming from `READY`. A status-only PATCH into an active stage without claim produces an ownerless card, which the reaper resets to `BACKLOG`.
+- **Claim to own, PATCH to move.** Enter active stages by claiming from `READY`. A status-only PATCH into an active stage without claim produces an ownerless card, which the reaper resets to `READY` after the orphan grace window.
 - **Optimistic locking:** every PATCH sends the fresh current `expected_version` (re-read before each PATCH; intermediate claims, logs, and heartbeats increment card version). Distinguish `409 Version mismatch` (retry with fresh version) from `409 Invalid state transition` (reaper reset after lease loss; re-claim). Stale writes get `409`.
 - **Leases & Progress:** default claim TTL is 10 min (`KANBAN_CLAIM_TTL_MS` = 600,000). Heartbeat at least every 2 minutes while holding a card; logs from the holder also extend the lease. Progress stall timeout (`KANBAN_PROGRESS_STALL_MS`, default 30 min) reaps abandoned claims even if heartbeated. A claim can request its own window with `{"lease_ms": <ms>}`, clamped between 60,000 and 7,200,000.
 - **Evidence or it didn't happen:** no stage transition without command output, test results or a commit hash.
@@ -150,11 +150,11 @@ Without it, calls silently resolve against the `default` project.
 
 - **`403 ... not authorized for project 'default'`** → missing `?project=` on a task path.
 - **`404` on `GET /tasks/:id`** → same cause, missing `?project=`.
-- **`409 Invalid state transition from BACKLOG to <X>`** → the lease expired and the reaper reset the card. Re-claim and re-walk the stages. Check `git status` / `git log` on the task branch first: uncommitted work may still be on disk, but it was never committed.
+- **`409 Invalid state transition from READY to <X>`** → the lease expired (or progress stalled) and the reaper reset the card to `READY`. Re-claim it from `READY` and re-walk the stages. Check `git status` / `git log` on the task branch first: uncommitted work may still be on disk, but it was never committed.
 - **`409` on PATCH with a version mismatch** → someone else wrote first. Re-read the card and retry with the current `version`.
 - **`415 Unsupported Media Type` (`unsupported_encoding`)** → request used an unrecognized `Content-Encoding` header. Send uncompressed UTF-8 JSON.
 - **`429 Too Many Requests` (`authentication rate limit exceeded`)** → too many failed token attempts from this IP. Wait for `Retry-After`, verify token credentials, and check `KANBAN_TRUST_PROXY` if behind a reverse proxy.
-- **Card keeps bouncing back to `BACKLOG`** → it was moved into an active stage by PATCH instead of claimed, or heartbeats/progress stopped.
+- **Card keeps bouncing back to `READY`** → it was moved into an active stage by PATCH instead of claimed, or heartbeats/progress stopped.
 
 ## Optional: Telegram reclaim alerts
 

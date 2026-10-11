@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.2.3        
+**System Version:** 3.2.4        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -21,7 +21,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 4. **Real-Time Human Observability via Server-Sent Events (SSE):**
    Human operators monitor autonomous swarms live. Any agent mutation (task creation, claim, transition, log entry) updates in-memory state and immediately broadcasts to all connected browser clients via an SSE stream with zero manual page refreshes.
 5. **Strict State Machine & Role-Based Access Control (RBAC):**
-   Transitions follow an immutable loop lifecycle (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`). Roles (`builder`, `reviewer`, `tester`, `runner`) are strictly bound to allowable transitions.
+   Transitions follow the v3 8-state lifecycle (ADR-004; `server/state-machine.js`): `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, plus the side state `BLOCKED`. Only `READY` cards can be claimed (a claim lands on `PLANNING` for a planner, `IN_PROGRESS` otherwise). Roles (`planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`, plus the privileged `runner`/`system`/`human`/`admin`) are strictly bound to allowable transitions. Legacy v2 names (`BUILDING`, `IN_TEST`, `TODO`) are still accepted on input and normalized to `IN_PROGRESS`, `VALIDATION` and `BACKLOG`.
 6. **Dual Persistence Strategy (Pluggable Storage):**
    Supports standalone atomic single-file JSON persistence for isolated workstations, or Git-backed YAML cards (`ops/kanban/<id>.yml`) where every state transition creates an atomic Git commit (`ops(<id>): kanban <STATUS>`).
 
@@ -51,13 +51,13 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Language** | TypeScript | ^5.5.3 | Strict type definitions (`types.ts`, `status.ts`, component props). |
 | **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
 | **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / midnight-navy blueprint dark palettes (adopted from the Stack Field Guide); explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
-| **Responsive Layout** | Tailwind breakpoints + `100lvh`/`100dvh` | Browser Native | App shell (`.app-shell`, `App.tsx`'s root only) sized to `100lvh` (v3.2.3; the large viewport, doesn't shrink for iOS Safari's floating bottom toolbar) over a `100dvh` fallback — `.h-screen` itself stays `100dvh` everywhere else (TaskSheet's fixed drawer, BugReportDialog), so a `position: fixed` panel is never grown past the actually-visible area. `85vw` snap-scroll columns below `md` (`w-72` from `md` up) with bottom scroll padding of `safe-area-inset-bottom + 5rem` on coarse pointers below `md` (Column/Portfolio/About) so the last row can clear the floating toolbar, Signal Rail collapses into a slide-over drawer below `md`. Below `md`/`sm` the secondary header and toolbar controls collapse behind a `⋯` / `Filters` disclosure (v2.9.1), the column paging arrows are `hidden … md:flex`, and the task-card badge group wraps full-width so the id stays readable. Phone controls carry `py-1.5` touch padding. Root `touch-action: pan-x pan-y` + a `gesturestart`/`gesturechange`/`gestureend` JS guard (v3.2.3) block iOS pinch zoom without narrowing any scroll axis; `text-size-adjust: 100%` stops WebKit's text autosizer from inflating prose independently of the `any-pointer: coarse` input-zoom rule. |
+| **Responsive Layout** | Tailwind breakpoints + `100dvh` + one phone-layout media block | Browser Native | Two layouts (v3.2.4). Desktop/tablet/mouse/landscape: the `h-screen` (`100dvh`) app shell with internal column scrolling, html/body `overflow: hidden`. Phone layout (`(max-width: 47.99rem) and (pointer: coarse)`): the document scrolls like a normal website (html scroller, sticky `.app-header`, full-height columns in the horizontal snap strip, Portfolio/About flow), the only way iOS Safari draws content behind its translucent floating toolbar; full-height overlays lock the document scroll (`lib/scrollLock.ts`). The header pads `env(safe-area-inset-top)` (`viewport-fit=cover`). `.h-screen` stays `100dvh` for TaskSheet/BugReportDialog so their pinned footers stay visible. `85vw` snap-scroll columns below `md` (`w-72` from `md` up) with bottom scroll padding of `safe-area-inset-bottom + 5rem` on coarse pointers below `md` (Column/Portfolio/About) so the last row can clear the floating toolbar, Signal Rail collapses into a slide-over drawer below `md`. Below `md`/`sm` the secondary header and toolbar controls collapse behind a `⋯` / `Filters` disclosure (v2.9.1), the column paging arrows are `hidden … md:flex`, and the task-card badge group wraps full-width so the id stays readable. Phone controls carry `py-1.5` touch padding. `touch-action: pan-x pan-y` on EVERY element (`*`, v3.2.4 — WebKit resets the effective value at each scroll container, so a root-only rule never reached the board) + a JS guard (multi-touch `touchmove`, WebKit `gesture*`; non-passive, capture, on document and window; no wheel listener, so desktop zoom is untouched) block pinch zoom without narrowing any scroll axis; `text-size-adjust: 100%` stops WebKit's text autosizer from inflating prose independently of the `any-pointer: coarse` input-zoom rule. |
 | **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' \| 'portfolio' \| 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server `version` prop so it can never go stale. |
 | **Board Filters & Sorting** | `components/BoardFilters.tsx`, `lib/filterTasks.ts`, `lib/boardSort.ts` | Browser Native | Live substring search (id/title/description/branch/agent), priority + assignee quick filters, and a persisted column sort (`priority \| updated \| id`, stable, re-applied on every SSE snapshot under `localStorage kanban.sort`). |
 | **Metrics Dashboard** | `components/MetricsDashboard.tsx`, `lib/dashboardMetrics.ts` | Browser Native | Toggleable 7-tile summary (Total, Backlog, In Flight, Blocked, Completed, Avg Cycle Time, Overdue/Stalled) computed from the **unfiltered** task list so totals stay stable while filters narrow the board. |
 | **Milestones** | `components/Portfolio.tsx`, `server/routes/milestones.js` | Browser Native | v2.11.0 (opt-milestones): cards carry an optional `milestone` label; `GET /api/milestones` rolls live cards up per goal (total / done / %) for the portfolio view. |
 | **Lease Windows & Bulk Renewal** | `server/store.js` · `leaseWindowFor`, `renewAllLeases`, `routes/agents.js` | Server | v2.12.0: a claim may request its own `lease_ms` (persisted as `claim_lease_ms`, clamped to `KANBAN_MIN_LEASE_MS`..`KANBAN_MAX_LEASE_MS`); every later renewal keeps that window, so a long job is not shrunk back to the global TTL. `POST /api/agents/:agent_id/heartbeat` renews every lease the agent holds in one call, and a holder write re-arms the holder's other leases (RC-1/RC-2 false-reclaim fix). |
-| **Operator Assignment** | `server/store.js` · `assignTask`, `components/TaskSheet.tsx` | Browser Native | v2.11.0 (opt-operator-assignment): a privileged caller can assign a task to a named agent (or release it) via `POST /api/tasks/:id/assign`; assignment sets the owner + lease and lifts a BACKLOG card to BUILDING, bypassing the dependency/contention gates by design. |
+| **Operator Assignment** | `server/store.js` · `assignTask`, `components/TaskSheet.tsx` | Browser Native | v2.11.0 (opt-operator-assignment): a privileged caller can assign a task to a named agent (or release it) via `POST /api/tasks/:id/assign`; assignment sets the owner + lease and lifts a BACKLOG or READY card to IN_PROGRESS (releasing an active card returns it to READY), bypassing the dependency/contention gates by design. |
 | **Integration Webhooks** | `server/webhooks.js` | Node HTTPS | v2.11.0 (opt-integration-hooks): signed (HMAC-SHA256) outbound JSON POSTs on task diff events to every `KANBAN_WEBHOOK_URLS` sink; fail-silent, no new dependency. |
 
 | **Custom Column Colors** | `routes/settings.js`, `store.js` (`getSettings`/`updateSettings`), `lib/columnColors.ts`, `components/ColumnColorsControl.tsx` | Server + Client | v2.5.0 per-project accent overrides resolved stock → board default → project override, persisted through both storage backends and pushed live over an SSE `event: settings`; the palette is the design system's 8 accent tokens (no raw hex). |
@@ -66,7 +66,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. **Diff events are the default** (one `task.<kind>` per changed task); `?mode=snapshot` restores whole-board snapshots and `?prime=1` sends an initial `event: tasks` snapshot. A single client stream carries both diffs and `event: settings` (v2.8.0). |
-| **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `BACKLOG` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
+| **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `READY` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
 
 ### 2.3 Typography & Design System
@@ -169,50 +169,52 @@ The loop lifecycle is strictly deterministic (ADR-001). Arbitrary state transiti
 
 ```mermaid
 flowchart LR
-    subgraph Legend ["Permissions Legend"]
-        L1["Builder: Claim, Building, In Review"]
-        L2["Reviewer: In Test, Return to Building"]
-        L3["Tester: Done, Return to Building"]
-        L4["Runner/Admin: Blocked, Orchestration"]
+    subgraph Legend ["Permissions Legend (v3, ADR-004)"]
+        L1["Planner: Ready, Planning, In Progress"]
+        L2["Builder: In Progress, In Review"]
+        L3["Reviewer: Validation, return to In Progress"]
+        L4["Tester: Ready to Ship, return to In Progress"]
+        L5["Releaser: Done"]
+        L6["Runner/Admin: Blocked, any legal move"]
     end
 
     B[("BACKLOG")]
-    BLD["BUILDING"]
+    RDY["READY (claimable)"]
+    PLN["PLANNING"]
+    PRG["IN_PROGRESS"]
     REV["IN_REVIEW"]
-    TST["IN_TEST"]
+    VAL["VALIDATION"]
+    RTS["READY_TO_SHIP"]
     BLK{{"BLOCKED"}}
     DN((("DONE (Terminal)")))
 
-    B -->|"claim / start\n[Builder, Runner]"| BLD
-    B -->|"dependency wait\n[Runner/Admin]"| BLK
+    B -->|"ready\n[Planner]"| RDY
+    RDY -->|"claim (planner)\n[Planner]"| PLN
+    RDY -->|"claim\n[Builder]"| PRG
+    RDY -->|"deprioritize\n[Runner/Admin]"| B
+    PLN -->|"plan done\n[Planner]"| PRG
+    PLN -->|"un-plan\n[Planner]"| RDY
+    PRG -->|"submit\n[Builder]"| REV
+    PRG -->|"re-plan\n[Planner]"| PLN
+    REV -->|"approve\n[Reviewer]"| VAL
+    REV -->|"request changes\n[Reviewer]"| PRG
+    VAL -->|"verified\n[Tester]"| RTS
+    VAL -->|"regression\n[Tester]"| PRG
+    RTS -->|"release\n[Releaser]"| DN
+    RTS -->|"rework\n[Releaser]"| PRG
 
-    BLD -->|"submit code\n[Builder]"| REV
-    BLD -->|"external blocker\n[Runner/Admin]"| BLK
-
-    REV -->|"approve diff\n[Reviewer]"| TST
-    REV -->|"request changes\n[Reviewer]"| BLD
-    REV -->|"blocked\n[Runner/Admin]"| BLK
-
-    TST -->|"tests pass\n[Tester]"| DN
-    TST -->|"regression fail\n[Tester]"| BLD
-    TST -->|"blocked\n[Runner/Admin]"| BLK
-
-    BLK -->|"unblock\n[Runner/Admin]"| BLD
-    BLK -->|"resume\n[Runner/Admin]"| REV
-    BLK -->|"resume\n[Runner/Admin]"| TST
-    BLK -->|"deprioritize\n[Runner/Admin]"| B
+    B & RDY & PLN & PRG & REV & VAL & RTS -->|"blocked\n[Runner/Admin]"| BLK
+    BLK -->|"unblock / deps done\n[Runner/Admin, auto]"| RDY
 
     classDef backlog fill:#f1f1ef,stroke:#787774,stroke-width:1px,color:#191b1e;
-    classDef building fill:#e6eef2,stroke:#1f5673,stroke-width:2px,color:#1f5673;
+    classDef active fill:#e6eef2,stroke:#1f5673,stroke-width:2px,color:#1f5673;
     classDef review fill:#f7f0e0,stroke:#8a6a12,stroke-width:2px,color:#8a6a12;
-    classDef test fill:#e6eef2,stroke:#1f5673,stroke-width:2px,color:#1f5673;
     classDef blocked fill:#eeeeec,stroke:#4a4d52,stroke-width:2px,color:#4a4d52;
     classDef done fill:#edf3ec,stroke:#346538,stroke-width:2px,color:#346538;
 
-    class B backlog;
-    class BLD building;
-    class REV review;
-    class TST test;
+    class B,RDY backlog;
+    class PLN,PRG active;
+    class REV,VAL,RTS review;
     class BLK blocked;
     class DN done;
 ```
@@ -220,19 +222,37 @@ flowchart LR
 
 #### Transition Table
 
+Generated from `server/state-machine.js` (`VALID_TRANSITIONS` × `canRoleTransition`). `BLOCKED` can also return to `PLANNING`, `IN_PROGRESS`, `IN_REVIEW` or `VALIDATION` (privileged roles); dependency completion auto-returns a blocked card to `READY`. Any role may move a card into `IN_PROGRESS` because that is also every stage's "send back for rework" target.
+
 | Origin State | Destination State | Allowed Roles | HTTP Status on Illegal Transition | HTTP Status on Role Violation |
 |---|---|---|---|---|
-| `BACKLOG` | `BUILDING` | `builder`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BACKLOG` | `READY` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
 | `BACKLOG` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `BUILDING` | `IN_REVIEW` | `builder`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `BUILDING` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `IN_REVIEW` | `IN_TEST` | `reviewer`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `IN_REVIEW` | `BUILDING` | `reviewer`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY` | `PLANNING` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY` | `BACKLOG` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `PLANNING` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `PLANNING` | `READY` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `PLANNING` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `IN_PROGRESS` | `IN_REVIEW` | `builder`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `IN_PROGRESS` | `PLANNING` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `IN_PROGRESS` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `IN_REVIEW` | `VALIDATION` | `reviewer`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `IN_REVIEW` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
 | `IN_REVIEW` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `IN_TEST` | `DONE` | `tester`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `IN_TEST` | `BUILDING` | `tester`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `IN_TEST` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
-| `BLOCKED` | `BUILDING`, `IN_REVIEW`, `IN_TEST`, `BACKLOG` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `VALIDATION` | `READY_TO_SHIP` | `tester`, `validator`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `VALIDATION` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `VALIDATION` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY_TO_SHIP` | `DONE` | `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY_TO_SHIP` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `READY_TO_SHIP` | `BLOCKED` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `BACKLOG` | `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `READY` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `PLANNING` | `planner`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `IN_PROGRESS` | `planner`, `builder`, `reviewer`, `tester`, `validator`, `releaser`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `IN_REVIEW` | `builder`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
+| `BLOCKED` | `VALIDATION` | `reviewer`, `runner`, `system`, `human`, `admin` | `409 Conflict` | `403 Forbidden` |
 | `DONE` | *(Any)* | **None (Terminal state)** | `409 Conflict` | `409 Conflict` |
 
 ---
@@ -264,9 +284,9 @@ sequenceDiagram
 
     Note over Queue: Lock acquired for Agent Alpha, Agent Beta queued
     Queue->>Store: getTask("task-42")
-    Store-->>Queue: Task exists, assigned_agent: null, status: "BACKLOG"
+    Store-->>Queue: Task exists, assigned_agent: null, status: "READY"
     
-    Queue->>Queue: Validate claim: unclaimed! Set assigned_agent="Agent-Alpha", status="BUILDING"
+    Queue->>Queue: Validate claim: unclaimed READY! Set assigned_agent="Agent-Alpha", status="IN_PROGRESS"
     Queue->>Disk: writeAtomic(temporary file -> rename)
     Disk-->>Queue: Write confirmed
     Queue->>Store: Update in-memory task
@@ -275,7 +295,7 @@ sequenceDiagram
 
     Note over Queue: Lock released, Agent Beta operation starts
     Queue->>Store: getTask("task-42")
-    Store-->>Queue: Task exists, assigned_agent: "Agent-Alpha", status: "BUILDING"
+    Store-->>Queue: Task exists, assigned_agent: "Agent-Alpha", status: "IN_PROGRESS"
     
     Queue->>Queue: Contention check: assigned_agent !== "Agent-Beta"!
     Queue-->>AgentB: HTTP 409 Conflict ("Task task-42 is already claimed by Agent-Alpha")
@@ -424,7 +444,7 @@ sequenceDiagram
     Browser->>API: GET /api/events
     API-->>Browser: HTTP 200 text/event-stream (initial tasks snapshot)
     
-    Agent->>API: PATCH /api/tasks/task-1 { status: "BUILDING", role: "builder" }
+    Agent->>API: PATCH /api/tasks/task-1?project=default { status: "IN_REVIEW", expected_version: 3 } (X-Agent-Role: builder)
     API->>Queue: Enqueue mutation
     Queue->>Queue: Check state machine & role auth
     Queue->>Disk: writeAtomic(temporary file -> rename)
@@ -433,7 +453,7 @@ sequenceDiagram
     Queue->>SSE: notify(tasksSnapshot)
     SSE-->>Browser: event: tasks \ndata: [...]
     Queue-->>API: 200 OK (updated task)
-    API-->>Agent: HTTP 200 { id: "task-1", status: "BUILDING", ... }
+    API-->>Agent: HTTP 200 { id: "task-1", status: "IN_REVIEW", version: 4, ... }
     Browser->>Browser: React re-renders Board & SignalRail instantly
 ```
 </details>

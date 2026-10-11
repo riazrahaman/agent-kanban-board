@@ -51,7 +51,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '213',
+    value: '255',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -61,9 +61,9 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'every push is built on both',
   },
   {
-    value: '3',
+    value: '4',
     label: 'ADRs',
-    detail: 'storage, git recovery, mutation serialization',
+    detail: 'storage, git recovery, mutation serialization, 8-state workflow',
   },
 ]
 
@@ -82,17 +82,17 @@ export const WHY_CARDS: WhyCard[] = [
   {
     title: 'An agent disappears mid-task',
     body: 'A crashed or hung worker would otherwise hold a card hostage forever, and no one could tell whether work was actually happening.',
-    mechanism: 'claim_expires_at lease + reapExpiredClaims — expired claims return to BACKLOG',
+    mechanism: 'claim_expires_at lease + progress-stall check + reapExpiredClaims — a dead or stalled claim returns to READY',
   },
   {
     title: 'An agent skips the workflow',
-    body: 'A rogue or buggy agent could jump a card straight to DONE, or a builder could approve its own work.',
+    body: 'A rogue or buggy agent could jump a card straight to DONE, a builder could approve its own work, or a tester could ship what it only verified.',
     mechanism: 'canTransition + canRoleTransition — illegal moves 409, wrong roles 403, enforced server-side',
   },
   {
     title: 'A task is silently reclaimed',
     body: 'A lease expiring is the system working correctly — but if nobody is told, a stalled agent looks exactly like a calm, healthy board.',
-    mechanism: 'notifier.js — an onDiff subscriber posts a full-detail alert when the reaper returns a task to BACKLOG',
+    mechanism: 'notifier.js — an onDiff subscriber posts a full-detail alert when the reaper returns a task to READY',
   },
 ]
 
@@ -102,16 +102,29 @@ export type LifecycleStep = {
   detail: string
 }
 
+// v3 (ADR-004, server/state-machine.js): the 8-state lifecycle. `actor` is
+// the role that moves a card INTO that state; only READY cards can be
+// claimed, and a claim lands on PLANNING (planner) or IN_PROGRESS (others).
 export const LIFECYCLE_STEPS: LifecycleStep[] = [
   {
     status: 'BACKLOG',
-    actor: 'unclaimed',
-    detail: 'queued and visible; any eligible agent can take it',
+    actor: 'anyone',
+    detail: 'captured and visible, but not yet claimable',
   },
   {
-    status: 'BUILDING',
+    status: 'READY',
+    actor: 'planner',
+    detail: 'the only claimable state; a claim takes the card under a lease',
+  },
+  {
+    status: 'PLANNING',
+    actor: 'planner',
+    detail: 'a planner claim lands here; the plan is written before any code',
+  },
+  {
+    status: 'IN_PROGRESS',
     actor: 'builder',
-    detail: 'claimed under a lease that must be renewed with a heartbeat',
+    detail: 'a builder claim lands here; the lease must be renewed with a heartbeat',
   },
   {
     status: 'IN_REVIEW',
@@ -119,19 +132,24 @@ export const LIFECYCLE_STEPS: LifecycleStep[] = [
     detail: 'work submitted; the builder hands it off',
   },
   {
-    status: 'IN_TEST',
+    status: 'VALIDATION',
     actor: 'reviewer',
     detail: 'review approved; a different role owns verification',
   },
   {
-    status: 'DONE',
+    status: 'READY_TO_SHIP',
     actor: 'tester',
-    detail: 'verified and closed; the terminal state',
+    detail: 'verified; a tester cannot close the card itself',
+  },
+  {
+    status: 'DONE',
+    actor: 'releaser',
+    detail: 'released and closed; the terminal state',
   },
   {
     status: 'BLOCKED',
     actor: 'runner',
-    detail: 'parked off the happy path; auto-unblocked when dependencies complete',
+    detail: 'parked off the happy path; auto-returned to READY when its dependencies complete',
   },
 ]
 
@@ -141,18 +159,22 @@ export type Capability = {
 }
 
 export const CAPABILITIES: Capability[] = [
-  { name: 'Strict lifecycle state machine', code: 'store.js · VALID_TRANSITIONS, canTransition' },
-  { name: 'Role-gated transitions', code: 'store.js · canRoleTransition' },
-  { name: 'Lease ownership + heartbeat', code: 'store.js · applyClaim, renewLease' },
+  { name: '8-state lifecycle state machine (v3)', code: 'state-machine.js · VALID_TRANSITIONS, canTransition' },
+  { name: 'Role-gated transitions (planner → releaser)', code: 'state-machine.js · canRoleTransition' },
+  { name: 'Lease ownership + heartbeat', code: 'store.js · applyClaim, renewLease; POST /api/agents/:agent_id/heartbeat' },
   { name: 'Background lease reaper', code: 'store.js · reapExpiredClaims, startReaper' },
+  { name: 'Progress-stall reclaim', code: 'store.js · getProgressStallMs (KANBAN_PROGRESS_STALL_MS, 30 min default)' },
   { name: 'Orphan grace window', code: 'store.js · getOrphanGraceMs (KANBAN_ORPHAN_GRACE_MS)' },
   { name: 'Process-local mutation lock', code: 'store.js · withMutationLock (ADR-003)' },
-  { name: 'Pluggable persistence', code: 'store.js · JsonStorage | GitYamlStorage' },
-  { name: 'Atomic writes + git audit trail', code: 'store.js · writeAtomic, serializeCard' },
+  { name: 'Pluggable persistence', code: 'storage.js · JsonStorage | GitYamlStorage' },
+  { name: 'Atomic writes + git audit trail', code: 'task-identity.js · writeAtomic; storage.js · serializeCard' },
   { name: 'Real-time push over SSE', code: 'server.js · GET /api/events' },
   { name: 'Periodic data backups', code: 'store.js · runBackup, backupStatus' },
   { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
   { name: 'Per-project token isolation', code: 'middleware/auth.js, projectScope.js' },
+  { name: 'Credential-map coverage in health', code: 'utils/credentialMap.js · checkCredentialCoverage, GET /api/health' },
+  { name: 'Rate limiting + auth-failure lockout', code: 'middleware/rateLimit.js · createRateLimitMiddleware' },
+  { name: 'Reverse-proxy aware client IPs', code: 'server.js · resolveTrustProxy (KANBAN_TRUST_PROXY)' },
   { name: 'HMAC session tokens', code: 'sessionAuth.js, routes/auth.js' },
   { name: 'Optimistic concurrency (version + If-Match)', code: 'store.js · nextVersionFor, versionConflict' },
   { name: 'Admin delete + bulk purge', code: 'store.js · deleteTask, purgeTasks' },
@@ -169,10 +191,12 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
   { name: 'Persisted audit stream', code: 'auditLog.js · appendAudit, GET /api/audit' },
   { name: 'Optional read auth + stream tickets', code: 'middleware/auth.js · KANBAN_READ_AUTH, streamTicket.js' },
-  { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph, validateMetadata' },
-  { name: 'Fail-closed corrupt-store load', code: 'store.js · JsonStorage.load' },
+  { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph; task-fields.js · validateMetadata' },
+  { name: 'Fail-closed corrupt-store load', code: 'storage.js · JsonStorage.load' },
   { name: 'Readiness probe', code: 'routes/health.js · GET /api/health/ready' },
   { name: 'Anonymous "Report a bug" -> GitHub issue', code: 'routes/bugReports.js · POST /api/bug-reports, Turnstile-protected' },
+  { name: 'Auto / Light / Dark theme', code: 'lib/theme.ts · resolveMode, nextMode' },
+  { name: 'Phone layout: document scroll, pinch-zoom block', code: 'index.css · lib/scrollLock.ts, lib/pinchZoomGuard.ts' },
 ]
 
 export type FaqItem = {
@@ -203,7 +227,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'How will I know when an agent dies?',
-    a: 'The reaper returns the task to BACKLOG and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. A held lease dies the moment it stops being renewed; an ownerless active card is only normalized once a grace window has passed. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
+    a: 'The reaper returns the task to READY and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. A held lease dies the moment it stops being renewed; an ownerless active card is only normalized once a grace window has passed. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
   },
   {
     q: 'How do I report a bug?',
@@ -211,13 +235,17 @@ export const FAQ: FaqItem[] = [
   },
 ]
 
-export const CURL_SNIPPET = `# an agent drives the board headlessly
-curl -s -X POST "$BOARD/api/tasks/next-claim?agent_id=builder-1" \\
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"
+export const CLAIM_CURL = `curl -s -X POST "$BOARD/api/tasks/next-claim?project=$PROJECT&agent_id=builder-1" \\
+  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"`
 
+export const CURL_SNIPPET = `# an agent drives the board headlessly (claims READY -> IN_PROGRESS)
+${CLAIM_CURL}
+
+# every PATCH carries the card's current version (409 if stale)
 curl -s -X PATCH "$BOARD/api/tasks/$ID?project=$PROJECT" \\
   -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \\
-  -d '{"status":"IN_REVIEW"}'
+  -H "Content-Type: application/json" \\
+  -d '{"status":"IN_REVIEW","expected_version":2}'
 
 # humans just watch: the same state, live, over SSE`
 
@@ -265,27 +293,27 @@ export type StackRow = {
 export const STACK_ROWS: StackRow[] = [
   {
     layer: 'Client',
-    choice: 'React 18 · Vite · TypeScript · Tailwind',
+    choice: 'React 19 · Vite · TypeScript · Tailwind v4',
     why: 'An observability viewport, not the workflow engine.',
     location: 'client/src/',
   },
   {
     layer: 'Transport',
-    choice: 'Express 4 (ESM) + Server-Sent Events',
+    choice: 'Express 5 (ESM, Node 20/22) + Server-Sent Events',
     why: 'Plain HTTP any agent can curl; SSE pushes live state to humans.',
     location: 'server/server.js',
   },
   {
     layer: 'Core engine',
-    choice: 'One module: state machine + RBAC + leases + lock',
+    choice: 'One store: state machine + RBAC + leases + lock',
     why: 'A single serialization point is what makes contention deterministic.',
-    location: 'server/store.js',
+    location: 'server/store.js · state-machine.js',
   },
   {
     layer: 'Persistence',
     choice: 'Atomic JSON or git-backed YAML',
     why: 'Local-first, zero dependencies — and git becomes the audit trail.',
-    location: 'JsonStorage · GitYamlStorage',
+    location: 'storage.js · JsonStorage · GitYamlStorage',
   },
   {
     layer: 'Auth',
@@ -325,13 +353,13 @@ export const CLAIM_FLOW: FlowStep[] = [
   },
   {
     label: '04',
-    title: 'Selects the highest-priority eligible BACKLOG task.',
+    title: 'Selects the highest-priority eligible READY task.',
     detail: 'Priority, then FIFO — and its dependencyGate must be satisfied.',
   },
   {
     label: '05',
     title: 'applyClaim writes the owner, the lease and the stage.',
-    detail: 'Sets assigned_agent, claim_expires_at and stage_owners.BUILDING; lifts BACKLOG → BUILDING; bumps version.',
+    detail: 'Sets assigned_agent, claim_expires_at and the stage owner; lifts READY → IN_PROGRESS (PLANNING for a planner); bumps version.',
   },
   {
     label: '06',
@@ -376,16 +404,16 @@ export const RECLAIM_FLOW: FlowStep[] = [
   {
     label: '01',
     title: 'An agent stops heartbeating mid-task.',
-    detail: 'The card stays BUILDING, IN_REVIEW or IN_TEST with a lease that is quietly running out.',
+    detail: 'The card stays PLANNING, IN_PROGRESS, IN_REVIEW or VALIDATION with a lease that is quietly running out.',
   },
   {
     label: '02',
-    title: 'The background reaper sweeps expired leases.',
-    detail: 'reapExpiredClaims runs on a timer; a task with no owner at all is treated as structurally stuck and normalized on the next sweep.',
+    title: 'The background reaper sweeps expired and stalled claims.',
+    detail: 'reapExpiredClaims runs on a timer: an expired lease, a held card with no progress for KANBAN_PROGRESS_STALL_MS (30 min default), or an ownerless active card past its grace window is reclaimed.',
   },
   {
     label: '03',
-    title: 'reclaimTaskInner returns the card to BACKLOG.',
+    title: 'reclaimTaskInner returns the card to READY.',
     detail: 'Owner and lease are cleared, reclaim_count increments and the version bumps — then the write is persisted first.',
   },
   {

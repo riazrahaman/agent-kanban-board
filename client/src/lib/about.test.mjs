@@ -130,11 +130,42 @@ test('the why-cards keep all the differentiation stories', () => {
   assert.match(mechanisms, /canTransition/)
 })
 
-test('the lifecycle covers every happy-path status plus BLOCKED', () => {
-  const statuses = LIFECYCLE_STEPS.map((s) => s.status)
-  for (const required of ['BACKLOG', 'BUILDING', 'IN_REVIEW', 'IN_TEST', 'DONE', 'BLOCKED']) {
-    assert.ok(statuses.includes(required), `lifecycle is missing ${required}`)
-  }
+// v3.2.4 audit: the About page still walked the pre-v3 five-state lifecycle
+// (BUILDING / IN_TEST) a year after ADR-004. Pin the v3 8-state machine
+// exactly, in order, with the role that moves a card into each state.
+test('the lifecycle walks the v3 8-state machine plus BLOCKED, in order, with its roles', () => {
+  assert.deepEqual(
+    LIFECYCLE_STEPS.map((s) => s.status),
+    ['BACKLOG', 'READY', 'PLANNING', 'IN_PROGRESS', 'IN_REVIEW', 'VALIDATION', 'READY_TO_SHIP', 'DONE', 'BLOCKED'],
+  )
+  const actor = Object.fromEntries(LIFECYCLE_STEPS.map((s) => [s.status, s.actor]))
+  assert.equal(actor.READY, 'planner')
+  assert.equal(actor.PLANNING, 'planner')
+  assert.equal(actor.IN_PROGRESS, 'builder')
+  assert.equal(actor.VALIDATION, 'reviewer')
+  assert.equal(actor.READY_TO_SHIP, 'tester')
+  assert.equal(actor.DONE, 'releaser')
+  assert.match(LIFECYCLE_STEPS.find((s) => s.status === 'READY').detail, /only claimable/)
+})
+
+test('no About copy describes the pre-v3 lifecycle or reaper (BUILDING / IN_TEST / reclaim to BACKLOG)', () => {
+  const all = JSON.stringify(content) + aboutSource
+  assert.doesNotMatch(all, /\bBUILDING\b|\bIN_TEST\b/, 'legacy v2 status names')
+  assert.doesNotMatch(all, /(returns?|reclaimed|return) (the (task|card) )?to BACKLOG/i, 'the v3 reaper reclaims to READY')
+  assert.doesNotMatch(all, /eligible BACKLOG task/, 'next-claim selects READY tasks')
+})
+
+test('About facts match the code: stack versions, lease TTL, claim curl scoping', () => {
+  const stack = STACK_ROWS.map((r) => r.choice).join('\n')
+  assert.match(stack, /React 19/)
+  assert.match(stack, /Express 5/)
+  assert.match(stack, /Tailwind v4/)
+  assert.doesNotMatch(stack, /React 18|Express 4/)
+  assert.match(aboutSource, /10 min \(claim\)/, 'KANBAN_CLAIM_TTL_MS defaults to 600000 (10 min) since v2.3.11')
+  assert.match(content.CLAIM_CURL, /next-claim\?project=\$PROJECT&agent_id=/, 'every task path carries ?project=')
+  assert.match(aboutSource, /\{CLAIM_CURL\}/, 'the sidebar quick-copy renders the shared snippet')
+  assert.match(CURL_SNIPPET, /expected_version/, 'every PATCH carries the current version')
+  assert.equal(TRUST_METRICS.find((m) => m.label === 'ADRs')?.value, String(readdirSync(join(CLIENT_SRC, '..', '..', 'docs', 'decisions')).filter((f) => /^ADR-\d+/.test(f)).length))
 })
 
 test('capabilities cite real code locations', () => {

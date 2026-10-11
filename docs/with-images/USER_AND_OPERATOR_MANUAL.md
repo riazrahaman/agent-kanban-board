@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.2.3
+**System:** Agent Kanban Board v3.2.4
 
 ---
 
@@ -18,15 +18,17 @@ The **Agent Kanban Board** provides an immutable, real-time state machine and mo
 
 ```mermaid
 flowchart TD
-    subgraph S1 ["1. Task Definition (Runner / Orchestrator)"]
-        CreateTask["POST /api/tasks\n(Status: BACKLOG, Round: 1, Role: runner)"]
+    subgraph S1 ["1. Task Definition (Runner / Orchestrator + Planner)"]
+        CreateTask["POST /api/tasks\n(Status: BACKLOG, Round: 1, project)"]
+        ReadyTask["PATCH /api/tasks/:id?project=\n(Status: READY, Role: planner)"]
+        CreateTask --> ReadyTask
     end
 
     subgraph S2 ["2. Claim & Build Phase (Builder Agent)"]
-        ClaimTask["POST /api/tasks/:id/claim\n(agent_id: 'builder-codex')"]
-        AutoBuilding["State automatically advances:\nBACKLOG -> BUILDING"]
-        LogProgress["POST /api/tasks/:id/logs\n('Scaffolded module, writing tests...')"]
-        SubmitReview["PATCH /api/tasks/:id\n(Status: IN_REVIEW, Role: builder)"]
+        ClaimTask["POST /api/tasks/:id/claim?project=\n(agent_id: 'builder-codex') — READY only"]
+        AutoBuilding["State automatically advances:\nREADY -> IN_PROGRESS\n(PLANNING for a planner claim)"]
+        LogProgress["POST /api/tasks/:id/logs\n('Scaffolded module, writing tests...')\n(renews the lease)"]
+        SubmitReview["PATCH /api/tasks/:id\n(Status: IN_REVIEW, Role: builder,\nexpected_version)"]
         
         ClaimTask --> AutoBuilding --> LogProgress --> SubmitReview
     end
@@ -35,8 +37,8 @@ flowchart TD
         InspectDiff["Review git worktree / diff"]
         ReviewDecision{"Diff Quality Check"}
         
-        RejectChanges["PATCH /api/tasks/:id\n(Status: BUILDING, Role: reviewer)\n+ POST /api/tasks/:id/logs (Feedback)"]
-        ApproveChanges["PATCH /api/tasks/:id\n(Status: IN_TEST, Role: reviewer)"]
+        RejectChanges["PATCH /api/tasks/:id\n(Status: IN_PROGRESS, Role: reviewer)\n+ POST /api/tasks/:id/logs (Feedback)"]
+        ApproveChanges["PATCH /api/tasks/:id\n(Status: VALIDATION, Role: reviewer)"]
         
         InspectDiff --> ReviewDecision
         ReviewDecision -- "Changes Requested" --> RejectChanges
@@ -44,12 +46,12 @@ flowchart TD
         ReviewDecision -- "Approved" --> ApproveChanges
     end
 
-    subgraph S4 ["4. Test Verification Phase (Tester Agent)"]
+    subgraph S4 ["4. Validation Phase (Tester Agent)"]
         RunSuite["Execute regression test suites"]
         TestDecision{"Tests Pass?"}
         
-        TestFail["PATCH /api/tasks/:id\n(Status: BUILDING, Role: tester)\n+ Log regression failures"]
-        TestPass["PATCH /api/tasks/:id\n(Status: DONE, Role: tester)\n+ Log test sign-off"]
+        TestFail["PATCH /api/tasks/:id\n(Status: IN_PROGRESS, Role: tester)\n+ Log regression failures"]
+        TestPass["PATCH /api/tasks/:id\n(Status: READY_TO_SHIP, Role: tester)\n+ Log test sign-off"]
         
         RunSuite --> TestDecision
         TestDecision -- "Regressions Found" --> TestFail
@@ -57,12 +59,13 @@ flowchart TD
         TestDecision -- "All Tests Pass" --> TestPass
     end
 
-    subgraph S5 ["5. Terminal State (Completed)"]
+    subgraph S5 ["5. Release (Releaser Agent)"]
+        Release["PATCH /api/tasks/:id\n(Status: DONE, Role: releaser)"]
         Finalized((("DONE\n(Task successfully achieved;\nImmutable terminal state)")))
-        TestPass --> Finalized
+        TestPass --> Release --> Finalized
     end
 
-    CreateTask --> ClaimTask
+    ReadyTask --> ClaimTask
 ```
 </details>
 
@@ -122,7 +125,7 @@ The server and client are configured via environment variables.
 | `KANBAN_MIN_LEASE_MS` | `60000` | Lower bound a requested `lease_ms` is clamped to (1 min). |
 | `KANBAN_MAX_LEASE_MS` | `7200000` | Upper bound a requested `lease_ms` is clamped to (2 h). |
 | `KANBAN_HOLDER_WRITE_RENEWS_ALL` | `1` | When on, a holder's log/PATCH/claim also re-arms all its other held leases. |
-| `KANBAN_ORPHAN_GRACE_MS` | `300000` | Grace before an ownerless ACTIVE task is normalized to BACKLOG. Decoupled from the claim TTL. Anchored on `updated`; any later write resets it. `0` reaps immediately. |
+| `KANBAN_ORPHAN_GRACE_MS` | `300000` | Grace before an ownerless ACTIVE task is normalized to READY. Decoupled from the claim TTL. Anchored on `updated`; any later write resets it. `0` reaps immediately. |
 | `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / *(default)* | Lease reaper switch and interval. |
 | `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` (enabled by default in `render.yaml` since v2.5.5) | Periodic snapshot of task data into `backups/`, rotated to a bounded count. Status is surfaced in the `backup` block of `GET /api/health`; restore with `scripts/restore-backup.mjs` per `docs/RESTORE.md`. |
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
@@ -133,7 +136,7 @@ The server and client are configured via environment variables.
 
 ### 3.1.1 Telegram Reclaim Notifications
 
-When the lease reaper returns a task to `BACKLOG` (an idle lease expired, or an ownerless active task was normalized), the server can post a full-detail alert to a Telegram group or chat. This is **off by default** and needs no extra dependency — the server calls the Telegram Bot API directly over HTTPS.
+When the lease reaper returns a task to `READY` (an idle lease expired, a held task stopped making progress for `KANBAN_PROGRESS_STALL_MS`, or an ownerless active task was normalized), the server can post a full-detail alert to a Telegram group or chat. This is **off by default** and needs no extra dependency — the server calls the Telegram Bot API directly over HTTPS.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -160,7 +163,7 @@ When the lease reaper returns a task to `BACKLOG` (an idle lease expired, or an 
 **Behaviour notes:**
 
 - **One message per task.** A reclaim alerts immediately; sends are serialized with a ≥1 s gap and a `429 retry_after` is honoured, so a sweep of several tasks delivers several messages without throttling failures.
-- **Failure isolation.** Delivery is fire-and-forget and wrapped: a Telegram outage is logged (`[kanban notify] send failed: …`) and **never** affects the reclaim — the task still returns to `BACKLOG`.
+- **Failure isolation.** Delivery is fire-and-forget and wrapped: a Telegram outage is logged (`[kanban notify] send failed: …`) and **never** affects the reclaim — the task still returns to `READY`.
 - **Secrets.** The bot token is server-side only, never sent to clients, never stored on the board, and redacted from logs. Treat it as a password; rotate it in BotFather if it leaks.
 - **Per-task lease windows** (v2.12.0): a claim may request its own window with `lease_ms` (clamped to `KANBAN_MIN_LEASE_MS`..`KANBAN_MAX_LEASE_MS`, default 1 min..2 h); the chosen window is persisted on the card (`claim_lease_ms`) and every later heartbeat/log/PATCH keeps it, so a long job is not shrunk back to the global TTL. `POST /api/agents/:agent_id/heartbeat` renews every lease that agent holds in one call, and (unless `KANBAN_HOLDER_WRITE_RENEWS_ALL` is disabled) any holder write re-arms the holder's other leases too.
 - **Orphan normalization** (an *ownerless active* task) is only reaped once a grace window has elapsed (`KANBAN_ORPHAN_GRACE_MS`, decoupled, default 5 min), then it alerts; a **lease expiry** alerts at TTL + one sweep (default ≈10–10.5 min). The message's `Reason` line distinguishes them. The grace window exists because entering an active stage with a status-only `PATCH` is a legitimate intermediate state, not a stuck card.
@@ -253,19 +256,22 @@ flowchart TD
 
     subgraph UI_Main ["Main Display Area"]
         subgraph Board_Columns ["Kanban Columns (Horizontal Snap Scroll)"]
-            Col1["BACKLOG\nCards waiting to be claimed"]
-            Col2["BUILDING\nActive implementation"]
-            Col3["IN_REVIEW\nAwaiting reviewer evaluation"]
-            Col4["IN_TEST\nAutomated tests running"]
-            Col5["BLOCKED\nStalled on external dependency"]
-            Col6["DONE\nFinalized tasks (opacity 70%)"]
+            Col1["01 BACKLOG\nCaptured, not yet claimable"]
+            Col2["02 READY\nThe only claimable state"]
+            Col3["03 PLANNING\nPlanner claim"]
+            Col4["04 IN_PROGRESS\nActive implementation"]
+            Col5["05 IN_REVIEW\nAwaiting reviewer evaluation"]
+            Col6["06 VALIDATION\nTests / verification"]
+            Col6b["07 READY_TO_SHIP\nVerified, awaiting release"]
+            Col6c["08 DONE\nFinalized tasks (opacity 70%)"]
+            Col5b["BLOCKED\nStalled on external dependency\n(shown once it has cards)"]
             Col7["UNKNOWN\nDefensive quarantine column"]
             Col8["ISSUES\nVirtual lane: tasks bearing issues"]
         end
 
         subgraph Sidebar ["Signal Rail (Docked Sidebar >= md; Slide-Over Drawer < md)"]
             subgraph Rollup ["Signal Overview"]
-                ActiveStat["Active Tile\n(Building + Review + Test)"]
+                ActiveStat["Active Tile\n(Planning + In Progress + Review + Validation)"]
                 BlockedStat["Blocked Tile\n(Red when count > 0)"]
                 DoneStat["Done Tile\n(Total completed)"]
             end
@@ -318,15 +324,16 @@ A toolbar above the board (`BoardFilters.tsx`) operates the board view:
 The right-hand counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`.
 
 ### 5.1.2 Metrics Dashboard
-Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Building + In Review + In Test), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
+Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Planning + In Progress + In Review + Validation), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
 
 ### 5.2 Card Anatomy
 - **Left 3px Color Stripe:** Visual severity and state indicator:
-  - Green (`border-l-pass`): `DONE`
-  - Blue (`border-l-live`): `BUILDING`
-  - Violet (`border-l-test`): `IN_TEST`
+  - Green (`border-l-pass`): `DONE`, `READY_TO_SHIP`
+  - Violet (`border-l-test`): `VALIDATION`
   - Yellow (`border-l-warn`): `IN_REVIEW`
-  - Grey (`border-l-block`): `BLOCKED`
+  - Blue (`border-l-live`): `IN_PROGRESS`
+  - Grey (`border-l-block`): `PLANNING`, `BLOCKED`
+  - Hairline (`border-l-line`): `BACKLOG`, `READY`
   - Hairline (`border-l-line`): `BACKLOG` / `UNKNOWN`
 - **Task ID:** Monospace identifier (e.g. `chess-c1`).
 - **Status Badge:** Normalized status with glyph markers (`▲` for review, `•` for active execution).
@@ -354,7 +361,7 @@ Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-cl
 
 Creating a task normally lands it in `BACKLOG` and any lifecycle role may do
 that. Creating one **directly** in an active or terminal work state
-(`BUILDING`, `IN_REVIEW`, `IN_TEST`, `DONE`) requires a privileged credential,
+(`PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`, `DONE`) requires a privileged credential,
 because those states are otherwise only reachable through the claim/transition
 contract. A body-supplied `assigned_agent` is ignored at create time — ownership
 is written only by `POST /api/tasks/:id/claim` (or `next-claim`) — and the
@@ -366,7 +373,7 @@ audit trail records only real transitions and real log/comment calls.
 
 ### 5.4 Signal Overview & Live Activity Feed
 - Located on the right-hand sidebar.
-- **Signal Overview:** Real-time counters for `Active` (`BUILDING` + `IN_REVIEW` + `IN_TEST`), `Blocked` (turns red when $>0$), and total `Done`.
+- **Signal Overview:** Real-time counters for `Active` (`PLANNING` + `IN_PROGRESS` + `IN_REVIEW` + `VALIDATION`), `Blocked` (turns red when $>0$), and total `Done`.
 - **Activity Feed:** Live streaming log of the 20 most recent agent actions across all tasks with relative timestamps (`12s`, `4m`).
 
 ### 5.5 Theme Customization
@@ -383,9 +390,10 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - **Touch targets:** Interactive header controls are enlarged on small screens (every header and toolbar control is `py-1.5` tall on phones, ≥30px).
 - **Header rhythm:** On phones the header uses tighter padding (`py-2`) and the title scales down (`text-base`), so it folds to roughly 118px on a 390px viewport instead of a four-row 158px stack.
 - **Filter toolbar:** The toolbar row wraps on phones and every control group may shrink (`min-w-0`), so `Sort`, `Export`, column colours and `Metrics` stay reachable at 360px and up. Each select clamps to `max-w-full`. (Before v2.5.9 the control group was a rigid 720px row clipped by the board column, which made those four controls untappable.)
-- **Viewport height:** The app shell (not every panel — see below) is sized to `100lvh` where supported (v3.2.3; the large viewport — stays as tall as the screen ever gets, does not shrink when iOS Safari's floating bottom toolbar appears), falling back to `100dvh` then plain `100vh` on older engines, so the layout is not clipped by mobile browser URL bars and does not leave a dead strip of background above the floating toolbar either. The task-detail sheet and bug-report dialog stay at `100dvh` — growing a `position: fixed` panel to `lvh` would push its pinned footer behind the floating toolbar with no way to scroll to it.
-- **Bottom scroll clearance (v3.2.3):** on coarse pointers (touch) below `md`, the board columns, Portfolio and About each reserve `env(safe-area-inset-bottom) + 5rem` of bottom padding in their scrollable area, so the last row can be scrolled up clear of iOS Safari's floating bottom toolbar instead of stopping right at its edge. A mouse window resized under 768px keeps the dense default padding — there is no floating toolbar to clear there.
-- **Pinch zoom (v3.2.3):** iOS Safari has ignored `user-scalable=no` in the viewport meta tag since ~iOS 10, so zoom is instead blocked via `touch-action: pan-x pan-y` on the page root (keeps both scroll axes fully intact for every column, sheet and dialog) plus a small JS guard that cancels WebKit's pinch-gesture events.
+- **Phone layout (v3.2.4):** on a touch phone in portrait (below 768px), the page scrolls like a normal website. The header (title, `⋯` and view tabs) stays pinned at the top, every column shows all its cards at full height, and you swipe sideways between columns. Because the page itself scrolls, iOS Safari draws the board behind its translucent floating toolbar and can collapse its address bar. Opening the `⋯` controls unpins the header, so the controls scroll away with the page. While a card, the bug-report dialog or the signal drawer is open, the page behind it is frozen and returns to the same position when you close it.
+- **Viewport height:** on desktop, tablets and landscape phones the app is exactly the visible viewport (`100dvh`) and columns scroll inside themselves, so a visible URL bar never hides content. The task-detail sheet and bug-report dialog always stay at `100dvh`, so their pinned footers stay visible.
+- **Bottom scroll clearance (v3.2.3):** on coarse pointers (touch) below `md`, the board columns, Portfolio and About each reserve `env(safe-area-inset-bottom) + 5rem` of bottom padding, so the last row can be scrolled up clear of iOS Safari's floating bottom toolbar. A mouse window resized under 768px keeps the dense default padding — there is no floating toolbar to clear there.
+- **Pinch zoom (v3.2.4):** iOS Safari has ignored `user-scalable=no` in the viewport meta tag since ~iOS 10, so zoom is instead blocked via `touch-action: pan-x pan-y` on every element (keeps both scroll axes fully intact for every column, sheet and dialog; v3.2.3 set it on the page root only, which WebKit does not carry into scroll containers) plus a JS guard that cancels two-finger `touchmove` and WebKit's pinch-gesture events. One-finger scrolling and taps are never cancelled, and desktop browser zoom (ctrl+wheel, keyboard) is left alone.
 - **Card text sizing (v3.2.3):** iOS Safari's WebKit text autosizer previously inflated multi-line card titles independently of their explicit font size, next to mono status badges that stayed their declared size — `text-size-adjust: 100%` disables that autosizing so the rendered scale matches the design system everywhere.
 - **Phone disclosure (v2.9.1):** below `md`/`sm` the secondary header and toolbar controls (agent id, token, help, Signal, theme, project picker, priority/assignee/sort, export, column colours, metrics) collapse behind a single `⋯` / `Filters` disclosure button; only the title, the Board/Portfolio/About switch, the search box and the task count stay visible. This keeps the chrome to roughly three rows — measured at 390px, chrome went from 299px to ~155px so the board keeps ~82% of the viewport.
 - **Column paging arrows (v2.9.1):** the `‹ / ›` scroll-columns buttons are hidden below `md`; touch devices use the native horizontal swipe + snap instead.
@@ -402,7 +410,7 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 - **Headless-first snippet:** a `curl` walkthrough showing an agent claiming the next task and advancing it, to make the API-first model concrete.
 - **Trust strip:** key credibility metrics (server/client test counts, the Node 20 & 22 CI matrix, the count of architecture decision records).
 - **"Why a normal board isn't enough":** three cards pairing each failure mode with the exact mechanism that handles it (`withMutationLock`, the lease plus reaper, the transition graph + role matrix).
-- **Lifecycle walk:** the five-state lifecycle (`BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE`, plus `BLOCKED`) with the role that acts at each step.
+- **Lifecycle walk:** the v3 8-state lifecycle (`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, plus `BLOCKED`) with the role that moves a card into each state.
 - **Capabilities table:** each capability mapped to the source file that implements it.
 - **Architecture & code flow:** an additive section that goes deeper than the capability list — a **stack table** (layer → choice → why → location), a step-by-step walk of the **next-claim code path** (route → auth → mutation lock → eligibility → `applyClaim` → persist-before-memory → SSE notify), the **three safety layers** that guard every write (optimistic concurrency, the transition graph + role matrix, lease ownership), a walk of the **reclaim-alert path** (stalled heartbeat → `reapExpiredClaims` → `reclaimTaskInner` → `notify()` → `notifier.js` → Telegram, including the fail-silent delivery guarantee), and a six-layer summary mirroring the system-design chapter. It is mobile-first: the stack table collapses into labelled cards on narrow screens.
 - **Guided tour:** curated screenshots served from `/landing/*.png` (board, project filter, task inspector, portfolio, dark mode).
@@ -430,7 +438,9 @@ Autonomous agents interact with the board exclusively through HTTP requests.
 ### 6.1 Authentication & Role Headers
 Every mutating request must include:
 1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all), `KANBAN_PROJECT_TOKENS` (per-project map), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; revoke your own token early with `POST /api/auth/revoke`).
-2. **Role:** `X-Agent-Role: <role>` (Allowed: `builder`, `reviewer`, `tester`, `runner`, `system`, `human`, `admin`)
+2. **Role:** `X-Agent-Role: <role>` (Allowed: `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`, `runner`, `system`, `human`, `admin`)
+4. **Project:** every task path carries `?project=<name>` (only `POST /api/tasks` takes `project` in the body instead).
+5. **Version:** every `PATCH` carries the card's current `version` as `expected_version` (or `If-Match`); a stale write is rejected `409 Version mismatch`.
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
 
 > To connect a brand-new project, see [ONBOARDING.md](../../ONBOARDING.md).
@@ -438,6 +448,8 @@ Every mutating request must include:
 ---
 
 ### 6.2 Agent Lifecycle Example (cURL)
+
+The v3 lifecycle (ADR-004) is `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`); only `READY` cards can be claimed. Every committed mutation — including a claim and a log entry — bumps the card's `version`, so each `PATCH` below uses the version returned by the previous call (read it from the response, or `GET /api/tasks/:id?project=…`). The numbers shown are what a fresh card goes through; this exact sequence was run against a 3.2.4 server.
 
 #### Step 1: Create a Task (Runner/Orchestrator)
 ```bash
@@ -447,6 +459,7 @@ curl -X POST http://localhost:4000/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "id": "task-auth-01",
+    "project": "default",
     "title": "Implement JWT validation middleware",
     "description": "Add token validation with expiry checks",
     "status": "BACKLOG",
@@ -455,19 +468,28 @@ curl -X POST http://localhost:4000/api/tasks \
   }'
 ```
 
-#### Step 2: Claim the Task (Builder Agent)
+#### Step 2: Make it claimable (Planner)
 ```bash
-curl -X POST http://localhost:4000/api/tasks/task-auth-01/claim \
+curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
+  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
+  -H "X-Agent-Role: planner" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "READY", "expected_version": 1 }'
+```
+
+#### Step 3: Claim the Task (Builder Agent)
+```bash
+curl -X POST "http://localhost:4000/api/tasks/task-auth-01/claim?project=default" \
   -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
   -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" \
   -d '{ "agent_id": "builder-codex" }'
 ```
-*Note: Successful claim automatically moves the card from `BACKLOG` to `BUILDING`.*
+*Note: only a `READY` card can be claimed; a successful claim moves it `READY → IN_PROGRESS` (`PLANNING` for a planner claim) and starts a lease (10 minutes by default, renewed by logs and heartbeats).*
 
-#### Step 3: Append Progress Logs (Builder Agent)
+#### Step 4: Append Progress Logs (Builder Agent)
 ```bash
-curl -X POST http://localhost:4000/api/tasks/task-auth-01/logs \
+curl -X POST "http://localhost:4000/api/tasks/task-auth-01/logs?project=default" \
   -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
   -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" \
@@ -477,32 +499,42 @@ curl -X POST http://localhost:4000/api/tasks/task-auth-01/logs \
   }'
 ```
 
-#### Step 4: Submit for Review (Builder Agent)
+#### Step 5: Submit for Review (Builder Agent)
 ```bash
-curl -X PATCH http://localhost:4000/api/tasks/task-auth-01 \
+curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
   -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
   -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" \
-  -d '{ "status": "IN_REVIEW" }'
+  -d '{ "status": "IN_REVIEW", "expected_version": 4 }'
 ```
 
-#### Step 5: Approve & Advance to Test (Reviewer Agent)
+#### Step 6: Approve & Advance to Validation (Reviewer Agent)
 ```bash
-curl -X PATCH http://localhost:4000/api/tasks/task-auth-01 \
+curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
   -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
   -H "X-Agent-Role: reviewer" \
   -H "Content-Type: application/json" \
-  -d '{ "status": "IN_TEST" }'
+  -d '{ "status": "VALIDATION", "expected_version": 5 }'
 ```
 
-#### Step 6: Verify & Finalize (Tester Agent)
+#### Step 7: Verify (Tester Agent)
 ```bash
-curl -X PATCH http://localhost:4000/api/tasks/task-auth-01 \
+curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
   -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
   -H "X-Agent-Role: tester" \
   -H "Content-Type: application/json" \
-  -d '{ "status": "DONE" }'
+  -d '{ "status": "READY_TO_SHIP", "expected_version": 6 }'
 ```
+
+#### Step 8: Release (Releaser Agent)
+```bash
+curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
+  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
+  -H "X-Agent-Role: releaser" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "DONE", "expected_version": 7 }'
+```
+*A tester cannot set `DONE` (403); only a releaser (or a privileged role) closes a card.*
 
 ---
 
@@ -513,6 +545,7 @@ import os
 import requests
 
 API_URL = "http://localhost:4000/api"
+PROJECT = {"project": os.getenv("KANBAN_PROJECT", "default")}
 TOKEN = os.getenv("KANBAN_AUTH_TOKEN", "default-secret")
 
 def agent_claim_and_build(task_id: str, agent_id: str):
@@ -523,25 +556,29 @@ def agent_claim_and_build(task_id: str, agent_id: str):
         "Content-Type": "application/json"
     }
     
-    # 1. Claim task
-    res = requests.post(f"{API_URL}/tasks/{task_id}/claim", json={"agent_id": agent_id}, headers=headers)
+    # 1. Claim task (must be READY)
+    res = requests.post(f"{API_URL}/tasks/{task_id}/claim", params=PROJECT, json={"agent_id": agent_id}, headers=headers)
     if res.status_code == 409:
         print(f"Task {task_id} already claimed by another agent!")
         return False
     res.raise_for_status()
+    version = res.json()["version"]
     print(f"Successfully claimed {task_id}")
 
     # 2. Append operational log
     requests.post(
         f"{API_URL}/tasks/{task_id}/logs",
+        params=PROJECT,
         json={"agent_id": agent_id, "message": "Starting code generation..."},
         headers=headers
     ).raise_for_status()
+    version = requests.get(f"{API_URL}/tasks/{task_id}", params=PROJECT).json()["version"]
 
     # 3. Move to review
     requests.patch(
         f"{API_URL}/tasks/{task_id}",
-        json={"status": "IN_REVIEW"},
+        params=PROJECT,
+        json={"status": "IN_REVIEW", "expected_version": version},
         headers=headers
     ).raise_for_status()
     print(f"Task {task_id} submitted for review")
@@ -586,7 +623,7 @@ flowchart TD
     Code401 -- Yes --> Fix401["Cause: Missing or incorrect Bearer token / X-API-Token.\nFix: Check token matches server's KANBAN_AUTH_TOKEN."]
 
     Code401 -- No --> Code403{"Status 403?"}
-    Code403 -- Yes --> Fix403["Cause: Missing role or role not allowed to perform transition.\nFix: Supply valid X-Agent-Role matching permission matrix\n(e.g., only Reviewer can move to IN_TEST)."]
+    Code403 -- Yes --> Fix403["Cause: Missing role or role not allowed to perform transition.\nFix: Supply valid X-Agent-Role matching permission matrix\n(e.g., only a Reviewer can move to VALIDATION, only a Releaser to DONE)."]
 
     Code403 -- No --> Code409{"Status 409?"}
     Code409 -- Yes --> Fix409["Cause: Illegal state transition (e.g. BACKLOG -> DONE)\nor task is already claimed by a different agent.\nFix: Check transition graph and verify card ownership."]

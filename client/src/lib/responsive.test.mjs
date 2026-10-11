@@ -49,12 +49,15 @@ test('App header wraps (flex-wrap) instead of forcing a single row', () => {
   )
 })
 
-test('App shell uses h-screen', () => {
-  assert.match(
-    appSource,
-    /className="[^"]*\bh-screen\b[^"]*"/,
-    'the App shell must use `h-screen` (index.css upgrades it to 100dvh where supported)',
-  )
+// v3.2.4 (GH #103 follow-up): outside the phone layout the shell is a plain
+// `h-screen` (100dvh) flex shell with internal scrolling — no `position:
+// fixed; inset: 0` + forced `100lvh` (an earlier 3.2.4 attempt), which on a
+// tablet/landscape phone with a visible URL bar would clip the bottom.
+test('App shell is a plain h-screen flex shell carrying the .app-shell hook', () => {
+  const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
+  assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
+  assert.match(shellTag, /\bh-screen\b/, 'the shell must use h-screen (100dvh via index.css)')
+  assert.match(shellTag, /\bflex\b[\s\S]*\bflex-col\b/)
 })
 
 test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', () => {
@@ -624,7 +627,7 @@ test('Board scroll container snaps horizontally and scrolls x (snap-x, scroll-pl
 test('Board layout stretches vertically and tightens mobile padding (GH #99)', () => {
   assert.match(
     boardSource,
-    /className="relative flex h-full min-w-0 flex-1 items-stretch"/,
+    /className="board-root relative flex h-full min-w-0 flex-1 items-stretch"/,
     'Board container must use items-stretch so columns extend to bottom',
   )
   assert.match(
@@ -668,38 +671,32 @@ test('index.css overrides .h-screen inside @supports (height:100dvh)', () => {
   )
 })
 
-// v3.2.3 (GH #103 follow-up, round 1): lvh is scoped to a DEDICATED
-// `.app-shell` class, not `.h-screen` globally. `.h-screen` is also used by
-// `fixed` panels (TaskSheet's <aside>) that must stay within the
-// actually-visible area — a global lvh override pushed TaskSheet's pinned
-// log-entry footer behind Safari's floating toolbar with no way to scroll to
-// it (the round-1 regression this guards against).
-test('index.css scopes the 100lvh override to .app-shell, NOT .h-screen globally', () => {
-  const dvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100dvh\s*\)/)
-  const lvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100lvh\s*\)/)
-  assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist')
-  assert.ok(lvhIdx >= 0, 'index.css must contain an `@supports (height:100lvh)` block')
-  assert.ok(lvhIdx > dvhIdx, 'the 100lvh block must come AFTER the 100dvh block so it wins on engines supporting both')
-  const lvhBlock = cssSource.slice(lvhIdx, cssSource.indexOf('}\n}', lvhIdx) + 3)
-  assert.match(lvhBlock, /\.app-shell\s*\{[\s\S]*?height:\s*100lvh/, 'the 100lvh block must override .app-shell')
-  assert.doesNotMatch(
-    lvhBlock,
-    /\.h-screen/,
-    'the 100lvh block must NOT target .h-screen — TaskSheet (and any other fixed panel) uses that class and must stay at 100dvh',
-  )
+// The 100dvh override stays on `.h-screen` (shell + TaskSheet); nothing may
+// force the large viewport (lvh) or pin the shell with position: fixed.
+test('index.css: .h-screen is 100dvh; no lvh and no fixed/inset app shell', () => {
+  assert.match(cssSource, /@supports\s*\(\s*height:\s*100dvh\s*\)\s*\{[\s\S]*?\.h-screen\s*\{[\s\S]*?height:\s*100dvh/)
+  assert.doesNotMatch(cssSource, /100lvh/, 'forcing the large viewport clips content behind a visible URL bar outside the phone layout')
+  assert.doesNotMatch(cssSource, /\.app-shell\s*\{[^}]*position:\s*fixed/, 'the shell must not be position: fixed')
+  assert.doesNotMatch(cssSource, /\.app-shell\s*\{[^}]*inset:/, 'the shell must not be pinned with inset')
 })
 
-test('App.tsx root shell carries .app-shell; TaskSheet\'s fixed <aside> does not', () => {
-  const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
-  assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
-  assert.match(shellTag, /\bh-screen\b/, 'the shell must keep h-screen (the 100dvh fallback) alongside app-shell')
+test('outside the phone layout html/body never scroll: overflow hidden both axes, no page overscroll', () => {
+  const idx = cssSource.search(/^html,\s*\nbody\s*\{\s*\n\s*overflow:/m)
+  assert.ok(idx >= 0, 'index.css must declare `html, body { overflow: hidden; ... }`')
+  const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
+  assert.match(block, /overflow:\s*hidden/)
+  assert.match(block, /overscroll-behavior:\s*none/, 'no rubber-band of the whole page')
+})
 
+test('TaskSheet\'s fixed <aside> does not carry app-shell and keeps its header clear of the status bar', () => {
   const asideTag = taskSheetSource.match(/<aside\b[\s\S]{0,400}?\}\s*>/)?.[0] ?? ''
+  assert.ok(asideTag, 'TaskSheet.tsx must render the <aside> element')
   assert.doesNotMatch(
     asideTag,
     /app-shell/,
     'TaskSheet\'s <aside> must NOT carry app-shell — it is a fixed panel that must stay within the visible (dvh) area, not grow to the large (lvh) viewport',
   )
+  assert.match(asideTag, /pt-\[env\(safe-area-inset-top,0px\)\]/, 'TaskSheet\'s top-0 <aside> must pad for the top safe-area inset')
 })
 
 test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are not inflated', () => {
@@ -715,30 +712,38 @@ test('index.css disables WebKit\'s text autosizer so explicit text-* sizes are n
   )
 })
 
-test('index.css gives html/body/#root touch-action: pan-x pan-y to block pinch/double-tap zoom without blocking scroll', () => {
-  const idx = cssSource.search(/html,\s*\n\s*body,\s*\n\s*#root\s*\{/)
-  assert.ok(idx >= 0, 'index.css must declare an `html, body, #root` rule')
+// v3.2.4 (GH #103 follow-up): v3.2.3 put `touch-action: pan-x pan-y` on
+// html/body/#root only, and pinch-zoom still worked on a real iPhone.
+// touch-action is NOT inherited, and WebKit resets the effective value to
+// `auto` at every scroll container (it intersects only up to the nearest
+// ancestor with a default touch behavior) — every card sits inside two
+// (.board-scroll, the column list), so the root rule never reached them.
+// The rule must therefore hit EVERY element via the universal selector.
+test('index.css applies touch-action: pan-x pan-y to EVERY element (universal), not just the root', () => {
+  const idx = cssSource.search(/^\*,\s*\n\*::before,\s*\n\*::after\s*\{/m)
+  assert.ok(idx >= 0, 'index.css must declare a top-level `*, *::before, *::after` rule')
   const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
   assert.match(
     block,
-    /touch-action:\s*pan-x pan-y/,
-    'html/body/#root must carry `touch-action: pan-x pan-y` — iOS honours this (unlike user-scalable=no) and, per the touch-action intersection rule, it can only ever REMOVE pinch-zoom from a descendant\'s effective value, never narrow which scroll axis a nested scroller is allowed to use',
+    /touch-action:\s*pan-x pan-y\s*;/,
+    'the universal rule must carry `touch-action: pan-x pan-y` — omitting pinch-zoom blocks pinch and double-tap zoom while keeping both scroll axes',
   )
-  // The exact regression this guards against: `pan-x` or `pan-y` ALONE here
-  // would, per the same intersection rule Board.tsx/Column.tsx already rely
-  // on (GH #87), knock out the OTHER axis for every scrollable descendant —
-  // vertical column scrolling, horizontal board scrolling, or sheet/dialog
-  // scrolling, depending on which single axis was chosen.
-  assert.doesNotMatch(
-    block,
-    /touch-action:\s*pan-x\s*;/,
-    'must not be the single-axis `pan-x` alone — that would block all vertical scrolling everywhere (column lists, sheets, dialogs)',
-  )
-  assert.doesNotMatch(
-    block,
-    /touch-action:\s*pan-y\s*;/,
-    'must not be the single-axis `pan-y` alone — that would block the board\'s horizontal column scroll',
-  )
+  // Single-axis values would, per the GH #87 intersection rule, knock out
+  // the other scroll axis for every scroller in the app.
+  assert.doesNotMatch(block, /touch-action:\s*pan-x\s*;/, 'must not be single-axis pan-x (kills vertical scrolling)')
+  assert.doesNotMatch(block, /touch-action:\s*pan-y\s*;/, 'must not be single-axis pan-y (kills the horizontal column scroll)')
+})
+
+test('index.css never re-enables zoom via touch-action: manipulation / auto / pinch-zoom', () => {
+  // `manipulation` = pan-x pan-y PLUS pinch-zoom; v3.2.3 set it on
+  // buttons/inputs/links, re-allowing pinch for any gesture starting on one.
+  assert.doesNotMatch(cssSource, /touch-action:\s*manipulation/, 'manipulation includes pinch-zoom')
+  assert.doesNotMatch(cssSource, /touch-action:\s*auto/, 'auto includes pinch-zoom')
+  assert.doesNotMatch(cssSource, /touch-action:[^;]*pinch-zoom/, 'no rule may grant pinch-zoom')
+  const twTouchUtility = new RegExp('\\b' + 'touch-' + '(auto|manipulation|pinch-zoom)\\b')
+  for (const [name, src] of [['App.tsx', appSource], ['Board.tsx', boardSource], ['Column.tsx', columnSource], ['TaskSheet.tsx', taskSheetSource]]) {
+    assert.doesNotMatch(src, twTouchUtility, `${name} must not use a Tailwind touch-* utility that grants pinch-zoom`)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -1030,3 +1035,122 @@ test('About page responsive layout invariants', async (t) => {
   )
 })
 
+
+// ---------------------------------------------------------------------------
+// v3.2.4 PHONE LAYOUT (touch AND below md): the DOCUMENT scrolls, so iOS
+// Safari renders content behind its translucent floating toolbar like a
+// normal website. Any shell with internal scrollers stopped at the toolbar's
+// top edge on a real iPhone (3.2.3's lvh shell, then a fixed inset:0 shell).
+// ---------------------------------------------------------------------------
+
+const PHONE_MQ = /@media \(max-width: 47\.99rem\) and \(pointer: coarse\) \{/
+function phoneBlock() {
+  const idx = cssSource.search(PHONE_MQ)
+  assert.ok(idx >= 0, 'index.css must contain the phone-layout media block')
+  // the block ends at the first "\n}\n" at column 0 after its start
+  return cssSource.slice(idx, cssSource.indexOf('\n}\n', idx) + 2)
+}
+function rule(block, selector) {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const m = block.match(new RegExp('(?:^|[\\s,])' + esc + '\\s*(?:,[^{]*)?\\{([^}]*)\\}', 'm'))
+  assert.ok(m, `phone block must have a rule for ${selector}`)
+  return m[1]
+}
+
+test('phone layout query matches Tailwind max-md:pointer-coarse and lib/scrollLock.ts', () => {
+  phoneBlock()
+  const lockSrc = readFileSync(join(dirname(CSS_PATH), 'lib', 'scrollLock.ts'), 'utf8')
+  assert.match(lockSrc, /PHONE_LAYOUT_QUERY = '\(max-width: 47\.99rem\) and \(pointer: coarse\)'/)
+})
+
+test('phone layout: html is the vertical scroller; body/#root grow and are not scroll containers', () => {
+  const block = phoneBlock()
+  const html = rule(block, 'html')
+  assert.match(html, /overflow-y:\s*auto/)
+  assert.match(html, /overflow-x:\s*hidden/)
+  assert.match(html, /height:\s*auto/)
+  const body = rule(block, 'body')
+  assert.match(body, /overflow:\s*visible/, 'a scrolling body would capture sticky positioning (the 3.2.3 failure mode)')
+  assert.match(body, /height:\s*auto/)
+  assert.match(block, /body\s*\{\s*overflow-x:\s*clip;/, 'body clips sideways with clip (no scroll container), not hidden')
+})
+
+test('phone layout: sticky header, non-sticky while the controls are open', () => {
+  const block = phoneBlock()
+  const header = rule(block, '.app-header')
+  assert.match(header, /position:\s*sticky/)
+  assert.match(header, /top:\s*0/)
+  assert.match(block, /\.app-header\[data-controls-open='true'\]\s*\{\s*position:\s*relative;/)
+  assert.match(appSource, /data-controls-open=\{headerOpen \? 'true' : 'false'\}/)
+  assert.match(appSource, /className="app-header /)
+})
+
+test('phone layout: columns grow to full height (no internal vertical scroll); board strip stays horizontal', () => {
+  const block = phoneBlock()
+  const list = rule(block, '.column-list')
+  assert.match(list, /overflow:\s*visible/)
+  assert.match(list, /flex:\s*none/)
+  for (const sel of ['.board-root', '.board-viewport', '.board-scroll', '.kanban-column']) {
+    assert.match(block, new RegExp('\\' + sel + '[\\s\\S]*?height:\\s*auto'), `${sel} must be height: auto`)
+  }
+  assert.doesNotMatch(rule(block, '.board-scroll'), /overflow/, 'the snap strip keeps its own overflow-x: auto')
+  assert.match(columnSource, /'kanban-column /)
+  assert.match(columnSource, /className="column-list /)
+  assert.match(boardSource, /className="board-viewport /)
+  assert.match(appSource, /className="app-main /)
+  assert.match(appSource, /className="board-pane /)
+  assert.match(appSource, /className="board-frame /)
+})
+
+test('phone layout: Portfolio and About flow in the document', () => {
+  const block = phoneBlock()
+  assert.match(rule(block, '.portfolio-view'), /overflow-y:\s*visible/)
+  assert.match(rule(block, '.portfolio-view'), /overflow-x:\s*auto/, 'the wide table stays swipeable sideways')
+  assert.match(rule(block, '.about-view'), /overflow-y:\s*visible/)
+  assert.match(rule(block, '.about-view'), /height:\s*auto/)
+})
+
+test('overlay scroll lock: html.scroll-locked pins body; App locks for TaskSheet, BugReportDialog and the rail drawer', () => {
+  assert.match(cssSource, /html\.scroll-locked\s*\{\s*overflow:\s*hidden;/)
+  assert.match(cssSource, /html\.scroll-locked body\s*\{[^}]*position:\s*fixed/)
+  assert.match(appSource, /useDocumentScrollLock\(openTask !== null \|\| bugReportOpen \|\| railDrawerShown\)/)
+})
+
+test('phone layout (review round 2): short columns stay short, sticky column bar, header kept visible while locked', () => {
+  const block = phoneBlock()
+  assert.match(block, /\n  \.board-scroll \{\s*align-items:\s*flex-start;/, 'without this every column stretches to the tallest one')
+  assert.match(block, /\.board-root\s*\{\s*flex-direction:\s*column;/)
+  const ind = rule(block, '.column-indicator')
+  assert.match(ind, /position:\s*sticky/)
+  assert.match(ind, /top:\s*max\(var\(--app-header-h,\s*0px\),\s*env\(safe-area-inset-top,\s*0px\)\)/)
+  assert.match(block, /html\.scroll-locked \.app-header:not\(\[data-controls-open='true'\]\)\s*\{\s*transform:\s*translateY\(var\(--scroll-lock-y,\s*0px\)\)/)
+  assert.match(appSource, /setProperty\('--app-header-h', headerOpen \? '0px' : `\$\{header\.offsetHeight\}px`\)/, 'App publishes the sticky header height (0 while the controls are open and it is not sticky)')
+})
+
+// v3.2.4 tester finding: the phone Signal Rail drawer trapped itself. Its
+// only toggle lives in the ⋯ header controls, which the open drawer covers,
+// and the drawer had no close control and ignored Escape.
+test('phone rail drawer: dialog with its own 44px CLOSE, Escape + backdrop close, focus returns to the toggle', () => {
+  const drawer = appSource.slice(appSource.indexOf('data-testid="rail-drawer"') - 200, appSource.indexOf('<SignalRail tasks={tasks} onOpen={handleOpen} />\n                      </div>'))
+  assert.match(drawer, /role="dialog"/)
+  assert.match(drawer, /aria-modal="true"/)
+  assert.match(drawer, /pt-\[env\(safe-area-inset-top,0px\)\] pb-\[env\(safe-area-inset-bottom,0px\)\]/, 'respects both safe-area insets')
+  const close = drawer.match(/aria-label="Close signal rail"\s*className="([^"]*)"/)?.[1] ?? ''
+  assert.match(close, /\bpointer-coarse:min-h-11\b/)
+  assert.match(close, /\bpointer-coarse:min-w-11\b/)
+  assert.match(drawer, /onClick=\{closeRail\}/, 'the close button closes the drawer')
+  assert.match(appSource, /data-testid="rail-backdrop"\s*className="[^"]*"\s*onClick=\{closeRail\}/, 'the backdrop tap still closes it')
+  assert.match(appSource, /if \(e\.key === 'Escape'\) closeRail\(\)/, 'Escape closes it')
+  assert.match(appSource, /railToggleRef\.current\?\.focus\(\{ preventScroll: true \}\)/, 'focus returns to the toggle without scrolling the page')
+  assert.match(appSource, /railCloseRef\.current\?\.focus\(\{ preventScroll: true \}\)/, 'focus moves into the drawer on open')
+  // stacking: backdrop z-30 + panel z-40 sit above the header (z-20) whether sticky or relative
+  assert.match(appSource, /data-testid="rail-backdrop"\s*className="fixed inset-0 z-30 /)
+  assert.match(drawer, /className="fixed right-0 top-0 z-40 /)
+  assert.match(cssSource, /\.app-header \{\s*position: sticky;\s*top: 0;\s*z-index: 20;/)
+})
+
+test('HeaderHelp closes on an outside TAP (pointerdown, not mousedown: iOS sends no mousedown there)', () => {
+  const help = readFileSync(join(dirname(APP_PATH), 'components', 'HeaderHelp.tsx'), 'utf8')
+  assert.match(help, /addEventListener\('pointerdown', onDown\)/)
+  assert.doesNotMatch(help, /addEventListener\('mousedown'/)
+})

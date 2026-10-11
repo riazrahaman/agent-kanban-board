@@ -12,7 +12,7 @@ Turns your coding agent into a **strict orchestrator** for an [agent-kanban-boar
 
 - You hand a feature or fix to sub-agents and want **one auditable record** of who holds it, what stage it's in, and why it moved.
 - You run **several agents on one repo** and need claims and leases so two agents never build the same card.
-- You want **crash recovery**: if an agent dies mid-build, the card goes back to `BACKLOG` on its own instead of showing "in progress" forever.
+- You want **crash recovery**: if an agent dies mid-build, the card goes back to `READY` on its own, ready to be re-claimed, instead of showing "in progress" forever.
 
 **Not a fit:** quick one-off edits, where a board adds process and no benefit.
 
@@ -21,14 +21,15 @@ Turns your coding agent into a **strict orchestrator** for an [agent-kanban-boar
 ## The model in 30 seconds
 
 ```
-BACKLOG ──claim──▶ BUILDING ──▶ IN_REVIEW ──▶ IN_TEST ──▶ DONE
-   ▲                  ▲              │             │
-   │                  └── findings ──┘             │
-   └────────── test fail · lease expired ──────────┘
+BACKLOG ─▶ READY ──claim──▶ IN_PROGRESS ─▶ IN_REVIEW ─▶ VALIDATION ─▶ READY_TO_SHIP ─▶ DONE
+             ▲                 ▲  ▲            │             │
+             │                 │  └─ findings ─┘             │
+             │                 └────────── test fail ────────┘
+             └──────── lease expired · progress stalled (reaper)
 ```
 
 - **The board is the state machine.** The server checks every move. An illegal move returns `409`, and a wrong role returns `403`.
-- **Claim to own, PATCH to move.** To enter an active stage, the agent calls `POST /tasks/:id/claim`, which sets an owner and a lease. A PATCH that only changes status leaves the card with no owner, and the reaper sends it back to `BACKLOG`.
+- **Claim to own, PATCH to move.** To enter an active stage, the agent calls `POST /tasks/:id/claim`, which sets an owner and a lease. A PATCH that only changes status leaves the card with no owner, and the reaper sends it back to `READY`. Only `READY` cards can be claimed.
 - **Leases beat crashes.** The holder sends heartbeats to keep the card. If the holder goes silent, the card is released for another agent.
 - **Every write is versioned.** Each `PATCH` carries `expected_version`, so a stale write gets a `409` and can't overwrite a newer one.
 
@@ -143,9 +144,10 @@ A `201` with the card JSON means the URL, token and project are all correct. Any
 4. Record the card's `id` and `version`.
 
 **B · Build → Review → Test**
-1. **Build:** claim the card as `builder`, which moves it `BACKLOG → BUILDING`. Log, start heartbeats, and dispatch the builder. The builder never claims.
-2. **Review:** PATCH to `IN_REVIEW` as `admin` with `expected_version`. Don't claim again. If the reviewer reports findings, the agent logs them, moves the card back to `BUILDING`, and dispatches the builder again.
-3. **Test:** PATCH to `IN_TEST`. If a test fails, the agent resets the card to `BACKLOG` and starts again at Build.
+1. **Ready:** PATCH the new card `BACKLOG → READY` as `planner`; only `READY` cards can be claimed.
+2. **Build:** claim the card as `builder`, which moves it `READY → IN_PROGRESS`. Log, start heartbeats, and dispatch the builder. The builder never claims.
+3. **Review:** PATCH to `IN_REVIEW` as `builder` (or `admin`) with `expected_version`. Don't claim again. If the reviewer reports findings, the agent logs them, moves the card back to `IN_PROGRESS`, and dispatches the builder again.
+4. **Validate:** PATCH to `VALIDATION` as `reviewer`, then to `READY_TO_SHIP` as `tester` when the tests pass. If a test fails, move it back to `IN_PROGRESS` and start again at Build. A tester cannot set `DONE`.
 
 **C · Close** (only after tests pass)
 1. Update docs and bump the version in lockstep.
@@ -178,7 +180,7 @@ Every path that targets a single task needs `?project=`. Only `POST /tasks` take
 ```
 POST   /tasks                            create · project in body
                                          requires id, title, status BACKLOG, round 1
-POST   /tasks/:id/claim?project=X        take ownership + lease (BACKLOG → BUILDING)
+POST   /tasks/:id/claim?project=X        take ownership + lease (READY → IN_PROGRESS)
 POST   /tasks/:id/heartbeat?project=X    renew the lease
 POST   /tasks/:id/logs?project=X         append a log (holder logs also renew the lease)
 PATCH  /tasks/:id?project=X              move / update · always send expected_version
@@ -225,13 +227,13 @@ The board server was started without a token. Restart it with `KANBAN_AUTH_TOKEN
 **`401 Unauthorized: valid token required for mutating operations`**
 `KANBAN_TOKEN` doesn't match the server's token. `GET /projects` still works in this case, because reads are open by default.
 
-**`409 Invalid state transition from BACKLOG to <X>`**
-The lease expired and the reaper reset the card. Run `git status` and `git log` on the branch first, because uncommitted work may still be on disk. Then claim the card again and repeat the stages.
+**`409 Invalid state transition from READY to <X>`**
+The lease expired (or progress stalled) and the reaper reset the card to `READY`. Run `git status` and `git log` on the branch first, because uncommitted work may still be on disk. Then claim the card again and repeat the stages.
 
 **`409 Version mismatch`**
 Something wrote to the card first. `GET` the card and retry with the current `version`.
 
-**Card goes back to `BACKLOG` about 5 minutes after a PATCH**
+**Card goes back to `READY` about 5 minutes after a PATCH**
 The card entered an active stage through a PATCH that only changed its status, so it had no owner. The reaper resets cards with no owner after `KANBAN_ORPHAN_GRACE_MS`, which defaults to 5 min. Use `POST /claim` to enter an active stage.
 
 ---

@@ -5,6 +5,7 @@ import {
   ARCH_INTRO,
   ARCH_LAYERS,
   CAPABILITIES,
+  CLAIM_CURL,
   CLAIM_FLOW,
   CURL_SNIPPET,
   FAQ,
@@ -128,7 +129,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
   const copyClaim = () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(
-        'curl -s -X POST "$BOARD/api/tasks/next-claim?agent_id=builder-1" \\\n  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"'
+        CLAIM_CURL
       )
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -144,10 +145,9 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
   }
 
   return (
-    // v3.2.3 (GH #103 follow-up, round 1): same floating-toolbar clearance
-    // as Column.tsx/Portfolio.tsx — this view also sits inside the
-    // `.app-shell` (index.css).
-    <div className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
+    // Same floating-toolbar clearance as Column.tsx/Portfolio.tsx; in the
+    // phone layout (index.css, `about-view` hook) it flows in the document.
+    <div className="about-view h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
       <div className="mx-auto w-full max-w-[1536px] px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex justify-start lg:justify-center gap-8 xl:gap-12">
           {/* Left Navigation: Table of Contents */}
@@ -587,7 +587,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
                   </div>
                   <div className="flex justify-between border-b border-line pb-1.5">
                     <dt className="text-muted">Lease TTL</dt>
-                    <dd className="text-ink">5 min (claim)</dd>
+                    <dd className="text-ink">10 min (claim)</dd>
                   </div>
                   <div className="flex justify-between border-b border-line pb-1.5">
                     <dt className="text-muted">Concurrency</dt>
@@ -617,7 +617,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
                   </button>
                 </div>
                 <pre className="mt-2 overflow-x-auto border border-line bg-muted-bg/30 p-2 font-mono text-[10px] leading-relaxed text-ink">
-                  {`curl -s -X POST "$BOARD/api/tasks/next-claim?agent_id=builder-1"`}
+                  {CLAIM_CURL}
                 </pre>
               </div>
 

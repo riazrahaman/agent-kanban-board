@@ -141,7 +141,9 @@ router.delete('/trash/:id', asyncHandler(async (req, res) => {
 
 /**
  * §2.7 POST /api/tasks/next-claim — atomically select + claim the highest-
- * priority, unclaimed, dependency-satisfied BACKLOG task for the caller.
+ * priority, unclaimed, dependency-satisfied READY task for the caller (v3: only
+ * READY cards are claimable; the claim lifts READY -> IN_PROGRESS, or PLANNING
+ * for a planner).
  * The caller's role is taken from the authenticated identity only (never the
  * query string). Query: ?project= (accepted, no-op today), ?agent_id= (falls
  * back to the caller's agent_id). Returns 200 + the claimed task, or 204 when

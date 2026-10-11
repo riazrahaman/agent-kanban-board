@@ -192,7 +192,7 @@ function getReapIntervalMs() {
  * the reaper treats it as structurally stuck.
  *
  * An active task with no owner/lease is normally created by a status-only PATCH
- * (the documented orchestrator flow: `PATCH {status:'BUILDING', role:'admin'}`).
+ * (the documented orchestrator flow: `PATCH {status:'IN_PROGRESS', role:'admin'}`).
  * That is a *legitimate* intermediate state — per-stage ownership deliberately
  * keeps `assigned_agent` as the lease holder rather than reassigning it — so
  * reaping it on the very next sweep destroys a card that was just written to.
@@ -1759,7 +1759,8 @@ function validateDependencyGraph(project, id, dependsOn) {
  *   2. dependency gate — a reason-tagged 409 (`reason: 'dependency_unsatisfied'`
  *      + `unresolved_dependencies[]`) distinct from contention.
  *   3. the write: set assigned_agent + claim_expires_at (now + TTL), lift
- *      BACKLOG → BUILDING, seed reclaim_count, push the claim log, persist.
+ *      READY → IN_PROGRESS (PLANNING for a planner), seed reclaim_count, push
+ *      the claim log, persist.
  *
  * Pass `{ renew: true }` for a lease renewal: skip contention when the caller is
  * privileged (they may renew any lease), skip the dependency gate (the lease was
@@ -2076,7 +2077,7 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
 /**
  * §2.4b bulk lease renewal (v2.12.0, RC-2). An orchestrator that holds N tasks
  * previously had to make N heartbeat calls, one per card; missing even one while
- * a long job ran let the reaper return that card to BACKLOG as a false alarm.
+ * a long job ran let the reaper return that card to READY as a false alarm.
  * This renews EVERY lease the given agent holds in ONE locked pass: for each
  * card owned by `agentId` in an active stage whose lease has NOT already lapsed,
  * push `claim_expires_at` out by that card's own window. Lapsed leases are
@@ -2162,7 +2163,7 @@ export async function renewAllLeases(agentId, { project: projectArg, caller = {}
  *     / legacy single-token mode), else 403.
  *   - The target agent id must be a non-empty string, else 400.
  * It sets `assigned_agent`, arms a fresh lease, records `stage_owners` for the
- * stage it lands in, and — like a claim — lifts a BACKLOG card to BUILDING so
+ * stage it lands in, and — like a claim — lifts a BACKLOG or READY card to IN_PROGRESS so
  * the assignment is actionable. It does NOT run the dependency gate or the
  * contention check: an operator explicitly overriding ownership is the point.
  * `agent_id: null` releases the assignment (clears owner + lease, returns an
@@ -2270,9 +2271,9 @@ export function getMilestones(project) {
 
        /**
        * reclaimTask inner — a DOCUMENTED SYSTEM OVERRIDE (like the §2.5 unlock). It
-       * forces an active claim (BUILDING / IN_REVIEW / IN_TEST) back to BACKLOG, which
-       * is NOT a legal agent transition per canTransition (those states have no
-       * → BACKLOG edge). The reaper is ownerless and exempt from the agent state
+       * forces an active claim (PLANNING / IN_PROGRESS / IN_REVIEW / VALIDATION) back
+       * to READY, which is NOT a legal agent transition per canTransition (only
+       * PLANNING has a → READY edge). The reaper is ownerless and exempt from the agent state
        * machine; this is the single sanctioned place that exemption exists. Clears
        * owner + lease, bumps reclaim_count, and logs the reclaim. Persist-first →
        * in-memory → notify (KB-05 fail-closed): a storage failure leaves the active
@@ -3192,7 +3193,7 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
 // ---------------------------------------------------------------------------
 // v2.5.6 (ENH-03): soft-delete trash sink. deleteTask/purgeTasks route into
 // `trash` (a per-project sink beside the archive) instead of destroying data;
-// restore returns a card to BACKLOG; a sweep hard-deletes rows older than
+// restore returns a card to READY; a sweep hard-deletes rows older than
 // KANBAN_TRASH_DAYS (default 30). `purgeTasks({hard:true})` bypasses the sink
 // for true permanent deletion.
 // ---------------------------------------------------------------------------
@@ -3225,7 +3226,7 @@ async function trashPersistRemove(project, removedTask) {
 }
 
 /**
- * Admin-only restore of a soft-deleted task back to the live board (BACKLOG).
+ * Admin-only restore of a soft-deleted task back to the live board (READY).
  * Persists FIRST (KB-05): the live partition gains the restored card and the
  * trash sink loses it, both before memory mutates.
  */

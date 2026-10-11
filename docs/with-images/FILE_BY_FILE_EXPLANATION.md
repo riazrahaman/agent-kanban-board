@@ -180,10 +180,13 @@ flowchart TD
     SignalRail["SignalRail.tsx\nReceives tasks array;\nComputes signalStats & 20 recent activities"]
     TaskSheet["TaskSheet.tsx (Modal Drawer)\nReceives active task object or null;\nLive agent log feed & manual log submission form"]
 
-    ColBacklog["Column: BACKLOG"]
-    ColBuilding["Column: BUILDING"]
-    ColReview["Column: IN_REVIEW"]
-    ColTest["Column: IN_TEST"]
+    ColBacklog["Column: 01 BACKLOG"]
+    ColReady["Column: 02 READY (claimable)"]
+    ColPlanning["Column: 03 PLANNING"]
+    ColBuilding["Column: 04 IN_PROGRESS"]
+    ColReview["Column: 05 IN_REVIEW"]
+    ColTest["Column: 06 VALIDATION"]
+    ColShip["Column: 07 READY_TO_SHIP"]
     ColBlocked["Column: BLOCKED"]
     ColDone["Column: DONE (opacity-70)"]
     ColUnknown["Column: UNKNOWN (Quarantine)"]
@@ -199,18 +202,24 @@ flowchart TD
     App --> TaskSheet
 
     Board --> ColBacklog
+    Board --> ColReady
+    Board --> ColPlanning
     Board --> ColBuilding
     Board --> ColReview
     Board --> ColTest
+    Board --> ColShip
     Board --> ColBlocked
     Board --> ColDone
     Board --> ColUnknown
     Board --> ColIssues
 
     ColBacklog --> TaskCard
+    ColReady --> TaskCard
+    ColPlanning --> TaskCard
     ColBuilding --> TaskCard
     ColReview --> TaskCard
     ColTest --> TaskCard
+    ColShip --> TaskCard
     ColBlocked --> TaskCard
     ColDone --> TaskCard
     ColUnknown --> TaskCard
@@ -303,10 +312,10 @@ resolution, `updateSettings` under the mutation lock, `onSettings` listeners,
 `patchTask`'s allowlist).
 v2.10.0: `store.js` is now a thin stateful core that re-exports four extracted modules (`state-machine.js`, `task-identity.js`, `task-fields.js`, `storage.js`); every existing importer is unchanged and `store.X === module.X` identity is asserted by `kanban.modulesplit.test.js`.
 v2.8.0 additions: an **optional append-only journal** for `JsonStorage` (`KANBAN_STORAGE_JOURNAL=1` appends one `{op,id,task}` line per mutation to `<partition>.journal.jsonl`, `_replayJournal` replays it on load and `_writeCanonical` compacts past `KANBAN_JOURNAL_COMPACT_BYTES`; off by default so the on-disk layout is unchanged) and **bounded inline logs/comments** (`getInlineLogCap`/`getInlineCommentCap`, `spillOverflow`/`appendSpill`/`readSpill`, which keep the newest `KANBAN_INLINE_LOG_CAP`/`KANBAN_INLINE_COMMENT_CAP` entries inline and spill older ones to `spill/<project>/<taskId>.jsonl`, read back via `getTaskLogs`).
-- **Path:** [`server/store.js`](../server/store.js)
+- **Path:** [`server/store.js`](../server/store.js) (the pure state machine lives in [`server/state-machine.js`](../server/state-machine.js) and is re-exported here)
 - **Core Domain State & Engine:**
-  - `STATUSES`: Dictionary of loop statuses (`BACKLOG`, `BUILDING`, `IN_REVIEW`, `IN_TEST`, `BLOCKED`, `DONE`).
-  - `normalizeStatus(status)`: Normalizes casing and legacy aliases (e.g., `TODO` $\to$ `BACKLOG`).
+  - `STATUSES`: Dictionary of the v3 loop statuses (`BACKLOG`, `READY`, `PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`, `DONE`, `BLOCKED`; ADR-004).
+  - `normalizeStatus(status)`: Normalizes casing and legacy aliases (`TODO` $\to$ `BACKLOG`, `BUILDING` $\to$ `IN_PROGRESS`, `IN_TEST` $\to$ `VALIDATION`).
   - `canTransition(fromStatus, toStatus)`: Verifies if the proposed state jump exists in `VALID_TRANSITIONS`.
   - `canRoleTransition(role, fromStatus, toStatus)`: Enforces role permissions.
   - `writeAtomic(filePath, content)`: Creates unique temp file (`.tmp_<timestamp>_<random>`), writes content, and executes `rename` for atomic POSIX replacement.
@@ -314,7 +323,7 @@ v2.8.0 additions: an **optional append-only journal** for `JsonStorage` (`KANBAN
   - `JsonStorage`: Standalone single-file JSON persistence engine.
   - `GitYamlStorage`: Git-backed YAML storage engine with path traversal protection and automated `git commit`.
   - CRUD Methods: `createTask()`, `patchTask()`, `claimTask()`, `appendLog()`, `addIssue()`.
-  - Input hardening (v2.5.8): `createTask(data, project, { caller })` validates shapes and bounds on create — `depends_on` must be an array of non-empty task ids (`validateDependsOn`), `metadata` a plain object of at most 8000 bytes (`validateMetadata`), `title`/`description` capped at 200 / 20000 characters. Creating a task directly in a **work state** (`BUILDING`/`IN_REVIEW`/`IN_TEST`/`DONE`, see `IMPORT_GATED_STATUSES`) requires a privileged credential (`403` otherwise); `BACKLOG` and `BLOCKED` stay open. A body-supplied `assigned_agent` is ignored (ownership is written only by a claim), and `stage_owners`/`agent_logs`/`comments` always start empty so audit provenance cannot be forged at create. The same shape rules apply inside `patchTask`'s allow-list loop.
+  - Input hardening (v2.5.8): `createTask(data, project, { caller })` validates shapes and bounds on create — `depends_on` must be an array of non-empty task ids (`validateDependsOn`), `metadata` a plain object of at most 8000 bytes (`validateMetadata`), `title`/`description` capped at 200 / 20000 characters. Creating a task directly in a **work state** (`PLANNING`/`IN_PROGRESS`/`IN_REVIEW`/`VALIDATION`/`READY_TO_SHIP`/`DONE`, see `IMPORT_GATED_STATUSES`) requires a privileged credential (`403` otherwise); `BACKLOG` and `BLOCKED` stay open. A body-supplied `assigned_agent` is ignored (ownership is written only by a claim), and `stage_owners`/`agent_logs`/`comments` always start empty so audit provenance cannot be forged at create. The same shape rules apply inside `patchTask`'s allow-list loop.
   - Lease & reaper: `getClaimTtlMs()` (`KANBAN_CLAIM_TTL_MS`, default 600000), `getReapIntervalMs()`, `getOrphanGraceMs()` (`KANBAN_ORPHAN_GRACE_MS`, decoupled from the TTL, default 300000), `applyClaim()`, `renewLease()`, `reapExpiredClaims()`, `reclaimTaskInner()`. An owned task with an expired lease is reaped immediately; an *ownerless active* task must be untouched for the grace window first, anchored on `updated`. Any committed write by the lease holder — `appendLog()`, `renewLease()` and now `patchTask()` — extends `claim_expires_at` to the full TTL (headless workers log and PATCH instead of heartbeating); a non-holder write never extends or steals.
   - Branch normalisation: `toBranch()` normalises the branch value on every write path (non-empty string kept verbatim, anything else `null`), and `backfillLeaseFields()` applies the same normaliser on every READ path — so a legacy dirty `branch` (empty, whitespace-only or non-string) is nulled on load and never re-emerges in API responses or on git-backend cards.
 
@@ -375,7 +384,7 @@ inherited from `referencedProjects`).
 
 #### `server/notifier.js`
 - **Path:** [`server/notifier.js`](../server/notifier.js)
-- **Purpose:** §2.11 outbound Telegram alerts when the lease reaper returns a task to `BACKLOG`.
+- **Purpose:** §2.11 outbound Telegram alerts when the lease reaper returns a task to `READY`.
 - **Functions:** `notifierConfig()`, `shouldNotify()`, `formatReclaimMessage()`, `startNotifier()`, `stopNotifier()`, `isNotifierRunning()`.
 - **Design:** a pure subscriber on `store.onDiff` (no mutation-path surface). It filters `kind === 'reclaimed'` events by `reason` (`lease_expired` / `orphan_normalized`) and by project, renders a full-detail HTML message (project, task, title, work context, branch, dependencies, issues, truncated description, reason, previous owner, lease expiry, last activity, reclaim count, stage owners, last log, deep link), and POSTs it to the Bot API with the global `fetch` — **no new dependency**. Sends are serialized with a minimum interval and honour `429 retry_after`. Delivery is fail-silent: an outage is logged and never affects the reclaim. Off unless both `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set; the token is redacted from logs.
 
@@ -448,7 +457,7 @@ inherited from `referencedProjects`).
 
 #### `server/test/` (Node.js built-in test runner)
 - **Paths:** `server/test/kanban.*.test.js`
-- **Coverage:** The server suite (532 tests across 48 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge incl. the v2.5.2 scope/privilege hardening (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), Telegram reclaim notifications (`kanban.notify.test.js`), task comments + column-color settings (`kanban.comments.test.js`, `kanban.settings.test.js`), and corrupt-file fail-closed loading (`kanban.corruptfile.test.js`), the v2.5.5 backup-status block (`kanban.backup.test.js`), the soft-delete trash sink + restore (`kanban.trash.test.js`), read-auth + stream tickets (`kanban.readauth.test.js`), the v2.5.8 createTask input hardening (`kanban.createinput.test.js`), the v2.6.0 security-hardening batch — constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation (`kanban.security260.test.js`), the v2.7.0 server-robustness batch — archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme (`kanban.robustness270.test.js`), the v2.8.0 performance batch — SSE diff-default + single combined stream, optional JSON append-only journal, bounded inline logs/comments with sidecar spill and paging (`kanban.performance280.test.js`), the v2.9.0 ops batch — persisted audit stream + config-reference drift guard (`kanban.audit.test.js`, `kanban.config.test.js`), and the v2.9.1 mobile-rendering fix set (phone-only header/filter disclosures, paging arrows off below `md`, full-width card badge group) guarded by the client `mobileToolbar` / `responsive` suites, plus the v2.10.0 session-revocation suite (`kanban.revocation.test.js`) the store-split re-export guard (`kanban.modulesplit.test.js`), the v2.11.0 opt-features batch — milestones, operator assignment, outbound webhooks (`kanban.optfeatures211.test.js`), and the v2.12.0 lease-window batch — per-task `lease_ms` windows, bulk agent heartbeat, holder-write renewal (`kanban.leasewindow.test.js`), and the v2.13.0 lease-window review fixups — sibling-renewal version churn, cross-project reach, broadcast timing, semantic event tagging, stricter lease_ms validation, the per-agent claim cap, and last_progress_at (`kanban.leasewindow2.test.js`), the v2.16.0 Report-a-bug batch — feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation (`kanban.bugreports.test.js`), plus its global body-parser error-translation guard (`kanban.bodyparser.test.js`), the v3.0.0 AgentOS 8-state workflow test suite (`kanban.statemachine.test.js`, `kanban.migration.test.js`), and the v3.1.0 credential-map coverage check suite (`kanban.credentialmap.test.js`).
+- **Coverage:** The server suite (534 tests across 48 files) covers duplicate prevention and CRUD (`kanban.test.js`), state transitions + role gating, claim leases and the reaper (`kanban.lease.test.js`), dependency-gated unblocking (`kanban.deps.test.js`), metrics aggregation (`kanban.metrics.test.js`), projects/portfolio summaries (`kanban.projects.test.js`), archive sweep (`kanban.archive.test.js`), SSE diff events (`kanban.events.test.js`), concurrency/mutation-lock behavior (`kanban.concurrency.test.js`), per-project token isolation (`kanban.projectauth.test.js`), cross-project scoping (`kanban.scoping.test.js`), next-claim role binding (`kanban.nextclaim.test.js`), fail-closed auth, HMAC session tokens (`kanban.sessionauth.test.js`), redacted auth logging (`kanban.authlog.test.js`), CORS allow-list (`kanban.cors.test.js`), the health endpoint (`kanban.health.test.js`), periodic backups (`kanban.backup.test.js`), the IPv6/HOST resolution fix (`kanban.host.test.js`), ownerless-active task normalization (`kanban.orphan.test.js`), admin delete + bulk purge incl. the v2.5.2 scope/privilege hardening (`kanban.purge.test.js`), per-stage ownership (`kanban.stageowners.test.js`), the release-version guard (`kanban.version.test.js`), branch-field integrity (`kanban.branch.test.js`), Telegram reclaim notifications (`kanban.notify.test.js`), task comments + column-color settings (`kanban.comments.test.js`, `kanban.settings.test.js`), and corrupt-file fail-closed loading (`kanban.corruptfile.test.js`), the v2.5.5 backup-status block (`kanban.backup.test.js`), the soft-delete trash sink + restore (`kanban.trash.test.js`), read-auth + stream tickets (`kanban.readauth.test.js`), the v2.5.8 createTask input hardening (`kanban.createinput.test.js`), the v2.6.0 security-hardening batch — constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation (`kanban.security260.test.js`), the v2.7.0 server-robustness batch — archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme (`kanban.robustness270.test.js`), the v2.8.0 performance batch — SSE diff-default + single combined stream, optional JSON append-only journal, bounded inline logs/comments with sidecar spill and paging (`kanban.performance280.test.js`), the v2.9.0 ops batch — persisted audit stream + config-reference drift guard (`kanban.audit.test.js`, `kanban.config.test.js`), and the v2.9.1 mobile-rendering fix set (phone-only header/filter disclosures, paging arrows off below `md`, full-width card badge group) guarded by the client `mobileToolbar` / `responsive` suites, plus the v2.10.0 session-revocation suite (`kanban.revocation.test.js`) the store-split re-export guard (`kanban.modulesplit.test.js`), the v2.11.0 opt-features batch — milestones, operator assignment, outbound webhooks (`kanban.optfeatures211.test.js`), and the v2.12.0 lease-window batch — per-task `lease_ms` windows, bulk agent heartbeat, holder-write renewal (`kanban.leasewindow.test.js`), and the v2.13.0 lease-window review fixups — sibling-renewal version churn, cross-project reach, broadcast timing, semantic event tagging, stricter lease_ms validation, the per-agent claim cap, and last_progress_at (`kanban.leasewindow2.test.js`), the v2.16.0 Report-a-bug batch — feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation (`kanban.bugreports.test.js`), plus its global body-parser error-translation guard (`kanban.bodyparser.test.js`), the v3.0.0 AgentOS 8-state workflow test suite (`kanban.statemachine.test.js`, `kanban.migration.test.js`), and the v3.1.0 credential-map coverage check suite (`kanban.credentialmap.test.js`).
 
 #### `server/tasks.json`
 - **Path:** [`server/tasks.json`](../server/tasks.json)
@@ -506,7 +515,7 @@ inherited from `referencedProjects`).
 
 #### `client/src/board-model.js` & `board-model.d.ts`
 - **Paths:** [`client/src/board-model.js`](../client/src/board-model.js), [`client/src/board-model.d.ts`](../client/src/board-model.d.ts)
-- **Function:** `groupTasks(tasks)` categorizing tasks into column arrays by status (`BACKLOG`, `BUILDING`, `IN_REVIEW`, `IN_TEST`, `BLOCKED`, `DONE`, `UNKNOWN`) and aggregating issues into a dedicated `ISSUES` array.
+- **Function:** `groupTasks(tasks)` categorizing tasks into column arrays by status (`BACKLOG`, `READY`, `PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`, `DONE`, `BLOCKED`, `UNKNOWN`) and aggregating issues into a dedicated `ISSUES` array.
 
 #### `client/src/priority.ts`
 - **Path:** [`client/src/priority.ts`](../client/src/priority.ts)

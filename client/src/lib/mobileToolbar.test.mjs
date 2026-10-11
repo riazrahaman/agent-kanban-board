@@ -105,12 +105,20 @@ test('the header keeps a compact phone rhythm and does not force a tall stack', 
   const headerTag = appSource.match(/<header\b[^>]*>/)?.[0]
   assert.ok(headerTag, 'App.tsx must render a <header> element')
   assert.match(headerTag, /\bflex-wrap\b/, 'the header must still wrap')
-  // Phone padding must be exactly `py-2` (not `py-2.5`): assert the token is
-  // whitespace-delimited so a `.5` suffix cannot satisfy it via a word boundary.
+  // Phone padding must be exactly 0.5rem (not the sm: 0.625rem): bottom is
+  // `pb-2`, top is `0.5rem + env(safe-area-inset-top)` since v3.2.4 (the
+  // fixed full-bleed shell can sit behind the status bar; env() is 0 off
+  // iOS, so the rhythm is unchanged there). Whitespace-delimited so a `.5`
+  // suffix cannot satisfy it via a word boundary.
   assert.match(
     headerTag,
-    /(?:^|\s)py-2(?=\s)/,
-    'the header must use a tighter phone padding (exactly py-2) so it does not eat a fifth of the viewport',
+    /(?:^|\s)pb-2(?=\s)/,
+    'the header must use a tighter phone bottom padding (exactly pb-2) so it does not eat a fifth of the viewport',
+  )
+  assert.match(
+    headerTag,
+    /(?:^|\s)pt-\[calc\(0\.5rem\+env\(safe-area-inset-top,0px\)\)\](?=\s)/,
+    'the header phone top padding must be exactly 0.5rem plus the top safe-area inset',
   )
   assert.match(appSource, /text-base[^"]*sm:text-lg/, 'the title must scale down on phones')
 })

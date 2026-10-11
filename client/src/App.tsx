@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
 import { getBugReportConfig, getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
 import type { DiffEvent } from './api'
@@ -42,6 +42,7 @@ import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
+import { useDocumentScrollLock } from './lib/scrollLock'
 import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
@@ -397,6 +398,50 @@ export default function App() {
      [tasks, openTaskId],
   )
 
+  // v3.2.4 phone layout: the document scrolls, so freeze it (preserving the
+  // scroll position) while a full-height overlay is open — TaskSheet,
+  // BugReportDialog, or the phone Signal Rail drawer (rendered under exactly
+  // the board-ready condition below). No-op outside the phone layout.
+  // v3.2.4 phone layout: publish the sticky header's height for the sticky
+  // column bar below it (index.css `.column-indicator`). 0 while the ⋯
+  // controls are open, because the header is not sticky then.
+  const headerRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const root = document.documentElement
+    const publish = () => root.style.setProperty('--app-header-h', headerOpen ? '0px' : `${header.offsetHeight}px`)
+    publish()
+    const ro = new ResizeObserver(publish)
+    ro.observe(header)
+    return () => ro.disconnect()
+  }, [headerOpen])
+
+  const railDrawerShown = railOpen && view === 'board' && !loading && !error && tasks.length > 0
+
+  // v3.2.4 (tester finding): the phone rail drawer used to trap itself — its
+  // only toggle lives in the ⋯ header controls, which the open drawer covers,
+  // and the drawer had no close control or Escape. It now has a CLOSE button
+  // (focused on open), Escape and the backdrop all close it, and focus goes
+  // back to the toggle.
+  const railToggleRef = useRef<HTMLButtonElement>(null)
+  const railCloseRef = useRef<HTMLButtonElement>(null)
+  const closeRail = useCallback(() => {
+    setRailOpen(false)
+    writeStoredRailOpen(false)
+    railToggleRef.current?.focus({ preventScroll: true })
+  }, [])
+  useEffect(() => {
+    if (!railDrawerShown) return
+    if (!window.matchMedia?.('(min-width: 48rem)').matches) railCloseRef.current?.focus({ preventScroll: true })
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRail()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [railDrawerShown, closeRail])
+  useDocumentScrollLock(openTask !== null || bugReportOpen || railDrawerShown)
+
   const [showMetrics, setShowMetrics] = useState<boolean>(() => readStoredShowMetrics())
   const handleToggleMetrics = useCallback(() => {
     setShowMetrics((v) => {
@@ -483,8 +528,19 @@ export default function App() {
     : ''
 
   return (
+     // v3.2.4 (GH #103 follow-up): two layouts, switched purely in CSS
+     // (index.css "PHONE LAYOUT"). Desktop/tablet/mouse: this `h-screen`
+     // (100dvh) flex shell with internal scrolling. Touch phone below `md`:
+     // the document scrolls (so iOS Safari renders the page behind its
+     // floating toolbar) and `.app-header` is sticky. The `app-*`/`board-*`
+     // class names are the hooks that block targets. The header's top
+     // padding adds env(safe-area-inset-top) (0 on desktop, so header height
+     // there is unchanged) so it can sit under the status bar.
      <div className="app-shell flex h-screen flex-col bg-bg text-ink">
-        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-2 sm:px-4 sm:py-2.5">
+        <header
+          ref={headerRef}
+          data-controls-open={headerOpen ? 'true' : 'false'}
+          className="app-header flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
           <div className="flex shrink-0 items-center gap-3">
             <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
             <div className="flex items-baseline gap-2">
@@ -625,6 +681,7 @@ export default function App() {
              {tasks.length} tasks
            </span>
            <button
+            ref={railToggleRef}
             type="button"
             onClick={() => {
               setRailOpen((v) => {
@@ -712,7 +769,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex flex-1 overflow-hidden">
+        <main className="app-main flex flex-1 overflow-hidden">
           <ErrorBoundary>
             {view === 'about' && (
               <About version={version} visit={visit}
@@ -757,7 +814,7 @@ export default function App() {
             )}
             {view === 'board' && !loading && !error && tasks.length > 0 && (
               <>
-                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <div className="board-pane flex min-w-0 flex-1 flex-col overflow-hidden">
                   <BoardFilters
                     search={searchQuery}
                     onSearchChange={handleSearchChange}
@@ -784,8 +841,12 @@ export default function App() {
                       onClose={handleCloseMetrics}
                     />
                   )}
-                  <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+                  <div className="board-frame flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+                    {/* Keyed by project so per-column state (the phone
+                        "Show N more" expansion, the snapped column) resets
+                        when the scope changes instead of leaking across. */}
                     <Board
+                      key={project || 'all-projects'}
                       tasks={filteredTasks}
                       onOpen={handleOpen}
                       showProject={!project}
@@ -801,15 +862,38 @@ export default function App() {
                 {railOpen && (
                   <>
                     <div
+                      data-testid="rail-backdrop"
                       className="fixed inset-0 z-30 bg-black/40 dark:bg-black/60 md:hidden"
-                      onClick={() => {
-                        setRailOpen(false)
-                        writeStoredRailOpen(false)
-                      }}
+                      onClick={closeRail}
                       aria-hidden="true"
                     />
-                    <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface md:hidden">
-                      <SignalRail tasks={tasks} onOpen={handleOpen} />
+                    {/* z-30/z-40 sit above the header (z-20) in every state —
+                        sticky or, with ⋯ open, relative — so the drawer's own
+                        CLOSE (not the covered header toggle) is the way out. */}
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Signal rail"
+                      data-testid="rail-drawer"
+                      className="fixed right-0 top-0 z-40 flex h-full max-w-[100vw] flex-col border-l border-line bg-surface pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] md:hidden"
+                    >
+                      <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-1.5">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                          Signal
+                        </span>
+                        <button
+                          ref={railCloseRef}
+                          type="button"
+                          onClick={closeRail}
+                          aria-label="Close signal rail"
+                          className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="flex min-h-0 flex-1">
+                        <SignalRail tasks={tasks} onOpen={handleOpen} />
+                      </div>
                     </div>
                   </>
                 )}

@@ -98,30 +98,39 @@ and are bound to the role + project issued. The static-token path continues to w
 BASE="https://agent-kanban.riazrahaman.com"
 TOKEN="tok-123"            # owner-issued, scoped to "myapp" via KANBAN_PROJECT_TOKENS
 
-# 1. Create the first task — this materializes project "myapp".
+# 1. Create the first task — this materializes project "myapp". New cards start in BACKLOG.
 curl -X POST "$BASE/api/tasks" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Agent-Id: myapp-builder" -H "X-Agent-Role: builder" \
+  -H "X-Agent-Id: myapp-planner" -H "X-Agent-Role: planner" \
   -H "Content-Type: application/json" \
   -d '{"id":"setup","title":"Provision board","round":1,"status":"BACKLOG","project":"myapp"}'
 
-# 2. Claim the next available task in the project (role comes from the header, not the URL).
-curl -X POST "$BASE/api/tasks/next-claim?agent_id=myapp-builder&project=myapp" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"
-
-# 3. Move a task (role-gated state machine; ?role= in the URL is ignored).
-curl -X PATCH "$BASE/api/tasks/setup" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \
+# 2. Make it claimable: a planner moves BACKLOG -> READY. Every PATCH carries the card's
+#    current version (1 for a new card); a stale one is rejected 409 "Version mismatch".
+curl -X PATCH "$BASE/api/tasks/setup?project=myapp" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: planner" \
   -H "Content-Type: application/json" \
-  -d '{"status":"BUILDING"}'
+  -d '{"status":"READY","expected_version":1}'
 
-# 4. Append a log line.
-curl -X POST "$BASE/api/tasks/setup/logs" \
+# 3. Claim the next READY task in the project (role comes from the header, not the URL).
+#    The claim sets owner + lease and moves READY -> IN_PROGRESS (PLANNING for a planner).
+curl -X POST "$BASE/api/tasks/next-claim?agent_id=myapp-builder&project=myapp" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Id: myapp-builder" -H "X-Agent-Role: builder"
+
+# 4. Append a log line (also renews the lease).
+curl -X POST "$BASE/api/tasks/setup/logs?project=myapp" \
   -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"myapp-builder","message":"Started implementation."}'
 
-# 5. Read (open — no token needed).
+# 5. Move it on (role-gated state machine; ?role= in the URL is ignored). The claim and the
+#    log each bumped the version, so read it first: GET /api/tasks/setup?project=myapp.
+curl -X PATCH "$BASE/api/tasks/setup?project=myapp" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"IN_REVIEW","expected_version":4}'
+
+# 6. Read (open — no token needed).
 curl "$BASE/api/tasks?project=myapp"
 curl "$BASE/api/metrics?project=myapp"
 curl "$BASE/api/health"
@@ -131,16 +140,25 @@ curl "$BASE/api/health"
 
 ## 5. The state machine you are driving
 
-A task follows `BACKLOG → BUILDING → IN_REVIEW → IN_TEST → DONE` (plus `BLOCKED`, settable
-from any active state). Transitions are role-gated:
+A task follows the v3 8-state lifecycle (ADR-004): `BACKLOG → READY → PLANNING → IN_PROGRESS →
+IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, plus `BLOCKED` (set by `runner`/`admin`; a card
+blocked on dependencies returns to `READY` automatically when they complete). Only `READY` cards
+can be claimed. Transitions are role-gated (the role that may move a card INTO each state):
 
-- `builder` → `BUILDING`, `IN_REVIEW`
-- `reviewer` → `IN_TEST`, `BUILDING`
-- `tester` → `DONE`, `BUILDING`
+- `planner` → `READY`, `PLANNING`, `IN_PROGRESS`
+- `builder` → `IN_PROGRESS`, `IN_REVIEW`
+- `reviewer` → `VALIDATION`, or back to `IN_PROGRESS`
+- `tester` (or `validator`) → `READY_TO_SHIP`, or back to `IN_PROGRESS` — a tester cannot set `DONE`
+- `releaser` → `DONE`, or back to `IN_PROGRESS`
+- `runner` / `system` / `human` / `admin` → any legal move, including `BLOCKED`
+
+Legacy v2 names (`BUILDING`, `IN_TEST`, `TODO`) are still accepted and normalized to
+`IN_PROGRESS`, `VALIDATION` and `BACKLOG`.
 
 Illegal transitions return `409`; a role that cannot make a transition returns `403`; a bad or
 missing token returns `401`; an unconfigured server returns `503` (fail-closed). Claims are
-lease-based and auto-reclaimed by the background reaper if not renewed before the TTL expires.
+lease-based (10 min by default) and auto-reclaimed to `READY` by the background reaper if not
+renewed before the TTL expires or if the holder stops making progress.
 
 ---
 
@@ -177,7 +195,7 @@ exists or is needed — the first `createTask` under a new id creates it.
 
 ### Getting alerted when a task is reclaimed
 
-When an agent stops heartbeating, its lease expires and the reaper returns the task to `BACKLOG`.
+When an agent stops heartbeating, its lease expires and the reaper returns the task to `READY` (owner and lease cleared).
 An active task found with **no owner at all** is normalized the same way, but only after it has sat
 untouched for the orphan grace window (`KANBAN_ORPHAN_GRACE_MS`, decoupled from the claim TTL,
 default 5 min) — so a

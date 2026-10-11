@@ -8,6 +8,10 @@ import {
   type ColumnColors,
   type ColumnColorToken,
 } from '../lib/columnColors'
+import { menuMaxHeight, useMenuPlacement } from '../lib/useMenuPlacement'
+
+// sm:w-64 / sm:pointer-coarse:w-72, as px for the measured placement.
+const POPOVER_WIDTHS = { fine: 256, coarse: 288 }
 
 const COLUMN_ORDER = Object.keys(DEFAULT_COLUMN_COLORS)
 
@@ -25,20 +29,29 @@ type Props = {
 export default function ColumnColorsControl({ colors, onChange, onReset }: Props) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  // v3.2.4: from `sm` up the popover is `fixed` and placed from the trigger's
+  // measured rect, clamped inside the viewport (lib/menuPlacement.ts). The
+  // old absolutely-positioned `right-0` anchoring ran off the LEFT edge
+  // whenever the Columns button sat near the left of a wrapped toolbar row
+  // (measured at x=-95..-127 at 820px), and its unbounded height ran off the
+  // bottom on touch layouts. Below `sm` the bottom-sheet classes apply.
+  const placement = useMenuPlacement(open, triggerRef, POPOVER_WIDTHS, '(min-width: 640px)')
 
   // Outside-click + Escape close, mirroring HeaderHelp.
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => {
+    // pointerdown: iOS fires no mousedown for a tap on a non-clickable area.
+    const onDown = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('pointerdown', onDown)
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
@@ -50,6 +63,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -64,7 +78,12 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
         <div
           role="dialog"
           aria-label="Column colors"
-          className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:absolute sm:right-0 sm:top-[calc(100%+6px)] sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-4 max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
+          style={
+            placement
+              ? { top: placement.top, left: placement.left, width: placement.width, maxHeight: menuMaxHeight(placement.top) }
+              : undefined
+          }
+          className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:fixed sm:overflow-y-auto sm:overscroll-contain sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
         >
           {COLUMN_ORDER.map((column) => {
             const current = colors?.[column] ?? DEFAULT_COLUMN_COLORS[column]

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,122 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.2.4] — 2026-10-11
+
+Second and third real-iPhone follow-ups (GH #103). A screen recording of the live 3.2.3 on iOS 26 Safari showed pinch-zoom still working and the board stopping above the floating bottom toolbar. Zoom is now confirmed fixed on the device. The phone layout now scrolls the document like a normal website, so content runs behind Safari's translucent toolbar. A project-picker overflow seen on the device is also fixed.
+
+### Fixed
+- **Pinch-zoom still worked on the board (confirmed fixed on a real iPhone)**: `touch-action` is not inherited, and WebKit (per the Pointer Events "determining supported touch behavior" rule) intersects an element's touch-action with its ancestors' only up to the nearest scroll container, where the effective value resets to `auto`. v3.2.3 set `pan-x pan-y` on `html, body, #root` only. Every card sits inside two scroll containers (`.board-scroll`, the column list), and body was one too, so pinch stayed allowed everywhere on the board. Buttons, inputs and links also carried `touch-action: manipulation`, which explicitly includes pinch-zoom. `client/src/index.css` now applies `touch-action: pan-x pan-y` to every element (`*, *::before, *::after`) and drops the `manipulation` rule. `pan-x pan-y` only removes the zoom keyword, so no scroll axis is narrowed (GH #87's swipe fix is unaffected).
+- **JS pinch guard hardened** (`client/src/lib/pinchZoomGuard.ts`): besides cancelling WebKit `gesturestart`/`gesturechange`/`gestureend`, it now `preventDefault()`s `touchmove` only when two or more fingers are down (or WebKit reports a `scale` other than 1). Every listener is `{ passive: false, capture: true }` on both `document` and `window`. One-finger moves are never cancelled, and there is still no `touchend` double-tap guard. There is deliberately no `wheel` listener. An interim ctrl+wheel cancel was removed in review because it killed desktop browser zoom and forced every wheel scroll onto the main thread.
+- **Content now runs behind Safari's floating bottom toolbar (phone layout)**: on a real iPhone, every app-style shell with internal scrollers stopped at the toolbar's top edge and left a dark strip. That covers v3.2.3's `100lvh` shell (body clipped it at the small viewport) and an interim 3.2.4 `position: fixed; inset: 0` shell. Only *document* scrolling slides content under the toolbar. On touch phones below `md` (`(max-width: 47.99rem) and (pointer: coarse)`, the same condition as Tailwind's `max-md:pointer-coarse:`), the document is now the vertical scroller:
+  - **Page structure:** `html` scrolls. body, `#root` and the shell grow with their content and are never scroll containers.
+  - **Header:** it is `position: sticky; top: 0` (title row, `⋯` toggle and view tabs, 113px). It pads `env(safe-area-inset-top)` so it can sit under the status bar. While the `⋯` controls are open it is non-sticky, so the 217px panel scrolls away instead of covering the screen. The filter and count rows scroll away with the page.
+  - **Board:** every column grows to its own content height with no internal vertical scroller. The horizontal snap strip stays. Its height is auto, so a vertical drag on it scrolls the document with no scroll-chaining trap. All columns share the document's single vertical scroll position, so long and short columns needed extra handling:
+    - **Short columns stay short:** the strip uses `align-items: flex-start`, so a 3-card column is no longer drawn as a box as tall as the tallest column.
+    - **Long columns are capped:** phones render the first 25 cards per column, then a 44px "Show N more" button. It is per column and persists while mounted. The live board's ~300 DONE cards would otherwise make a ~40,000px page. Column header counts, filter counts and the new column bar always show full totals.
+    - **Current-column bar:** a phone-only bar under the sticky page header shows the snapped column's number, title, card count and position (for example `02 Ready · 3 2/10`). It is sticky at `top: var(--app-header-h)`, which App publishes as the header's height, or 0 while `⋯` is open. The columns' own headers can't be sticky against the document because they sit inside the horizontal scroll container, which is what sticky binds to.
+    - **Re-aligning after a swipe:** when the snapped column changes, the page scrolls so that column's top sits just under the sticky chrome, if its top was hidden above it. Previously, swiping from deep in DONE to READY landed on empty space. The check is debounced 150ms after the strip settles. It is skipped while the user is scrolling vertically (any non-programmatic window scroll in the last 250ms), so it never fights a drag or momentum scroll. Helpers are in `client/src/lib/phoneBoard.ts`.
+  - **Bottom clearance:** the existing `calc(5rem + env(safe-area-inset-bottom))` bottom padding lets the last card scroll clear of the toolbar.
+  - **Portfolio and About:** both flow in the document. The Portfolio table stays swipeable sideways.
+  - **Implementation:** this is all one unlayered media block in `index.css`, keyed on semantic class hooks (`app-header`, `app-main`, `board-pane`, `board-frame`, `board-root`, `board-viewport`, `kanban-column`, `column-list`, `portfolio-view`, `about-view`). Desktop classes are untouched.
+  - **Overlay scroll lock:** while TaskSheet, BugReportDialog or the phone Signal Rail drawer is open, the new `client/src/lib/scrollLock.ts` freezes the page behind it. It pins `<body>` at `top: -scrollY` because iOS ignores `overflow: hidden` for touch scrolling in some versions. Locks are reference-counted for stacked overlays, and the exact scroll position is restored on close. It only applies in the phone layout and follows the phone query live:
+    - Rotating across 768px with an overlay open releases the lock. Release always restores the position, so `<body>` is never left fixed at a negative top in the desktop layout.
+    - An overlay opened in landscape gets locked once rotated to portrait.
+    - The sticky header is shifted back by `--scroll-lock-y` while locked, so it stays visible behind the backdrop instead of vanishing.
+- **Desktop, tablet and landscape layout**: unchanged from 3.2.3's behaviour, except for the removal of `100lvh`. It is a plain `h-screen` (`100dvh`) flex shell with internal column scrolling and html/body `overflow: hidden`. There is no `position: fixed` shell and no forced `100lvh`, so a visible URL bar on a tablet or landscape phone never clips content (review finding). The header adds `env(safe-area-inset-top)` to its top padding. That is 0 on desktop, so the header height is unchanged and `scripts/check-header-layout.mjs` still passes. TaskSheet, BugReportDialog and the phone Signal Rail drawer pad the top safe-area inset. The HeaderHelp and column-colours bottom sheets clear `safe-area-inset-bottom`.
+- **Project picker opened off-screen to the left on iPhone**: the listbox was `absolute right-0 w-48`, right-aligned to its trigger. Below `md` the trigger is the first item of the wrapped header disclosure row, at the screen's left edge, so the 12rem menu ran ~7rem past x=0. Project names were cut off ("ects", "vestment-advisor") and the menu covered the token, theme and bug-report controls. The menu is now `position: fixed` and placed from the trigger's measured rect by a new pure `client/src/lib/menuPlacement.ts`, via the `useMenuPlacement` hook: right-aligned with the trigger when that fits (so desktop is unchanged, 192px wide), otherwise left-aligned, and always clamped 12px inside the viewport. It is re-measured on resize. Its max height is the visible viewport minus the bottom safe area, with internal scrolling. On touch, options are 44px tall at 14px text in a 256px menu. Long names truncate with a tooltip, and the selected project is scrolled into view and is the only highlighted row. Outside taps now close it via `pointerdown`, because iOS fires no `mousedown` for a tap on a non-clickable area. Escape and selection close it too.
+- **Column-colours popover had the same edge bug** (found while auditing the other header/toolbar popovers): from `sm` up it was `absolute right-0`, opening at x=-95 (fine pointer) or x=-127 (touch) at 820px. On touch layouts it also ran ~200px off the bottom at 768–1440px. From `sm` up it now uses the same measured, clamped, height-capped placement; desktop placement is pixel-identical. Its phone bottom sheet (`max-sm:`) is unchanged and was already contained. HeaderHelp's popover was already contained at every width (also checked by `check-header-layout.mjs`). The Filters control is an inline disclosure, not a popover.
+- **Phone polish (review round 3)**:
+  - The current-column bar announces only the column name (`aria-live` wraps the title, not the count or the `n/N` position).
+  - While the `⋯` controls are open, the bar's top is `max(--app-header-h, env(safe-area-inset-top))`, so it never sits under the status bar.
+  - The board is keyed by project, so "Show N more" expansion resets when you switch projects.
+  - Rotating portrait → landscape → portrait with an overlay open no longer loses the saved scroll position. Crossing the breakpoint unpins `<body>` without scrolling and carries the position; re-entering portrait re-pins at it; only the real close restores it.
+- **Phone Signal Rail drawer trapped itself** (tester finding, reproduced in Chromium and WebKit): the drawer's only toggle lives in the `⋯` header controls, which the open drawer covers. The drawer (z-40, over its z-30 backdrop, both above the z-20 header in every state) had no close control and ignored Escape, so the only exit was a ~70px backdrop sliver. It is now a modal dialog with its own CLOSE button (44px on touch, focused on open). Escape, the button and the backdrop all close it, focus returns to the toggle without scrolling the page, and it pads both safe-area insets.
+- **HeaderHelp did not close on an outside tap on iOS**: it listened for `mousedown`, which iOS does not fire for a tap on a non-clickable area. It now uses `pointerdown`, like the project picker.
+- **Docs, skill and comments said reclaim/normalize/restore goes to BACKLOG**: the code returns a card to `READY` in all three cases.
+  - **Bundled skill:** `skills/kanban/SKILL.md` now says the reaper resets to `READY`, so the error is "Invalid state transition from READY to <X>" and recovery is re-claiming from `READY`. It also no longer suggests `VALIDATION → READY` after a failed validation; that isn't a legal transition, and `IN_PROGRESS` is the only way back. `skills/kanban/README.md` is updated to match.
+  - **Other docs:** README (trash restore, `KANBAN_ORPHAN_GRACE_MS`) and the manual (orphan grace, Telegram note), in both `docs/` and `docs/with-images/`. The file-by-file server count is 532 → 534.
+  - **`ONBOARDING.md`:** it still taught the v2 flow; its example now runs verbatim on 3.2.4.
+  - **`docs/skillport/SKILLPORT_DOCS.md`:** moved to v3.
+  - **`DESIGN.md` §6/§7.2:** the status palette and column accents now cover the nine v3 statuses, and the alias table is the right way round.
+  - **Server comments:** `store.js` (`reclaimTaskInner`, `applyClaim`, bulk heartbeat, trash restore, orphan grace, `assignTask`), the `notifier.js` header and the `routes/tasks.js` next-claim comment. Comment lines only; no behaviour change.
+- **About page was stale against v3** (audited against the code):
+  - **Lifecycle walk:** it showed the pre-v3 five states (`BUILDING`/`IN_TEST`). It now walks the v3 8-state machine plus `BLOCKED`, with the role that moves a card into each state; `READY` is the only claimable state.
+  - **Reclaim target:** the reaper, notifier, FAQ and reclaim-flow copy said cards return to `BACKLOG`. In v3 they return to `READY`, and progress-stalled claims are reclaimed too.
+  - **Claim flow:** it said next-claim picks `BACKLOG` and lifts `BACKLOG → BUILDING`. It picks `READY` and lifts it to `IN_PROGRESS` (`PLANNING` for a planner).
+  - **Stack table:** it said React 18 / Express 4. It now says React 19, Tailwind v4 and Express 5 on Node 20/22.
+  - **Lease TTL:** "Protocol invariants" said 5 minutes; the default has been 10 minutes since v2.3.11.
+  - **ADR count:** 3 → 4.
+  - **Capability code locations:** moved to `state-machine.js`, `storage.js`, `task-identity.js` and `task-fields.js`, plus new rows (progress-stall reclaim, bulk heartbeat, credential-map health, rate limiting, trust proxy, theme modes, phone layout).
+  - **Curl snippets:** they carry `?project=` and `expected_version`, and the sidebar quick-copy shares the main snippet.
+  - **Tour screenshots:** all six showed the v2.5.9 board with `BUILDING`/`IN TEST` columns. They were recaptured from a server seeded through the real v3 flow.
+- **Docs still described the five-state machine**:
+  - **System design:** the state-machine/RBAC diagram is redrawn for the 8 states. The transition table is now generated from `state-machine.js` (27 rows), and the sequence diagrams, operator-assignment and Telegram rows are corrected.
+  - **User and operator manual:** the swarm lifecycle flowchart, column schematic, card colours, Active/In-Flight definitions and role list are updated. The step-by-step curl walkthrough was rewritten and run against a 3.2.4 server, which corrected its `expected_version` numbers because a log entry bumps the version. The Python example now sends `?project=` and `expected_version`.
+  - **File-by-file guide:** status lists and the component diagram are updated.
+  - **`docs/with-images`:** regenerated with `scripts/generate-diagram-images.js`.
+  - **`scripts/test-agents.js`:** it claimed `BACKLOG` cards (409 on v3) and had a tester set `DONE` (403). It now runs the v3 flow end to end, and the README describes it accordingly.
+
+### Verification
+- **Phone layout** (playwright-core, `isMobile` + `hasTouch`, Chromium 360/390/430 and WebKit 360/390/430, each in dark and light, with a 17-card demo project):
+  - The phone media query matches. The document scrolls (1863px of content in an 844px viewport), and `scrollWidth` equals `innerWidth`.
+  - Every column list has `overflow-y: visible` and no internal vertical scroll. The board strip can't scroll vertically.
+  - `scrollTo(0, 400)` moves the cards exactly 400px while the sticky header stays at `top: 0`.
+  - At maximum scroll, the tallest column's last card ends 90px above the viewport bottom, clear of the 80px (5rem) padding line.
+  - With the `⋯` controls open, the header (217px, 26% of the screen) turns non-sticky and scrolls away.
+  - Portfolio and About have no internal vertical scroll. About scrolls the document (about 9.6k–10.5k px).
+  - TaskSheet, BugReportDialog and the Signal Rail drawer each lock the page. The `scroll-locked` class is on `<html>`, the body is fixed at `top: -Npx`, and the exact scroll position (300, 0 and 60px in the runs) comes back on close.
+  - Tapping a card opens it.
+  - **Chromium only, using real CDP touch input:**
+    - A vertical swipe that starts on a card scrolls the document (`scrollY` ≈ 690–720) and leaves the strip's `scrollTop` at 0.
+    - A horizontal swipe changes column and snaps to whole column pitches (for example 687px = 2 × 347.5px at 390px).
+    - A background swipe while a sheet is open doesn't move the page.
+  - Computed `touch-action` is still `pan-x pan-y` on every element, and a synthetic two-finger `touchmove` is still prevented while a one-finger one is not.
+- **Long/short columns** (same matrix, a project with 60 DONE, 8 BACKLOG, 3 READY and 2 IN_PROGRESS cards):
+  - **Cap:** DONE renders 25 cards with a 44px "Show 35 more" button, and its header count reads 60. Tapping the button reveals all 60.
+  - **Short columns:** READY is 588px tall (530px at 430) against DONE's 4050px. The page is 4273px; it would be 9646px uncapped.
+  - **Column bar:** while deep in DONE (scrollY ≈ 3429) the bar reads DONE and is pinned exactly at the header's bottom edge (113px).
+  - **After switching to READY:** the bar reads "02 Ready · 3 2/10". The page has scrolled (scrollY 69) so READY's top sits exactly under the bar (147px), with its header and all three cards on screen. In Chromium the switch is a real CDP touch swipe; in WebKit it's done by setting `scrollLeft` directly.
+  - **No fighting the user:** switching column during a continuous vertical scroll does not snap back (scrollY keeps increasing).
+  - **Lock while scrolled:** opening a card at scrollY 400 locks with body at `top: -400px` and the sticky header still at `top: 0`.
+  - **Rotation:** rotating to 844 wide with the sheet open releases the lock (body static, no top) and rotating back re-locks it. Opening in landscape and then rotating to portrait applies the lock.
+  - **Desktop/tablet unchanged:** 1280/1440 mouse, 820 touch and 1024 mouse show all 60 DONE cards, with no bar, no button and internal column scroll.
+  - **Snap:** in Chromium a fast real-touch fling can rest between snap points at 430px (for example 547px with a 381.5px pitch). That is the existing `snap-proximity` behaviour and also happens with the alignment disabled; the nearest column still counts as the current one.
+- **Unchanged layouts:** at 1280×800 and 1440×900 (mouse), 820×1180 and 1024×768 (touch and mouse) and 844×390 landscape touch (Chromium), the phone query does not match. The document does not scroll, the shell is static and exactly the viewport height, columns scroll internally, and the header is static. Header heights are 49/49/155/120/101/81.5/155px, the same as before this change.
+- `check-header-layout.mjs` (live ON-vs-OFF diff, fresh browser profile), `check-card-layout.mjs` and `check-browser-smoke.mjs` pass.
+  - Project picker, opened from the open phone disclosure row with 12 projects including `agent-kanban-board`, `investment-advisor` and a 61-character name: tested at 360/390/430 × 844/568 height and 768/820/1024/1280/1440, each with touch and fine pointer. The listbox rect is always within `[0, innerWidth]` × `[0, innerHeight]`, it scrolls internally on 568px-tall screens, the selected row is visible, the listbox is topmost, touch rows are ≥44px at 14px text, and outside tap, Escape and selection all close it. The column-colours popover and HeaderHelp were contained in all of the same cases.
+- **Round-3 polish** (Chromium and WebKit, 390×844 touch):
+  - **Rotation:** a sheet opened at scrollY 450, rotated to 844×390 and back, keeps `top: -450px` (unpinned in landscape) and closes back to exactly 450.
+  - **Column bar:** has exactly one live region, containing only the column name; its top is 0px with `⋯` open (no safe-area inset in emulation).
+  - **Show more:** expanded DONE resets to 25 cards after switching demo → live.
+  - **Regression:** the round-2 suite still passes.
+- **Rail drawer** (Chromium and WebKit, 360/390/430, opened from the `⋯` row at scrollY 60):
+  - While open, the header toggle is covered as expected and the CLOSE button is on top (44px, 6px from the top).
+  - Each of the three close paths (button, Escape, backdrop tap) closes the drawer, releases the lock (no `scroll-locked` class, body unpinned), restores scrollY to exactly 60, returns focus to the toggle, and leaves the toggle clickable again.
+- **Other overlays reachable from the `⋯` row:**
+  - **HeaderHelp:** on top, closes on Escape and on an outside tap.
+  - **Project picker:** on top, closes on Escape.
+  - **Bug dialog:** its Close button is on top, Escape closes it, and the scroll lock is released.
+  - **Theme toggle:** cycles.
+  - None of them traps.
+- **Not verifiable without an iPhone**:
+  - Whether the scrolling document actually renders behind iOS 26 Safari's translucent floating toolbar.
+  - Whether the address bar collapses or expands on scroll as on other sites.
+  - How the sticky header looks under the status bar with real `env(safe-area-inset-*)` values.
+  - Whether the body-pinning scroll lock behaves on a real touch screen.
+  - Why: Chromium emulation has no translucent toolbar and Playwright WebKit is a desktop engine, which also means WebKit can't do touch swipes or build synthetic `Touch` objects. Zoom blocking is the one item the user has confirmed on a device.
+
+### Tests
+- `pinchZoomGuard.test.mjs`: 7 → 10 cases. Covers listeners on document and window (non-passive + capture), 2-finger touchmove prevented, 1-finger not, `scale` handling, and that no `wheel` listener is ever registered.
+- `scrollLock.test.mjs` (8 cases, new): lock pins body at `-scrollY` (and publishes `--scroll-lock-y`) and release restores the position; stacked locks release only on the last close and keep the first saved offset; release is idempotent; the phone query string; and `bindScrollLockToQuery` for rotation in both directions, including end to end with the real lock.
+- `phoneBoard.test.mjs` (6 cases, new): the 25-card cap, `snappedColumnIndex` (including a proximity fling resting between points), `columnAlignTarget`, and source contracts for the Column and Board wiring (cap only via `cardLimit` from Board in the phone layout, 44px button, full header count, phone-only bar and alignment, the debounce and the vertical-scroll guard).
+- `responsive.test.mjs`, `mobileToolbar.test.mjs` and `bugReportContract.test.mjs`. Cover the universal touch-action rule and the ban on `manipulation`/`auto`/`pinch-zoom` touch-action. Cover the plain `h-screen` shell (no `100lvh`, no fixed/inset shell) and html/body `overflow: hidden` outside the phone layout. Cover the phone-layout block: the query string, `html` as scroller, non-scrolling body, the sticky header and its non-sticky open state, full-height columns, Portfolio/About flow, and the class hooks in the components. Also the overlay-lock CSS and App wiring, and header/TaskSheet safe-area-top padding.
+- `menuPlacement.test.mjs` (7 cases): placement maths (desktop right-alignment preserved, the left-edge iPhone case, a sweep of trigger positions across 320–1280px viewports, shrink-to-fit) plus source contracts for ProjectPicker and ColumnColorsControl. These cover fixed + measured placement with no `right-0` anchoring, capped `100dvh`/safe-area max-height, internal scroll, 44px/14px touch options, truncation with tooltip, and `pointerdown` outside-tap close.
+- `scrollLock.test.mjs` +2 for the round-3 rotation round trip and `release(false)`; `phoneBoard.test.mjs` +3 for the column bar's live region, its safe-area top and the project-keyed reset.
+- `about.test.mjs`: pins the v3 lifecycle (order and roles) and adds guards against legacy status names, reclaim-to-BACKLOG wording, a stale stack, the 5-minute lease and an unscoped claim curl. The ADR count is checked against `docs/decisions`.
+- `responsive.test.mjs` +2: the rail drawer contract (dialog semantics, 44px CLOSE, Escape + backdrop + button close, focus moves in and returns with `preventScroll`, safe-area padding, stacking above the header) and HeaderHelp's `pointerdown` outside-tap close.
+- Client: 255 (was 213; `aboutContent.ts` updated). Server: unchanged at 534.
 
 ## [3.2.3] — 2026-10-10
 

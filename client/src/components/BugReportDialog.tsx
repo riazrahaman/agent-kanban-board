@@ -187,7 +187,8 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
         // does not affect the close animation's visibility.
         inert={!open ? true : undefined}
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col',
+          // pt safe-area (v3.2.4): keep the header clear of the status bar.
+          'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col pt-[env(safe-area-inset-top,0px)]',
           'border-l border-line bg-surface transition-transform duration-200',
           // `box-border` + an explicit `max-w-[100vw]` on top of `max-w-md`:
           // belt-and-suspenders so this panel can never itself measure wider

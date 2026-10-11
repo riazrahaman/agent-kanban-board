@@ -1,6 +1,7 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { Task, TaskStatus } from '../types'
 import TaskCard from './TaskCard'
+import { capCards } from '../lib/phoneBoard'
 
 type Props = {
   status: TaskStatus
@@ -12,6 +13,9 @@ type Props = {
   showProject?: boolean
   /** v2.5.0: resolved top-accent class override (per-project column colors). */
   accentClass?: string
+  /** v3.2.4 phone layout: render at most this many cards until "Show N more"
+   *  (undefined = no cap; desktop/tablet never pass it). */
+  cardLimit?: number
 }
 
 const COLUMN_ACCENTS: Record<string, string> = {
@@ -53,11 +57,15 @@ function areEqual(prev: Props, next: Props): boolean {
     prev.onOpen === next.onOpen &&
     prev.showProject === next.showProject &&
     prev.accentClass === next.accentClass &&
+    prev.cardLimit === next.cardLimit &&
     sameBucket(prev.tasks, next.tasks)
   )
 }
 
-function Column({ status, title, stepNumber, tasks, onOpen, showProject = false, accentClass }: Props) {
+function Column({ status, title, stepNumber, tasks, onOpen, showProject = false, accentClass, cardLimit }: Props) {
+  // Per-column "Show N more" state: persists while the column is mounted.
+  const [expanded, setExpanded] = useState(false)
+  const { shown, hidden } = capCards(tasks, cardLimit, expanded)
   const isDone = status === 'DONE' || status === 'done'
   const isBlocked = status === 'BLOCKED' || status === 'blocked'
   const normalizedStatus = String(status).toUpperCase()
@@ -66,7 +74,7 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
   return (
     <div
       className={[
-        'flex h-full w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
+        'kanban-column flex h-full w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
         topAccent,
         isDone ? 'opacity-70' : '',
       ].join(' ')}
@@ -98,16 +106,15 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
       </div>
       <div
         data-status={status}
-        // v3.2.3 (GH #103 follow-up, round 1): the `.app-shell` (index.css)
-        // gives this column real extra height to scroll into behind iOS
-        // Safari's floating bottom toolbar; this padding is what lets the
-        // last card reach it. Keyed on `pointer-coarse:` + `max-md:`
-        // (CLAUDE.md's touch-ergonomics convention), not a width breakpoint
-        // alone: a mouse window resized under 768px has no floating toolbar
-        // and would otherwise get 80px of dead scroll space for nothing.
-        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
+        // `column-list` is a phone-layout hook (index.css): on a touch phone
+        // below md the list grows to full height and the DOCUMENT scrolls,
+        // so content passes behind iOS Safari's floating toolbar; this
+        // bottom padding lets the last card scroll clear of it. Keyed on
+        // `pointer-coarse:` + `max-md:` (the same condition as the phone
+        // layout), so a mouse window under 768px keeps dense padding.
+        className="column-list flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
       >
-        {tasks.map((task) => (
+        {shown.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
@@ -115,6 +122,19 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
             showProject={showProject}
           />
         ))}
+        {hidden > 0 && (
+          // v3.2.4 phone layout: the document scrolls and all columns share
+          // its height, so a 300-card DONE column would make a 40,000px page.
+          // The header count above still shows the full total.
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            data-testid="show-more-cards"
+            className="w-full shrink-0 border border-line bg-surface px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] pointer-coarse:min-h-11"
+          >
+            Show {hidden} more
+          </button>
+        )}
       </div>
     </div>
   )

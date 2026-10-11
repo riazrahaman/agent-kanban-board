@@ -153,8 +153,8 @@ than a border to nest, keeping the hairline budget low.
 ## 5. Layout Shell
 
 ```
-<div class="flex h-screen flex-col bg-bg text-ink">
-  <header class="…border-b border-line bg-surface…">      ← sticky chrome, mono controls
+<div class="app-shell flex h-screen flex-col bg-bg text-ink">   ← 100dvh (phone: grows, document scrolls)
+  <header class="app-header …border-b border-line bg-surface…">  ← chrome, mono controls (phone: sticky)
   <main class="flex flex-1 overflow-hidden">
     <Board/>            ← horizontal snap-scroll columns
     <SignalRail/>       ← w-80, border-l; slides over below md
@@ -162,18 +162,44 @@ than a border to nest, keeping the hairline budget low.
 </div>
 ```
 
-- `h-screen` is overridden to `100dvh` under `@supports (height:100dvh)` so
-  mobile URL bars don't push the layout off-screen. This root shell div ALSO
-  carries a dedicated `.app-shell` class, further overridden to `100lvh`
-  under `@supports (height:100lvh)` (v3.2.3) — the LARGE viewport (chrome
-  collapsed) rather than the dynamic one, so the shell stays as tall as the
-  screen ever gets and doesn't leave a dead strip of unthemed background
-  when iOS Safari's floating bottom toolbar is showing. The `100lvh`
-  override is scoped to `.app-shell`, NOT to `.h-screen` globally: `h-screen`
-  is also used by `fixed` panels (TaskSheet's drawer) that must stay within
-  the actually-visible area, or their pinned footers end up behind the
-  floating toolbar with no way to scroll to them (a round-1 review catch).
-  See CHANGELOG 3.2.3 for the full dvh-vs-lvh reasoning.
+- Two layouts (v3.2.4), switched only by one media block in `index.css`:
+  - **Desktop / tablet / mouse / landscape** (everything that is not a
+    touch phone below `md`): the shell is `h-screen`, overridden to `100dvh`
+    under `@supports (height:100dvh)`, a flex column whose columns and views
+    scroll internally; html/body are `overflow: hidden; overscroll-behavior:
+    none`. Never `position: fixed` or a forced `100lvh` on the shell — that
+    clips content behind a visible URL bar.
+  - **Phone layout** — `(max-width: 47.99rem) and (pointer: coarse)`, the
+    same condition as `max-md:pointer-coarse:`: the DOCUMENT is the vertical
+    scroller, like a normal website, because only document scrolling lets
+    iOS Safari draw the page behind its translucent floating toolbar (every
+    internal-scroller shell stopped at the toolbar's top edge on a real
+    iPhone). html scrolls; body/#root/shell grow and are never scroll
+    containers; `.app-header` is `position: sticky; top: 0` (non-sticky
+    while the `⋯` controls are open, so that panel scrolls away); each
+    column grows to its full height inside the horizontal snap strip, so
+    the document is as tall as the tallest column; Portfolio and About flow
+    in the document. The hooks are semantic classes (`app-main`,
+    `board-pane`, `board-frame`, `board-root`, `board-viewport`,
+    `kanban-column`, `column-list`, `portfolio-view`, `about-view`).
+    Because every column shares the document's one vertical scroll
+    position: the strip aligns columns to the top (short columns stay
+    short); phones render 25 cards per column plus a 44px "Show N more"
+    (counts stay full totals); a sticky current-column bar sits under the
+    page header (`top: var(--app-header-h)`) — the columns' own headers
+    can't be sticky against the document because they live inside the
+    horizontal scroll container; and when the snapped column changes the
+    page re-aligns to that column's top if it is hidden under the sticky
+    chrome (never while the user is scrolling vertically).
+    Full-height overlays (TaskSheet, BugReportDialog, the rail drawer) lock
+    the document scroll (`lib/scrollLock.ts`) and restore its position.
+- With `viewport-fit=cover` the header adds `env(safe-area-inset-top)` to
+  its top padding (0 on desktop, so header height is unchanged there), and
+  the coarse+narrow `5rem + safe-area` bottom padding on Column/Portfolio/
+  About lets the last content scroll clear of the floating toolbar.
+  `h-screen` stays `100dvh` for `fixed` panels (TaskSheet's drawer) so their
+  pinned footers stay in the visible area; top-0 sheets pad
+  `env(safe-area-inset-top)`.
 - The header is the only place the display serif appears; every control in it is
   mono, uppercase, `text-[11px]`, and hairline-bordered
   (`border border-line bg-surface px-2.5 py-1.5 … hover:bg-muted-bg`).
@@ -190,16 +216,18 @@ than a border to nest, keeping the hairline budget low.
 
 ### 6.1 Canonical statuses
 
-Six canonical values (ADR-001, mirrored in `client/src/lib/status.ts`):
+Nine canonical values — the v3 8-state lifecycle plus `BLOCKED` (ADR-004,
+`server/state-machine.js`, mirrored in `client/src/lib/status.ts`):
 
-`BACKLOG · BUILDING · IN_REVIEW · IN_TEST · BLOCKED · DONE`
+`BACKLOG · READY · PLANNING · IN_PROGRESS · IN_REVIEW · VALIDATION · READY_TO_SHIP · DONE · BLOCKED`
 
-`normalizeStatus` (`client/src/status.js`) maps legacy input:
+`normalizeStatus` (`client/src/status.js`) maps legacy v2 input:
 
 | Input | Normalized |
 |---|---|
 | `TODO` | `BACKLOG` |
-| `IN_PROGRESS` | `BUILDING` |
+| `BUILDING` | `IN_PROGRESS` |
+| `IN_TEST` | `VALIDATION` |
 | unknown / empty / non-string | `UNKNOWN` |
 
 ### 6.2 Status stripe + badge
@@ -208,12 +236,13 @@ Every status maps to a **left stripe** and a **badge tint** (`STATUS_STYLES`):
 
 | Status | Stripe | Badge | Accent token |
 |---|---|---|---|
-| `DONE` | `border-l-pass` | `bg-pass-bg text-pass` | green |
-| `IN_TEST` | `border-l-test` | `bg-test-bg text-test` | violet |
+| `DONE`, `READY_TO_SHIP` | `border-l-pass` | `bg-pass-bg text-pass` | green |
+| `VALIDATION` | `border-l-test` | `bg-test-bg text-test` | violet |
 | `IN_REVIEW` | `border-l-warn` | `bg-warn-bg text-warn` | amber |
-| `BUILDING` | `border-l-live` | `bg-live-bg text-live` | blue |
+| `IN_PROGRESS` | `border-l-live` | `bg-live-bg text-live` | blue |
+| `PLANNING` | `border-l-block` | `bg-muted-bg text-muted` | slate stripe |
 | `BLOCKED` | `border-l-block` | `bg-block-bg text-block` | slate |
-| `BACKLOG` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
+| `BACKLOG`, `READY` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
 | `UNKNOWN` | `border-l-line` | `bg-muted-bg text-muted` | hairline |
 
 `StatusBadge` renders it as
@@ -225,7 +254,7 @@ with an `aria-label="Status: <NORMALIZED>"`.
 | Glyph | Appears on | Meaning |
 |---|---|---|
 | `▲ ` | `IN_REVIEW` badge | awaiting review |
-| `• ` | `BUILDING`, `IN_TEST` badge | actively running |
+| `• ` | `PLANNING`, `IN_PROGRESS`, `VALIDATION` badge (and the legacy aliases) | actively running |
 
 ### 6.3 Priority
 
@@ -276,8 +305,9 @@ unmapped priority falls back to `medium` so a render can never throw.
 `flex w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 md:w-72 <topAccent>`
 
 - Top accent: `border-t-2 border-t-<token>`. The stock map (`COLUMN_ACCENTS`) is
-  `BACKLOG muted/40 · BUILDING live · IN_REVIEW warn · IN_TEST test · BLOCKED fail ·
-  DONE pass · UNKNOWN line · ISSUES warn`.
+  `BACKLOG muted/40 · READY line · PLANNING block · IN_PROGRESS live · IN_REVIEW warn ·
+  VALIDATION test · READY_TO_SHIP pass · DONE pass · BLOCKED fail · UNKNOWN line ·
+  ISSUES warn` (legacy `BUILDING`/`IN_TEST` keys alias `IN_PROGRESS`/`VALIDATION`).
 - Per-project overrides (`lib/columnColors.ts`) replace the accent only; the
   eight selectable tokens are `muted · live · warn · test · fail · pass · block ·
   line`, each with a **literal** Tailwind class (the JIT scanner requires literal
@@ -482,11 +512,14 @@ keyframes exist; add animation sparingly.
 | `lg` | Additional header labels reveal |
 
 Guarded by `client/src/lib/mobileToolbar.test.mjs` and `responsive.test.mjs`,
-which also assert the `100dvh` `.h-screen` override, the `.app-shell`-scoped
-`100lvh` override (and that it does NOT target `.h-screen` globally — see
-§5), the root `touch-action: pan-x pan-y` (blocks iOS pinch zoom without
-narrowing which axis any nested scroller can use — see §5 and §7.7-adjacent
-`pinchZoomGuard.ts`), and the `text-size-adjust: 100%` override (stops
+which also assert the `100dvh` `.h-screen` override, the plain `h-screen`
+`.app-shell` (no `100lvh`, no fixed/inset shell), the phone-layout block
+(document scroll, sticky header, full-height columns, overlay scroll lock —
+see §5), the universal `*` `touch-action:
+pan-x pan-y` (blocks iOS pinch zoom without narrowing which axis any nested
+scroller can use; it must be on every element because WebKit resets
+touch-action at each scroll container, and `manipulation` — which re-grants
+pinch — is banned; JS layer in `pinchZoomGuard.ts`), and the `text-size-adjust: 100%` override (stops
 WebKit's text autosizer from inflating prose independently of the
 `any-pointer: coarse` input-zoom rule) all exist.
 
@@ -498,7 +531,7 @@ WebKit's text autosizer from inflating prose independently of the
   (`--ink`) / 4.97:1 (`--muted`); dark is 13.1:1 / 8.8:1. Operational foregrounds
   range 4.89:1–8.20:1 (light).
 - Status is encoded three ways — stripe, label, glyph — so it survives greyscale.
-- Interactive icons carry `aria-label` (`Status: BUILDING`, `Live connection`,
+- Interactive icons carry `aria-label` (`Status: IN_PROGRESS`, `Live connection`,
   `Scroll columns left/right`, `Close metrics dashboard`).
 - `color-scheme` keeps native controls legible in both themes.
 - Decorative overlays and gradients are `pointer-events-none` + `aria-hidden` by
