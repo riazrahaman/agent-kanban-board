@@ -17,7 +17,7 @@
 // now applies `pan-x pan-y` to EVERY element (`*`), scroll containers
 // included, which is the primary fix.
 //
-// This module is the JS layer on top, layered so any one of them suffices:
+// This module is the JS layer on top, layered so either one suffices:
 //   1. `touchmove` with more than one finger down (or a WebKit `scale` other
 //      than 1) is `preventDefault()`ed — the classic pinch block that still
 //      works on current iOS when the listener is NON-passive (document-level
@@ -26,10 +26,14 @@
 //      so scrolling and swiping are unaffected.
 //   2. WebKit's non-standard `gesturestart`/`gesturechange`/`gestureend`
 //      events are cancelled.
-//   3. `wheel` with `ctrlKey` (how desktop browsers report a trackpad pinch)
-//      is cancelled.
 // Each is registered on both `document` and `window`, capture phase, so a
 // descendant that stops propagation cannot hide the gesture from the guard.
+//
+// Deliberately NO `wheel` listener (removed in review before 3.2.4 shipped):
+// cancelling ctrl+wheel killed desktop browser zoom (an accessibility
+// regression nobody asked for — the zoom report is iPhone-only), and ANY
+// non-passive wheel listener on document/window forces every wheel scroll on
+// the page onto the main thread.
 //
 // Deliberately NO `touchend` double-tap guard: an earlier revision had one
 // and it was reviewed out — it `preventDefault()`ed the second of any two
@@ -48,11 +52,6 @@ type Target = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 interface TouchLikeEvent {
   touches?: { length: number }
   scale?: number
-  preventDefault(): void
-}
-
-interface WheelLikeEvent {
-  ctrlKey?: boolean
   preventDefault(): void
 }
 
@@ -79,16 +78,12 @@ export function installPinchZoomGuard(
   const preventPinchMove = (e: Event) => {
     if (isPinchTouch(e as unknown as TouchLikeEvent)) e.preventDefault()
   }
-  const preventCtrlWheel = (e: Event) => {
-    if ((e as unknown as WheelLikeEvent).ctrlKey) e.preventDefault()
-  }
 
   const handlers: Array<[string, EventListener]> = [
     ['touchmove', preventPinchMove],
     ['gesturestart', preventGesture],
     ['gesturechange', preventGesture],
     ['gestureend', preventGesture],
-    ['wheel', preventCtrlWheel],
   ]
   // passive:false — preventDefault() on a passive listener is a silent no-op.
   // capture:true — see the header comment.

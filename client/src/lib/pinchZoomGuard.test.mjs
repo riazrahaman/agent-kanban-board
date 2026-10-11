@@ -3,9 +3,10 @@
 // neither Playwright WebKit (a desktop engine) nor Chromium touch emulation
 // implements iOS Safari's pinch pipeline, and node:test has no DOM. What IS
 // verified, against a minimal fake EventTarget: the wiring (touchmove,
-// gesture*, wheel on BOTH document and window, each passive:false +
+// gesture* on BOTH document and window, each passive:false +
 // capture), the decision logic (2+-finger touchmove prevented, 1-finger
-// NOT; ctrl+wheel prevented, plain wheel NOT), cleanup, that main.tsx
+// NOT), that no wheel listener is ever registered (it killed desktop
+// ctrl+wheel zoom and forced main-thread wheel scrolling), cleanup, that main.tsx
 // installs it, and that the reviewed-out `touchend` double-tap guard (it
 // cancelled real clicks) never comes back.
 // esbuild bundles the TS source into ESM at test time, mirroring
@@ -60,7 +61,7 @@ function makeFakeDoc() {
 }
 
 const GESTURE_EVENTS = ['gesturestart', 'gesturechange', 'gestureend']
-const ALL_EVENTS = ['touchmove', ...GESTURE_EVENTS, 'wheel']
+const ALL_EVENTS = ['touchmove', ...GESTURE_EVENTS]
 
 function fire(target, type, init) {
   let prevented = false
@@ -117,11 +118,13 @@ test('each gesture listener calls preventDefault when invoked', () => {
   }
 })
 
-test('wheel is cancelled only with ctrlKey (trackpad pinch), never for plain scrolling', () => {
+test('no wheel listener: desktop ctrl+wheel zoom and compositor wheel scrolling stay intact', () => {
   const doc = makeFakeDoc()
-  mod.installPinchZoomGuard(doc, null)
-  assert.equal(fire(doc, 'wheel', { ctrlKey: true }), true)
-  assert.equal(fire(doc, 'wheel', { ctrlKey: false }), false)
+  const win = makeFakeDoc()
+  mod.installPinchZoomGuard(doc, win)
+  assert.equal(doc.listeners.get('wheel'), undefined)
+  assert.equal(win.listeners.get('wheel'), undefined)
+  assert.doesNotMatch(pinchZoomGuardSource, /\['wheel'|addEventListener\(\s*['"]wheel['"]/, 'pinchZoomGuard.ts must never register a wheel listener')
 })
 
 test('the cleanup function removes every listener it installed, from both targets', () => {
