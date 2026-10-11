@@ -157,10 +157,10 @@ The board features pluggable persistence:
 - **Authentication (A07)**:
   - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment; there is no default or fallback token.
   - Mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`. If the token is not configured, mutations fail closed with `503`.
-  - Per-project isolation via `KANBAN_PROJECT_TOKENS` (JSON map `{"project":"token"}`); an admin token (`KANBAN_ADMIN_TOKEN`) spans every project and is audited as `admin_write`.
+  - Per-project isolation via `KANBAN_PROJECT_TOKENS` (JSON map `{"project":"token"}`); an admin token (`KANBAN_ADMIN_TOKEN`) spans every project and is audited as `admin_write`. Under isolation mode (v3.3.0+), client tokens strictly isolate project listings (`GET /api/projects`), health probe metadata (`GET /api/health`), and task feeds (`GET /api/tasks`).
   - HMAC session tokens are available when `KANBAN_AUTH_SECRET` is set — clients negotiate a stateless 24h token via `POST /api/auth/session` instead of holding a static secret. See [ONBOARDING.md](ONBOARDING.md).
   - Identity is sent as `X-Agent-Id` + `X-Agent-Role` (or `body.role`), lowercased, validated against `VALID_ROLES`.
-  - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring.
+  - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring, but scope to authorized projects when `KANBAN_PROJECT_TOKENS` is active.
 - **CORS Lockdown (A05)**:
   - CORS is restricted to `http://localhost:5173` by default. Set `KANBAN_ALLOWED_ORIGIN` (a comma-separated list) to allow other client origins; wildcard `*` is prohibited.
   - Untrusted origins receive no `Access-Control-Allow-Origin` header.
