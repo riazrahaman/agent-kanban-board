@@ -1126,3 +1126,31 @@ test('phone layout (review round 2): short columns stay short, sticky column bar
   assert.match(block, /html\.scroll-locked \.app-header:not\(\[data-controls-open='true'\]\)\s*\{\s*transform:\s*translateY\(var\(--scroll-lock-y,\s*0px\)\)/)
   assert.match(appSource, /setProperty\('--app-header-h', headerOpen \? '0px' : `\$\{header\.offsetHeight\}px`\)/, 'App publishes the sticky header height (0 while the controls are open and it is not sticky)')
 })
+
+// v3.2.4 tester finding: the phone Signal Rail drawer trapped itself. Its
+// only toggle lives in the ⋯ header controls, which the open drawer covers,
+// and the drawer had no close control and ignored Escape.
+test('phone rail drawer: dialog with its own 44px CLOSE, Escape + backdrop close, focus returns to the toggle', () => {
+  const drawer = appSource.slice(appSource.indexOf('data-testid="rail-drawer"') - 200, appSource.indexOf('<SignalRail tasks={tasks} onOpen={handleOpen} />\n                      </div>'))
+  assert.match(drawer, /role="dialog"/)
+  assert.match(drawer, /aria-modal="true"/)
+  assert.match(drawer, /pt-\[env\(safe-area-inset-top,0px\)\] pb-\[env\(safe-area-inset-bottom,0px\)\]/, 'respects both safe-area insets')
+  const close = drawer.match(/aria-label="Close signal rail"\s*className="([^"]*)"/)?.[1] ?? ''
+  assert.match(close, /\bpointer-coarse:min-h-11\b/)
+  assert.match(close, /\bpointer-coarse:min-w-11\b/)
+  assert.match(drawer, /onClick=\{closeRail\}/, 'the close button closes the drawer')
+  assert.match(appSource, /data-testid="rail-backdrop"\s*className="[^"]*"\s*onClick=\{closeRail\}/, 'the backdrop tap still closes it')
+  assert.match(appSource, /if \(e\.key === 'Escape'\) closeRail\(\)/, 'Escape closes it')
+  assert.match(appSource, /railToggleRef\.current\?\.focus\(\{ preventScroll: true \}\)/, 'focus returns to the toggle without scrolling the page')
+  assert.match(appSource, /railCloseRef\.current\?\.focus\(\{ preventScroll: true \}\)/, 'focus moves into the drawer on open')
+  // stacking: backdrop z-30 + panel z-40 sit above the header (z-20) whether sticky or relative
+  assert.match(appSource, /data-testid="rail-backdrop"\s*className="fixed inset-0 z-30 /)
+  assert.match(drawer, /className="fixed right-0 top-0 z-40 /)
+  assert.match(cssSource, /\.app-header \{\s*position: sticky;\s*top: 0;\s*z-index: 20;/)
+})
+
+test('HeaderHelp closes on an outside TAP (pointerdown, not mousedown: iOS sends no mousedown there)', () => {
+  const help = readFileSync(join(dirname(APP_PATH), 'components', 'HeaderHelp.tsx'), 'utf8')
+  assert.match(help, /addEventListener\('pointerdown', onDown\)/)
+  assert.doesNotMatch(help, /addEventListener\('mousedown'/)
+})

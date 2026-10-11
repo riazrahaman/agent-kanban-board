@@ -18,16 +18,19 @@ export default function HeaderHelp() {
 
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => {
+    // pointerdown, not mousedown: iOS Safari fires no compatibility mouse
+    // events for a tap on a non-clickable area, so outside taps on a phone
+    // never closed the popover (v3.2.4; same fix as ProjectPicker).
+    const onDown = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onDown)
+    document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('pointerdown', onDown)
       document.removeEventListener('keydown', onKey)
     }
   }, [open])

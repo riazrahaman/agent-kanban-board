@@ -418,6 +418,28 @@ export default function App() {
   }, [headerOpen])
 
   const railDrawerShown = railOpen && view === 'board' && !loading && !error && tasks.length > 0
+
+  // v3.2.4 (tester finding): the phone rail drawer used to trap itself — its
+  // only toggle lives in the ⋯ header controls, which the open drawer covers,
+  // and the drawer had no close control or Escape. It now has a CLOSE button
+  // (focused on open), Escape and the backdrop all close it, and focus goes
+  // back to the toggle.
+  const railToggleRef = useRef<HTMLButtonElement>(null)
+  const railCloseRef = useRef<HTMLButtonElement>(null)
+  const closeRail = useCallback(() => {
+    setRailOpen(false)
+    writeStoredRailOpen(false)
+    railToggleRef.current?.focus({ preventScroll: true })
+  }, [])
+  useEffect(() => {
+    if (!railDrawerShown) return
+    if (!window.matchMedia?.('(min-width: 48rem)').matches) railCloseRef.current?.focus({ preventScroll: true })
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRail()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [railDrawerShown, closeRail])
   useDocumentScrollLock(openTask !== null || bugReportOpen || railDrawerShown)
 
   const [showMetrics, setShowMetrics] = useState<boolean>(() => readStoredShowMetrics())
@@ -659,6 +681,7 @@ export default function App() {
              {tasks.length} tasks
            </span>
            <button
+            ref={railToggleRef}
             type="button"
             onClick={() => {
               setRailOpen((v) => {
@@ -839,15 +862,38 @@ export default function App() {
                 {railOpen && (
                   <>
                     <div
+                      data-testid="rail-backdrop"
                       className="fixed inset-0 z-30 bg-black/40 dark:bg-black/60 md:hidden"
-                      onClick={() => {
-                        setRailOpen(false)
-                        writeStoredRailOpen(false)
-                      }}
+                      onClick={closeRail}
                       aria-hidden="true"
                     />
-                    <div className="fixed right-0 top-0 z-40 flex h-full border-l border-line bg-surface pt-[env(safe-area-inset-top,0px)] md:hidden">
-                      <SignalRail tasks={tasks} onOpen={handleOpen} />
+                    {/* z-30/z-40 sit above the header (z-20) in every state —
+                        sticky or, with ⋯ open, relative — so the drawer's own
+                        CLOSE (not the covered header toggle) is the way out. */}
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Signal rail"
+                      data-testid="rail-drawer"
+                      className="fixed right-0 top-0 z-40 flex h-full max-w-[100vw] flex-col border-l border-line bg-surface pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] md:hidden"
+                    >
+                      <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-1.5">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                          Signal
+                        </span>
+                        <button
+                          ref={railCloseRef}
+                          type="button"
+                          onClick={closeRail}
+                          aria-label="Close signal rail"
+                          className="border border-line bg-surface px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="flex min-h-0 flex-1">
+                        <SignalRail tasks={tasks} onOpen={handleOpen} />
+                      </div>
                     </div>
                   </>
                 )}
