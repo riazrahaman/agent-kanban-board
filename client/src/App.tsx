@@ -42,6 +42,7 @@ import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
+import { useDocumentScrollLock } from './lib/scrollLock'
 import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
@@ -397,6 +398,13 @@ export default function App() {
      [tasks, openTaskId],
   )
 
+  // v3.2.4 phone layout: the document scrolls, so freeze it (preserving the
+  // scroll position) while a full-height overlay is open — TaskSheet,
+  // BugReportDialog, or the phone Signal Rail drawer (rendered under exactly
+  // the board-ready condition below). No-op outside the phone layout.
+  const railDrawerShown = railOpen && view === 'board' && !loading && !error && tasks.length > 0
+  useDocumentScrollLock(openTask !== null || bugReportOpen || railDrawerShown)
+
   const [showMetrics, setShowMetrics] = useState<boolean>(() => readStoredShowMetrics())
   const handleToggleMetrics = useCallback(() => {
     setShowMetrics((v) => {
@@ -483,15 +491,18 @@ export default function App() {
     : ''
 
   return (
-     // v3.2.4 (GH #103 follow-up): `.app-shell` (index.css) is a
-     // `position: fixed; inset: 0` full-bleed box, NOT `h-screen` — see the
-     // comment there for why a body-relative height left a dead strip above
-     // iOS Safari's floating bottom bar. The header's top padding adds
-     // env(safe-area-inset-top) (0 on desktop, so header height there is
-     // unchanged) so its surface can sit behind the status bar under
-     // viewport-fit=cover while its controls stay clear of it.
-     <div className="app-shell flex flex-col bg-bg text-ink">
-        <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
+     // v3.2.4 (GH #103 follow-up): two layouts, switched purely in CSS
+     // (index.css "PHONE LAYOUT"). Desktop/tablet/mouse: this `h-screen`
+     // (100dvh) flex shell with internal scrolling. Touch phone below `md`:
+     // the document scrolls (so iOS Safari renders the page behind its
+     // floating toolbar) and `.app-header` is sticky. The `app-*`/`board-*`
+     // class names are the hooks that block targets. The header's top
+     // padding adds env(safe-area-inset-top) (0 on desktop, so header height
+     // there is unchanged) so it can sit under the status bar.
+     <div className="app-shell flex h-screen flex-col bg-bg text-ink">
+        <header
+          data-controls-open={headerOpen ? 'true' : 'false'}
+          className="app-header flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
           <div className="flex shrink-0 items-center gap-3">
             <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
             <div className="flex items-baseline gap-2">
@@ -719,7 +730,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex flex-1 overflow-hidden">
+        <main className="app-main flex flex-1 overflow-hidden">
           <ErrorBoundary>
             {view === 'about' && (
               <About version={version} visit={visit}
@@ -764,7 +775,7 @@ export default function App() {
             )}
             {view === 'board' && !loading && !error && tasks.length > 0 && (
               <>
-                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <div className="board-pane flex min-w-0 flex-1 flex-col overflow-hidden">
                   <BoardFilters
                     search={searchQuery}
                     onSearchChange={handleSearchChange}
@@ -791,7 +802,7 @@ export default function App() {
                       onClose={handleCloseMetrics}
                     />
                   )}
-                  <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+                  <div className="board-frame flex h-full min-w-0 flex-1 flex-col overflow-hidden">
                     <Board
                       tasks={filteredTasks}
                       onOpen={handleOpen}

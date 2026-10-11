@@ -49,14 +49,15 @@ test('App header wraps (flex-wrap) instead of forcing a single row', () => {
   )
 })
 
-// v3.2.4 (GH #103 follow-up): the shell is no longer `h-screen` (a
-// body-relative height that body's overflow clipped at the small viewport,
-// leaving a dead strip above iOS Safari's floating bar) but the
-// `position: fixed; inset: 0` `.app-shell` — see index.css.
-test('App shell is the fixed full-bleed .app-shell, not h-screen', () => {
+// v3.2.4 (GH #103 follow-up): outside the phone layout the shell is a plain
+// `h-screen` (100dvh) flex shell with internal scrolling — no `position:
+// fixed; inset: 0` + forced `100lvh` (an earlier 3.2.4 attempt), which on a
+// tablet/landscape phone with a visible URL bar would clip the bottom.
+test('App shell is a plain h-screen flex shell carrying the .app-shell hook', () => {
   const shellTag = appSource.match(/<div className="([^"]*app-shell[^"]*)">/)?.[1]
   assert.ok(shellTag, 'App.tsx root div must carry the app-shell class')
-  assert.doesNotMatch(shellTag, /\bh-screen\b/, 'the shell must not use h-screen — .app-shell sizes it from the viewport edges')
+  assert.match(shellTag, /\bh-screen\b/, 'the shell must use h-screen (100dvh via index.css)')
+  assert.match(shellTag, /\bflex\b[\s\S]*\bflex-col\b/)
 })
 
 test('App exposes a mobile-only signal-rail toggle (aria-label + md:hidden)', () => {
@@ -626,7 +627,7 @@ test('Board scroll container snaps horizontally and scrolls x (snap-x, scroll-pl
 test('Board layout stretches vertically and tightens mobile padding (GH #99)', () => {
   assert.match(
     boardSource,
-    /className="relative flex h-full min-w-0 flex-1 items-stretch"/,
+    /className="board-root relative flex h-full min-w-0 flex-1 items-stretch"/,
     'Board container must use items-stretch so columns extend to bottom',
   )
   assert.match(
@@ -670,35 +671,16 @@ test('index.css overrides .h-screen inside @supports (height:100dvh)', () => {
   )
 })
 
-// v3.2.3 (round 1) scoped lvh to a DEDICATED `.app-shell` class, not
-// `.h-screen` globally: `.h-screen` is also used by `fixed` panels
-// (TaskSheet's <aside>) that must stay within the actually-visible area — a
-// global lvh override pushed TaskSheet's pinned footer behind Safari's
-// floating toolbar. v3.2.4 makes the shell `position: fixed; inset: 0` with
-// `min-height: 100lvh`: fixed boxes are laid out against the viewport, so
-// body's overflow can no longer clip the shell at the small viewport (the
-// dead strip still visible on a real iPhone running 3.2.3).
-test('index.css makes .app-shell a fixed, inset:0 box at least 100lvh tall, NOT .h-screen globally', () => {
-  const shellIdx = cssSource.search(/^\.app-shell\s*\{/m)
-  assert.ok(shellIdx >= 0, 'index.css must declare a top-level `.app-shell` rule')
-  const shellBlock = cssSource.slice(shellIdx, cssSource.indexOf('}', shellIdx) + 1)
-  assert.match(shellBlock, /position:\s*fixed/, '.app-shell must be position: fixed so no ancestor overflow can clip it')
-  assert.match(shellBlock, /inset:\s*0/, '.app-shell must be pinned to all four viewport edges')
-
-  const dvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100dvh\s*\)/)
-  const lvhIdx = cssSource.search(/@supports\s*\(\s*height:\s*100lvh\s*\)/)
-  assert.ok(dvhIdx >= 0, 'the 100dvh @supports block must still exist (TaskSheet uses h-screen)')
-  assert.ok(lvhIdx >= 0, 'index.css must contain an `@supports (height:100lvh)` block')
-  const lvhBlock = cssSource.slice(lvhIdx, cssSource.indexOf('}\n}', lvhIdx) + 3)
-  assert.match(lvhBlock, /\.app-shell\s*\{[\s\S]*?min-height:\s*100lvh/, 'the 100lvh block must give .app-shell min-height: 100lvh')
-  assert.doesNotMatch(
-    lvhBlock,
-    /\.h-screen/,
-    'the 100lvh block must NOT target .h-screen — TaskSheet (and any other fixed panel) uses that class and must stay at 100dvh',
-  )
+// The 100dvh override stays on `.h-screen` (shell + TaskSheet); nothing may
+// force the large viewport (lvh) or pin the shell with position: fixed.
+test('index.css: .h-screen is 100dvh; no lvh and no fixed/inset app shell', () => {
+  assert.match(cssSource, /@supports\s*\(\s*height:\s*100dvh\s*\)\s*\{[\s\S]*?\.h-screen\s*\{[\s\S]*?height:\s*100dvh/)
+  assert.doesNotMatch(cssSource, /100lvh/, 'forcing the large viewport clips content behind a visible URL bar outside the phone layout')
+  assert.doesNotMatch(cssSource, /\.app-shell\s*\{[^}]*position:\s*fixed/, 'the shell must not be position: fixed')
+  assert.doesNotMatch(cssSource, /\.app-shell\s*\{[^}]*inset:/, 'the shell must not be pinned with inset')
 })
 
-test('html/body never scroll: overflow hidden both axes, no page overscroll', () => {
+test('outside the phone layout html/body never scroll: overflow hidden both axes, no page overscroll', () => {
   const idx = cssSource.search(/^html,\s*\nbody\s*\{\s*\n\s*overflow:/m)
   assert.ok(idx >= 0, 'index.css must declare `html, body { overflow: hidden; ... }`')
   const block = cssSource.slice(idx, cssSource.indexOf('}', idx) + 1)
@@ -1053,3 +1035,83 @@ test('About page responsive layout invariants', async (t) => {
   )
 })
 
+
+// ---------------------------------------------------------------------------
+// v3.2.4 PHONE LAYOUT (touch AND below md): the DOCUMENT scrolls, so iOS
+// Safari renders content behind its translucent floating toolbar like a
+// normal website. Any shell with internal scrollers stopped at the toolbar's
+// top edge on a real iPhone (3.2.3's lvh shell, then a fixed inset:0 shell).
+// ---------------------------------------------------------------------------
+
+const PHONE_MQ = /@media \(max-width: 47\.99rem\) and \(pointer: coarse\) \{/
+function phoneBlock() {
+  const idx = cssSource.search(PHONE_MQ)
+  assert.ok(idx >= 0, 'index.css must contain the phone-layout media block')
+  // the block ends at the first "\n}\n" at column 0 after its start
+  return cssSource.slice(idx, cssSource.indexOf('\n}\n', idx) + 2)
+}
+function rule(block, selector) {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const m = block.match(new RegExp('(?:^|[\\s,])' + esc + '\\s*(?:,[^{]*)?\\{([^}]*)\\}', 'm'))
+  assert.ok(m, `phone block must have a rule for ${selector}`)
+  return m[1]
+}
+
+test('phone layout query matches Tailwind max-md:pointer-coarse and lib/scrollLock.ts', () => {
+  phoneBlock()
+  const lockSrc = readFileSync(join(dirname(CSS_PATH), 'lib', 'scrollLock.ts'), 'utf8')
+  assert.match(lockSrc, /PHONE_LAYOUT_QUERY = '\(max-width: 47\.99rem\) and \(pointer: coarse\)'/)
+})
+
+test('phone layout: html is the vertical scroller; body/#root grow and are not scroll containers', () => {
+  const block = phoneBlock()
+  const html = rule(block, 'html')
+  assert.match(html, /overflow-y:\s*auto/)
+  assert.match(html, /overflow-x:\s*hidden/)
+  assert.match(html, /height:\s*auto/)
+  const body = rule(block, 'body')
+  assert.match(body, /overflow:\s*visible/, 'a scrolling body would capture sticky positioning (the 3.2.3 failure mode)')
+  assert.match(body, /height:\s*auto/)
+  assert.match(block, /body\s*\{\s*overflow-x:\s*clip;/, 'body clips sideways with clip (no scroll container), not hidden')
+})
+
+test('phone layout: sticky header, non-sticky while the controls are open', () => {
+  const block = phoneBlock()
+  const header = rule(block, '.app-header')
+  assert.match(header, /position:\s*sticky/)
+  assert.match(header, /top:\s*0/)
+  assert.match(block, /\.app-header\[data-controls-open='true'\]\s*\{\s*position:\s*relative;/)
+  assert.match(appSource, /data-controls-open=\{headerOpen \? 'true' : 'false'\}/)
+  assert.match(appSource, /className="app-header /)
+})
+
+test('phone layout: columns grow to full height (no internal vertical scroll); board strip stays horizontal', () => {
+  const block = phoneBlock()
+  const list = rule(block, '.column-list')
+  assert.match(list, /overflow:\s*visible/)
+  assert.match(list, /flex:\s*none/)
+  for (const sel of ['.board-root', '.board-viewport', '.board-scroll', '.kanban-column']) {
+    assert.match(block, new RegExp('\\' + sel + '[\\s\\S]*?height:\\s*auto'), `${sel} must be height: auto`)
+  }
+  assert.doesNotMatch(rule(block, '.board-scroll'), /overflow/, 'the snap strip keeps its own overflow-x: auto')
+  assert.match(columnSource, /'kanban-column /)
+  assert.match(columnSource, /className="column-list /)
+  assert.match(boardSource, /className="board-viewport /)
+  assert.match(appSource, /className="app-main /)
+  assert.match(appSource, /className="board-pane /)
+  assert.match(appSource, /className="board-frame /)
+})
+
+test('phone layout: Portfolio and About flow in the document', () => {
+  const block = phoneBlock()
+  assert.match(rule(block, '.portfolio-view'), /overflow-y:\s*visible/)
+  assert.match(rule(block, '.portfolio-view'), /overflow-x:\s*auto/, 'the wide table stays swipeable sideways')
+  assert.match(rule(block, '.about-view'), /overflow-y:\s*visible/)
+  assert.match(rule(block, '.about-view'), /height:\s*auto/)
+})
+
+test('overlay scroll lock: html.scroll-locked pins body; App locks for TaskSheet, BugReportDialog and the rail drawer', () => {
+  assert.match(cssSource, /html\.scroll-locked\s*\{\s*overflow:\s*hidden;/)
+  assert.match(cssSource, /html\.scroll-locked body\s*\{[^}]*position:\s*fixed/)
+  assert.match(appSource, /useDocumentScrollLock\(openTask !== null \|\| bugReportOpen \|\| railDrawerShown\)/)
+})

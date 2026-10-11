@@ -72,7 +72,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
   }
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 items-stretch">
+    <div className="board-root relative flex h-full min-w-0 flex-1 items-stretch">
       {/* Explicit affordance for pointer users: the styled scrollbar below is
           always visible, but a trackpad-less mouse can't easily drag it, and
           these also make "there is more to the right" unmistakable.
@@ -89,7 +89,7 @@ export default function Board({ tasks, onOpen, showProject = false, columnColors
         ‹
       </button>
 
-      <div className="relative flex h-full min-w-0 flex-1">
+      <div className="board-viewport relative flex h-full min-w-0 flex-1">
         {canLeft && (
           <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-bg to-transparent" />
         )}

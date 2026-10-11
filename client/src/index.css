@@ -139,16 +139,12 @@ html {
   text-size-adjust: 100%;
 }
 
-/* Defensive against a WebKit/iOS Safari quirk (v2.17.0, mobile-dialog fixes):
-   a `position: fixed` panel translated off-screen via `translate-x-full`
-   (BugReportDialog/TaskSheet/SignalRail's slide-in sheets) can still widen
-   the document's scrollable area in WebKit even though it is visually gone
-   and out of normal flow — observed as the whole page panning/swaying
-   horizontally on an iPhone with the sheet open. Clipping at the document
-   root is a second line of defense alongside `overflow-x-hidden` on the
-   sheet itself: the board's own horizontal scrolling (columns, the mobile
-   toolbar) happens in nested `overflow-x-auto` containers, never on
-   html/body, so this cannot clip anything intentional. */
+/* Desktop / tablet / mouse layout: the document never scrolls — the
+   `h-screen` app shell (App.tsx) is exactly the visible viewport and its
+   columns/views scroll internally. `overflow: hidden` here is also the
+   document-root half of the v2.17.0 WebKit defence against an off-screen
+   `translate-x-full` sheet widening the page. The phone layout below
+   overrides this so the document itself scrolls. */
 html,
 body {
   overflow: hidden;
@@ -158,45 +154,126 @@ body {
 }
 
 /* Mobile browsers grow/shrink the visual viewport as the URL bar shows and
-   hides; `100vh` is the *largest* viewport, so a fixed `h-screen` panel
-   (TaskSheet) overflows the bottom on phones. `dvh` tracks the viewport that
-   is actually visible. The @supports guard keeps the 100vh fallback. */
+   hides; `100vh` is the *largest* viewport, so an `h-screen` layout overflows
+   the bottom on phones. `dvh` tracks the viewport that is actually visible,
+   so a visible URL bar never clips the shell or a fixed sheet (TaskSheet).
+   The @supports guard keeps the 100vh fallback. */
 @supports (height: 100dvh) {
   .h-screen {
     height: 100dvh;
   }
 }
 
-/* Full-bleed app shell (GH #103 follow-up; v3.2.4). v3.2.3 gave the shell
-   `height: 100lvh` but it still stopped above Safari's floating bottom bar:
-   html/body were `height: 100%` (the SMALL viewport) and body's
-   `overflow-x: hidden` made body a scroll container (overflow-y computes to
-   auto), so body clipped the taller lvh shell at the small-viewport edge,
-   leaving the dead strip seen on device. A `position: fixed` box is laid out
-   against the viewport, not body, so no ancestor overflow can clip it.
-   `inset: 0` pins it to the viewport edges; `min-height: 100lvh` (where
-   supported) makes it at least the LARGE viewport — as tall as the screen
-   with browser chrome collapsed — so it reaches behind a translucent bottom
-   bar whichever of the two Safari treats as "the viewport" for fixed boxes.
-   On desktop both equal the window height, so mouse layouts are unchanged.
-   Content reaching behind the bar stays reachable because the scrollable
-   lists (Column/About/Portfolio) carry `calc(5rem + safe-area)` bottom
-   padding on coarse narrow screens. The header adds
-   env(safe-area-inset-top) padding (App.tsx) so with viewport-fit=cover the
-   shell can also sit behind the status bar; env() is 0 on desktop, so the
-   header-height guard (scripts/check-header-layout.mjs) is unaffected.
-   Fixed overlays (TaskSheet, BugReportDialog) keep dvh sizing so their
-   pinned footers stay in the visible area. */
-.app-shell {
-  position: fixed;
-  inset: 0;
-  height: auto;
+/* PHONE LAYOUT (v3.2.4; touch AND below `md` — same condition as Tailwind's
+   `max-md:pointer-coarse:` and lib/scrollLock.ts PHONE_LAYOUT_QUERY).
+   The DOCUMENT is the vertical scroller, like a normal website, so iOS
+   Safari draws the page behind its translucent floating toolbar and can
+   collapse its chrome on scroll. An app-style shell with internal scrollers
+   (v3.2.3's lvh shell, then 3.2.4's first `position: fixed; inset: 0`
+   attempt) always stopped at the toolbar's top edge on a real iPhone,
+   because only document scrolling slides content under it.
+   - html is the scroller (`overflow-x: hidden` only, so the viewport still
+     clips sideways); body and #root grow with content (height: auto) and
+     must NOT be scroll containers or sticky positioning would bind to them.
+   - The header is `position: sticky; top: 0` (title row + ⋯ toggle + view
+     tabs, ~113px) and pads env(safe-area-inset-top) (App.tsx) so it can sit
+     under the status bar. While the ⋯ controls are open it becomes
+     non-sticky, so a tall controls panel scrolls away instead of covering
+     half the screen. Filter/count rows scroll away with the page.
+   - Every column grows to its full content height (no internal vertical
+     scroller), so document height = tallest column; the horizontal snap
+     strip (.board-scroll, overflow-x: auto) stays. Its height is auto, so
+     it never scrolls vertically and a vertical drag goes to the document.
+   - The `calc(5rem + safe-area)` bottom padding already on Column/
+     Portfolio/About (`max-md:pointer-coarse:`) lets the last content scroll
+     clear of the toolbar while everything else passes behind it.
+   Unlayered, so these beat the Tailwind utilities (`h-full`,
+   `overflow-hidden`, `flex-1`, ...) on the hooked elements without touching
+   their desktop classes. */
+@media (max-width: 47.99rem) and (pointer: coarse) {
+  html {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: auto;
+    height: auto;
+  }
+
+  body,
+  #root {
+    overflow: visible;
+    height: auto;
+    min-height: 100%;
+  }
+
+  body {
+    overflow-x: clip;
+  }
+
+  :root .app-shell {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .app-header[data-controls-open='true'] {
+    position: relative;
+  }
+
+  .app-main,
+  .board-pane,
+  .board-frame {
+    overflow: visible;
+    height: auto;
+  }
+
+  /* The project table can be wider than a phone: keep it swipeable
+     sideways; height auto means it never scrolls vertically. */
+  .portfolio-view {
+    overflow-x: auto;
+    overflow-y: visible;
+    height: auto;
+  }
+
+  .board-root,
+  .board-viewport,
+  .board-scroll,
+  .kanban-column {
+    height: auto;
+  }
+
+  .column-list {
+    overflow: visible;
+    flex: none;
+  }
+
+  .about-view {
+    height: auto;
+    overflow-x: clip;
+    overflow-y: visible;
+  }
 }
 
-@supports (height: 100lvh) {
-  .app-shell {
-    min-height: 100lvh;
-  }
+/* Overlay scroll lock (lib/scrollLock.ts, phone layout only): pins <body> at
+   `top: -scrollY` so the page behind TaskSheet / BugReportDialog / the
+   Signal Rail drawer can't be touch-scrolled (iOS ignores overflow:hidden
+   for that in some versions) and doesn't jump; the scroll position is
+   restored on release. */
+html.scroll-locked {
+  overflow: hidden;
+}
+
+html.scroll-locked body {
+  position: fixed;
+  left: 0;
+  right: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* iOS Safari zooms the page when a focused form control's computed font-size

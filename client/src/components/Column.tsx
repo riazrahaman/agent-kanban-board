@@ -66,7 +66,7 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
   return (
     <div
       className={[
-        'flex h-full w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
+        'kanban-column flex h-full w-[85vw] shrink-0 snap-start flex-col border border-line bg-surface/40 transition-opacity md:w-72',
         topAccent,
         isDone ? 'opacity-70' : '',
       ].join(' ')}
@@ -98,14 +98,13 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
       </div>
       <div
         data-status={status}
-        // v3.2.3 (GH #103 follow-up, round 1): the `.app-shell` (index.css)
-        // gives this column real extra height to scroll into behind iOS
-        // Safari's floating bottom toolbar; this padding is what lets the
-        // last card reach it. Keyed on `pointer-coarse:` + `max-md:`
-        // (CLAUDE.md's touch-ergonomics convention), not a width breakpoint
-        // alone: a mouse window resized under 768px has no floating toolbar
-        // and would otherwise get 80px of dead scroll space for nothing.
-        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
+        // `column-list` is a phone-layout hook (index.css): on a touch phone
+        // below md the list grows to full height and the DOCUMENT scrolls,
+        // so content passes behind iOS Safari's floating toolbar; this
+        // bottom padding lets the last card scroll clear of it. Keyed on
+        // `pointer-coarse:` + `max-md:` (the same condition as the phone
+        // layout), so a mouse window under 768px keeps dense padding.
+        className="column-list flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-2 max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
       >
         {tasks.map((task) => (
           <TaskCard
