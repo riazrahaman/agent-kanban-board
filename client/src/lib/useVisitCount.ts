@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react'
 // The data lives entirely on the counter's servers. This app keeps no copy: the
 // only client-side state is a sessionStorage flag so a reload inside the same
 // browsing session does not double-count.
-export const COUNTER_BASE = 'https://abacus.jasoncameron.dev'
+export const COUNTER_BASE = 'https://abacus-production-cbb0.up.railway.app'
 export const VISIT_NAMESPACE = 'agent-kanban.riazrahaman.com'
 export const VISIT_KEY = 'pageviews'
 export const VISIT_SESSION_FLAG = 'kanban-visit-counted'

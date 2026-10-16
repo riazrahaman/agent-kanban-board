@@ -44,7 +44,7 @@ await rm(stubPath, { force: true })
 const { COUNTER_BASE, VISIT_NAMESPACE, VISIT_KEY, VISIT_SESSION_FLAG, formatVisitCount } = mod
 
 test('the counter targets the board’s own namespace, not riazrahaman.com', () => {
-  assert.equal(COUNTER_BASE, 'https://abacus.jasoncameron.dev')
+  assert.equal(COUNTER_BASE, 'https://abacus-production-cbb0.up.railway.app')
   assert.equal(VISIT_NAMESPACE, 'agent-kanban.riazrahaman.com')
   assert.notEqual(VISIT_NAMESPACE, 'riazrahaman.com', 'must not share the personal-site namespace')
   assert.equal(VISIT_KEY, 'pageviews')
