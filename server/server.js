@@ -20,6 +20,7 @@ import { createAuthMiddleware, parseProjectTokens } from './middleware/auth.js';
 import { reportCredentialCoverage } from './utils/credentialMap.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
+import { createAskRouter } from './routes/ask.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -106,6 +107,11 @@ export function createApp(opts = {}) {
   // `opts.bugReports` lets tests inject a fake fetch/clock; production passes
   // nothing and the router reads real env + global fetch.
   app.use('/api/bug-reports', createBugReportsRouter(opts.bugReports));
+  // Ask-the-Board (v3.4.0): also public — it carries its OWN password gate
+  // (`x-ask-pass`) instead of a board token, so it must mount before auth too.
+  // `opts.ask` lets tests inject a fake fetch/clock/env/store; production
+  // passes nothing and the router reads real env + global fetch.
+  app.use('/api/ask', createAskRouter(opts.ask));
   app.use(createAuthMiddleware());
   app.use(createRateLimitMiddleware());
 
