@@ -16,6 +16,21 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.4.0] — 2026-10-17
+
+Ask-the-Board, backend half: a read-only, password-gated Q&A endpoint over the board's protocol and source code. A visitor types a question; the server builds a system prompt from a curated protocol summary, a source file map, and a live in-process snapshot, then asks OpenRouter and returns the answer. The model is never given a board token and never claims or moves a card.
+
+### Added
+- **`POST /api/ask` (password-gated Q&A)** (`server/routes/ask.js`, `server/askKnowledge.js`): mounted public, before the auth middleware, exactly like `/api/bug-reports`, but gated by its own shared password (`x-ask-pass` header) rather than a board token. `GET /api/ask/config` reports `{ enabled: true, gated: true, model }` when on and `{ enabled: false }` when off — never the key or the password.
+- **Fail-closed feature gate**: the feature is off unless BOTH `KANBAN_ASK_OPENROUTER_API_KEY` and `KANBAN_ASK_PASSWORD` are non-empty. Disabled, `GET /api/ask/config` returns `{ enabled: false }` and `POST /api/ask` returns `404 not_found`.
+- **Question contract**: `POST /api/ask` requires `{ question: string }` with a trimmed length of 3–500 characters (`400 invalid_question` otherwise). A missing or wrong `x-ask-pass` returns the same generic `401 invalid_pass`, compared with the shared constant-time `tokensMatch` helper.
+- **Rate limiting**: a peek-only/consume-on-success limiter — a global per-UTC-day cap (`KANBAN_ASK_DAILY_CAP`, default 50) and a per-IP hourly cap (`KANBAN_ASK_PER_IP_PER_HOUR`, default 3); over either, `429` with `retry_after_ms` and a `Retry-After` header. Only a fully successful answer spends the budget. Wrong-password attempts get their own fixed 60-second per-IP counter (`KANBAN_AUTH_RATE_LIMIT_PER_MIN`, default 10): the first 10 in a window return the generic `401 invalid_pass`, and every attempt after that is throttled with `429 too_many_attempts` plus `retry_after_ms`/`Retry-After` — they never reach OpenRouter, so a guessing burst cannot spend quota. A successful answer carries `fallback: true` when the live board snapshot cannot be read; the answer is then built from the static knowledge pack alone.
+- **Upstream error mapping**: success → `200 { answer, model }`; empty/missing completion, a network error, or a non-2xx upstream → `502 gateway_error`; an abort/timeout → `503 timeout`. The raw upstream error body, the API key, and the password are never returned or logged.
+- **Configuration keys** (documented in `docs/CONFIGURATION.md` and `.env.example`): `KANBAN_ASK_OPENROUTER_API_KEY`, `KANBAN_ASK_PASSWORD`, `KANBAN_ASK_MODEL` (default `openai/gpt-oss-20b`), `KANBAN_ASK_DAILY_CAP` (50), `KANBAN_ASK_PER_IP_PER_HOUR` (3), `KANBAN_ASK_TIMEOUT_MS` (45000), `KANBAN_ASK_MAX_PROMPT_TOKENS` (2000), `KANBAN_ASK_MAX_OUTPUT_TOKENS` (600).
+
+### Tests
+- **`server/test/kanban.ask.test.js`** (new): 21 cases covering the feature gate, the password gate, question validation, the happy path (asserting the configured model and a system guardrail message reach OpenRouter), upstream failure mapping, the per-IP/daily limits, the wrong-password backoff, and that no secret ever reaches a response body — all with an injected `fetch`, `env`, and store (no network).
+
 ## [3.3.0] — 2026-10-11
 
 Per-token project name isolation and discovery restriction on shared multi-client boards (§2.11). On multi-tenant deployments configured with `KANBAN_PROJECT_TOKENS`, client-specific tokens are now strictly isolated to their mapped project(s) across project listing, health probes, and task feeds.
