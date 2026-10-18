@@ -817,7 +817,7 @@ node scripts/gen-config-reference.mjs`,
       'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token.',
     snippet: {
       label: 'the ask surface',
-      code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "model": "..." }
+      code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "provider": "ollama", "model": "..." }
 
 POST /api/ask
   x-ask-pass: <password>
@@ -871,12 +871,15 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_REAP_ENABLED', purpose: 'Set falsy to disable the background lease reaper.' },
   { name: 'KANBAN_STORAGE_BACKEND', purpose: 'Persistence backend: "json" (default) or "git" (one YAML card per task).' },
   { name: 'KANBAN_DATA_DIR', purpose: 'Directory for named-project data, archives and settings.' },
+  { name: 'KANBAN_ASK_PROVIDER', purpose: 'LLM provider for Ask-the-Board: "openrouter" or "ollama" (auto-detected if unset).' },
   { name: 'KANBAN_ASK_OPENROUTER_API_KEY', purpose: 'Secret OpenRouter key that turns Ask-the-Board on.' },
+  { name: 'KANBAN_ASK_OLLAMA_HOST', purpose: 'Base URL for Ollama instance (default http://localhost:11434).' },
+  { name: 'KANBAN_ASK_OLLAMA_AUTH_HEADER', purpose: 'Optional secret token for Ollama / reverse-proxy gateway.' },
   { name: 'KANBAN_ASK_PASSWORD', purpose: 'Secret shared password gate for POST /api/ask.' },
-  { name: 'KANBAN_ASK_MODEL', purpose: 'OpenRouter model id for Ask-the-Board (default openai/gpt-oss-20b).' },
+  { name: 'KANBAN_ASK_MODEL', purpose: 'Model id for Ask-the-Board (default openai/gpt-oss-20b for OpenRouter, qwen3.6:latest for Ollama).' },
   { name: 'KANBAN_ASK_DAILY_CAP', purpose: 'Global Ask-the-Board answers cap per UTC day (default 50).' },
   { name: 'KANBAN_ASK_PER_IP_PER_HOUR', purpose: 'Per-IP Ask-the-Board answers cap per hour (default 3).' },
-  { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'OpenRouter request timeout for Ask-the-Board, in ms (default 45000).' },
+  { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'Upstream request timeout for Ask-the-Board, in ms (default 45000).' },
   { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for Ask-the-Board (default 6000).' },
   { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 1500).' },
 ]
@@ -886,7 +889,7 @@ export const ENV_VARS: EnvVar[] = [
 // ---------------------------------------------------------------------------
 
 export const ASK_UNCONFIGURED_NOTE =
-  'Ask-the-Board is off on this deployment. An operator switches it on by setting KANBAN_ASK_OPENROUTER_API_KEY and KANBAN_ASK_PASSWORD on the server.'
+  'Ask-the-Board is off on this deployment. An operator switches it on by setting KANBAN_ASK_PASSWORD along with either KANBAN_ASK_OPENROUTER_API_KEY or KANBAN_ASK_PROVIDER=ollama.'
 
 export const ASK_SCOPE_NOTE =
   'The assistant is instructed to stay on this board — its protocol, engine, client, deployment, configuration and source. Answers are read-only; it can never claim, move or delete a card.'
