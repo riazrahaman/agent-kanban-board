@@ -16,6 +16,14 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.7.2] — 2026-10-18
+
+### Changed
+- **Fixed-height scrollable answer window for Ask-the-Board**:
+  Wrapped the Ask answer container in `About.tsx` with a fixed maximum height (`max-h-[24rem] overflow-y-auto overscroll-contain`) and hairline border styling so multi-project synthesis outputs remain easily navigable without excessively expanding the page layout.
+- **Uncapped output tokens for local Ollama models**:
+  Removed default `max_tokens` limitation when querying local Ollama instances (`reqBody.max_tokens` is omitted unless explicitly overridden by `KANBAN_ASK_MAX_OUTPUT_TOKENS`). This prevents reasoning/thinking models (such as `qwen3.6`) from terminating prematurely with `finish_reason: "length"` during their internal chain-of-thought generation.
+
 ## [3.7.1] — 2026-10-18
 
 ### Documentation & Reference Sync

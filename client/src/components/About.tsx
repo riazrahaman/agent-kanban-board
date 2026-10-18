@@ -675,7 +675,12 @@ function AskCard() {
                 </span>
               )}
             </div>
-            <p className="mt-2.5 whitespace-pre-wrap text-[16.5px] leading-relaxed text-ink">{answer}</p>
+            <div
+              className="mt-2.5 overflow-auto overscroll-contain pr-2 border border-line/40 bg-bg/50 p-3.5"
+              style={{ maxHeight: '24rem' }}
+            >
+              <p className="whitespace-pre-wrap text-[16.5px] leading-relaxed text-ink">{answer}</p>
+            </div>
           </div>
         )}
 

@@ -437,19 +437,29 @@ export function createAskRouter(deps = {}) {
 
     const providerLabel = isOllama ? 'Ollama' : 'OpenRouter';
 
+    const reqBody = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: question },
+      ],
+      temperature: 0.2,
+    };
+    // For OpenRouter: clamp output tokens to prevent runaway credit spend.
+    // For Ollama (local): do not impose a token limit unless explicitly set
+    // in KANBAN_ASK_MAX_OUTPUT_TOKENS, so thinking/reasoning models (qwen3.6)
+    // are not truncated during their thought chain.
+    if (!isOllama) {
+      reqBody.max_tokens = maxOutputTokens;
+    } else if (isNonEmpty(env.KANBAN_ASK_MAX_OUTPUT_TOKENS)) {
+      reqBody.max_tokens = maxOutputTokens;
+    }
+
     try {
       upstream = await fetchImpl(targetUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: question },
-          ],
-          max_tokens: maxOutputTokens,
-          temperature: 0.2,
-        }),
+        body: JSON.stringify(reqBody),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
