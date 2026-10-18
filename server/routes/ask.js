@@ -43,7 +43,15 @@ import * as storeModule from '../store.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_REFERER = 'https://agent-kanban.riazrahaman.com';
-const OPENROUTER_TITLE = 'Agent Kanban Board — Ask';
+// ASCII ONLY. An HTTP header value is a ByteString: every character must fit
+// in one byte. This constant previously used an em dash (U+2014), which made
+// `fetch` throw `TypeError: Cannot convert argument to a ByteString ...` before
+// a single packet left the process — so Ask-the-Board failed on every request
+// from v3.4.0 until v3.6.3, while the deploy logs showed no outbound
+// connection at all. The project's prose style uses em dashes freely; headers
+// are the one place they cannot go. Guarded by a test that runs the real
+// `Headers` validator over the request this route actually builds.
+const OPENROUTER_TITLE = 'Agent Kanban Board - Ask';
 const DEFAULT_MODEL = 'openai/gpt-oss-20b';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;

@@ -24,6 +24,7 @@ function fakeLogger() {
 const FAKE_KEY = 'sk-or-v1-test-key-DO-NOT-LEAK';
 const FAKE_PASSWORD = 'test-password-DO-NOT-LEAK';
 const DEFAULT_MODEL = 'openai/gpt-oss-20b';
+const OPENROUTER_URL_FOR_TEST = 'https://openrouter.ai/api/v1/chat/completions';
 
 /** A fully-enabled environment; overrides patch or clear a key. */
 function baseEnv(overrides = {}) {
@@ -462,6 +463,45 @@ describe('ask: no secrets in responses', () => {
 // other — and from a working feature — in the deploy log. The client maps both
 // 502 and 503 to one message, so the UI cannot tell them apart either.
 // ---------------------------------------------------------------------------
+
+describe('ask: the outgoing request must actually be sendable', () => {
+  // THE GAP THAT LET THE BUG SHIP. Every other test here injects a fake
+  // `fetch`, which happily accepts any object as `headers` — so a header value
+  // that the real platform rejects sails through all of them. Ask-the-Board
+  // was broken in production from v3.4.0 to v3.6.3 by an em dash in X-Title,
+  // with 600+ passing tests, because nothing ever ran the real validator.
+  //
+  // These assertions take the headers the route ACTUALLY built (recorded by
+  // the fake fetch) and push them through the platform's own `Headers` and
+  // `Request` constructors, which perform the ByteString check without any
+  // network access.
+  it('builds headers the platform will accept (no character above 255)', async () => {
+    const fetchImpl = makeFetch(() => fakeResponse(200, okAnswerBody()));
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 200);
+    });
+    const { opts } = fetchImpl.calls[0];
+
+    for (const [name, value] of Object.entries(opts.headers)) {
+      const offending = [...String(value)].findIndex((ch) => ch.codePointAt(0) > 255);
+      assert.equal(
+        offending,
+        -1,
+        `header ${name} carries a non-ByteString character at index ${offending}: ` +
+          `${JSON.stringify([...String(value)][offending] ?? '')} — an em dash or smart quote ` +
+          'here makes fetch throw before the request is sent',
+      );
+    }
+
+    // The real validator, not our own loop: this is what actually threw.
+    assert.doesNotThrow(() => new Headers(opts.headers), 'Headers must accept what the route built');
+    assert.doesNotThrow(
+      () => new Request(OPENROUTER_URL_FOR_TEST, { method: 'POST', headers: opts.headers, body: opts.body }),
+      'the whole request must be constructible',
+    );
+  });
+});
 
 describe('ask: upstream failure diagnostics', () => {
   it('maps each upstream status to an operator-actionable hint', () => {
