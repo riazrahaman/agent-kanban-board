@@ -161,9 +161,17 @@ test('About facts match the code: stack versions, lease TTL, claim curl scoping'
   assert.match(stack, /Express 5/)
   assert.match(stack, /Tailwind v4/)
   assert.doesNotMatch(stack, /React 18|Express 4/)
-  assert.match(aboutSource, /10 min \(claim\)/, 'KANBAN_CLAIM_TTL_MS defaults to 600000 (10 min) since v2.3.11')
+  assert.match(
+    content.ENV_VARS.map((v) => v.purpose).join('\n'),
+    /10 min/,
+    'KANBAN_CLAIM_TTL_MS defaults to 600000 (10 min) since v2.3.11 — chapter 9 config table',
+  )
   assert.match(content.CLAIM_CURL, /next-claim\?project=\$PROJECT&agent_id=/, 'every task path carries ?project=')
-  assert.match(aboutSource, /\{CLAIM_CURL\}/, 'the sidebar quick-copy renders the shared snippet')
+  assert.match(
+    aboutSource,
+    /\{CURL_SNIPPET\}/,
+    'chapter 3 renders the shared headless snippet, which embeds CLAIM_CURL',
+  )
   assert.match(CURL_SNIPPET, /expected_version/, 'every PATCH carries the current version')
   assert.equal(TRUST_METRICS.find((m) => m.label === 'ADRs')?.value, String(readdirSync(join(CLIENT_SRC, '..', '..', 'docs', 'decisions')).filter((f) => /^ADR-\d+/.test(f)).length))
 })
@@ -351,6 +359,37 @@ test('About.tsx adds the architecture section without dropping existing sections
   ]) {
     assert.match(aboutSource, new RegExp(section), `existing section ${section} must be preserved`)
   }
+
+  // CHANGE 1 — the right rail ("Quick Links" / "Trust Metrics" / "Site Traffic")
+  // is removed. The visit counter and the download/demo CTAs already live on in
+  // the masthead, the closing section and the reference, and TRUST_METRICS is
+  // now rendered once as a compact mono line.
+  assert.doesNotMatch(aboutSource, /xl:block 2xl:w-72/, 'the right rail must be removed')
+  assert.doesNotMatch(aboutSource, /Quick Links/, 'the rail Quick Links card must be removed')
+  assert.doesNotMatch(aboutSource, /Site Traffic/, 'the rail Site Traffic card must be removed')
+  assert.match(aboutSource, /TRUST_METRICS\.map/, 'TRUST_METRICS must still be rendered')
+  assert.match(
+    aboutSource,
+    /\.join\(' · '\)/,
+    'the trust metrics must render as one compact `value label · …` line',
+  )
+
+  // CHANGE 2 — a real architecture chapter with an inline hand-authored SVG.
+  const arch = content.CHAPTERS.find((c) => c.id === 'architecture')
+  assert.ok(arch, 'the article must gain an architecture chapter')
+  assert.match(arch.title, /Architecture/)
+  assert.ok(arch.files.includes('server/server.js'), 'the architecture chapter must cite server.js')
+  assert.match(
+    aboutSource,
+    /chapter\.id === 'architecture'/,
+    'About.tsx must render the architecture chapter body',
+  )
+  assert.match(aboutSource, /<svg\b/, 'the architecture chapter must render an inline SVG')
+  assert.match(aboutSource, /role="img"/, 'the SVG must expose role="img"')
+  assert.match(aboutSource, /preserveAspectRatio/, 'the SVG must set preserveAspectRatio')
+  assert.match(aboutSource, /<title>/, 'the SVG must carry an accessible title')
+  assert.match(aboutSource, /ARCH_DIAGRAM\b/, 'the diagram title/description must be data-driven')
+  assert.doesNotMatch(aboutSource, /<foreignObject/, 'the diagram must not use <foreignObject>')
 })
 
 // Banned tokens are assembled from fragments on purpose: this test file itself

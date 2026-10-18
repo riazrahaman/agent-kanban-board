@@ -20,9 +20,18 @@
  */
 
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('./package.json');
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const sourceCache = new Map();
+// This module's own repo path. Its content is not scanned for keyword matches
+// because it embeds the guardrail/protocol prose (see rankSourceFiles).
+const SELF_PATH = 'server/askKnowledge.js';
 
 /** Public repository the guardrail points at for source-code questions. */
 export const ASK_REPO_URL = 'https://github.com/riazrahaman/agent-kanban-board';
@@ -153,6 +162,160 @@ export function buildFileMapText(fileMap = FILE_MAP) {
   return fileMap.map((f) => `- ${f.path} — ${f.note}`).join('\n');
 }
 
+/** Full text of a repo file (cached by abs path + mtime); null on error. */
+export function readSourceFile(relPath) {
+  try {
+    const abs = path.join(REPO_ROOT, relPath);
+    const stat = fs.statSync(abs);
+    const cached = sourceCache.get(abs);
+    if (cached && cached.mtimeMs === stat.mtimeMs) return cached.text;
+    const text = fs.readFileSync(abs, 'utf8');
+    sourceCache.set(abs, { text, mtimeMs: stat.mtimeMs });
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads one repo file (relative to the repo root) and returns the first
+ * `maxChars` characters. Cached by absolute path + mtime. Returns null on any
+ * error (missing file, unreadable) so callers degrade gracefully.
+ */
+export function readSourceExcerpt(relPath, maxChars = 6000) {
+  const text = readSourceFile(relPath);
+  return text === null ? null : text.slice(0, maxChars);
+}
+
+/**
+ * Common English words that must never count as a keyword match: without this,
+ * an off-topic question matches almost every file-map note on the word "the"
+ * and retrieves irrelevant source. Purely a filter on the question tokens;
+ * domain words (claim, lease, reaper, git, sse, ...) are kept.
+ *
+ * Keep this comment free of ordinary off-topic nouns: rankSourceFiles() scans
+ * file *contents*, so spelling an example out here would make this file match
+ * the very questions the stopwords exist to reject.
+ */
+const QUESTION_STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'was', 'were', 'been', 'being', 'does', 'did',
+  'has', 'have', 'had', 'how', 'what', 'why', 'when', 'where', 'which', 'who',
+  'whom', 'this', 'that', 'these', 'those', 'its', 'you', 'your', 'our', 'their',
+  'can', 'could', 'would', 'should', 'may', 'might', 'will', 'shall', 'about',
+  'over', 'under', 'then', 'than', 'such', 'not', 'with', 'from', 'into', 'but',
+  'any', 'all', 'some', 'each', 'more', 'most', 'other', 'only', 'also', 'just',
+]);
+
+/** Splits a question into lowercase keyword tokens (>= 3 chars, stopwords removed). */
+function questionTokens(question) {
+  return String(question || '')
+    .toLowerCase()
+    .split(/[^a-z0-9_.-]+/)
+    .filter((t) => t.length >= 3 && !QUESTION_STOPWORDS.has(t));
+}
+
+/**
+ * Folds British/American -ise/-ize (and -isation/-ization) spelling so a question
+ * that says "serialise" still matches source that says "serialize". Symmetric
+ * (z -> s), so it only ever makes two spellings compare equal, never apart.
+ */
+function foldSpelling(text) {
+  return String(text).toLowerCase().replace(/z/g, 's');
+}
+
+/**
+ * Scores FILE_MAP entries against a question using (a) path/note metadata and
+ * (b) a cached content scan. Content hits are strong evidence, so a precise
+ * symbol name (e.g. renewAllLeasesInner) finds its file even when the map note
+ * never mentions it. Pure-ish (only reads the cached file text); never throws.
+ */
+export function rankSourceFiles(question, { maxFiles = 3 } = {}) {
+  const tokens = questionTokens(question);
+  if (tokens.length === 0) return [];
+  const scored = FILE_MAP.map((f) => {
+    const hay = `${f.path} ${f.note}`.toLowerCase();
+    const segments = f.path.toLowerCase().split(/[\/.]/);
+    let score = 0;
+    for (const t of tokens) {
+      if (hay.includes(t)) score += 1;
+      if (segments.includes(t)) score += 2;
+    }
+    // Skip the content scan for this module: it embeds the guardrail and
+    // protocol prose (e.g. "world facts", "unrelated"), which would otherwise
+    // self-match almost any question. It stays rankable via metadata only.
+    const text = f.path === SELF_PATH ? null : readSourceFile(f.path);
+    if (text) {
+      const lc = foldSpelling(text);
+      for (const t of tokens) {
+        if (t.length >= 5 && lc.includes(foldSpelling(t))) score += 3;
+      }
+    }
+    return { ...f, score };
+  }).filter((f) => f.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, maxFiles);
+}
+
+/**
+ * Returns the most relevant slice of a file for a question: a sliding window of
+ * `windowLines` lines with the highest density of question keywords, capped at
+ * `maxChars`. Falls back to the head of the file when there are no keyword hits.
+ */
+export function excerptWindow(text, question, { maxChars = 12000, windowLines = 120 } = {}) {
+  if (typeof text !== 'string' || text.length === 0) return '';
+  const tokens = questionTokens(question);
+  const lines = text.split('\n');
+  if (tokens.length === 0 || lines.length <= windowLines) return text.slice(0, maxChars);
+  const scores = lines.map((l) => {
+    const lc = foldSpelling(l);
+    let s = 0;
+    for (const t of tokens) if (lc.includes(foldSpelling(t))) s += 1;
+    return s;
+  });
+  let bestStart = 0;
+  let bestScore = -1;
+  let running = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    running += scores[i];
+    if (i >= windowLines) running -= scores[i - windowLines];
+    if (i >= windowLines - 1) {
+      const start = i - windowLines + 1;
+      if (running > bestScore) { bestScore = running; bestStart = start; }
+    }
+  }
+  if (bestScore <= 0) return text.slice(0, maxChars);
+  const header = `... (lines ${bestStart + 1}-${Math.min(bestStart + windowLines, lines.length)}) ...\n`;
+  return (header + lines.slice(bestStart, bestStart + windowLines).join('\n')).slice(0, maxChars);
+}
+
+/**
+ * Selects the most relevant source files for a question and returns their
+ * verbatim excerpts. Returns `{ files: string[], text: string }`; `text` is ''
+ * when nothing matched or nothing could be read.
+ *
+ * `maxCharsPerFile` defaults to 12000 (not 6000): the flagship files are large
+ * (server/store.js is ~143k chars, with `reapExpiredClaims` at ~92k and
+ * `renewAllLeasesInner` at ~62k), so a head-only excerpt would return only
+ * imports and would not answer implementation questions. `excerptWindow` instead
+ * centres the excerpt on where the question's keywords actually occur.
+ */
+export function gatherSourceContext(question, { maxFiles = 3, maxCharsPerFile = 12000, maxTotalChars = 20000 } = {}) {
+  const picked = rankSourceFiles(question, { maxFiles });
+  const parts = [];
+  let total = 0;
+  for (const f of picked) {
+    const full = readSourceFile(f.path);
+    if (!full) continue;
+    const body = excerptWindow(full, question, { maxChars: maxCharsPerFile });
+    if (!body) continue;
+    const block = `--- ${f.path} (excerpt) ---\n${body}`;
+    if (total + block.length > maxTotalChars) break;
+    parts.push(block);
+    total += block.length;
+  }
+  return { files: parts.length ? picked.map((f) => f.path) : [], text: parts.join('\n\n') };
+}
+
 /** Coarse prompt-token estimate (chars / 4). Exact counting is not required here. */
 export function estimateTokens(text) {
   if (typeof text !== 'string' || text.length === 0) return 0;
@@ -247,22 +410,30 @@ Rules:
 - Never invent endpoints, env vars, statuses, or file paths. If unsure, say so.
 - Never claim, patch, move, or delete a card, and never ask for or reveal a token.
 - Prefer the LIVE BOARD SNAPSHOT for current figures; use the protocol summary for
-  how things work. Be concise and concrete.`;
+  how things work. Be concise and concrete.
+
+Verbatim source excerpts may be provided; answer code questions precisely from them
+and never invent functions, endpoints, or files that are absent from the excerpts or
+the file map.`;
 
 /**
  * Builds the full system prompt: guardrail + protocol pack + file map + snapshot.
  *
  * @param {object} [opts]
  * @param {object} [opts.snapshot] - from gatherSnapshot(); omitted -> "unavailable".
+ * @param {object} [opts.retrieved] - from gatherSourceContext(); verbatim source excerpts.
  * @param {number} [opts.maxTokens] - soft budget; long sections are trimmed to fit.
  */
-export function buildSystemPrompt({ snapshot, maxTokens = 2000 } = {}) {
+export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}) {
   const header = `You are the "Ask the Board" assistant for the Agent Kanban Board (v${APP_VERSION}).`;
   const snapshotText = formatSnapshot(snapshot);
   const fileMapText = `SOURCE-CODE FILE MAP (public repo: ${ASK_REPO_URL})\n${buildFileMapText()}`;
+  const retrievedText = retrieved && retrieved.text
+    ? `RELEVANT SOURCE-CODE EXCERPTS (verbatim from the repository)\n${retrieved.text}`
+    : 'RELEVANT SOURCE-CODE EXCERPTS: none selected for this question — answer from the protocol summary and file map, and say so if you are unsure.';
 
   // Assemble longest-first, trimming the protocol pack if we blow the budget.
-  const fixed = [header, GUARDRAIL_INSTRUCTION, snapshotText, fileMapText].join('\n\n');
+  const fixed = [header, GUARDRAIL_INSTRUCTION, snapshotText, fileMapText, retrievedText].join('\n\n');
   const fixedTokens = estimateTokens(fixed);
   let protocol = PROTOCOL_KNOWLEDGE;
   const budgetForProtocol = Math.max(200, maxTokens - fixedTokens);
@@ -271,5 +442,5 @@ export function buildSystemPrompt({ snapshot, maxTokens = 2000 } = {}) {
     protocol = `${protocol.slice(0, maxChars)}\n[protocol summary trimmed to fit the prompt budget]`;
   }
 
-  return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, snapshotText].join('\n\n');
+  return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, retrievedText, snapshotText].join('\n\n');
 }

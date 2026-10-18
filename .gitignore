@@ -5,6 +5,11 @@ dist/
 .DS_Store
 *.log
 tasks.json
+
+# Local board state. KANBAN_DATA_DIR defaults to an in-repo server/data
+# (ADR-001), so running the server or the tests here writes real per-project
+# task files next to the source. They are runtime data, never source.
+server/data/
 .env
 .env.*
 !.env.example

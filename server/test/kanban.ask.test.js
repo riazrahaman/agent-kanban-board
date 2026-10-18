@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
-import { ASK_REPO_URL } from '../askKnowledge.js';
+import { ASK_REPO_URL, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow } from '../askKnowledge.js';
 
 const FAKE_KEY = 'sk-or-v1-test-key-DO-NOT-LEAK';
 const FAKE_PASSWORD = 'test-password-DO-NOT-LEAK';
@@ -204,6 +204,59 @@ describe('ask: question validation', () => {
   });
 });
 
+describe('ask: source-code retrieval', () => {
+  it('rankSourceFiles finds server/store.js for the reaper question', () => {
+    const files = rankSourceFiles('how does the reaper reclaim a stalled card').map((f) => f.path);
+    assert.ok(files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(files)}`);
+  });
+
+  it('gatherSourceContext returns verbatim excerpts with real store symbols', () => {
+    const ctx = gatherSourceContext('how does the reaper reclaim a stalled card');
+    assert.ok(ctx.files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(ctx.files)}`);
+    // The window must reach the reaper body (~92k into server/store.js), not just the head.
+    assert.match(ctx.text, /reapExpiredClaims/);
+  });
+
+  it('rankSourceFiles finds a file by a precise symbol name absent from the map note', () => {
+    const files = rankSourceFiles('what does renewAllLeasesInner do').map((f) => f.path);
+    assert.ok(files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(files)}`);
+  });
+
+  it('gatherSourceContext reaches a symbol found only in file contents', () => {
+    const ctx = gatherSourceContext('what does renewAllLeasesInner do');
+    assert.ok(ctx.files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(ctx.files)}`);
+    assert.match(ctx.text, /renewAllLeasesInner/);
+  });
+
+  it('gatherSourceContext window reaches the concurrency lock for a mutex question', () => {
+    const ctx = gatherSourceContext('how does the mutex serialise writes');
+    assert.ok(ctx.files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(ctx.files)}`);
+    assert.match(ctx.text, /withMutationLock/);
+  });
+
+  it('an off-topic question selects nothing', () => {
+    const ctx = gatherSourceContext('what is the weather tomorrow');
+    assert.equal(ctx.text, '');
+    assert.deepEqual(rankSourceFiles('what is the weather tomorrow'), []);
+  });
+
+  it('excerptWindow falls back to the file head when the question has no keyword hits', () => {
+    assert.equal(excerptWindow('line1\nline2', 'weather'), 'line1\nline2');
+  });
+
+  it('readSourceFile returns the full text (store.js) and null for a missing file', () => {
+    const text = readSourceFile('server/store.js');
+    assert.equal(typeof text, 'string');
+    assert.ok(text.length > 1000, `expected a long string, got ${text && text.length}`);
+    assert.match(text, /withMutationLock/);
+    assert.equal(readSourceFile('nope-xyz.js'), null);
+  });
+
+  it('readSourceExcerpt returns null for a missing file', () => {
+    assert.equal(readSourceExcerpt('server/does-not-exist-xyz.js'), null);
+  });
+});
+
 describe('ask: happy path', () => {
   it('returns 200 { answer, model } and sends the model plus a system guardrail message', async () => {
     const fetchImpl = makeFetch();
@@ -223,6 +276,9 @@ describe('ask: happy path', () => {
       // The guardrail + repo pointer are actually present in the system prompt.
       assert.match(sent.messages[0].content, /SCOPE/);
       assert.match(sent.messages[0].content, new RegExp(ASK_REPO_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      // The retrieved source excerpts are injected verbatim for code questions.
+      assert.match(sent.messages[0].content, /SOURCE-CODE EXCERPTS/);
+      assert.match(sent.messages[0].content, /store\.js \(excerpt\)/);
       // The Authorization header carries the key — but only upstream, never back.
       assert.equal(fetchImpl.calls[0].opts.headers.Authorization, `Bearer ${FAKE_KEY}`);
     });

@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.4.0
+**System:** Agent Kanban Board v3.5.0
 
 ---
 
@@ -147,6 +147,41 @@ When the lease reaper returns a task to `READY` (an idle lease expired, a held t
 | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated (300-char) task description. `false` omits it. |
 | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between alerts; the send queue is serialized so a multi-task sweep cannot trip Telegram's rate limit. |
 | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL for the alert's deep link. |
+
+### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console)
+
+The About page opens with a password-gated, **read-only** assistant that answers
+questions about this board — its protocol, engine, client, deployment and
+configuration. The question is tokenised, the most relevant repository files are
+ranked, and a window around the match is folded into the system prompt
+(`server/askKnowledge.js`) alongside a live read-only board snapshot, so it can
+explain the code and not only the documented protocol.
+
+It never reads or writes a card, never accepts a board token, and never sees
+one. `server/routes/ask.js` is mounted ahead of the auth middleware (like bug
+reports) and carries its own gate and its own limits. **Fail-closed on both
+secrets:** unset either and `GET /api/ask/config` reports `{"enabled":false}`,
+the console collapses to a one-line note, and `POST /api/ask` is unavailable.
+
+| Variable | Default | Description |
+|---|---|---|
+| `KANBAN_ASK_OPENROUTER_API_KEY` | *(unset)* | Upstream OpenRouter key. Required to enable the feature. Never returned or logged. |
+| `KANBAN_ASK_PASSWORD` | *(unset)* | Shared gate on `POST /api/ask`, sent by the console as the `x-ask-pass` header. Required to enable the feature. |
+| `KANBAN_ASK_MODEL` | `openai/gpt-oss-20b` | OpenRouter model id. |
+| `KANBAN_ASK_DAILY_CAP` | `50` | Global answers per UTC day. |
+| `KANBAN_ASK_PER_IP_PER_HOUR` | `3` | Per-IP answers per hour. |
+| `KANBAN_ASK_TIMEOUT_MS` | `45000` | Upstream request timeout. |
+| `KANBAN_ASK_MAX_PROMPT_TOKENS` | `6000` | Prompt budget. Raised from 2000 in v3.5.0, since the prompt now carries retrieved source. |
+| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | `600` | Answer budget. |
+
+A wrong password is counted separately from the answer caps, so brute-forcing
+the gate cannot exhaust the day's budget. Verify a deployment with `curl
+<board-url>/api/ask/config`; the first genuine end-to-end check is asking one
+real question from the page.
+
+> The topic limit is a **prompt instruction, not a hard fence**. The assistant
+> is told to stay on this board, but it is the same model answering, so an
+> off-topic reply is expected behaviour, not a security bug.
 
 **Setting up a bot (once):**
 

@@ -373,6 +373,167 @@ body {
   background-color: var(--scroll-thumb-hover);
 }
 
+/* Field Guide Nº 02 (About rebuild): a subtle 28px drafting grid behind the
+   About view only. Scoped to `.about-view`, which About.tsx sets on its own
+   scroll container, so the board and portfolio are untouched. Built from the
+   shared `--color-line` token — no fork of the palette — and softened in dark
+   mode with `color-mix` so the grid stays a hint rather than a cage. */
+.about-view {
+  background-image: linear-gradient(var(--color-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
+  background-size: 28px 28px;
+
+  /* Editorial reading setting, matched to the field guides this page is
+     benchmarked against (token-tv / stack-field-guide `guide.css`): IBM Plex
+     Sans at a 16.5px base on a 1.6 rhythm. Scoped here, so the board, the
+     portfolio and every dialog keep the DESIGN.md §9 system stack. The 700
+     weight is what carries the hero and the chapter heads — Instrument Serif
+     has no bold face, which is why it is used only for italic accents. */
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Helvetica,
+    Arial, sans-serif;
+  font-size: 16.5px;
+  line-height: 1.6;
+
+  /* Live height of the sticky chapter bar, re-measured by About.tsx (see the
+     ResizeObserver there) so a jump target always clears it whether the bar is
+     one scrolling row (phones) or a wrapped block (desktop). Ported from
+     stack-field-guide #5, which fixed headings landing underneath the bar. */
+  --toc-h: 56px;
+}
+
+/* Every in-page anchor inside the guide clears the sticky bar. Deliberately
+   scoped to `.about-view` rather than a bare `[id]` so no other view's
+   scroll-into-view behaviour changes. */
+.about-view [id] {
+  scroll-margin-top: calc(var(--toc-h) + 12px);
+}
+
+/* Inline code inside an inverted panel must be a tint of the PANEL, not the
+   page: with the page token it renders as a dark strip in dark mode and a pale
+   strip in light mode, which is unreadable either way (stack-field-guide #23). */
+.about-code code {
+  background-color: color-mix(in srgb, currentColor 14%, transparent);
+  border-color: color-mix(in srgb, currentColor 28%, transparent);
+  color: inherit;
+}
+
+/* Emoji have no bold face, so a bold heading makes Safari smear them and clip
+   the last glyph. Give them the real weight and a full advance instead
+   (stack-field-guide #19). */
+.about-view .emo {
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
+  font-synthesis: none;
+}
+
+.dark .about-view {
+  background-image: linear-gradient(
+      color-mix(in srgb, var(--color-line) 55%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-line) 55%, transparent) 1px,
+      transparent 1px
+    );
+}
+
+/* The sticky chapter bar. OPAQUE on purpose: a sticky bar that combines
+   `position: sticky` with backdrop-filter / a translucent background can fail
+   to composite in Safari and vanish mid-scroll (token-tv guide.css #6), so it
+   repaints the page background and its own grid instead of blurring what is
+   behind it. */
+.about-toc {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--color-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Phone layout only: the DOCUMENT scrolls and `.app-header` is sticky at the
+   top of it, so the chapter bar has to stick BELOW the app header instead of
+   at viewport 0, or it slides underneath it. Elsewhere the `.about-view` div
+   is its own scroller and `top: 0` is already correct. */
+@media (max-width: 47.99rem) and (pointer: coarse) {
+  .about-toc {
+    top: max(var(--app-header-h, 0px), env(safe-area-inset-top, 0px));
+  }
+
+  /* Both the app header and the chapter bar are above a jump target here, so
+     the anchor has to clear BOTH. With only --toc-h the heading lands under
+     the app header — the very bug this scroll margin exists to prevent, on
+     the layout where it is hardest to recover from. */
+  .about-view [id] {
+    scroll-margin-top: calc(
+      max(var(--app-header-h, 0px), env(safe-area-inset-top, 0px)) + var(--toc-h) + 12px
+    );
+  }
+}
+
+/* Below the rail breakpoint the pills are ONE horizontally scrolling row with
+   a faded right edge, rather than a block that wraps to three rows and eats
+   the fold (token-tv guide.css, ≤900px). `.at-end` is set by About.tsx once
+   the row is scrolled out. */
+.about-toc-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.about-toc-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.about-toc-strip.at-end {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* The rail is off by default and switched on by the wide-screen query below.
+   This default MUST stay above that query: both rules have the same
+   specificity, so a later `display: none` would win at every width and the
+   rail would never appear at all. */
+.about-rail {
+  display: none;
+}
+
+@media (min-width: 80rem) {
+  /* Wide screens: the chapter list moves into the left gutter that was
+     otherwise empty paper, and the horizontal bar steps aside, so the reading
+     column keeps the full width (stack-field-guide #35). Unlike that page's
+     `position: fixed` rail, this one is sticky inside the scroller — a fixed
+     one would ride over the app header, which the field guides do not have. */
+  .about-toc {
+    display: none;
+  }
+
+  .about-rail {
+    display: block;
+  }
+}
+
+/* "Dark code block" panels for the field-guide chapters — built from the two
+   base tokens so there is no extra palette. In light mode it is the classic
+   inverted terminal (`--ink` paper with `--bg` text); in dark mode the paper is
+   lifted just above the page with `color-mix`, so it stays dark rather than
+   flipping to a glaring white slab. */
+.about-code {
+  background-color: var(--color-ink);
+  color: var(--color-bg);
+}
+
+.dark .about-code {
+  background-color: color-mix(in srgb, var(--color-ink) 8%, var(--color-bg));
+  color: var(--color-ink);
+}
+
 /* Crisp document scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

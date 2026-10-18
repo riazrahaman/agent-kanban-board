@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,101 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.5.0] — 2026-10-18
+
+Everything below is relative to the shipped `v3.4.0`, which contained the
+Ask-the-Board **backend** and its password gate. This release adds the client
+half, gives the endpoint real source retrieval, and rebuilds the About page
+around it as Field Guide Nº 02.
+
+### Added
+- **Ask-the-Board, the console.** `client/src/lib/ask.ts` plus the card in
+  `About.tsx`: `GET /api/ask/config` decides whether the feature renders at
+  all, the question goes to `POST /api/ask` behind the `x-ask-pass` header, and
+  the shared password is remembered in `localStorage` (`kanban.askPass`) and
+  never put in a query string. 401 / 429 / 502-503 each map to their own
+  message instead of a generic failure.
+- **The endpoint now answers from the source, not just the protocol pack.**
+  `askKnowledge.js` gains `readSourceFile`, `readSourceExcerpt`,
+  `rankSourceFiles`, `excerptWindow` and `gatherSourceContext`: the question is
+  tokenised (with common English words filtered out, so an off-topic question
+  no longer matches every file on "the"), the best few repo files are ranked,
+  and a window around the match is folded into the system prompt alongside the
+  live read-only snapshot. Excerpts are cached by path + mtime and degrade to
+  null on any read error.
+- **About is rebuilt as a twelve-chapter field guide**, each chapter carrying an
+  ELI5 line, an under-the-hood paragraph, a real labelled snippet from the file
+  it names, a gotcha, and the files themselves — with an inline SVG of the
+  six-tier architecture and request flow, and an environment table checked
+  against `docs/CONFIGURATION.md` by test.
+- A floating **↑ Top** control once the hero is well out of view, clearing the
+  phone layout's floating-toolbar safe area.
+
+### Changed
+- `KANBAN_ASK_MAX_PROMPT_TOKENS` defaults to **6000**, up from 2000, since the
+  prompt now carries retrieved source. Changed in `routes/ask.js`,
+  `.env.example`, `docs/CONFIGURATION.md` and the About environment table
+  together.
+- **Ask-the-Board leads the page.** It is the guide's one interactive feature,
+  so it sits in the hero beside the headline rather than inside the eleventh of
+  twelve chapters; chapter 11 keeps the explanation and links back up to it. The
+  console leads with the question — the shared password is a compact gate beside
+  the send button rather than the first field asked for — the prompt chips are
+  short enough to stay on one row, and ⌘/Ctrl+Enter sends. On a phone the
+  console is placed directly under the lede, ahead of the specifications block.
+- **The page is set like the field guides it is modelled on.** The reading
+  column is IBM Plex Sans at a 16.5px base on a 1.6 rhythm — loaded for
+  `.about-view` only, so the board keeps the DESIGN.md §9 system stack — and the
+  hero and chapter headings are **bold sans with Instrument Serif reserved for
+  the italic accents**. Setting whole headings in the serif, which ships no bold
+  face, is what made them read light rather than authoritative. Every body size
+  below 13px was lifted off the floor. Recorded as a scoped exception in
+  DESIGN.md §9; the guide's cards and controls stay square-cornered hairline
+  surfaces, deliberately unlike the rounded cards of the reference pages.
+- **The empty margins are gone.** The reading column was capped at `max-w-3xl`
+  (768px) inside a centring wrapper, leaving two wide empty gutters. The cap now
+  lives once on the outer container, and from 1280px the chapter list moves into
+  the left gutter as a sticky rail while the horizontal bar hides itself, so the
+  gutter carries navigation instead of nothing. The repository / live-board /
+  skill links are no longer repeated in both the masthead and the hero.
+- `scripts/generate-diagram-images.js` retries with exponential backoff, so a
+  transient 503 from the renderer no longer fails a diagram refresh.
+- `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md`, `docs/FILE_BY_FILE_EXPLANATION.md`
+  and their `with-images/` mirrors re-synced to the real six-tier architecture,
+  `withMutationLock`, persist-first storage and the fan-out event bus, with
+  `docs/images/01-layered-system-architecture.svg` and two others re-rendered.
+
+### Fixed
+- The sticky chapter bar is **opaque**. It combined `position: sticky` with a
+  translucent background and `backdrop-blur`, which Safari can fail to
+  composite, making the bar disappear mid-scroll. Same fix as the reference
+  guide's `guide.css`.
+- In-page jumps land **below** the chapter bar instead of underneath it. The
+  scroll margin was a hardcoded utility that went stale whenever the bar changed
+  height; it now follows a `--toc-h` custom property that About.tsx re-measures
+  with a `ResizeObserver`. In the phone layout the app header's height is
+  counted too, since the document is the scroller there and both are pinned
+  above the text.
+- The chapter bar sticks below the app header in the phone layout rather than
+  sliding under it, and the scroll-spy follows the phone media query live, so
+  rotating to landscape — which swaps the scroller — no longer leaves the spy
+  and the Top button bound to an element that has stopped scrolling.
+- Below 1280px the chapter pills are **one horizontally scrolling row with a
+  faded right edge**, so the chapters past the fold advertise themselves instead
+  of wrapping into rows that ate the screen.
+- Scroll-spy highlights the chapter you are actually reading — the last one
+  whose top has passed a reading line under the bar — instead of whichever entry
+  the `IntersectionObserver` callback happened to list first, which flickered
+  between neighbours.
+- Inline code inside the inverted code panels is a tint of the panel rather than
+  the page, so it is no longer an unreadable dark strip in dark mode and a pale
+  one in light mode.
+- The Ask button is `bg-ink text-bg` rather than the inverted-panel token, which
+  in dark mode sat almost on the background and left the primary action looking
+  disabled.
+- Emoji in bold headings keep their real weight and full advance, so Safari
+  stops smearing them and clipping the last glyph.
 
 ## [3.4.0] — 2026-10-17
 

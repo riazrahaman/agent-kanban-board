@@ -962,7 +962,10 @@ test('Portfolio scroll container reserves bottom clearance for the floating tool
 
 test('About page responsive layout invariants', async (t) => {
   await t.test('About scroll container uses overflow-x-hidden', () => {
-    const scrollContainer = aboutSource.match(/<div className="([^"]*overflow-y-auto[^"]*)">/)?.[1]
+    // The class list is matched on its own rather than as the tag's only
+    // attribute: the container also carries a ref, so pinning the whole
+    // opening tag would break on an unrelated attribute being added.
+    const scrollContainer = aboutSource.match(/className="([^"]*overflow-y-auto[^"]*)"/)?.[1]
     assert.ok(scrollContainer, 'About.tsx must render an overflow-y-auto scroll container')
     assert.match(
       scrollContainer,
@@ -978,28 +981,32 @@ test('About page responsive layout invariants', async (t) => {
     )
   })
 
-  await t.test('About multi-column container uses justify-start and lg:justify-center', () => {
-    const flexContainer = aboutSource.match(/<div className="([^"]*justify-start[^"]*)">/)?.[1]
-    assert.ok(flexContainer, 'About.tsx must render a container with justify-start')
-    assert.match(
-      flexContainer,
-      /\bjustify-start\b/,
-      'About multi-column container must use `justify-start` on mobile',
-    )
-    assert.match(
-      flexContainer,
-      /\blg:justify-center\b/,
-      'About multi-column container must upgrade to `lg:justify-center` on desktop',
+  await t.test('About caps its page width on the outer container, not the article', () => {
+    // Until v3.5.0 the article itself was capped at `max-w-3xl` inside a
+    // `justify-center` flex wrapper. That left a 768px column of text between
+    // two wide empty margins — the "wasted space" this release was reported
+    // for. The cap now lives once, on the outer container, and the article is
+    // the flexible column beside the wide-screen chapter rail.
+    const container = aboutSource.match(/className="(mx-auto[^"]*max-w-\[\d+px\][^"]*)"/)?.[1]
+    assert.ok(container, 'About.tsx must cap its page width on one mx-auto container')
+    assert.match(container, /\bw-full\b/, 'the container must fill the width it is given')
+
+    const articleTag = aboutSource.match(/<article className="([^"]*)">/)?.[1]
+    assert.ok(articleTag, 'About.tsx must render an <article> element')
+    assert.match(articleTag, /\bmin-w-0\b/, 'About article must include `min-w-0`')
+    assert.match(articleTag, /\bflex-1\b/, 'About article must include `flex-1`')
+    assert.doesNotMatch(
+      articleTag,
+      /\bmax-w-/,
+      'the article must not re-cap its own width — the outer container owns that',
     )
   })
 
-  await t.test('About article uses w-full min-w-0 max-w-3xl flex-1', () => {
-    const articleTag = aboutSource.match(/<article className="([^"]*)">/)?.[1]
-    assert.ok(articleTag, 'About.tsx must render an <article> element')
-    assert.match(articleTag, /\bw-full\b/, 'About article must include `w-full`')
-    assert.match(articleTag, /\bmin-w-0\b/, 'About article must include `min-w-0`')
-    assert.match(articleTag, /\bmax-w-3xl\b/, 'About article must include `max-w-3xl`')
-    assert.match(articleTag, /\bflex-1\b/, 'About article must include `flex-1`')
+  await t.test('the wide-screen chapter rail cannot squeeze the reading column', () => {
+    const rail = aboutSource.match(/<nav[^>]*className="about-rail ([^"]*)"/)?.[1]
+    assert.ok(rail, 'About.tsx must render the .about-rail chapter list')
+    assert.match(rail, /\bflex-none\b/, 'the rail is a fixed-width gutter, never a flex victim')
+    assert.match(rail, /\bw-\[\d/, 'the rail must declare an explicit width')
   })
 
   await t.test('About grid items in orchestrator skill carry min-w-0', () => {

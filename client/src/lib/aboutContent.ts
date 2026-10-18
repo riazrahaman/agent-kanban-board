@@ -1,3 +1,19 @@
+// Field Guide Nº 02 · The Agent Board — the About page's content module.
+//
+// Two layers live here on purpose:
+//  1. A compact, code-derived 11-chapter ARTICLE (`CHAPTERS`, `ENV_VARS`) that
+//     is the page's narrative. Every chapter names the real file it describes.
+//  2. The data-driven reference blocks the page has always rendered
+//     (`TRUST_METRICS`, `CAPABILITIES`, `STACK_ROWS`, the claim/reclaim/safety
+//     flows, the orchestrator-skill entry, the tour plates). These are pinned
+//     by `about.test.mjs` and `responsive.test.mjs`, so their shapes and the
+//     code-location tokens inside them stay stable even as the prose around
+//     them is rewritten.
+
+// ---------------------------------------------------------------------------
+// Links & the bundled orchestrator skill
+// ---------------------------------------------------------------------------
+
 export const ABOUT_GITHUB_URL =
   'https://github.com/riazrahaman/agent-kanban-board'
 
@@ -38,6 +54,35 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
   ],
 }
 
+// ---------------------------------------------------------------------------
+// Field-guide cover
+// ---------------------------------------------------------------------------
+
+export const FIELD_GUIDE = {
+  kicker: 'Field Guide',
+  edition: 'Nº 02',
+  title: 'The Agent Board',
+  blurb:
+    'A hand-written tour of the running system: eight states, leases, the reaper, two very different 409s, and the credentials that decide who may touch a card.',
+}
+
+// One or two `font-serif italic` accent words are pulled out of the hero so the
+// page can render them in the display face without splitting the string inline.
+export const HERO = {
+  before: 'The board is the ',
+  accentOne: 'state machine',
+  middle: '. Everything else just ',
+  accentTwo: 'watches',
+  after: '.',
+  lede:
+    'Agents claim work and advance one strict lifecycle over plain HTTP. The server enforces ownership, transitions and roles; humans get a live, auditable view without ever becoming the workflow engine.',
+}
+
+// ---------------------------------------------------------------------------
+// Trust metrics (kept in lock-step with the real suite sizes — about.test.mjs
+// counts the suites from the files and fails if these drift).
+// ---------------------------------------------------------------------------
+
 export type TrustMetric = {
   value: string
   label: string
@@ -46,12 +91,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '596',
+    value: '605',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '255',
+    value: '272',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -66,6 +111,10 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'storage, git recovery, mutation serialization, 8-state workflow',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Why a human task board is not enough
+// ---------------------------------------------------------------------------
 
 export type WhyCard = {
   title: string
@@ -96,14 +145,17 @@ export const WHY_CARDS: WhyCard[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
+// The 8-state lifecycle (ADR-004, server/state-machine.js)
+// ---------------------------------------------------------------------------
+
 export type LifecycleStep = {
   status: string
   actor: string
   detail: string
 }
 
-// v3 (ADR-004, server/state-machine.js): the 8-state lifecycle. `actor` is
-// the role that moves a card INTO that state; only READY cards can be
+// `actor` is the role that moves a card INTO that state; only READY cards can be
 // claimed, and a claim lands on PLANNING (planner) or IN_PROGRESS (others).
 export const LIFECYCLE_STEPS: LifecycleStep[] = [
   {
@@ -153,6 +205,10 @@ export const LIFECYCLE_STEPS: LifecycleStep[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
+// Capability index
+// ---------------------------------------------------------------------------
+
 export type Capability = {
   name: string
   code: string
@@ -199,6 +255,10 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Phone layout: document scroll, pinch-zoom block', code: 'index.css · lib/scrollLock.ts, lib/pinchZoomGuard.ts' },
 ]
 
+// ---------------------------------------------------------------------------
+// Adoption FAQ (chapter 11)
+// ---------------------------------------------------------------------------
+
 export type FaqItem = {
   q: string
   a: string
@@ -207,33 +267,33 @@ export type FaqItem = {
 export const FAQ: FaqItem[] = [
   {
     q: 'Do I need a database?',
-    a: 'No. State persists to a single atomic JSON file by default, or to git-backed YAML. A database backend is anticipated by the pluggable getStorage factory — a natural first contribution.',
+    a: 'No. State persists to a single atomic JSON file by default, or to git-backed YAML (KANBAN_STORAGE_BACKEND=git). The pluggable storage factory leaves room for a database backend — a natural first contribution.',
   },
   {
-    q: 'Does it phone home?',
-    a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous site-wide visit counter (one count per browser session, no per-visitor data) shown on the About tab.',
+    q: 'How will I know an agent died?',
+    a: 'The reaper returns the card to READY and, when configured, notifier.js posts a full-detail alert — project, title, reclaim reason, who held it, when the lease ended and a deep link back to that project. Set KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
   },
   {
-    q: 'How do I host it?',
-    a: 'One Node process serves the API, the built SPA and the SSE stream. It needs a persistent process and a mounted disk (SSE + the background reaper rule out serverless). railway.json and render.yaml are included.',
+    q: 'How do I connect a new project?',
+    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it a token out of band via KANBAN_PROJECT_TOKENS. See ONBOARDING.md for the curl walkthrough.',
   },
   {
     q: 'Can humans change task state?',
     a: 'By default the UI is a read-only observability viewport — the primary users are headless agents driving the board over HTTP. Humans watch, and can bind an api token to act as an agent.',
   },
   {
-    q: 'How do I connect a new project?',
-    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it a project token out of band. See ONBOARDING.md for the curl walkthrough.',
-  },
-  {
-    q: 'How will I know when an agent dies?',
-    a: 'The reaper returns the task to READY and the notifier posts a full-detail alert — project, title, reason, who held it, when the lease ended and a deep link back to that project. A held lease dies the moment it stops being renewed; an ownerless active card is only normalized once a grace window has passed. Configure KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to switch it on; it is off by default.',
+    q: 'Does it phone home?',
+    a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous site-wide visit counter (one count per browser session, no per-visitor data) shown on this page.',
   },
   {
     q: 'How do I report a bug?',
-    a: '"Report a bug" opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. Two entry points: the small bug icon in the header, right beside the theme toggle, and here on the About page. No account, no attachments, no PII collected; the report is public on GitHub. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug").',
+    a: '"Report a bug" opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug"). The same button lives in the header.',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Headless-first snippets
+// ---------------------------------------------------------------------------
 
 export const CLAIM_CURL = `curl -s -X POST "$BOARD/api/tasks/next-claim?project=$PROJECT&agent_id=builder-1" \\
   -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"`
@@ -248,6 +308,10 @@ curl -s -X PATCH "$BOARD/api/tasks/$ID?project=$PROJECT" \\
   -d '{"status":"IN_REVIEW","expected_version":2}'
 
 # humans just watch: the same state, live, over SSE`
+
+// ---------------------------------------------------------------------------
+// Workflow plates (back matter)
+// ---------------------------------------------------------------------------
 
 export type TourShot = {
   src: string
@@ -282,6 +346,10 @@ export const TOUR_SHOTS: TourShot[] = [
     caption: 'Same operational model, dark by explicit choice — not OS guesswork',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Stack table (back matter)
+// ---------------------------------------------------------------------------
 
 export type StackRow = {
   layer: string
@@ -328,6 +396,10 @@ export const STACK_ROWS: StackRow[] = [
     location: 'railway.json · render.yaml',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Code flows (folded into the chapters that explain them)
+// ---------------------------------------------------------------------------
 
 export type FlowStep = {
   label: string
@@ -447,3 +519,368 @@ export const ARCH_LAYERS: FlowStep[] = [
 
 export const ARCH_INTRO =
   'The capability table names the parts. This section shows how they fit together — the stack, the exact path a claim takes through the code, and the three layers that guard every write.'
+
+// ---------------------------------------------------------------------------
+// Chapter 9 — the architecture diagram
+//
+// The SVG itself is hand-authored in components/About.tsx (no mermaid, no
+// external image, no build step). Only its accessible title/description and the
+// short labels drawn on the arrows live here, so the prose stays data-driven.
+// ---------------------------------------------------------------------------
+
+export const ARCH_DIAGRAM = {
+  title: 'The running system, end to end',
+  desc:
+    'Agents and the web board call the Express server over REST. A write walks the auth and rate-limit middleware into the core store, is persisted to disk before memory changes, then fans out over SSE to the browser and, optionally, to the Telegram notifier, signed webhooks and the audit log.',
+}
+
+export const ARCH_DIAGRAM_CALLOUTS = {
+  rest: 'REST + token',
+  sse: 'SSE diff',
+  persist: 'persist-first',
+  reaper: 'reaper every 30 s',
+} as const
+
+// ---------------------------------------------------------------------------
+// The article: 12 chapters, each ELI5 → Under the hood → Real snippet → Gotcha
+// ---------------------------------------------------------------------------
+
+export type ChapterSnippet = {
+  label: string
+  code: string
+}
+
+export type Chapter = {
+  id: string
+  number: string
+  emoji: string
+  title: string
+  eli5: string
+  underTheHood: string
+  snippet: ChapterSnippet
+  gotcha: string
+  /** Real file paths this chapter is written from (rendered as mono chips). */
+  files: string[]
+}
+
+export const CHAPTERS: Chapter[] = [
+  {
+    id: 'states',
+    number: '01',
+    emoji: '🔄',
+    title: 'Eight States',
+    eli5:
+      'A card is never "just opened". It walks one fixed path, and each step belongs to a different kind of worker.',
+    underTheHood:
+      'server/state-machine.js is the whole rulebook. VALID_TRANSITIONS lists the only legal edges for the eight canonical states plus BLOCKED; canTransition rejects anything else with a 409 and canRoleTransition rejects the wrong role with a 403. Input is normalised first, so the pre-v3 spellings — `todo`, `building`, `in_test` — resolve to BACKLOG, IN_PROGRESS and VALIDATION instead of failing.',
+    snippet: {
+      label: 'VALID_TRANSITIONS',
+      code: `BACKLOG       -> READY, BLOCKED
+READY         -> PLANNING, IN_PROGRESS, BACKLOG, BLOCKED
+PLANNING      -> IN_PROGRESS, READY, BLOCKED
+IN_PROGRESS   -> IN_REVIEW, PLANNING, BLOCKED
+IN_REVIEW     -> VALIDATION, IN_PROGRESS, BLOCKED
+VALIDATION    -> READY_TO_SHIP, IN_PROGRESS, BLOCKED
+READY_TO_SHIP -> DONE, IN_PROGRESS, BLOCKED
+BLOCKED       -> BACKLOG, READY, PLANNING, IN_PROGRESS, IN_REVIEW, VALIDATION
+DONE          -> (terminal)`,
+    },
+    gotcha:
+      'DONE is terminal — VALID_TRANSITIONS[DONE] is an empty list, so nothing moves a shipped card again. Corrections happen with a new card.',
+    files: ['server/state-machine.js'],
+  },
+  {
+    id: 'claims',
+    number: '02',
+    emoji: '⏱️',
+    title: 'Claims & Leases',
+    eli5:
+      'Claiming a card is borrowing it with a timer. Keep checking in and it stays yours; stop checking in and the timer hands it back.',
+    underTheHood:
+      'A claim sets assigned_agent and arms claim_expires_at. Only a READY card can be claimed. The window is leaseWindowFor(task): a per-card claim_lease_ms if one was requested, otherwise KANBAN_CLAIM_TTL_MS (600000 ms). A requested window is clamped by resolveLeaseMs between KANBAN_MIN_LEASE_MS (60000) and KANBAN_MAX_LEASE_MS (7200000). Renewal only pushes the deadline out; a sibling lease renewal deliberately does NOT bump version, so it never invalidates a concurrent expected_version PATCH on a card nobody is editing.',
+    snippet: {
+      label: 'a claimed card on disk',
+      code: `{
+  "status": "IN_PROGRESS",
+  "assigned_agent": "builder-1",
+  "claim_expires_at": "2026-10-17T12:10:00.000Z",
+  "claim_lease_ms": 600000,
+  "last_progress_at": "2026-10-17T12:00:00.000Z"
+}`,
+    },
+    gotcha:
+      'last_progress_at is NOT touched by a sibling renewal — only a fresh claim or a real write advances it, which is exactly what lets the reaper tell "alive" apart from "working".',
+    files: ['server/store.js'],
+  },
+  {
+    id: 'reaper',
+    number: '03',
+    emoji: '🧟',
+    title: 'The Reaper',
+    eli5:
+      'A background janitor sweeps dead or stalled claims back into the queue so one crashed agent cannot freeze a card forever.',
+    underTheHood:
+      'reapExpiredClaims in server/store.js runs on a timer and marks each active card with a reason: orphan_normalized (active but ownerless past its grace window), progress_stalled (a held card whose last_progress_at is older than KANBAN_PROGRESS_STALL_MS, 1800000 by default) or lease_expired. Each candidate goes through reclaimTaskInner, which clears owner and lease, bumps reclaim_count, raises the version and persists before emitting a reclaimed diff.',
+    snippet: {
+      label: 'reaper knobs & reasons',
+      code: `KANBAN_PROGRESS_STALL_MS=1800000   # 30 min — 0 disables the stall check
+KANBAN_REAP_INTERVAL_MS=30000      # sweep every 30 s
+KANBAN_ORPHAN_GRACE_MS=300000      # grace for an ownerless active card
+
+# reclaim reasons
+'orphan_normalized' | 'progress_stalled' | 'lease_expired'`,
+    },
+    gotcha:
+      'The reaper resets a card to READY — immediately claimable again — not to BACKLOG. Older comments once said BACKLOG; the code has returned cards to READY since ADR-004.',
+    files: ['server/store.js'],
+  },
+  {
+    id: 'conflicts',
+    number: '04',
+    emoji: '🧮',
+    title: 'The Two 409s',
+    eli5:
+      'Two failures both answer with 409, and they mean opposite things: one says "your copy is old, retry", the other says "you lost the race, give up".',
+    underTheHood:
+      'A "Version mismatch" is a stale read: your expected_version no longer matches the stored one — re-read the card and retry with the fresh expected_version. A "Task … is already claimed by …" is contention: another agent holds a live lease, so retrying is pointless until it lapses. The claim path also tags some 409s with a machine-readable reason — dependency_unsatisfied, not_ready (still in BACKLOG), status_not_claimable, or claim_limit when the caller is already at KANBAN_MAX_CLAIMS_PER_AGENT — so an orchestrator can branch without parsing prose.',
+    snippet: {
+      label: '409 payloads',
+      code: `// (a) stale read — retry with a fresh expected_version
+{ "error": "Version mismatch",
+  "details": { "expected": 7, "provided": 5 } }
+
+// (b) lost the race — a live lease is held elsewhere
+{ "error": "Task KB-12 is already claimed by builder-2" }
+
+// (c) reason-tagged claim refusals
+{ "reason": "dependency_unsatisfied" }  // unresolved depends_on
+{ "reason": "not_ready" }               // still in BACKLOG
+{ "reason": "status_not_claimable" }    // not READY, not active
+{ "reason": "claim_limit" }             // at the per-agent cap`,
+    },
+    gotcha:
+      'Treat them differently: retry a version mismatch (it is your bug), never hot-retry a claim loss (it is a race you lost) — wait for the holder or for the reaper.',
+    files: ['server/store.js'],
+  },
+  {
+    id: 'auth',
+    number: '05',
+    emoji: '🔐',
+    title: 'Who May Write',
+    eli5:
+      'Every write carries a credential, and the credential decides which projects it may touch. What you claim to be in a header counts for nothing.',
+    underTheHood:
+      'server/middleware/auth.js resolves the request against KANBAN_ADMIN_TOKEN (spans every project), KANBAN_PROJECT_TOKENS (a JSON map — a token only works for the projects it names, otherwise 403 "token is not authorized for project \'X\'"), an HMAC session token from KANBAN_AUTH_SECRET (revocable via jti), or the legacy global KANBAN_AUTH_TOKEN. The SSE stream cannot set headers, so it accepts a short-lived, single-use 60-second ticket. Malformed or missing config fails closed with a 503 rather than opening an unauthenticated write API.',
+    snippet: {
+      label: 'per-project isolation',
+      code: `# a token is scoped to the projects it names
+KANBAN_PROJECT_TOKENS={"alpha":"tok-a","beta":"tok-b"}
+
+# a write aimed at the wrong project
+403 Forbidden: token is not authorized for project 'beta'`,
+    },
+    gotcha:
+      'Privilege comes from the CREDENTIAL, never from the self-asserted X-Agent-Role header. A per-project worker token can assert builder/reviewer/tester but can never confer an admin-only operation.',
+    files: ['server/middleware/auth.js'],
+  },
+  {
+    id: 'storage',
+    number: '06',
+    emoji: '💾',
+    title: 'Where Cards Live',
+    eli5:
+      'Cards live in a file, not in the browser. A write lands on disk before the server updates its memory, so a crash never loses committed work.',
+    underTheHood:
+      'server/storage.js offers two interchangeable backends behind one factory: KANBAN_STORAGE_BACKEND=json (the default — one partitioned atomic file per project) and git (one YAML card per task, one real commit per transition, so git becomes the audit trail). Writes go through an atomic temp-file-plus-rename, and the store persists before it mutates memory. If a JSON file exists but cannot be parsed, JsonStorage.load throws and the server refuses to boot rather than overwrite good data with an empty board.',
+    snippet: {
+      label: 'backend selection',
+      code: `KANBAN_STORAGE_BACKEND=json   # default: one atomic JSON file per project
+KANBAN_STORAGE_BACKEND=git    # one YAML card per task, one commit per write
+KANBAN_DATA_DIR=/data         # named projects, archives and settings live here`,
+    },
+    gotcha:
+      'Named projects (anything beyond the default) live under KANBAN_DATA_DIR — so the writable disk you mount must cover that directory, not just the tasks file.',
+    files: ['server/storage.js'],
+  },
+  {
+    id: 'alerts',
+    number: '07',
+    emoji: '📣',
+    title: 'Reporting & Alerts',
+    eli5:
+      'Three optional channels let the humans find out what happened: file a bug, get a reclaim alert, or stream every change to another system.',
+    underTheHood:
+      'server/routes/bugReports.js turns an anonymous in-app report into a labelled GitHub issue, guarded by Cloudflare Turnstile, a honeypot field and peek-and-consume rate limits (a request that fails validation or the captcha never spends the budget). server/notifier.js posts a full-detail Telegram alert whenever the reaper returns a card to READY. server/webhooks.js POSTs a signed, machine-readable envelope for every committed mutation to one or more subscriber URLs.',
+    snippet: {
+      label: 'the three channels',
+      code: `# 1. bug reports -> one GitHub issue (routes/bugReports.js)
+POST /api/bug-reports   # Turnstile + honeypot + peek-and-consume caps
+
+# 2. reclaim alerts (notifier.js) — OFF unless BOTH are set
+KANBAN_TELEGRAM_BOT_TOKEN=...
+KANBAN_TELEGRAM_CHAT_ID=...
+
+# 3. signed outbound hooks (webhooks.js)
+KANBAN_WEBHOOK_URLS=https://example.test/hook
+KANBAN_WEBHOOK_SECRET=...`,
+    },
+    gotcha:
+      'All three are off by default and fail-silent: a Telegram or webhook outage is logged and swallowed so it can never break the mutation or reclaim that triggered it.',
+    files: ['server/routes/bugReports.js', 'server/notifier.js', 'server/webhooks.js'],
+  },
+  {
+    id: 'client',
+    number: '08',
+    emoji: '🧭',
+    title: 'The Client',
+    eli5:
+      'The browser opens one live stream and redraws from it. It never invents state of its own, and it can only claim through the same protocol an agent uses.',
+    underTheHood:
+      'client/src/App.tsx keeps ONE combined Server-Sent Events connection (mode=diff) and reconciles each event into its local array by the composite key (id, project) — task ids are unique only within a project. client/src/lib/useClaimCoordinator.ts is the single writer on the browser side: it heartbeats every card the bound agent holds and, when idle, pulls the next one with nextClaim (claim-first). Pure decisions live in lib/claimCoordinator.ts so they are unit-testable without a browser.',
+    snippet: {
+      label: 'one stream, one writer',
+      code: `// App.tsx — one EventSource, reconciled by (id, project)
+subscribeToBoard(applyDiff, applySettings, { project: scope })
+
+prev.findIndex(
+  (t) => t.id === evt.task.id && (t.project ?? '') === (evt.project ?? ''),
+)
+
+// useClaimCoordinator.ts — claim-first, then heartbeat
+await heartbeatTask(task.id, who, { project: task.project })
+const claimed = await nextClaim(who, { project: proj, role: 'builder' })`,
+    },
+    gotcha:
+      'The UI is a projection — no drag-and-drop, no client-side workflow logic. State only ever changes through the API, so the board can never disagree with the server.',
+    files: ['client/src/App.tsx', 'client/src/lib/useClaimCoordinator.ts'],
+  },
+  {
+    id: 'architecture',
+    number: '09',
+    emoji: '🏗️',
+    title: 'Architecture',
+    eli5:
+      'Every request walks the same corridor: authenticated, rate-limited, routed to one store, written to disk before memory, and only then pushed out to whoever is watching.',
+    underTheHood:
+      'server/server.js composes the process in a fixed order — CORS, express.json and the trust-proxy setting, then the pre-auth routes (/api/auth, /api/bug-reports, and /api/ask with its own password gate), then the auth middleware (middleware/auth.js) and the rate limiter (middleware/rateLimit.js), then the routers (tasks.js, agents.js, projects.js, metrics.js, settings.js, milestones.js, audit.js, health.js) and the SSE channel GET /api/events. Every mutation funnels into server/store.js and its siblings — state-machine.js (the eight states plus canRoleTransition), task-fields.js, task-identity.js and storage.js — through withMutationLock, the one serialized write path. A claim is applyClaim; leases and stalls are swept by the reaper. The write is persisted first — JsonStorage via an atomic temp-file-plus-rename, or GitYamlStorage with one YAML card per task and one commit per transition — under the mounted disk KANBAN_DATA_DIR; only then does memory change and the onDiff / onChange / onAudit bus fire. That bus drives SSE to the browser plus the optional notifier.js (Telegram), webhooks.js and auditLog.js (audit.jsonl).',
+    snippet: {
+      label: 'server/server.js — real mount order',
+      code: `cors -> express.json -> trust proxy
+  -> /api/auth  /api/bug-reports  /api/ask   # pre-auth
+  -> auth middleware -> rate limit
+  -> /api/tasks /agents /projects /metrics
+     /settings /milestones /audit /health
+  -> GET /api/events                        # SSE, mode=diff`,
+    },
+    gotcha:
+      'A storage failure never advances in-memory state. The store persists first, so a disk error leaves the card untouched and emits no SSE diff — memory is never ahead of disk.',
+    files: [
+      'server/server.js',
+      'server/store.js',
+      'server/state-machine.js',
+      'server/storage.js',
+      'client/src/App.tsx',
+    ],
+  },
+  {
+    id: 'config',
+    number: '10',
+    emoji: '⚙️',
+    title: 'Configuration',
+    eli5:
+      'Everything that changes how the board behaves is an environment variable. Set none and you get a safe, local, single-token board.',
+    underTheHood:
+      'The server reads its configuration from the environment at call time, so tests and redeploys can change behaviour without a code change. Secrets are server-only — they are never inlined into the client bundle (the client stores its one write token in localStorage rather than a build-time env var). A feature whose prerequisite secrets are unset stays off: Ask-the-Board, reclaim alerts and bug reports are all fail-closed by default.',
+    snippet: {
+      label: 'docs/CONFIGURATION.md is generated',
+      code: `# regenerate the reference table from the code
+node scripts/gen-config-reference.mjs`,
+    },
+    gotcha:
+      'Prefer the per-project tokens over the legacy global KANBAN_AUTH_TOKEN: the global token opens every project, which is exactly the isolation KANBAN_PROJECT_TOKENS exists to give you.',
+    files: ['docs/CONFIGURATION.md', 'scripts/gen-config-reference.mjs'],
+  },
+  {
+    id: 'ask',
+    number: '11',
+    emoji: '💬',
+    title: 'Ask the Board',
+    eli5:
+      'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, so it can explain the code itself as well as the protocol, alongside a live read-only snapshot.',
+    underTheHood:
+      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token.',
+    snippet: {
+      label: 'the ask surface',
+      code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "model": "..." }
+
+POST /api/ask
+  x-ask-pass: <password>
+  { "question": "Why do claims expire?" }
+  -> { "answer": "...", "model": "..." }`,
+    },
+    gotcha:
+      'The scope limit is a prompt instruction, not a hard fence: the assistant is instructed to stay on topic, but it is the same model answering, so treat an off-topic reply as expected behaviour rather than a security bug.',
+    files: ['client/src/lib/ask.ts', 'server/routes/ask.js'],
+  },
+  {
+    id: 'faq',
+    number: '12',
+    emoji: '❓',
+    title: 'FAQ',
+    eli5:
+      'The questions people ask before they trust a board their coding agents will drive.',
+    underTheHood:
+      'These answers are derived from the same code the rest of this guide describes. The two that matter most are storage (there is no database — state is a file) and liveness (a dead agent is detected by the lease and announced by the notifier, both configurable).',
+    snippet: {
+      label: 'the shortest honest summary',
+      code: `local-first · headless-first · no accounts
+no tracking · one Node process + a mounted disk
+enforced server-side: transitions, roles, leases, versions`,
+    },
+    gotcha:
+      'If an answer here ever disagrees with the code, the code wins — this page is generated by hand from the source, and the source is the contract.',
+    files: ['docs/CONFIGURATION.md'],
+  },
+]
+
+// ---------------------------------------------------------------------------
+// Chapter 10 — the configuration table
+// ---------------------------------------------------------------------------
+
+export type EnvVar = {
+  name: string
+  purpose: string
+}
+
+export const ENV_VARS: EnvVar[] = [
+  { name: 'KANBAN_PROJECT_TOKENS', purpose: 'JSON map of project id to per-project token — a token only works for the projects it names.' },
+  { name: 'KANBAN_ADMIN_TOKEN', purpose: 'Privileged token that spans every project (audited as admin_write).' },
+  { name: 'KANBAN_AUTH_TOKEN', purpose: 'Legacy global shared token gating every mutating request (opens every project — prefer per-project tokens).' },
+  { name: 'KANBAN_AUTH_SECRET', purpose: 'HMAC secret that enables stateless, revocable session tokens.' },
+  { name: 'KANBAN_READ_AUTH', purpose: 'Set to "token" to require auth on reads and SSE (single-use stream tickets).' },
+  { name: 'KANBAN_CLAIM_TTL_MS', purpose: 'Default lease window for a claimed task, in ms (default 600000 = 10 min).' },
+  { name: 'KANBAN_MIN_LEASE_MS', purpose: 'Lower bound a per-task lease request is clamped to (default 60000).' },
+  { name: 'KANBAN_MAX_LEASE_MS', purpose: 'Upper bound a per-task lease request is clamped to (default 7200000).' },
+  { name: 'KANBAN_PROGRESS_STALL_MS', purpose: 'No-progress timeout before a held card is reaped (default 1800000; 0 disables).' },
+  { name: 'KANBAN_REAP_ENABLED', purpose: 'Set falsy to disable the background lease reaper.' },
+  { name: 'KANBAN_STORAGE_BACKEND', purpose: 'Persistence backend: "json" (default) or "git" (one YAML card per task).' },
+  { name: 'KANBAN_DATA_DIR', purpose: 'Directory for named-project data, archives and settings.' },
+  { name: 'KANBAN_ASK_OPENROUTER_API_KEY', purpose: 'Secret OpenRouter key that turns Ask-the-Board on.' },
+  { name: 'KANBAN_ASK_PASSWORD', purpose: 'Secret shared password gate for POST /api/ask.' },
+  { name: 'KANBAN_ASK_MODEL', purpose: 'OpenRouter model id for Ask-the-Board (default openai/gpt-oss-20b).' },
+  { name: 'KANBAN_ASK_DAILY_CAP', purpose: 'Global Ask-the-Board answers cap per UTC day (default 50).' },
+  { name: 'KANBAN_ASK_PER_IP_PER_HOUR', purpose: 'Per-IP Ask-the-Board answers cap per hour (default 3).' },
+  { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'OpenRouter request timeout for Ask-the-Board, in ms (default 45000).' },
+  { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for Ask-the-Board (default 6000).' },
+  { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 600).' },
+]
+
+// ---------------------------------------------------------------------------
+// Chapter 11 — the Ask card copy
+// ---------------------------------------------------------------------------
+
+export const ASK_UNCONFIGURED_NOTE =
+  'Ask-the-Board is off on this deployment. An operator switches it on by setting KANBAN_ASK_OPENROUTER_API_KEY and KANBAN_ASK_PASSWORD on the server.'
+
+export const ASK_SCOPE_NOTE =
+  'The assistant is instructed to stay on this board — its protocol, engine, client, deployment, configuration and source. Answers are read-only; it can never claim, move or delete a card.'

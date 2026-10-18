@@ -128,6 +128,18 @@ Rules:
   `tracking-[0.14em]` (section headers). Sub-labels use `text-[9px]`; meta rows
   `text-[11px]`.
 - `Inter` and `Roboto` are banned outright (§12).
+- **One scoped exception (v3.5.0): the About / Field Guide view.** `.about-view`
+  in `index.css` sets `IBM Plex Sans` at a 16.5px base on a 1.6 rhythm, and the
+  guide's headings are **bold sans with `font-serif` reserved for the italic
+  accent words**. That page is a long-form editorial document benchmarked
+  against the field guides it is modelled on, and it needs a 700 display weight
+  the system stack has no dependable access to — Instrument Serif ships no bold
+  face, so headings set in it read light rather than authoritative. The
+  exception is scoped to that one class: the board, the portfolio, every dialog
+  and the header keep the system stack above. Nothing else on the page escapes
+  the rest of this document — the guide's cards, rules and controls are the
+  same square-cornered hairline surfaces as everywhere else, deliberately
+  unlike the rounded cards of the pages it is benchmarked against.
 
 ---
 

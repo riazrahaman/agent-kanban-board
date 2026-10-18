@@ -1,6 +1,6 @@
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
-import { buildSystemPrompt, gatherSnapshot } from '../askKnowledge.js';
+import { buildSystemPrompt, gatherSnapshot, gatherSourceContext } from '../askKnowledge.js';
 import * as storeModule from '../store.js';
 
 /**
@@ -20,7 +20,7 @@ import * as storeModule from '../store.js';
  *   KANBAN_ASK_DAILY_CAP            default: 50 (global, per UTC day)
  *   KANBAN_ASK_PER_IP_PER_HOUR      default: 3
  *   KANBAN_ASK_TIMEOUT_MS           default: 45000
- *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 2000
+ *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 6000
  *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 600
  *   KANBAN_AUTH_RATE_LIMIT_PER_MIN  wrong-password backoff ceiling (default 10;
  *                                   shared name with the auth middleware, but
@@ -241,8 +241,10 @@ export function createAskRouter(deps = {}) {
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
 
-    // 4. Build the prompt from the protocol pack + a live read-only snapshot.
-    const maxPromptTokens = intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, 2000);
+    // 4. Build the prompt from the protocol pack + retrieved source + a live
+    //    read-only snapshot.
+    const maxPromptTokens = intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, 6000);
+    const retrieved = gatherSourceContext(question.trim());
     const snapshot = gatherSnapshot(store);
     const fallback = !snapshot || snapshot.available === false;
     if (fallback) {
@@ -250,6 +252,7 @@ export function createAskRouter(deps = {}) {
     }
     const systemPrompt = buildSystemPrompt({
       snapshot,
+      retrieved,
       maxTokens: maxPromptTokens,
     });
     const model = modelName(env);

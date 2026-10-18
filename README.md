@@ -335,13 +335,63 @@ GitHub issue labelled `user-report`, which you can close once confirmed.
 
 ---
 
+## Ask the Board
+
+The About page opens with **Ask the Board** (v3.4.0 backend, v3.5.0 console): a
+password-gated, read-only assistant that answers questions about *this* board —
+its protocol, engine, client, deployment and configuration. It is the first
+thing on the page rather than a footnote, because it is the only part of the
+guide a reader can interrogate.
+
+How it answers: the question is tokenised, the most relevant few repository
+files are ranked and a window around the match is folded into the system prompt
+(`server/askKnowledge.js` — `rankSourceFiles` / `gatherSourceContext`),
+alongside a live read-only board snapshot. So it can explain the code itself,
+not only the documented protocol.
+
+What it cannot do: it never reads or writes a card, never accepts a board token,
+and never sees one. `server/routes/ask.js` is mounted ahead of the auth
+middleware (like bug reports) and carries its own gate and its own limits — a
+global per-day cap, a per-IP per-hour cap, and a separate wrong-password
+counter.
+
+**The feature is OFF until explicitly configured.** It is fail-closed on *both*
+secrets: unset either one and `GET /api/ask/config` reports `{enabled:false}`,
+the console collapses to a one-line note, and `POST /api/ask` is unavailable.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `KANBAN_ASK_OPENROUTER_API_KEY` | yes | Turns the feature on. The upstream key; never returned or logged. |
+| `KANBAN_ASK_PASSWORD` | yes | The shared gate on `POST /api/ask`, sent as the `x-ask-pass` header. |
+| `KANBAN_ASK_MODEL` | no | OpenRouter model id. Default `openai/gpt-oss-20b`. |
+| `KANBAN_ASK_DAILY_CAP` | no | Global answers per UTC day. Default 50. |
+| `KANBAN_ASK_PER_IP_PER_HOUR` | no | Per-IP answers per hour. Default 3. |
+| `KANBAN_ASK_TIMEOUT_MS` | no | Upstream timeout. Default 45000. |
+| `KANBAN_ASK_MAX_PROMPT_TOKENS` | no | Prompt budget. Default 6000 (raised from 2000 in v3.5.0, since the prompt now carries retrieved source). |
+| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | no | Answer budget. Default 600. |
+
+> The topic limit is a **prompt instruction, not a hard fence**. The assistant
+> is told to stay on this board, but it is the same model answering, so treat
+> an off-topic reply as expected behaviour rather than a security bug.
+
+Verify a deployment the same way as report-a-bug:
+
+```bash
+curl <board-url>/api/ask/config
+```
+
+`{"enabled":true,"gated":true,"model":"..."}` confirms configuration; the first
+genuine end-to-end check is asking one real question from the page.
+
+---
+
 ## Design System
 
 The visual interface follows an editorial-minimalist design system. The full
 contract — every colour token, type stack, geometry rule, status encoding and
 enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **Hairlines**: Depth is achieved solely through 1px hairlines (`border-line`); shadows and heavy gradients are banned.
-- **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps.
+- **Typography**: System sans-serif for body UI, display serif (`Instrument Serif`) for titles, and monospace (`JetBrains Mono` / system mono) with `tabular-nums` for all metrics, IDs, counts, and timestamps. One scoped exception (v3.5.0): the About field guide sets its reading column in `IBM Plex Sans` at a 16.5px base and its headings in bold sans, keeping the serif for italic accents only — see DESIGN.md §9.
 - **Form + Colour**: Status is encoded in form as well as colour: left 3px severity stripe, text badge, status glyphs (`▲` for review), and active pulsing indicators.
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
 - **Theming**: A warm-cream light palette and a midnight-navy blueprint dark palette (adopted from the Stack Field Guide), controlled by a single header button cycling Auto -> Light -> Dark (v2.17.0; Auto follows the OS preference live, no reload needed, and is the default with no stored choice); an explicit Light/Dark choice wins over the OS preference and native controls follow via `color-scheme`.
@@ -399,6 +449,10 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/auth/revoke` | Revoke the caller's own HMAC session token immediately (jti deny-list) | Bearer session token |
 | `POST` | `/api/tasks/:id/assign` | v2.11.0 — privileged assign-to-agent (or `agent_id: null` to release) | Bearer + role |
 | `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
+| `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
+| `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
+| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated, model}`); the console only renders when enabled | Public |
+| `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never reads or writes a card | Shared password (not a board token) |
 
 ---
 

@@ -65,7 +65,7 @@ const DIAGRAM_METADATA = {
   ],
 };
 
-async function renderMermaidSvg(mermaidCode) {
+async function renderMermaidSvg(mermaidCode, maxRetries = 4) {
   // Compress using pako / zlib deflate to stay well within HTTP URI limits
   const json = JSON.stringify({
     code: mermaidCode.trim(),
@@ -75,12 +75,22 @@ async function renderMermaidSvg(mermaidCode) {
   const b64 = Buffer.from(deflated).toString('base64url');
   const url = `https://mermaid.ink/svg/pako:${b64}`;
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`Failed to render SVG (${res.status}): ${errText.slice(0, 150)}`);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        return await res.text();
+      }
+      if (attempt === maxRetries) {
+        const errText = await res.text().catch(() => res.statusText);
+        throw new Error(`Failed to render SVG (${res.status}): ${errText.slice(0, 150)}`);
+      }
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+    }
+    // backoff before next attempt
+    await new Promise((r) => setTimeout(r, 1500 * attempt));
   }
-  return res.text();
 }
 
 async function main() {
