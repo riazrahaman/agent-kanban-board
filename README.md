@@ -386,6 +386,39 @@ curl <board-url>/api/ask/config
 `{"enabled":true,"gated":true,"model":"..."}` confirms configuration; the first
 genuine end-to-end check is asking one real question from the page.
 
+### Troubleshooting: "The assistant is temporarily unavailable"
+
+That one message covers **both** `502 gateway_error` and `503 timeout` — the UI
+deliberately tells a visitor nothing about the upstream. Since **v3.6.1** the
+server logs one line per failed request (at most one per kind per 60s) in its
+console output; on Railway, `railway logs`:
+
+```
+[kanban ask] request failed: OpenRouter answered 401 — KANBAN_ASK_OPENROUTER_API_KEY invalid, revoked or a placeholder [model=openai/gpt-oss-20b]
+```
+
+| Logged status | Meaning | Fix |
+|---|---|---|
+| `401` | Key invalid, revoked, or a placeholder | Issue a new OpenRouter key and redeploy |
+| `402` | Credit balance exhausted | Top up the OpenRouter account |
+| `403` | Key not permitted to use this model | Check `KANBAN_ASK_MODEL` and the key's scope |
+| `404` | Model id wrong or retired | Check `KANBAN_ASK_MODEL` against <https://openrouter.ai/models> |
+| `429` | OpenRouter's own rate limit | Retry later, or raise the plan |
+| `400` | Prompt over the model's context | Lower `KANBAN_ASK_MAX_PROMPT_TOKENS` |
+| `5xx` | Provider down or no route | Upstream outage; retry |
+| `timed out after Nms` | No answer inside `KANBAN_ASK_TIMEOUT_MS` | Raise the budget, or pick a faster model |
+| `empty answer (length)` | 2xx with no content | Raise `KANBAN_ASK_MAX_OUTPUT_TOKENS` |
+
+A boot-time line also fires when the key does not have the shape of an
+OpenRouter key:
+
+```
+[kanban ask] WARNING: KANBAN_ASK_OPENROUTER_API_KEY does not look like an OpenRouter key (placeholder?)
+```
+
+The upstream response **body** is never logged, and the key and password are
+redacted from every line.
+
 ---
 
 ## Design System

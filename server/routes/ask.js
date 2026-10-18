@@ -1,6 +1,7 @@
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherSourceContext } from '../askKnowledge.js';
+import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
 
 /**
@@ -29,6 +30,15 @@ import * as storeModule from '../store.js';
  * NEVER returned or logged: the API key, the password, or the raw upstream
  * error body. The model is told, in the system prompt, that it may never
  * claim/move a card or reveal a token (see askKnowledge.js).
+ *
+ * The HTTP STATUS of a failed upstream call, and a short hint keyed on it, ARE
+ * logged (v3.6.1). Until then this path logged nothing whatsoever, so a dead
+ * key, an exhausted balance and a genuine outage were indistinguishable from
+ * each other and from a working feature — the user saw one generic message and
+ * the deploy log said nothing at all. That is the same blind spot bug reports
+ * had before v3.2.5; this is the same fix, with the same rate limiting and the
+ * same secret redaction. A status is not a secret; a response body might be,
+ * so the body is still never logged.
  */
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -41,6 +51,43 @@ const MINUTE_MS = 60 * 1000;
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_QUESTION_LEN = 3;
 const MAX_QUESTION_LEN = 500;
+const LOG_PREFIX = '[kanban ask]';
+const LOG_WINDOW_MS = 60 * 1000;
+
+/**
+ * Shape-only check on the OpenRouter key, for a boot-time nudge. It never
+ * disables the feature and never sees the network — the whole point is to
+ * catch a placeholder before it becomes a silent 401 on every question, which
+ * is the failure mode this file had no way of reporting.
+ */
+export function looksLikeOpenRouterKey(key) {
+  return typeof key === 'string' && /^sk-or-[A-Za-z0-9._-]{16,}$/.test(key.trim());
+}
+
+/** Short operator-facing hint keyed on OpenRouter's HTTP status. */
+export function hintForUpstreamStatus(status) {
+  switch (status) {
+    case 400:
+      return 'bad request — often a prompt over the model context; try lowering KANBAN_ASK_MAX_PROMPT_TOKENS';
+    case 401:
+      return 'KANBAN_ASK_OPENROUTER_API_KEY invalid, revoked or a placeholder';
+    case 402:
+      return 'OpenRouter credit exhausted — top up the account';
+    case 403:
+      return 'key not permitted to use this model (check KANBAN_ASK_MODEL and the key scope)';
+    case 404:
+      return 'KANBAN_ASK_MODEL not found — check the id against openrouter.ai/models';
+    case 408:
+      return 'upstream timeout';
+    case 429:
+      return "OpenRouter's own rate limit — retry later or raise the plan";
+    case 502:
+    case 503:
+      return 'the selected provider is down or at capacity; OpenRouter found no route';
+    default:
+      return status >= 500 ? 'OpenRouter outage' : 'unexpected status';
+  }
+}
 
 /** Positive integer from an env value, else the fallback (0/negative/garbage → fallback). */
 function intFrom(raw, fallback) {
@@ -95,6 +142,43 @@ export function createAskRouter(deps = {}) {
   const store = deps.store || storeModule;
   const env = deps.env || readEnv();
   const router = express.Router();
+  const logger = deps.logger || console;
+
+  // Boot-time nudge, matching routes/bugReports.js. A placeholder key is the
+  // single most likely cause of a feature that is "on" but answers nothing,
+  // and before v3.6.1 it produced no output anywhere at all.
+  if (isEnabled(env) && !looksLikeOpenRouterKey(env.KANBAN_ASK_OPENROUTER_API_KEY)) {
+    logger.warn(
+      `${LOG_PREFIX} WARNING: KANBAN_ASK_OPENROUTER_API_KEY does not look like an OpenRouter key (placeholder?)`,
+    );
+  }
+
+  // One line per failed request, not one per cause-of-failure and not one per
+  // retry, de-duplicated per kind for LOG_WINDOW_MS so an outage or a flood
+  // cannot fill the deploy log.
+  const lastLoggedAt = new Map();
+
+  /** Strip our own secrets out of anything about to be logged. */
+  function redactSecrets(line) {
+    let out = String(line);
+    for (const secret of [env.KANBAN_ASK_OPENROUTER_API_KEY, env.KANBAN_ASK_PASSWORD]) {
+      if (!secret || secret.length < 8) continue;
+      out = out.split(secret).join('[redacted]');
+      const escaped = JSON.stringify(secret).slice(1, -1);
+      if (escaped !== secret) out = out.split(escaped).join('[redacted]');
+    }
+    return out;
+  }
+
+  function logFailure(kind, detail) {
+    const nowTs = now();
+    const last = lastLoggedAt.get(kind);
+    if (last !== undefined && nowTs - last < LOG_WINDOW_MS) return;
+    lastLoggedAt.set(kind, nowTs);
+    logger.warn(
+      redactSecrets(`${LOG_PREFIX} request failed: ${detail} [model=${modelName(env)}]`),
+    );
+  }
 
   // ---------------------------------------------------------------------
   // In-memory rate limiting — same proven peek/consume pattern as
@@ -261,6 +345,7 @@ export function createAskRouter(deps = {}) {
 
     // 5. Call OpenRouter.
     let upstream;
+    const startedAt = now();
     try {
       upstream = await fetchImpl(OPENROUTER_URL, {
         method: 'POST',
@@ -284,12 +369,19 @@ export function createAskRouter(deps = {}) {
     } catch (err) {
       const aborted =
         err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
-      // No upstream detail is ever surfaced or logged.
-      if (aborted) return res.status(503).json({ error: 'timeout' });
+      // The upstream BODY is still never logged — only the shape of the
+      // failure, which is what an operator needs and a visitor cannot abuse.
+      if (aborted) {
+        logFailure('timeout', `timed out after ${now() - startedAt}ms (KANBAN_ASK_TIMEOUT_MS=${timeoutMs})`);
+        return res.status(503).json({ error: 'timeout' });
+      }
+      logFailure('network', `could not reach OpenRouter: ${safeLogValue(err?.code || err?.name || 'unknown')}`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
     if (!upstream || !upstream.ok) {
+      const status = upstream?.status ?? 0;
+      logFailure(`http_${status}`, `OpenRouter answered ${status} — ${hintForUpstreamStatus(status)}`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
@@ -297,11 +389,16 @@ export function createAskRouter(deps = {}) {
     try {
       data = await upstream.json();
     } catch {
+      logFailure('unparseable', 'OpenRouter returned a 2xx that was not JSON');
       return res.status(502).json({ error: 'gateway_error' });
     }
 
     const answer = data?.choices?.[0]?.message?.content;
     if (typeof answer !== 'string' || answer.trim().length === 0) {
+      // A 2xx with no content is the shape an upstream refusal or a
+      // length/filter stop takes, so surface the reason the API gives.
+      const why = data?.choices?.[0]?.finish_reason || data?.error?.code || 'no content';
+      logFailure('empty', `OpenRouter returned 200 with an empty answer (${safeLogValue(why)})`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
