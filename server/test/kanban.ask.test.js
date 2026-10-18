@@ -12,6 +12,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import { ASK_REPO_URL, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow } from '../askKnowledge.js';
+import { hintForUpstreamStatus, looksLikeOpenRouterKey } from '../routes/ask.js';
+
+/** Collects log lines instead of printing them, so a test that simulates a
+ *  failure can assert on the output rather than scribbling on the run. */
+function fakeLogger() {
+  const lines = [];
+  return { lines, warn: (l) => lines.push(String(l)), error: (l) => lines.push(String(l)) };
+}
 
 const FAKE_KEY = 'sk-or-v1-test-key-DO-NOT-LEAK';
 const FAKE_PASSWORD = 'test-password-DO-NOT-LEAK';
@@ -443,5 +451,115 @@ describe('ask: no secrets in responses', () => {
       assert.doesNotMatch(JSON.stringify(cfg.body), new RegExp(FAKE_KEY));
       assert.doesNotMatch(JSON.stringify(cfg.body), new RegExp(FAKE_PASSWORD));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Failure diagnostics (v3.6.1)
+//
+// Until v3.6.1 this path logged NOTHING on an upstream failure, so a dead key,
+// an exhausted balance and a real outage were indistinguishable from each
+// other — and from a working feature — in the deploy log. The client maps both
+// 502 and 503 to one message, so the UI cannot tell them apart either.
+// ---------------------------------------------------------------------------
+
+describe('ask: upstream failure diagnostics', () => {
+  it('maps each upstream status to an operator-actionable hint', () => {
+    assert.match(hintForUpstreamStatus(401), /invalid, revoked or a placeholder/);
+    assert.match(hintForUpstreamStatus(402), /credit exhausted/i);
+    assert.match(hintForUpstreamStatus(404), /not found/i);
+    assert.match(hintForUpstreamStatus(429), /rate limit/i);
+    assert.match(hintForUpstreamStatus(400), /KANBAN_ASK_MAX_PROMPT_TOKENS/);
+    assert.match(hintForUpstreamStatus(500), /outage/i);
+  });
+
+  it('recognises an OpenRouter key by shape, so a placeholder is caught at boot', () => {
+    assert.equal(looksLikeOpenRouterKey('sk-or-v1-0123456789abcdef0123'), true);
+    assert.equal(looksLikeOpenRouterKey('changeme'), false);
+    assert.equal(looksLikeOpenRouterKey('ghp_not_an_openrouter_key'), false);
+    assert.equal(looksLikeOpenRouterKey(''), false);
+    assert.equal(looksLikeOpenRouterKey(undefined), false);
+  });
+
+  it('warns at boot when the configured key does not look like one', () => {
+    const logger = fakeLogger();
+    createApp({ ask: { env: baseEnv({ KANBAN_ASK_OPENROUTER_API_KEY: 'placeholder' }), logger } });
+    assert.ok(
+      logger.lines.some((l) => /KANBAN_ASK_OPENROUTER_API_KEY does not look like/.test(l)),
+      `expected a placeholder warning, got: ${JSON.stringify(logger.lines)}`,
+    );
+  });
+
+  it('does not warn at boot when the key has the right shape', () => {
+    const logger = fakeLogger();
+    createApp({ ask: { env: baseEnv(), logger } });
+    assert.deepEqual(logger.lines, []);
+  });
+
+  it('logs the upstream STATUS and its hint on a failure, and never a secret', async () => {
+    const logger = fakeLogger();
+    const fetchImpl = makeFetch(() => fakeResponse(401, { error: { message: 'No auth credentials found' } }));
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 502);
+    });
+    const line = logger.lines.find((l) => l.includes('request failed'));
+    assert.ok(line, `expected a failure line, got: ${JSON.stringify(logger.lines)}`);
+    assert.match(line, /401/);
+    assert.match(line, /invalid, revoked or a placeholder/);
+    assert.match(line, /model=openai\/gpt-oss-20b/);
+    // The whole point of the original "log nothing" rule was secret safety;
+    // that guarantee has to survive the new logging.
+    assert.ok(!line.includes(FAKE_KEY), 'the API key must never reach the log');
+    assert.ok(!line.includes(FAKE_PASSWORD), 'the password must never reach the log');
+  });
+
+  it('distinguishes a timeout from a gateway error in the log', async () => {
+    const logger = fakeLogger();
+    const abort = Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+    const fetchImpl = makeFetch(() => abort);
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 503);
+    });
+    const line = logger.lines.find((l) => l.includes('request failed'));
+    assert.ok(line, 'a timeout must be logged');
+    assert.match(line, /timed out after \d+ms/);
+    assert.match(line, /KANBAN_ASK_TIMEOUT_MS=/);
+  });
+
+  it('reports a 200 that carries no answer, instead of failing silently', async () => {
+    const logger = fakeLogger();
+    const fetchImpl = makeFetch(() =>
+      fakeResponse(200, { choices: [{ finish_reason: 'length', message: { content: '' } }] }),
+    );
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 502);
+    });
+    const line = logger.lines.find((l) => l.includes('request failed'));
+    assert.ok(line, 'an empty 200 must be logged');
+    assert.match(line, /empty answer/);
+    assert.match(line, /length/);
+  });
+
+  it('de-duplicates repeated failures of the same kind, so an outage cannot fill the log', async () => {
+    const logger = fakeLogger();
+    let t = 1_000_000;
+    const fetchImpl = makeFetch(() => fakeResponse(503, {}));
+    await withApp(
+      { env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger, now: () => t },
+      async (baseUrl) => {
+        for (let i = 0; i < 4; i += 1) {
+          await jsonRequest(baseUrl, '/api/ask', askRequest());
+        }
+        const within = logger.lines.filter((l) => l.includes('request failed')).length;
+        assert.equal(within, 1, 'four identical failures inside the window log once');
+        t += 61_000; // past LOG_WINDOW_MS
+        await jsonRequest(baseUrl, '/api/ask', askRequest());
+        const after = logger.lines.filter((l) => l.includes('request failed')).length;
+        assert.equal(after, 2, 'the next window logs again');
+      },
+    );
   });
 });
