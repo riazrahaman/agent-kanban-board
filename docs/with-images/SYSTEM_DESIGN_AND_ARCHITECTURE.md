@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.6.4        
+**System Version:** 3.7.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -42,7 +42,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Credential Coverage (§2.10)** | `server/utils/credentialMap.js` | Native | Boot-time comparison of `KANBAN_PROJECT_TOKENS` against known store projects; exposes `credential_map: { status, covered, missing, extra }` on `GET /api/health` to alert on truncated token maps without taking down the board. |
 | **Stateless Session & Stream Tickets** | `server/middleware/sessionAuth.js`, `server/middleware/streamTicket.js` | Native | HMAC stateless tokens for web sessions and single-use 60s stream tickets for EventSource streaming. |
 | **Anonymous Bug Reports** | `server/routes/bugReports.js` | Native | Public bug reporting with Cloudflare Turnstile verification, honeypot protection, and in-memory rate limiting. |
-| **Ask-the-Board Knowledge Engine** | `server/routes/ask.js`, `server/askKnowledge.js` | Native | Password-gated (`x-ask-pass`) Q&A assistant with verbatim source-code retrieval and in-process live snapshots. |
+| **Ask-the-Board Knowledge Engine** | `server/routes/ask.js`, `server/askKnowledge.js` | Native | Password-gated (`x-ask-pass`) Q&A assistant with verbatim source-code retrieval and in-process live snapshots. Supports OpenRouter API and local Ollama (`qwen3.6:latest`) models. |
 
 ### 2.2 Frontend Client
 

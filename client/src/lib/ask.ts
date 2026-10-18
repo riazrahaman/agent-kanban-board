@@ -22,11 +22,13 @@ const ASK_PASS_KEY = 'kanban.askPass'
 export type AskConfig = {
   enabled: boolean
   gated?: boolean
+  provider?: 'openrouter' | 'ollama' | string
   model?: string
 }
 
 export type AskAnswer = {
   answer: string
+  provider?: 'openrouter' | 'ollama' | string
   model?: string
   fallback?: boolean
 }

@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.6.4
+**System:** Agent Kanban Board v3.7.0
 
 ---
 
@@ -142,7 +142,7 @@ When the lease reaper returns a task to `READY` (an idle lease expired, a held t
 | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between alerts; the send queue is serialized so a multi-task sweep cannot trip Telegram's rate limit. |
 | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL for the alert's deep link. |
 
-### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console)
+### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider)
 
 The About page opens with a password-gated, **read-only** assistant that answers
 questions about this board — its protocol, engine, client, deployment and
@@ -154,19 +154,40 @@ explain the code and not only the documented protocol.
 It never reads or writes a card, never accepts a board token, and never sees
 one. `server/routes/ask.js` is mounted ahead of the auth middleware (like bug
 reports) and carries its own gate and its own limits. **Fail-closed on both
-secrets:** unset either and `GET /api/ask/config` reports `{"enabled":false}`,
+secrets:** unset either the provider secret/host or `KANBAN_ASK_PASSWORD` and `GET /api/ask/config` reports `{"enabled":false}`,
 the console collapses to a one-line note, and `POST /api/ask` is unavailable.
+
+Supported providers:
+1. **OpenRouter** (cloud API): requires `KANBAN_ASK_OPENROUTER_API_KEY` and `KANBAN_ASK_PASSWORD`. Default model: `openai/gpt-oss-20b`.
+2. **Ollama** (local or private network model): requires `KANBAN_ASK_PASSWORD` and `KANBAN_ASK_PROVIDER=ollama` (or `KANBAN_ASK_OLLAMA_HOST` set). Default model: `qwen3.6:latest` (or any local model). Supports custom auth header `KANBAN_ASK_OLLAMA_AUTH_HEADER`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `KANBAN_ASK_OPENROUTER_API_KEY` | *(unset)* | Upstream OpenRouter key. Required to enable the feature. Never returned or logged. |
+| `KANBAN_ASK_PROVIDER` | *(auto)* | LLM provider: `"openrouter"` or `"ollama"`. Auto-detected if unset. |
+| `KANBAN_ASK_OPENROUTER_API_KEY` | *(unset)* | Upstream OpenRouter key. Required when using OpenRouter. Never returned or logged. |
+| `KANBAN_ASK_OLLAMA_HOST` | `http://localhost:11434` | Base URL for the Ollama instance or private gateway when using Ollama. |
+| `KANBAN_ASK_OLLAMA_AUTH_HEADER` | *(unset)* | (secret) Optional token for reverse proxy or Cloudflare tunnel gateway in front of Ollama. |
 | `KANBAN_ASK_PASSWORD` | *(unset)* | Shared gate on `POST /api/ask`, sent by the console as the `x-ask-pass` header. Required to enable the feature. |
-| `KANBAN_ASK_MODEL` | `openai/gpt-oss-20b` | OpenRouter model id. |
+| `KANBAN_ASK_MODEL` | *(provider default)* | Model id (`openai/gpt-oss-20b` for OpenRouter; `qwen3.6:latest` for Ollama). |
 | `KANBAN_ASK_DAILY_CAP` | `50` | Global answers per UTC day. |
 | `KANBAN_ASK_PER_IP_PER_HOUR` | `3` | Per-IP answers per hour. |
 | `KANBAN_ASK_TIMEOUT_MS` | `45000` | Upstream request timeout. |
 | `KANBAN_ASK_MAX_PROMPT_TOKENS` | `6000` | Prompt budget. Raised from 2000 in v3.5.0, since the prompt now carries retrieved source. |
-| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | `600` | Answer budget. |
+| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | `1500` | Answer budget (raised to 1500 in v3.6.4). |
+
+#### Connecting Railway-Hosted Kanban to Local Ollama
+
+When running the Kanban board on Railway and Ollama on your local development machine:
+
+- **Option 2 (Recommended — Private Tailscale Mesh):**
+  Join the Railway container to your Tailscale tailnet using Tailscale Userspace networking or a subnet router.
+  Set `KANBAN_ASK_PROVIDER=ollama` and `KANBAN_ASK_OLLAMA_HOST=http://<tailscale-ip-or-magicdns>:11434`.
+  Zero public exposure, fully encrypted end-to-end.
+
+- **Option 1 (Cloudflare Tunnel + Token Gateway):**
+  Create a persistent Cloudflare Tunnel (`cloudflared tunnel run`) pointing to a local reverse proxy (`scripts/gateway/ollama-tunnel-gateway.js`).
+  The gateway enforces token authorization before proxying to `http://localhost:11434`.
+  On Railway, set `KANBAN_ASK_PROVIDER=ollama`, `KANBAN_ASK_OLLAMA_HOST=https://ollama.your-tunnel-domain.com`, and `KANBAN_ASK_OLLAMA_AUTH_HEADER="<your-secret-token>"`.
 
 A wrong password is counted separately from the answer caps, so brute-forcing
 the gate cannot exhaust the day's budget. Verify a deployment with `curl

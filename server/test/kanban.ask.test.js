@@ -143,7 +143,7 @@ describe('ask: feature gate', () => {
     await withApp({ env: baseEnv(), fetch: makeFetch(), store: fakeStore() }, async (baseUrl) => {
       const cfg = await jsonRequest(baseUrl, '/api/ask/config');
       assert.equal(cfg.res.status, 200);
-      assert.deepEqual(cfg.body, { enabled: true, gated: true, model: DEFAULT_MODEL });
+      assert.deepEqual(cfg.body, { enabled: true, gated: true, provider: 'openrouter', model: DEFAULT_MODEL });
       const raw = JSON.stringify(cfg.body);
       assert.doesNotMatch(raw, new RegExp(FAKE_KEY));
       assert.doesNotMatch(raw, new RegExp(FAKE_PASSWORD));
@@ -754,5 +754,163 @@ describe('ask: answer quality', () => {
     });
     const body = JSON.parse(fetchImpl.calls[0].opts.body);
     assert.equal(body.max_tokens, 1500, '600 cut a twelve-project answer off mid-sentence');
+  });
+});
+
+describe('ask: ollama provider', () => {
+  function makeOllamaFetch(handler) {
+    const calls = [];
+    const fn = async (url, opts) => {
+      calls.push({ url: String(url), opts });
+      if (!handler) return fakeResponse(200, okAnswerBody('Ollama answer'));
+      const out = handler(calls.length, opts);
+      if (out instanceof Error) throw out;
+      return out;
+    };
+    fn.calls = calls;
+    return fn;
+  }
+
+  it('is enabled with KANBAN_ASK_PROVIDER=ollama and KANBAN_ASK_PASSWORD alone (no OpenRouter key)', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+        assert.equal(cfg.res.status, 200);
+        assert.equal(cfg.body.enabled, true);
+        assert.equal(cfg.body.provider, 'ollama');
+        assert.equal(cfg.body.model, 'qwen3.6:latest');
+
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(res.body.answer, 'Ollama answer');
+        assert.equal(res.body.provider, 'ollama');
+        assert.equal(res.body.model, 'qwen3.6:latest');
+
+        assert.equal(fetchImpl.calls.length, 1);
+        assert.equal(fetchImpl.calls[0].url, 'http://localhost:11434/v1/chat/completions');
+        assert.equal(fetchImpl.calls[0].opts.headers['Content-Type'], 'application/json');
+        assert.equal(fetchImpl.calls[0].opts.headers['Authorization'], undefined);
+      },
+    );
+  });
+
+  it('honours KANBAN_ASK_OLLAMA_HOST and custom KANBAN_ASK_MODEL', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_OLLAMA_HOST: 'http://100.64.0.1:11434/',
+          KANBAN_ASK_MODEL: 'llama3.1:8b',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(fetchImpl.calls[0].url, 'http://100.64.0.1:11434/v1/chat/completions');
+        const sent = JSON.parse(fetchImpl.calls[0].opts.body);
+        assert.equal(sent.model, 'llama3.1:8b');
+      },
+    );
+  });
+
+  it('supports Option 1 (Cloudflare tunnel auth header) with KANBAN_ASK_OLLAMA_AUTH_HEADER', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_OLLAMA_HOST: 'https://ollama.riazrahaman.com',
+          KANBAN_ASK_OLLAMA_AUTH_HEADER: 'my-tunnel-secret-token',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(fetchImpl.calls[0].url, 'https://ollama.riazrahaman.com/v1/chat/completions');
+        assert.equal(fetchImpl.calls[0].opts.headers['Authorization'], 'Bearer my-tunnel-secret-token');
+      },
+    );
+  });
+
+  it('auto-detects provider=ollama when KANBAN_ASK_OLLAMA_HOST is set and OpenRouter key is unset', async () => {
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_OLLAMA_HOST: 'http://100.64.0.2:11434',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: makeOllamaFetch(),
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+        assert.equal(cfg.body.enabled, true);
+        assert.equal(cfg.body.provider, 'ollama');
+      },
+    );
+  });
+
+  it('handles Ollama upstream 404 (model not found) with clean hint and no secret leak', async () => {
+    const logger = fakeLogger();
+    const fetchImpl = makeOllamaFetch(() => fakeResponse(404, { error: 'model not found' }));
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+        logger,
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 502);
+        assert.equal(res.body.error, 'gateway_error');
+        assert.ok(logger.lines.some((l) => l.includes('Ollama answered 404') && l.includes('ollama pull')));
+      },
+    );
+  });
+
+  it('handles Ollama connection refused with clean network failure log', async () => {
+    const logger = fakeLogger();
+    const fetchImpl = makeOllamaFetch(() => {
+      const err = new TypeError('fetch failed');
+      err.cause = { code: 'ECONNREFUSED', address: '127.0.0.1', port: 11434 };
+      return err;
+    });
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+        logger,
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 502);
+        assert.equal(res.body.error, 'gateway_error');
+        assert.ok(logger.lines.some((l) => l.includes('could not reach Ollama') && l.includes('ECONNREFUSED')));
+      },
+    );
   });
 });
