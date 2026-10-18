@@ -278,6 +278,49 @@ test('in-page anchors clear the sticky chapter bar via a measured --toc-h', () =
   assert.match(aboutSource, /setProperty\('--toc-h'/)
 })
 
+test('the back-to-origin control records a scroll offset and arms before retiring (#113)', () => {
+  // The counterpart to the Top control: Top always goes to the hero, this
+  // returns you to the sentence you jumped away from.
+  assert.match(aboutSource, /← Back to/, 'the control must render its origin label')
+  assert.match(aboutSource, /const goBack = \(\) =>/)
+  // An offset, not an element: returning to the origin CHAPTER's heading is
+  // not the same as returning to where the reader actually was.
+  assert.match(aboutSource, /setBackTo\(\{ top: from, label: fromLabel, left: false \}\)/)
+  // The `left` guard is load-bearing. A smooth jump fires scroll events from
+  // the origin outwards, so an unguarded "are we back yet" test is true on the
+  // first one and cancels the offer before the reader has gone anywhere.
+  assert.match(aboutSource, /if \(!prev\.left\) return away > \d+ \? \{ \.\.\.prev, left: true \} : prev/)
+})
+
+test('the back control is offered only when the jump actually went somewhere', () => {
+  assert.match(
+    aboutSource,
+    /id !== activeSection && distance > window\.innerHeight \/ 2/,
+    'a chip on every click is noise, not an affordance',
+  )
+})
+
+test('the page width pays for the chapter rail on top of the reading column', () => {
+  // v3.5.0 capped the whole shell, so the rail and its gap came out of the
+  // text: 1088px of article with 332px of empty paper either side at a 2000px
+  // viewport, against 1380/180 for the guide this is modelled on.
+  assert.match(cssSource, /\.about-shell\s*\{[^}]*max-width:\s*calc\(var\(--guide-measure\) \+ var\(--guide-rail\)\)/)
+  assert.match(aboutSource, /about-shell/)
+  assert.doesNotMatch(aboutSource, /max-w-\[1400px\]/, 'the flat cap is what caused the narrow column')
+  // The measure grows on very wide screens instead of turning them into margin.
+  for (const bp of ['1900px', '2400px']) {
+    assert.ok(
+      cssSource.includes(`@media (min-width: ${bp})`),
+      `the reading measure must widen at ${bp}`,
+    )
+  }
+  // --guide-rail must track the rail's real width + gap, or the column
+  // silently changes size.
+  assert.match(cssSource, /--guide-rail:\s*15\.5rem/)
+  assert.match(aboutSource, /w-\[13rem\][^"]*flex-none/)
+  assert.match(aboutSource, /flex gap-10/)
+})
+
 test('the sticky chapter bar is opaque, and the wide-screen rail defaults to hidden first', () => {
   const toc = cssSource.match(/\.about-toc\s*\{([^}]*)\}/)
   assert.ok(toc, 'index.css must declare the sticky chapter bar')
@@ -287,12 +330,15 @@ test('the sticky chapter bar is opaque, and the wide-screen rail defaults to hid
   // disappear mid-scroll (token-tv guide.css #6).
   assert.doesNotMatch(toc[1], /backdrop-filter/)
   assert.doesNotMatch(aboutSource, /about-toc[^"]*backdrop-blur/)
-  // `.about-rail { display: none }` must come BEFORE the min-width query that
-  // turns it on; same specificity means source order decides, and the other
-  // way round the rail never appears at any width.
+  // `.about-rail { display: none }` must come BEFORE the rule that turns it on;
+  // same specificity means source order decides, and the other way round the
+  // rail never appears at any width. Anchored on the rail's own two rules
+  // rather than on the media query, since more than one block now opens at
+  // this breakpoint.
   const hidden = cssSource.indexOf('.about-rail {\n  display: none;')
-  const shown = cssSource.indexOf('@media (min-width: 80rem)')
-  assert.ok(hidden > 0 && shown > hidden, 'the rail default must precede its media query')
+  const shown = cssSource.indexOf('.about-rail {\n    display: block;')
+  assert.ok(hidden > 0, 'the rail must default to hidden')
+  assert.ok(shown > hidden, 'the rail default must precede the rule that shows it')
 })
 
 test('index.css scopes the 28px grid to .about-view and keeps the phone override', () => {

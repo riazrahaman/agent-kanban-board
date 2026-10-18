@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,39 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.6.0] — 2026-10-18
+
+### Added
+- **"← Back to …" on the About field guide (#113).** The counterpart to ↑ Top,
+  and the last navigation affordance still missing from the guides this page is
+  modelled on. Jump to a chapter from the rail or the chapter bar and a control
+  appears offering the way back; ↑ Top always returns to the hero, this returns
+  you to the sentence you left.
+
+  It records a **scroll offset**, not an element — returning to the origin
+  chapter's heading is not the same as returning to where you were reading. It
+  is offered only when the jump actually went somewhere (a different chapter,
+  more than half a viewport away), so it is an affordance rather than a chip on
+  every click, and it retires itself once you are back, however you got there.
+
+  Unlike the reference implementation this needs no `popstate`/`hashchange`
+  handling: the nav controls already `preventDefault()` and never touch the
+  hash, so there is no browser history entry for it to fight. Per DESIGN.md it
+  is a square hairline control, not the reference's pill with a drop shadow,
+  and it clears the phone layout's floating-toolbar safe area alongside ↑ Top.
+
+### Fixed
+- **The chapter rail was eating the reading column.** The page width was capped
+  flat at `max-w-[1400px]`, with the 13rem rail and its 2.5rem gap *inside* that
+  cap — so they came out of the text. Measured at a 2000px viewport: a 1088px
+  article with 332px of empty paper either side, against 1380px / 180px for the
+  reference guide. The cap is now computed as the reading measure **plus** the
+  rail (`.about-shell`), so the rail is paid for out of the margin where it
+  lives. Same viewport after: a 1316px article with 218px margins.
+- The reading measure now widens on very wide screens — 1180px, 1380px from
+  1900px, 1480px from 2400px — rather than turning a large display into mostly
+  margin. Both breakpoints are the reference's own.
 
 ## [3.5.2] — 2026-10-18
 

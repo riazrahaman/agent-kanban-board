@@ -439,6 +439,44 @@ body {
     );
 }
 
+/* Page width.
+   The reading column is capped, and the chapter rail is paid for ON TOP of it
+   rather than out of it. Capping the whole shell instead (what v3.5.0 did with
+   a flat `max-w-[1400px]`) means the rail and its gap come straight out of the
+   text: measured at a 2000px viewport the article was 1088px with 332px of
+   empty paper either side, against 1380px / 180px for the field guide this is
+   modelled on. The measure also grows on very wide screens, so a 2560px
+   display is not mostly margin — the same two breakpoints the reference uses. */
+.about-view {
+  --guide-measure: 1180px;
+  --guide-rail: 0px;
+}
+
+@media (min-width: 80rem) {
+  /* The rail's own width (13rem) plus the flex gap (2.5rem). Keep in step with
+     the `w-[13rem]` and `gap-10` in About.tsx — if they drift, the reading
+     column silently changes width. */
+  .about-view {
+    --guide-rail: 15.5rem;
+  }
+}
+
+@media (min-width: 1900px) {
+  .about-view {
+    --guide-measure: 1380px;
+  }
+}
+
+@media (min-width: 2400px) {
+  .about-view {
+    --guide-measure: 1480px;
+  }
+}
+
+.about-shell {
+  max-width: calc(var(--guide-measure) + var(--guide-rail));
+}
+
 /* The sticky chapter bar. OPAQUE on purpose: a sticky bar that combines
    `position: sticky` with backdrop-filter / a translucent background can fail
    to composite in Safari and vanish mid-scroll (token-tv guide.css #6), so it
