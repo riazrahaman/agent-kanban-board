@@ -110,6 +110,36 @@ test('chapter 3 states the reaper reclaims to READY and lists the three reasons'
   assert.match(reaper.gotcha, /READY/)
 })
 
+test('the architecture chapter documents teardown, not just the mount order', () => {
+  // The About page is the only place a reader is told how the process is
+  // composed. After v3.5.1 it is also where they are told how it comes apart,
+  // and the ORDER is the whole point: ending the SSE streams after
+  // server.close() would deadlock on the connections close() is waiting for.
+  const arch = CHAPTERS.find((c) => c.id === 'architecture')
+  assert.ok(arch, 'the architecture chapter must exist')
+  const prose = `${arch.underTheHood} ${arch.snippet.code}`
+  assert.match(prose, /SIGTERM/)
+  assert.match(prose, /drainSseStreams/)
+  assert.match(prose, /server\.close\(\)/)
+
+  // The claim is only true if the drain is described BEFORE the close.
+  const snippet = arch.snippet.code
+  assert.ok(
+    snippet.indexOf('drainSseStreams') < snippet.indexOf('server.close()'),
+    'the snippet must show the drain ahead of the close, which is the actual contract',
+  )
+})
+
+test('the client chapter explains what a redeploy does to the one open stream', () => {
+  const client = CHAPTERS.find((c) => c.id === 'client')
+  assert.ok(client, 'the client chapter must exist')
+  assert.match(
+    client.underTheHood,
+    /EventSource/,
+    'a reader watching the board through a deploy needs to know the stream returns by itself',
+  )
+})
+
 // ---------------------------------------------------------------------------
 // The environment table (chapter 9)
 // ---------------------------------------------------------------------------
