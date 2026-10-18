@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
-import { ASK_REPO_URL, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow } from '../askKnowledge.js';
+import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot } from '../askKnowledge.js';
 import { hintForUpstreamStatus, looksLikeOpenRouterKey } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
@@ -624,5 +624,135 @@ describe('ask: upstream failure diagnostics', () => {
         assert.equal(after, 2, 'the next window logs again');
       },
     );
+  });
+});
+
+describe('ask: snapshot project activity enrichment', () => {
+  it('gatherSnapshot breaks down states and collects recent tasks per project', () => {
+    const tasks = [
+      { id: 't1', title: 'Setup auth', status: 'DONE', project: 'kanbann', updated: '2026-10-18T10:00:00Z' },
+      { id: 't2', title: 'Implement SSE diff', status: 'IN_PROGRESS', project: 'kanbann', assigned_agent: 'builder-1', updated: '2026-10-18T10:05:00Z' },
+      { id: 't3', title: 'Backlog item', status: 'BACKLOG', project: 'kanbann', updated: '2026-10-18T09:00:00Z' },
+      { id: 't4', title: 'Blocked item', status: 'BLOCKED', project: 'kanbann', updated: '2026-10-18T08:00:00Z' },
+      { id: 'tv1', title: 'AliExpress hardware docs', status: 'DONE', project: 'TokenTV', updated: '2026-10-18T10:10:00Z' },
+    ];
+    const snap = gatherSnapshot(fakeStore(tasks));
+    assert.equal(snap.available, true);
+    assert.equal(snap.by_project.kanbann.total, 4);
+    assert.equal(snap.by_project.kanbann.done, 1);
+    assert.equal(snap.by_project.kanbann.active, 1);
+    assert.equal(snap.by_project.kanbann.backlog, 1);
+    assert.equal(snap.by_project.kanbann.blocked, 1);
+    assert.ok(Array.isArray(snap.by_project.kanbann.recent_tasks));
+    assert.ok(snap.by_project.kanbann.recent_tasks.length >= 1);
+    const inProgress = snap.by_project.kanbann.recent_tasks.find((t) => t.id === 't2');
+    assert.ok(inProgress);
+    assert.equal(inProgress.title, 'Implement SSE diff');
+    assert.equal(inProgress.status, 'IN_PROGRESS');
+    assert.equal(inProgress.assigned_agent, 'builder-1');
+  });
+
+  it('formatSnapshot includes recent project activity with titles and status breakdown', () => {
+    const snap = {
+      available: true,
+      version: '3.6.3',
+      tasks_total: 2,
+      by_status: { DONE: 1, IN_PROGRESS: 1 },
+      by_project: {
+        TokenTV: {
+          total: 2,
+          done: 1,
+          active: 1,
+          backlog: 0,
+          blocked: 0,
+          recent_tasks: [
+            { id: 'tv-1', title: 'Pillow 240x240 renderer', status: 'DONE', assigned_agent: null },
+            { id: 'tv-2', title: 'Firmware HTTP client', status: 'IN_PROGRESS', assigned_agent: 'builder-2' },
+          ],
+        },
+      },
+      reaper: { enabled: true, running: true },
+    };
+    const formatted = formatSnapshot(snap);
+    assert.match(formatted, /TokenTV \(2 cards, 1 done, 1 active\)/);
+    assert.match(formatted, /recent activity by project|recent project activity/i);
+    assert.match(formatted, /\[DONE\] tv-1: Pillow 240x240 renderer/);
+    assert.match(formatted, /\[IN_PROGRESS\] tv-2: Firmware HTTP client \(@builder-2\)/);
+  });
+
+  it('end-to-end: prompt sent to OpenRouter contains project task titles and status details', async () => {
+    const fetchImpl = makeFetch();
+    const tasks = [
+      { id: 'k-1', title: 'Add mutation lock', status: 'DONE', project: 'kanban' },
+      { id: 'k-2', title: 'Add reaper tests', status: 'IN_PROGRESS', project: 'kanban', assigned_agent: 'tester-1' },
+    ];
+    await withApp({ env: baseEnv(), fetch: fetchImpl, store: fakeStore(tasks) }, async (baseUrl) => {
+      await jsonRequest(baseUrl, '/api/ask', askRequest());
+      const sent = JSON.parse(fetchImpl.calls[0].opts.body);
+      const systemPrompt = sent.messages[0].content;
+      assert.match(systemPrompt, /Add mutation lock/);
+      assert.match(systemPrompt, /Add reaper tests/);
+      assert.match(systemPrompt, /@tester-1/);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Answer quality (v3.6.4)
+//
+// The first real answer this feature ever produced was cut off mid-sentence and
+// contradicted its own table — it printed "22 cards, 19 done" for a project and
+// then wrote that every task was finished. The figures were right; the prose
+// ignored them.
+// ---------------------------------------------------------------------------
+
+describe('ask: answer quality', () => {
+  function tasksFor(project, n, status = 'DONE') {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `${project}-${i}`,
+      project,
+      title: `${project} card ${i}`,
+      status,
+    }));
+  }
+
+  it('gives the model enough recent activity to say what was DONE, not just how many', () => {
+    const snap = gatherSnapshot({ getTasks: () => tasksFor('alpha', 12) });
+    assert.equal(snap.by_project.alpha.total, 12);
+    assert.equal(
+      snap.by_project.alpha.recent_tasks.length,
+      8,
+      'three titles per project was too thin to answer "what has been done"',
+    );
+    const text = formatSnapshot(snap);
+    assert.match(text, /recent activity by project/);
+    assert.match(text, /alpha card 0/, 'the titles must reach the prompt, not just the counts');
+  });
+
+  it('reports a project that is NOT fully done as not fully done', () => {
+    // The exact shape the model got wrong: most cards done, a few not.
+    const snap = gatherSnapshot({
+      getTasks: () => [...tasksFor('tokentv', 19, 'DONE'), ...tasksFor('tokentv-x', 3, 'IN_PROGRESS').map((t) => ({ ...t, project: 'tokentv' }))],
+    });
+    const p = snap.by_project.tokentv;
+    assert.equal(p.total, 22);
+    assert.equal(p.done, 19);
+    assert.equal(p.active, 3, 'the active count is present — the model had no excuse to say 0');
+    assert.match(formatSnapshot(snap), /tokentv \(22 cards, 19 done, 3 active\)/);
+  });
+
+  it('instructs the model never to contradict the snapshot figures', () => {
+    assert.match(GUARDRAIL_INSTRUCTION, /NEVER state a figure that contradicts the snapshot/);
+    assert.match(GUARDRAIL_INSTRUCTION, /do not write "0 active" unless the snapshot says active=0/);
+    assert.match(GUARDRAIL_INSTRUCTION, /Name the actual cards/);
+  });
+
+  it('defaults the answer budget high enough not to truncate a board-wide answer', async () => {
+    const fetchImpl = makeFetch(() => fakeResponse(200, okAnswerBody()));
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl }, async (baseUrl) => {
+      await jsonRequest(baseUrl, '/api/ask', askRequest());
+    });
+    const body = JSON.parse(fetchImpl.calls[0].opts.body);
+    assert.equal(body.max_tokens, 1500, '600 cut a twelve-project answer off mid-sentence');
   });
 });

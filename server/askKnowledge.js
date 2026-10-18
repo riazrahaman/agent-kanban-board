@@ -335,9 +335,21 @@ function safeGet(fn, fallback) {
  * Assembles a compact, read-only snapshot of the live board via in-process
  * store accessors. Never throws; on failure returns `{ available: false }`.
  *
+ * Enriches each project's bucket with state counts (total, done, active, backlog,
+ * blocked) and up to `maxRecentTasksPerProject` recent/active task items with
+ * their status, id, and title so the assistant can answer questions about
+ * what work has been done and what is in flight.
+ *
  * @param {object} store - the imported `server/store.js` module (injectable for tests).
+ * @param {object} [opts]
+ * @param {number} [opts.maxRecentTasksPerProject=3]
+ * @param {number} [opts.maxTitleChars=80]
  */
-export function gatherSnapshot(store) {
+// 8, not 3: the first real question this feature ever answered was "explain
+// what has been done in each project", and three titles per project was too
+// thin to answer it — the model filled the gap with generic prose instead.
+// The prompt budget is 6000 tokens and the fixed blocks leave room for this.
+export function gatherSnapshot(store, { maxRecentTasksPerProject = 8, maxTitleChars = 80 } = {}) {
   if (!store || typeof store.getTasks !== 'function') return { available: false };
   try {
     const tasks = store.getTasks() || [];
@@ -347,10 +359,36 @@ export function gatherSnapshot(store) {
       const status = t && t.status ? t.status : 'UNKNOWN';
       byStatus[status] = (byStatus[status] || 0) + 1;
       const project = (t && t.project) || 'default';
-      const bucket = (byProject[project] = byProject[project] || { total: 0, done: 0, active: 0 });
+      const bucket = (byProject[project] = byProject[project] || {
+        total: 0,
+        done: 0,
+        active: 0,
+        backlog: 0,
+        blocked: 0,
+        recent_tasks: [],
+      });
       bucket.total += 1;
-      if (status === 'DONE') bucket.done += 1;
-      else if (ACTIVE_STATUSES.includes(status)) bucket.active += 1;
+      if (status === 'DONE') {
+        bucket.done += 1;
+      } else if (ACTIVE_STATUSES.includes(status)) {
+        bucket.active += 1;
+      } else if (status === 'BACKLOG') {
+        bucket.backlog += 1;
+      } else if (status === 'BLOCKED') {
+        bucket.blocked += 1;
+      }
+
+      // Collect top recent tasks per project (store.getTasks returns tasks sorted by recency)
+      if (bucket.recent_tasks.length < maxRecentTasksPerProject && t && t.id) {
+        const rawTitle = typeof t.title === 'string' ? t.title.trim() : '';
+        const title = rawTitle.length > maxTitleChars ? `${rawTitle.slice(0, maxTitleChars - 3)}...` : rawTitle;
+        bucket.recent_tasks.push({
+          id: t.id,
+          title: title || '(no title)',
+          status,
+          assigned_agent: t.assigned_agent || null,
+        });
+      }
     }
     const loaded = typeof store.isStoreLoaded === 'function' ? !!store.isStoreLoaded() : undefined;
     const reaperEnabled = typeof store.isReaperEnabled === 'function' ? !!store.isReaperEnabled() : undefined;
@@ -383,10 +421,32 @@ export function formatSnapshot(snapshot) {
     .map(([k, v]) => `${k}=${v}`)
     .join(', ');
   if (statusParts) lines.push(`- by status: ${statusParts}.`);
-  const projectParts = Object.entries(snapshot.by_project || {})
-    .map(([k, v]) => `${k} (${v.total} cards, ${v.done} done, ${v.active} active)`)
+
+  const projectEntries = Object.entries(snapshot.by_project || {});
+  const projectParts = projectEntries
+    .map(([k, v]) => {
+      const counts = [`${v.total} cards`, `${v.done} done`, `${v.active} active`];
+      if (v.backlog) counts.push(`${v.backlog} backlog`);
+      if (v.blocked) counts.push(`${v.blocked} blocked`);
+      return `${k} (${counts.join(', ')})`;
+    })
     .join('; ');
   if (projectParts) lines.push(`- by project: ${projectParts}.`);
+
+  // Project activity details (recent task titles and agents)
+  const activityBlocks = [];
+  for (const [project, info] of projectEntries) {
+    if (info.recent_tasks && info.recent_tasks.length > 0) {
+      const items = info.recent_tasks
+        .map((t) => `    * [${t.status}] ${t.id}: ${t.title}${t.assigned_agent ? ` (@${t.assigned_agent})` : ''}`)
+        .join('\n');
+      activityBlocks.push(`  - ${project}:\n${items}`);
+    }
+  }
+  if (activityBlocks.length > 0) {
+    lines.push(`- recent activity by project:\n${activityBlocks.join('\n')}`);
+  }
+
   if (snapshot.reaper) lines.push(`- reaper: enabled=${snapshot.reaper.enabled}, running=${snapshot.reaper.running}.`);
   return lines.join('\n');
 }
@@ -396,19 +456,31 @@ export function formatSnapshot(snapshot) {
  * boundary — the About page copy must not word it as a guarantee.
  */
 export const GUARDRAIL_INSTRUCTION = `SCOPE — READ THIS FIRST
-You only answer questions about THIS board: its protocol, lifecycle, engine, API,
-client, deployments, configuration, and its source code. The public repository is
-${ASK_REPO_URL} — you may reference or link files from it.
+You answer questions about THIS board: its protocol, lifecycle, engine, API, client,
+deployments, configuration, its source code, and the projects and tasks tracked on it.
+The public repository is ${ASK_REPO_URL} — you may reference or link files from it.
 
 If a question is outside that scope (general chit-chat, other products, coding help
 unrelated to this board, world facts, opinions, etc.), reply with exactly one short
 polite line declining, e.g.: "I can only answer questions about the Agent Kanban
-Board, its protocol, and its source code." Then stop. Do not answer the off-topic
-part even partially.
+Board, its protocol, source code, and tracked projects." Then stop. Do not answer
+the off-topic part even partially.
 
 Rules:
 - Never invent endpoints, env vars, statuses, or file paths. If unsure, say so.
 - Never claim, patch, move, or delete a card, and never ask for or reveal a token.
+- When asked about projects, activity, or tasks, use the recent activity and card
+  counts in the LIVE BOARD SNAPSHOT to explain what work has been completed, what is
+  in progress, and what remains in backlog for each project. Name the actual cards
+  from "recent activity by project" — that list is the activity. Do not answer a
+  question about what was DONE with counts alone.
+- NEVER state a figure that contradicts the snapshot. If a project shows
+  "22 cards, 19 done", it has 3 cards that are NOT done: do not write that every
+  task is finished, and do not write "0 active" unless the snapshot says active=0.
+  Read each project's own numbers; do not generalise one project's state to the
+  others.
+- The snapshot is a point-in-time read of the WHOLE board. It is not a claim that
+  nothing else exists, and counts may have moved on since.
 - Prefer the LIVE BOARD SNAPSHOT for current figures; use the protocol summary for
   how things work. Be concise and concrete.
 
