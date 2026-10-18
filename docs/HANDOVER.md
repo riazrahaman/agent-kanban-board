@@ -505,8 +505,13 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-- **Version `3.5.2` is the current release** — the About field guide brought in
-  line with v3.5.1's shutdown path (`## [3.5.2] — 2026-10-18`). Chapter 9 now
+- **Version `3.6.0` is the current release** — the "← Back to …" control
+  (#113) plus the page-width fix (`## [3.6.0] — 2026-10-18`). The chapter rail
+  had been capped INSIDE `max-w-[1400px]`, so it came out of the reading
+  column: 1088px of article with 332px margins at 2000px, against 1380/180 for
+  the reference. `.about-shell` now caps on the measure PLUS the rail.
+- **`3.5.2`** — the About field guide brought in line with v3.5.1's shutdown
+  path (`## [3.5.2] — 2026-10-18`). Chapter 9 now
   carries the teardown order beside the mount order and chapter 8 explains the
   `EventSource` reconnect; two tests pin the ordering.
 - **`3.5.1`** — "graceful shutdown with open SSE streams"
@@ -529,12 +534,12 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
   four doc version strings synced, `skills/kanban/SKILL.md` frontmatter
   re-synced (it had drifted to `3.3.0`), the `KANBAN_ASK_MAX_PROMPT_TOKENS`
   drift reconciled on 6000, `server/data/` added to `.gitignore`, and
-  `TRUST_METRICS` moved to 608 server / 274 client — the numbers in the hero and
+  `TRUST_METRICS` moved to 608 server / 277 client — the numbers in the hero and
   the numbers strip are now read from that constant instead of retyped into JSX,
   so they cannot drift independently.
 - Obvious next steps:
-  1. Port the reference guides' **"← Back to …"** chip (the counterpart to the
-     ↑ Top control), which was deliberately left out of v3.5.0.
+  1. (done in v3.6.0 — #113 closed.) Every navigation affordance from the
+     reference guides is now ported.
   2. Issue **#108** is **closed** (v3.5.1), with the production redeploy log as
      evidence. Its original cause — an `npm` wrapper in the Railway start
      command — was fixed in the dashboard on 2026-10-11, and no crash email has

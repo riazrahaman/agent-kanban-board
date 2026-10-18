@@ -987,9 +987,18 @@ test('About page responsive layout invariants', async (t) => {
     // two wide empty margins — the "wasted space" this release was reported
     // for. The cap now lives once, on the outer container, and the article is
     // the flexible column beside the wide-screen chapter rail.
-    const container = aboutSource.match(/className="(mx-auto[^"]*max-w-\[\d+px\][^"]*)"/)?.[1]
-    assert.ok(container, 'About.tsx must cap its page width on one mx-auto container')
+    // Since v3.6.0 the cap is `.about-shell` in index.css rather than a flat
+    // Tailwind `max-w-[…]`, because it has to be computed: the reading measure
+    // PLUS the chapter rail, so the rail does not come out of the text.
+    const container = aboutSource.match(/className="(about-shell[^"]*)"/)?.[1]
+    assert.ok(container, 'About.tsx must cap its page width on one .about-shell container')
+    assert.match(container, /\bmx-auto\b/, 'the shell must stay centred')
     assert.match(container, /\bw-full\b/, 'the container must fill the width it is given')
+    assert.doesNotMatch(
+      container,
+      /\bmax-w-\[/,
+      'a flat cap here is what made the rail eat the reading column (v3.5.x)',
+    )
 
     const articleTag = aboutSource.match(/<article className="([^"]*)">/)?.[1]
     assert.ok(articleTag, 'About.tsx must render an <article> element')

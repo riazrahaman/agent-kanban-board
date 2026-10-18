@@ -880,6 +880,16 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
   const { count: visitCount, counted: visitCounted } = visit
   const [activeSection, setActiveSection] = useState<string>(SECTIONS[0]?.id ?? 'states')
   const [showTop, setShowTop] = useState(false)
+  // Where a chapter jump came FROM, so it can be undone (#113). Stored as a
+  // scroll offset rather than an element: it returns you to the sentence you
+  // were on, where returning to the origin chapter's heading would not.
+  // `left` guards the retire-on-return check below: a smooth jump fires scroll
+  // events from the origin outwards, so an unguarded "are we back yet" test is
+  // true on the very first one and cancels the offer before the reader has
+  // gone anywhere. It flips once the jump has actually travelled.
+  const [backTo, setBackTo] = useState<{ top: number; label: string; left: boolean } | null>(
+    null,
+  )
   const viewRef = useRef<HTMLDivElement | null>(null)
   const tocRef = useRef<HTMLElement | null>(null)
   const stripRef = useRef<HTMLDivElement | null>(null)
@@ -957,11 +967,18 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
       }
       if (hit && hit.getBoundingClientRect().bottom < tocHeight()) hit = null
       if (hit) setActiveSection(hit.id)
-      setShowTop(
-        scroller === window
-          ? window.scrollY > 600
-          : (scroller as HTMLElement).scrollTop > 600,
-      )
+      const top =
+        scroller === window ? window.scrollY : (scroller as HTMLElement).scrollTop
+      setShowTop(top > 600)
+      setBackTo((prev) => {
+        if (!prev) return prev
+        const away = Math.abs(top - prev.top)
+        if (!prev.left) return away > 400 ? { ...prev, left: true } : prev
+        // Back at roughly where the jump started, under the reader's own
+        // steam: the offer is spent, so retire it rather than leave a stale
+        // label pointing at where they already are.
+        return away < 140 ? null : prev
+      })
     }
 
     const scroller = getScroller()
@@ -1013,11 +1030,31 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
     }
   }, [])
 
+  const scrollOffset = () => {
+    const scroller = getScroller()
+    return scroller === window ? window.scrollY : (scroller as HTMLElement).scrollTop
+  }
+
   const scrollTo = (id: string) => {
     const el = document.getElementById(id)
     if (!el) return
+    const from = scrollOffset()
+    const fromLabel = SECTIONS.find((s) => s.id === activeSection)?.title
+    const distance = Math.abs(el.getBoundingClientRect().top)
+    // Only offer the return trip when the jump actually took you somewhere.
+    // Nudging to the chapter you are already reading needs no way back, and a
+    // chip that appears on every click is noise rather than an affordance.
+    if (fromLabel && id !== activeSection && distance > window.innerHeight / 2) {
+      setBackTo({ top: from, label: fromLabel, left: false })
+    }
     el.scrollIntoView({ behavior: motion(), block: 'start' })
     setActiveSection(id)
+  }
+
+  const goBack = () => {
+    if (!backTo) return
+    getScroller().scrollTo({ top: backTo.top, behavior: motion() })
+    setBackTo(null)
   }
 
   const scrollToTop = () => {
@@ -1035,7 +1072,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
       // phone layout (index.css, `about-view` hook) it flows in the document.
       className="about-view h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden max-md:pointer-coarse:pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
     >
-      <div className="mx-auto w-full max-w-[1400px] px-4 py-7 sm:px-6 lg:px-8">
+      <div className="about-shell mx-auto w-full px-4 py-7 sm:px-6 lg:px-8">
         {/* Masthead: edition line + version, closed by the 2px ink rule. The
             repository / live-board / skill links used to be repeated here AND
             in the hero; they are now in the hero only, so the fold carries the
@@ -1444,14 +1481,27 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
           both are off-system here (DESIGN.md §7), so it is the same hairline
           square as every other control. It sits above the phone layout's
           floating toolbar clearance so the two never overlap. */}
-      {showTop && (
-        <button
-          type="button"
-          onClick={scrollToTop}
-          className="fixed right-4 bottom-4 z-30 border border-line bg-surface px-3.5 py-2 font-mono text-[13px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg max-md:pointer-coarse:bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] pointer-coarse:min-h-11"
-        >
-          ↑ Top
-        </button>
+      {(showTop || backTo) && (
+        <div className="fixed right-4 bottom-4 z-30 flex items-center gap-2 max-md:pointer-coarse:bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))]">
+          {backTo && (
+            <button
+              type="button"
+              onClick={goBack}
+              className="max-w-[min(62vw,22rem)] truncate border border-line bg-surface px-3.5 py-2 font-mono text-[13px] text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
+            >
+              ← Back to {backTo.label}
+            </button>
+          )}
+          {showTop && (
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="border border-line bg-surface px-3.5 py-2 font-mono text-[13px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
+            >
+              ↑ Top
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
