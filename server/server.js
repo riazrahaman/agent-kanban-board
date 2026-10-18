@@ -47,6 +47,44 @@ export function liveSseStreamCount() {
 
 export function resetSseStreams() {
   activeSseStreams = 0;
+  openSseStreams.clear();
+}
+
+/**
+ * Every currently-open `/api/events` response.
+ *
+ * This exists for shutdown (#108). `server.close()` stops accepting new
+ * connections but only calls back once every EXISTING one has ended, and an
+ * SSE stream never ends on its own — it is a response that is deliberately
+ * held open forever. Without a handle on them there is nothing to close, so
+ * the callback never fires and the process sits there until something kills
+ * it. A plain counter cannot do this; we need the responses themselves.
+ */
+const openSseStreams = new Set();
+
+/**
+ * Ends every open SSE stream. Called on SIGTERM/SIGINT before `server.close()`.
+ *
+ * Ending the response (rather than destroying the socket) is what lets the
+ * browser's `EventSource` treat it as a normal stream end and reconnect on its
+ * own schedule — straight onto the new container during a rolling deploy. A
+ * destroyed socket surfaces as a network error instead.
+ *
+ * @returns {number} how many streams were ended.
+ */
+export function drainSseStreams() {
+  const streams = [...openSseStreams];
+  openSseStreams.clear();
+  for (const res of streams) {
+    try {
+      res.end();
+    } catch {
+      // Already torn down by the peer — nothing to do, and a throw here must
+      // never be allowed to abort the rest of the shutdown.
+    }
+  }
+  activeSseStreams = Math.max(0, activeSseStreams - streams.length);
+  return streams.length;
 }
 
 /**
@@ -148,6 +186,7 @@ export function createApp(opts = {}) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
     activeSseStreams += 1;
+    openSseStreams.add(res);
 
     const rawProject = typeof req.query.project === 'string' ? req.query.project.trim() : '';
     const project = rawProject || null;
@@ -216,7 +255,11 @@ export function createApp(opts = {}) {
       req.on('close', () => {
         closed = true;
         unsubscribe();
-        activeSseStreams = Math.max(0, activeSseStreams - 1);
+        // `delete` reports whether it was still registered, so a stream that
+        // drainSseStreams() already ended is not counted down twice.
+        if (openSseStreams.delete(res)) {
+          activeSseStreams = Math.max(0, activeSseStreams - 1);
+        }
       });
     });
 
@@ -361,30 +404,97 @@ export async function startServer(
  * and calling server.close(), we ensure in-flight requests finish,
  * persistence flush hooks run, and the process exits with code 0 instead of 143.
  *
+ * ORDER MATTERS HERE (#108). `server.close()` stops new connections but waits
+ * for every open one to end, and this server deliberately holds connections
+ * open forever: each browser tab parks on `GET /api/events`. Measured locally:
+ * with no SSE client the process exits in ~0.1s; with ONE open stream it never
+ * reached the close callback and left only via the `timeoutMs` path below,
+ * five seconds later. In production every tab holds a stream, so that was the
+ * normal case, and the deploy logs show SIGTERM followed by the container
+ * stopping ~2.8s later with no exit line in between.
+ *
+ * (The crash emails #108 was filed for had a different, earlier cause — an
+ * `npm` wrapper in the Railway start command, fixed in the dashboard on
+ * 2026-10-11, after which they stopped. This is a second defect found while
+ * verifying that one: a shutdown that was never actually graceful.)
+ *
+ * Hence: drain the SSE streams first (a clean `res.end()`, so EventSource
+ * reconnects to the new container by itself), then close the server, then
+ * `closeIdleConnections()` for keep-alive sockets sitting between requests.
+ * A request still being served is deliberately NOT destroyed here — that is
+ * what "graceful" means, and killing a PATCH mid-response would hand the
+ * client a reset whose retry then fails on a version mismatch. If one is still
+ * running a second later, `closeAllConnections()` takes it; the `timeoutMs`
+ * exit stays as the last backstop, not as the normal path.
+ *
  * @param {import('node:http').Server} server
  * @param {object} [opts]
  * @param {function} [opts.exit]
  * @param {function} [opts.log]
  * @param {number} [opts.timeoutMs]
+ * @param {function} [opts.drain] Ends long-lived streams. Defaults to
+ *   `drainSseStreams`; injectable so the unit tests can observe the ordering.
  * @returns {function} cleanup callback to remove signal listeners
  */
 export function registerShutdownHandlers(
   server,
-  { exit = process.exit, log = console.log, timeoutMs = 5000 } = {}
+  { exit = process.exit, log = console.log, timeoutMs = 5000, drain = drainSseStreams } = {}
 ) {
   let stopping = false;
   const shutdown = (signal) => {
     if (stopping) return;
     stopping = true;
     log(`[kanban server] received ${signal}, shutting down gracefully...`);
+
+    // Before close(), or close() waits on streams that never end by design.
+    let drained = 0;
+    try {
+      drained = drain() ?? 0;
+    } catch (err) {
+      console.error('[kanban server] error draining event streams:', err);
+    }
+    if (drained > 0) {
+      log(`[kanban server] ended ${drained} open event stream(s)`);
+    }
+
+    const closeStarted = Date.now();
     server.close((err) => {
       if (err) {
         console.error('[kanban server] error during close:', err);
         exit(1);
         return;
       }
+      // Logged so a retirement can be told apart from a container that was
+      // killed before it ever got here — the two are indistinguishable in the
+      // deploy log otherwise, which is what made #108 hard to confirm.
+      log(`[kanban server] closed cleanly in ${Date.now() - closeStarted}ms`);
       exit(0);
     });
+    // Node 18.2+. Idle keep-alive sockets are dropped at once: nothing is being
+    // served on them, and they would otherwise hold close() open for their full
+    // keep-alive window. In-flight requests are left alone.
+    if (typeof server.closeIdleConnections === 'function') {
+      try {
+        server.closeIdleConnections();
+      } catch (err) {
+        console.error('[kanban server] error closing idle connections:', err);
+      }
+    }
+
+    // Backstop for a request that is still running a second later (or a client
+    // that ignored the stream end). Unref'd, so it never by itself keeps the
+    // process alive once everything has drained.
+    if (typeof server.closeAllConnections === 'function') {
+      const hard = setTimeout(() => {
+        try {
+          server.closeAllConnections();
+        } catch (err) {
+          console.error('[kanban server] error closing connections:', err);
+        }
+      }, 1000);
+      if (typeof hard.unref === 'function') hard.unref();
+    }
+
     const timer = setTimeout(() => {
       console.warn('[kanban server] graceful shutdown timed out; exiting forcefully');
       exit(0);

@@ -238,7 +238,7 @@ flowchart TD
 - **Type:** Root npm configuration (`"type": "module"`).
 - **Scripts:**
   - `npm test`: Runs server tests, client status tests, client unit tests, and compiles the client bundle.
-  - `npm start`: Runs the backend API on port 4000.
+  - `npm start`: Runs the backend API on port 4000. Since v3.5.1 this execs `node server/server.js` directly instead of spawning a nested `npm --prefix server start`, so `SIGTERM` reaches the server rather than an npm wrapper that would then exit non-zero and be read as a crash by the host.
   - `npm run build`: Produces production client bundle in `client/dist`.
 
 #### `Makefile`
