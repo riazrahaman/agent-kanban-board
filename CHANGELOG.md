@@ -16,6 +16,21 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.7.0] — 2026-10-18
+
+### Added
+- **Ollama local model support for Ask-the-Board (`POST /api/ask`).**
+  Configurable via `KANBAN_ASK_PROVIDER=ollama` (or auto-detected when `KANBAN_ASK_OLLAMA_HOST` is set without an OpenRouter key).
+  - Defaults to `qwen3.6:latest` and upstream host `http://localhost:11434`.
+  - Targets Ollama's OpenAI-compatible `/v1/chat/completions` API.
+  - Returns clear actionable error diagnostics if a model is missing (`ollama pull <model>`) or connection is refused (`ollama serve`).
+- **Support for private tunnel authentication (`KANBAN_ASK_OLLAMA_AUTH_HEADER`).**
+  Supports forwarding custom bearer/token authentication headers when the Kanban board is hosted remotely (e.g. on Railway) and communicating with a local Ollama instance through a Cloudflare tunnel reverse proxy or gateway.
+- **Gateway proxy reference script (`scripts/gateway/ollama-tunnel-gateway.js`).**
+  Lightweight standalone token-verifying reverse proxy for secure Cloudflare Tunnel setups between Railway and local machines.
+- **Provider metadata in `/api/ask/config`.**
+  Exposes `provider` alongside `enabled`, `gated`, and `model` in `AskConfig` client types.
+
 ## [3.6.4] — 2026-10-18
 
 With v3.6.3 the assistant reached OpenRouter for the first time, and the first

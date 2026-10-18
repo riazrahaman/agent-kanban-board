@@ -52,7 +52,9 @@ const OPENROUTER_REFERER = 'https://agent-kanban.riazrahaman.com';
 // are the one place they cannot go. Guarded by a test that runs the real
 // `Headers` validator over the request this route actually builds.
 const OPENROUTER_TITLE = 'Agent Kanban Board - Ask';
-const DEFAULT_MODEL = 'openai/gpt-oss-20b';
+const DEFAULT_OPENROUTER_MODEL = 'openai/gpt-oss-20b';
+const DEFAULT_OLLAMA_MODEL = 'qwen3.6:latest';
+const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -72,8 +74,20 @@ export function looksLikeOpenRouterKey(key) {
   return typeof key === 'string' && /^sk-or-[A-Za-z0-9._-]{16,}$/.test(key.trim());
 }
 
-/** Short operator-facing hint keyed on OpenRouter's HTTP status. */
-export function hintForUpstreamStatus(status) {
+/** Short operator-facing hint keyed on OpenRouter or Ollama HTTP status. */
+export function hintForUpstreamStatus(status, provider = 'openrouter') {
+  if (provider === 'ollama') {
+    switch (status) {
+      case 404:
+        return 'model not found on Ollama instance — run `ollama pull <model>` or check KANBAN_ASK_MODEL';
+      case 401:
+      case 403:
+        return 'unauthorized — check KANBAN_ASK_OLLAMA_AUTH_HEADER or tunnel secret';
+      default:
+        return status >= 500 ? 'Ollama internal server error' : 'unexpected status from Ollama';
+    }
+  }
+
   switch (status) {
     case 400:
       return 'bad request — often a prompt over the model context; try lowering KANBAN_ASK_MAX_PROMPT_TOKENS';
@@ -108,6 +122,23 @@ function isNonEmpty(value) {
 }
 
 /**
+ * Resolves the active provider: 'openrouter' or 'ollama'.
+ * Auto-detects if unset: defaults to 'ollama' if KANBAN_ASK_OLLAMA_HOST is set
+ * without an OpenRouter key, otherwise defaults to 'openrouter'.
+ */
+export function resolveProvider(env) {
+  if (isNonEmpty(env.KANBAN_ASK_PROVIDER)) {
+    const p = env.KANBAN_ASK_PROVIDER.trim().toLowerCase();
+    if (p === 'ollama') return 'ollama';
+    return 'openrouter';
+  }
+  if (!isNonEmpty(env.KANBAN_ASK_OPENROUTER_API_KEY) && isNonEmpty(env.KANBAN_ASK_OLLAMA_HOST)) {
+    return 'ollama';
+  }
+  return 'openrouter';
+}
+
+/**
  * Reads every `KANBAN_ASK_*` key literally off `process.env` so the config
  * generator (scripts/gen-config-reference.mjs) and the config drift test
  * (server/test/kanban.config.test.js) discover each one by name. `deps.env`
@@ -116,6 +147,9 @@ function isNonEmpty(value) {
  */
 function readEnv() {
   return {
+    KANBAN_ASK_PROVIDER: process.env.KANBAN_ASK_PROVIDER,
+    KANBAN_ASK_OLLAMA_HOST: process.env.KANBAN_ASK_OLLAMA_HOST,
+    KANBAN_ASK_OLLAMA_AUTH_HEADER: process.env.KANBAN_ASK_OLLAMA_AUTH_HEADER,
     KANBAN_ASK_OPENROUTER_API_KEY: process.env.KANBAN_ASK_OPENROUTER_API_KEY,
     KANBAN_ASK_PASSWORD: process.env.KANBAN_ASK_PASSWORD,
     KANBAN_ASK_MODEL: process.env.KANBAN_ASK_MODEL,
@@ -128,13 +162,30 @@ function readEnv() {
   };
 }
 
-/** Fail-closed gate: enabled only when BOTH the key and the password are non-empty. */
+/**
+ * Fail-closed gate:
+ * - Always requires KANBAN_ASK_PASSWORD.
+ * - If provider is openrouter: requires KANBAN_ASK_OPENROUTER_API_KEY.
+ * - If provider is ollama: requires KANBAN_ASK_PASSWORD (host defaults to http://localhost:11434).
+ */
 function isEnabled(env) {
-  return isNonEmpty(env.KANBAN_ASK_OPENROUTER_API_KEY) && isNonEmpty(env.KANBAN_ASK_PASSWORD);
+  if (!isNonEmpty(env.KANBAN_ASK_PASSWORD)) return false;
+  const provider = resolveProvider(env);
+  if (provider === 'ollama') return true;
+  return isNonEmpty(env.KANBAN_ASK_OPENROUTER_API_KEY);
 }
 
 function modelName(env) {
-  return isNonEmpty(env.KANBAN_ASK_MODEL) ? env.KANBAN_ASK_MODEL.trim() : DEFAULT_MODEL;
+  if (isNonEmpty(env.KANBAN_ASK_MODEL)) return env.KANBAN_ASK_MODEL.trim();
+  const provider = resolveProvider(env);
+  return provider === 'ollama' ? DEFAULT_OLLAMA_MODEL : DEFAULT_OPENROUTER_MODEL;
+}
+
+function ollamaHost(env) {
+  if (isNonEmpty(env.KANBAN_ASK_OLLAMA_HOST)) {
+    return env.KANBAN_ASK_OLLAMA_HOST.trim().replace(/\/+$/, '');
+  }
+  return DEFAULT_OLLAMA_HOST;
 }
 
 /**
@@ -152,10 +203,12 @@ export function createAskRouter(deps = {}) {
   const router = express.Router();
   const logger = deps.logger || console;
 
+  const provider = resolveProvider(env);
+
   // Boot-time nudge, matching routes/bugReports.js. A placeholder key is the
   // single most likely cause of a feature that is "on" but answers nothing,
   // and before v3.6.1 it produced no output anywhere at all.
-  if (isEnabled(env) && !looksLikeOpenRouterKey(env.KANBAN_ASK_OPENROUTER_API_KEY)) {
+  if (provider === 'openrouter' && isEnabled(env) && !looksLikeOpenRouterKey(env.KANBAN_ASK_OPENROUTER_API_KEY)) {
     logger.warn(
       `${LOG_PREFIX} WARNING: KANBAN_ASK_OPENROUTER_API_KEY does not look like an OpenRouter key (placeholder?)`,
     );
@@ -169,7 +222,11 @@ export function createAskRouter(deps = {}) {
   /** Strip our own secrets out of anything about to be logged. */
   function redactSecrets(line) {
     let out = String(line);
-    for (const secret of [env.KANBAN_ASK_OPENROUTER_API_KEY, env.KANBAN_ASK_PASSWORD]) {
+    for (const secret of [
+      env.KANBAN_ASK_OPENROUTER_API_KEY,
+      env.KANBAN_ASK_PASSWORD,
+      env.KANBAN_ASK_OLLAMA_AUTH_HEADER,
+    ]) {
       if (!secret || secret.length < 8) continue;
       out = out.split(secret).join('[redacted]');
       const escaped = JSON.stringify(secret).slice(1, -1);
@@ -184,7 +241,7 @@ export function createAskRouter(deps = {}) {
     if (last !== undefined && nowTs - last < LOG_WINDOW_MS) return;
     lastLoggedAt.set(kind, nowTs);
     logger.warn(
-      redactSecrets(`${LOG_PREFIX} request failed: ${detail} [model=${modelName(env)}]`),
+      redactSecrets(`${LOG_PREFIX} request failed: ${detail} [provider=${provider}, model=${modelName(env)}]`),
     );
   }
 
@@ -296,7 +353,7 @@ export function createAskRouter(deps = {}) {
 
   router.get('/config', (req, res) => {
     if (!isEnabled(env)) return res.json({ enabled: false });
-    res.json({ enabled: true, gated: true, model: modelName(env) });
+    res.json({ enabled: true, gated: true, provider, model: modelName(env) });
   });
 
   // express.json() already ran globally in server.js before this router is
@@ -354,18 +411,36 @@ export function createAskRouter(deps = {}) {
     const maxOutputTokens = intFrom(env.KANBAN_ASK_MAX_OUTPUT_TOKENS, 1500);
     const timeoutMs = intFrom(env.KANBAN_ASK_TIMEOUT_MS, 45000);
 
-    // 5. Call OpenRouter.
+    // 5. Call upstream model provider (OpenRouter or Ollama).
     let upstream;
     const startedAt = now();
+    const isOllama = provider === 'ollama';
+    const targetUrl = isOllama
+      ? `${ollamaHost(env)}/v1/chat/completions`
+      : OPENROUTER_URL;
+
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    if (isOllama) {
+      // Option 1 (Cloudflare Tunnel) or custom auth gateway support
+      if (isNonEmpty(env.KANBAN_ASK_OLLAMA_AUTH_HEADER)) {
+        const authVal = env.KANBAN_ASK_OLLAMA_AUTH_HEADER.trim();
+        headers['Authorization'] = authVal.startsWith('Bearer ') ? authVal : `Bearer ${authVal}`;
+      }
+    } else {
+      headers['Authorization'] = `Bearer ${env.KANBAN_ASK_OPENROUTER_API_KEY}`;
+      headers['HTTP-Referer'] = OPENROUTER_REFERER;
+      headers['X-Title'] = OPENROUTER_TITLE;
+    }
+
+    const providerLabel = isOllama ? 'Ollama' : 'OpenRouter';
+
     try {
-      upstream = await fetchImpl(OPENROUTER_URL, {
+      upstream = await fetchImpl(targetUrl, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.KANBAN_ASK_OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': OPENROUTER_REFERER,
-          'X-Title': OPENROUTER_TITLE,
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages: [
@@ -401,13 +476,13 @@ export function createAskRouter(deps = {}) {
       ]
         .filter(Boolean)
         .join(' | ');
-      logFailure('network', `could not reach OpenRouter: ${safeLogValue(detail || 'unknown', 400)}`);
+      logFailure('network', `could not reach ${providerLabel}: ${safeLogValue(detail || 'unknown', 400)}`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
     if (!upstream || !upstream.ok) {
       const status = upstream?.status ?? 0;
-      logFailure(`http_${status}`, `OpenRouter answered ${status} — ${hintForUpstreamStatus(status)}`);
+      logFailure(`http_${status}`, `${providerLabel} answered ${status} — ${hintForUpstreamStatus(status, provider)}`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
@@ -415,7 +490,7 @@ export function createAskRouter(deps = {}) {
     try {
       data = await upstream.json();
     } catch {
-      logFailure('unparseable', 'OpenRouter returned a 2xx that was not JSON');
+      logFailure('unparseable', `${providerLabel} returned a 2xx that was not JSON`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
@@ -424,14 +499,14 @@ export function createAskRouter(deps = {}) {
       // A 2xx with no content is the shape an upstream refusal or a
       // length/filter stop takes, so surface the reason the API gives.
       const why = data?.choices?.[0]?.finish_reason || data?.error?.code || 'no content';
-      logFailure('empty', `OpenRouter returned 200 with an empty answer (${safeLogValue(why)})`);
+      logFailure('empty', `${providerLabel} returned 200 with an empty answer (${safeLogValue(why)})`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
     // Only a fully successful answer spends the cap/IP budget.
     consume(ip);
 
-    res.json(fallback ? { answer, model, fallback: true } : { answer, model });
+    res.json(fallback ? { answer, model, provider, fallback: true } : { answer, model, provider });
   });
 
   return router;
