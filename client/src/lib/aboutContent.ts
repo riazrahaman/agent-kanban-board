@@ -43,6 +43,7 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
   path: SKILL_PATH,
   hubUrl: SKILL_HUB_URL,
   install: [
+    'npx @skillporthq/cli@latest add riazrahaman/agentkanban',
     'cp -r skills/kanban .opencode/skills/kanban',
     'cp -r skills/kanban ~/.config/opencode/skills/kanban',
   ],
@@ -51,6 +52,7 @@ export const ORCHESTRATOR_SKILL: OrchestratorSkill = {
     'Claim to own, PATCH to move — never enter a stage with a status-only PATCH.',
     'Every PATCH sends expected_version; illegal moves 409, wrong roles 403.',
     'Documents the optional Telegram reclaim alerts the reaper fires on a reset card.',
+    'Protocol synced: Ask-the-Board assistant, 2-stage graceful teardown, and ASCII ByteString headers.',
   ],
 }
 
@@ -251,6 +253,9 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Fail-closed corrupt-store load', code: 'storage.js · JsonStorage.load' },
   { name: 'Readiness probe', code: 'routes/health.js · GET /api/health/ready' },
   { name: 'Anonymous "Report a bug" -> GitHub issue', code: 'routes/bugReports.js · POST /api/bug-reports, Turnstile-protected' },
+  { name: 'Ask-the-Board assistant (OpenRouter & Ollama)', code: 'routes/ask.js, lib/ask.ts · POST /api/ask, GET /api/ask/config' },
+  { name: 'Two-stage graceful teardown', code: 'server.js · drainSseStreams, registerShutdownHandlers' },
+  { name: 'HTTP ByteString header sanitization', code: 'api.ts · sanitizeByteStringHeaders' },
   { name: 'Auto / Light / Dark theme', code: 'lib/theme.ts · resolveMode, nextMode' },
   { name: 'Phone layout: document scroll, pinch-zoom block', code: 'index.css · lib/scrollLock.ts, lib/pinchZoomGuard.ts' },
 ]
@@ -814,7 +819,7 @@ node scripts/gen-config-reference.mjs`,
     eli5:
       'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, so it can explain the code itself as well as the protocol, alongside a live read-only snapshot.',
     underTheHood:
-      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token.',
+      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token.',
     snippet: {
       label: 'the ask surface',
       code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "provider": "ollama", "model": "..." }
