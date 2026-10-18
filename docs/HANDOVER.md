@@ -505,8 +505,8 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-**Current release: `3.7.1`**, live on Railway, CI green, working tree clean on
-`main`. Tags `v3.5.0` … `v3.7.1` all pushed.
+**Current release: `3.7.2`**, live on Railway, CI green, working tree clean on
+`main`. Tags `v3.5.0` … `v3.7.2` all pushed.
 
 ### The arc of this run, in one line each
 
@@ -523,6 +523,8 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 | `3.6.4` | Ask answer quality: truncation, self-contradiction, thin activity data. |
 | `3.7.0` | Ask local model support: Ollama provider (`qwen3.6:latest`), Tailscale mesh & Cloudflare tunnel gateway options. |
 | `3.7.1` | Documentation & skill sync: About environment tables, handover notes, and bundled orchestrator skill. |
+| `3.7.2` | Ask answer UI: scrollable answer window & uncapped output tokens for local Ollama. |
+| `current` | Persistent Tailscale Funnel public ingress with macOS `launchd` token gateway for zero-network-exposure Ollama hosting. |
 
 ### The one worth reading twice
 

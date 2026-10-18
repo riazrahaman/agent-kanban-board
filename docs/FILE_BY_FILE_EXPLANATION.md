@@ -568,6 +568,18 @@ inherited from `referencedProjects`).
 - **Path:** [`scripts/test-client-status.js`](../scripts/test-client-status.js)
 - **Role:** Test validating client status normalizer resilience against malformed inputs.
 
+#### `scripts/gateway/ollama-tunnel-gateway.js`
+- **Path:** [`scripts/gateway/ollama-tunnel-gateway.js`](../scripts/gateway/ollama-tunnel-gateway.js)
+- **Role:** Lightweight local reverse proxy and firewall sitting between ingress tunnels (Tailscale Funnel or Cloudflare) and the local Ollama instance (`:11434`). Verifies the `Authorization: Bearer <TOKEN>` header before forwarding requests.
+
+#### `scripts/setup-ollama-persistent-tunnel.sh`
+- **Path:** [`scripts/setup-ollama-persistent-tunnel.sh`](../scripts/setup-ollama-persistent-tunnel.sh)
+- **Role:** Automated setup script for persistent local Ollama connectivity. Configures the token gateway as a macOS background LaunchAgent service (`~/Library/LaunchAgents/com.riazrahaman.ollama-tunnel-gateway.plist`), enables Tailscale Funnel on port 11435, and updates Railway environment variables.
+
+#### `scripts/start-ollama-tunnel.sh`
+- **Path:** [`scripts/start-ollama-tunnel.sh`](../scripts/start-ollama-tunnel.sh)
+- **Role:** Quick-start ephemeral tunnel launcher using Cloudflare Quick Tunnel (`trycloudflare.com`) for testing local Ollama against Railway without a persistent domain.
+
 #### `.github/workflows/ci.yml`
 - **Path:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 - **Pipeline:** Automated CI running discrete steps — security checks (`make sec`), server tests (`npm --prefix server test`), client status tests, client unit tests (`npm --prefix client test`), and the production build — across Node 20.x and 22.x, using `actions/checkout@v4` and `actions/setup-node@v4`.
