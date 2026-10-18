@@ -505,50 +505,61 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-- **Version `3.6.0` is the current release** — the "← Back to …" control
-  (#113) plus the page-width fix (`## [3.6.0] — 2026-10-18`). The chapter rail
-  had been capped INSIDE `max-w-[1400px]`, so it came out of the reading
-  column: 1088px of article with 332px margins at 2000px, against 1380/180 for
-  the reference. `.about-shell` now caps on the measure PLUS the rail.
-- **`3.5.2`** — the About field guide brought in line with v3.5.1's shutdown
-  path (`## [3.5.2] — 2026-10-18`). Chapter 9 now
-  carries the teardown order beside the mount order and chapter 8 explains the
-  `EventSource` reconnect; two tests pin the ordering.
-- **`3.5.1`** — "graceful shutdown with open SSE streams"
-  (`CHANGELOG.md` `## [3.5.1] — 2026-10-18`, tag `v3.5.1`). Shutdown
-  now ends the open `/api/events` responses before `server.close()`, which
-  previously waited for connections that never end by design. Verified on a
-  live redeploy: the retired container logged `ended 2 open event stream(s)` /
-  `closed cleanly in 1ms`, against ~5s before. See
-  `SYSTEM_DESIGN_AND_ARCHITECTURE.md` §9 for the sequence and the design rules.
-- **`3.5.0` was "Ask-the-Board console + Field Guide Nº 02"**
-  (`## [3.5.0] — 2026-10-18`). It contains the
-  client half of Ask-the-Board (`client/src/lib/ask.ts` + the hero console),
-  source retrieval in `server/askKnowledge.js` (`rankSourceFiles` /
-  `gatherSourceContext`), the `KANBAN_ASK_MAX_PROMPT_TOKENS` 2000 → 6000 raise,
-  and the About page rebuilt as a twelve-chapter field guide.
-- **`3.4.0` was the backend half** (`## [3.4.0] — 2026-10-17`; commit `7361948`,
-  merge `6b0b699`): the endpoint, the password gate and the rate limits.
-- Everything the previous handover listed as pending is now done: both manifests
-  bumped, the dated CHANGELOG section written against the tagged `v3.4.0`, the
-  four doc version strings synced, `skills/kanban/SKILL.md` frontmatter
-  re-synced (it had drifted to `3.3.0`), the `KANBAN_ASK_MAX_PROMPT_TOKENS`
-  drift reconciled on 6000, `server/data/` added to `.gitignore`, and
-  `TRUST_METRICS` moved to 608 server / 277 client — the numbers in the hero and
-  the numbers strip are now read from that constant instead of retyped into JSX,
-  so they cannot drift independently.
-- Obvious next steps:
-  1. (done in v3.6.0 — #113 closed.) Every navigation affordance from the
-     reference guides is now ported.
-  2. Issue **#108** is **closed** (v3.5.1), with the production redeploy log as
-     evidence. Its original cause — an `npm` wrapper in the Railway start
-     command — was fixed in the dashboard on 2026-10-11, and no crash email has
-     arrived for this service since 2026-10-10. The shutdown defect found while
-     verifying that is the one v3.5.1 actually fixes. Note Railway's dashboard
-     start command still overrides `railway.json`, so check there first if the
-     emails ever return.
-  3. Keep `aboutContent.ts` `TRUST_METRICS` in lock-step as tests are added
-     (§10); `about.test.mjs` fails the build when it drifts.
+**Current release: `3.6.4`**, live on Railway, CI green, working tree clean on
+`main`. Tags `v3.5.0` … `v3.6.4` all pushed.
+
+### The arc of this run, in one line each
+
+| | |
+| :-- | :-- |
+| `3.4.0` | Ask-the-Board **backend**: endpoint, password gate, rate limits. |
+| `3.5.0` | Ask **console** (`client/src/lib/ask.ts`) + About rebuilt as Field Guide Nº 02; source retrieval in `askKnowledge.js`; prompt budget 2000 → 6000. |
+| `3.5.1` | **Graceful shutdown** — `drainSseStreams()` before `server.close()` (#108). |
+| `3.5.2` | The field guide documents that shutdown path (§9 + chapter 9/8). |
+| `3.6.0` | "← Back to …" control (#113) + the page-width fix. |
+| `3.6.1` | Ask failures became **diagnosable** at all (status + hint + model). |
+| `3.6.2` | …and that logging's own blind spot: the **errno** behind a `TypeError`. |
+| `3.6.3` | **The actual bug**: an em dash in the `X-Title` header. |
+| `3.6.4` | Ask answer quality: truncation, self-contradiction, thin activity data. |
+
+### The one worth reading twice
+
+`3.6.1` → `3.6.3` is a worked example of not guessing. Ask-the-Board had
+**never worked in production since v3.4.0**, and the symptom was a generic
+"temporarily unavailable". Four hypotheses were eliminated with evidence before
+the cause was found — retired model (no, still listed), over-long prompt (no,
+131072-token context vs a 6000 budget), placeholder key (no, boot shape check
+clean), whitespace or quotes corrupting the header (no, tested all five
+variants against the real endpoint). Railway's flow logs showed an empty DNS
+stream and zero egress, which *looked* like a network fault and was in fact a
+symptom: `fetch` threw before a packet left the process, because an HTTP header
+value is a **ByteString** and `'Agent Kanban Board — Ask'` carries U+2014 at
+index 19.
+
+It shipped past 600+ passing tests because every test injects a fake `fetch`,
+which accepts any object as `headers` and never runs the platform's validation.
+The guard added in 3.6.3 pushes the headers the route actually builds through
+the real `Headers` and `Request` constructors — verified to fail on the em dash.
+
+### Open
+
+1. **#114 — Ask bypasses project isolation.** `gatherSnapshot()` calls
+   `store.getTasks()` unscoped, so the assistant sees **12** projects with
+   counts and recent card titles, while an anonymous caller sees **0** and a
+   project-scoped token sees **1**. It bypasses the v3.3.0 isolation model on
+   the one surface that takes no board token. **Filed, not fixed — it needs an
+   owner decision**, because the sensible fix removes a capability the owner is
+   actively using. Four options are on the issue; the allow-list
+   (`KANBAN_ASK_SNAPSHOT_PROJECTS`, fail-closed) is the most consistent with
+   how everything else here is gated.
+2. **Model choice.** `openai/gpt-oss-20b` still makes arithmetic and
+   consistency mistakes on a wide table even with the 3.6.4 guardrails.
+   `openai/gpt-oss-120b` is on the same account — a one-variable change to
+   `KANBAN_ASK_MODEL`. Not made unilaterally: it changes cost per answer.
+3. **Ask has still never been exercised end to end against a *failing*
+   upstream.** Every 4xx/5xx path is covered by tests with an injected fetch,
+   but the real key, the credit balance and the model have only now started
+   round-tripping. A second, independent problem could still surface.
 
 ---
 
