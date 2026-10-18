@@ -16,6 +16,12 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.7.1] — 2026-10-18
+
+### Documentation & Reference Sync
+- Updated About page (Field Guide Nº 02) environment variable tables and Chapter 11 Ask surface snippet to document the new Ollama provider and configuration flags (`KANBAN_ASK_PROVIDER`, `KANBAN_ASK_OLLAMA_HOST`, `KANBAN_ASK_OLLAMA_AUTH_HEADER`).
+- Updated system architecture and handover documentation to match live v3.7.1 state.
+
 ## [3.7.0] — 2026-10-18
 
 ### Added
