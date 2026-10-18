@@ -505,8 +505,12 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-- **Version `3.5.1` is the current release** — "graceful shutdown with open SSE
-  streams" (`CHANGELOG.md` `## [3.5.1] — 2026-10-18`, tag `v3.5.1`). Shutdown
+- **Version `3.5.2` is the current release** — the About field guide brought in
+  line with v3.5.1's shutdown path (`## [3.5.2] — 2026-10-18`). Chapter 9 now
+  carries the teardown order beside the mount order and chapter 8 explains the
+  `EventSource` reconnect; two tests pin the ordering.
+- **`3.5.1`** — "graceful shutdown with open SSE streams"
+  (`CHANGELOG.md` `## [3.5.1] — 2026-10-18`, tag `v3.5.1`). Shutdown
   now ends the open `/api/events` responses before `server.close()`, which
   previously waited for connections that never end by design. Verified on a
   live redeploy: the retired container logged `ended 2 open event stream(s)` /
@@ -525,7 +529,7 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
   four doc version strings synced, `skills/kanban/SKILL.md` frontmatter
   re-synced (it had drifted to `3.3.0`), the `KANBAN_ASK_MAX_PROMPT_TOKENS`
   drift reconciled on 6000, `server/data/` added to `.gitignore`, and
-  `TRUST_METRICS` moved to 608 server / 272 client — the numbers in the hero and
+  `TRUST_METRICS` moved to 608 server / 274 client — the numbers in the hero and
   the numbers strip are now read from that constant instead of retyped into JSX,
   so they cannot drift independently.
 - Obvious next steps:

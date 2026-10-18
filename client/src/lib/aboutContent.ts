@@ -96,7 +96,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '272',
+    value: '274',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -736,7 +736,7 @@ KANBAN_WEBHOOK_SECRET=...`,
     eli5:
       'The browser opens one live stream and redraws from it. It never invents state of its own, and it can only claim through the same protocol an agent uses.',
     underTheHood:
-      'client/src/App.tsx keeps ONE combined Server-Sent Events connection (mode=diff) and reconciles each event into its local array by the composite key (id, project) — task ids are unique only within a project. client/src/lib/useClaimCoordinator.ts is the single writer on the browser side: it heartbeats every card the bound agent holds and, when idle, pulls the next one with nextClaim (claim-first). Pure decisions live in lib/claimCoordinator.ts so they are unit-testable without a browser.',
+      'client/src/App.tsx keeps ONE combined Server-Sent Events connection (mode=diff) and reconciles each event into its local array by the composite key (id, project) — task ids are unique only within a project. client/src/lib/useClaimCoordinator.ts is the single writer on the browser side: it heartbeats every card the bound agent holds and, when idle, pulls the next one with nextClaim (claim-first). Pure decisions live in lib/claimCoordinator.ts so they are unit-testable without a browser. Nothing in the client handles a redeploy: when the server shuts down it ENDS the stream rather than dropping the socket, which EventSource treats as a normal end and retries on its own schedule — straight onto the replacement container (chapter 9).',
     snippet: {
       label: 'one stream, one writer',
       code: `// App.tsx — one EventSource, reconciled by (id, project)
@@ -762,15 +762,21 @@ const claimed = await nextClaim(who, { project: proj, role: 'builder' })`,
     eli5:
       'Every request walks the same corridor: authenticated, rate-limited, routed to one store, written to disk before memory, and only then pushed out to whoever is watching.',
     underTheHood:
-      'server/server.js composes the process in a fixed order — CORS, express.json and the trust-proxy setting, then the pre-auth routes (/api/auth, /api/bug-reports, and /api/ask with its own password gate), then the auth middleware (middleware/auth.js) and the rate limiter (middleware/rateLimit.js), then the routers (tasks.js, agents.js, projects.js, metrics.js, settings.js, milestones.js, audit.js, health.js) and the SSE channel GET /api/events. Every mutation funnels into server/store.js and its siblings — state-machine.js (the eight states plus canRoleTransition), task-fields.js, task-identity.js and storage.js — through withMutationLock, the one serialized write path. A claim is applyClaim; leases and stalls are swept by the reaper. The write is persisted first — JsonStorage via an atomic temp-file-plus-rename, or GitYamlStorage with one YAML card per task and one commit per transition — under the mounted disk KANBAN_DATA_DIR; only then does memory change and the onDiff / onChange / onAudit bus fire. That bus drives SSE to the browser plus the optional notifier.js (Telegram), webhooks.js and auditLog.js (audit.jsonl).',
+      'server/server.js composes the process in a fixed order — CORS, express.json and the trust-proxy setting, then the pre-auth routes (/api/auth, /api/bug-reports, and /api/ask with its own password gate), then the auth middleware (middleware/auth.js) and the rate limiter (middleware/rateLimit.js), then the routers (tasks.js, agents.js, projects.js, metrics.js, settings.js, milestones.js, audit.js, health.js) and the SSE channel GET /api/events. Every mutation funnels into server/store.js and its siblings — state-machine.js (the eight states plus canRoleTransition), task-fields.js, task-identity.js and storage.js — through withMutationLock, the one serialized write path. A claim is applyClaim; leases and stalls are swept by the reaper. The write is persisted first — JsonStorage via an atomic temp-file-plus-rename, or GitYamlStorage with one YAML card per task and one commit per transition — under the mounted disk KANBAN_DATA_DIR; only then does memory change and the onDiff / onChange / onAudit bus fire. That bus drives SSE to the browser plus the optional notifier.js (Telegram), webhooks.js and auditLog.js (audit.jsonl). Teardown runs that corridor backwards, and the order is load-bearing: registerShutdownHandlers catches SIGTERM, drainSseStreams ends every open /api/events response FIRST, and only then does server.close() run. Closing first would wait for exactly the connections that never end by themselves — a browser tab holds its stream open for as long as it is open — so before v3.5.1 the process never finished shutting down and was killed five seconds later by its host.',
     snippet: {
-      label: 'server/server.js — real mount order',
+      label: 'server/server.js — mount order, and the teardown that mirrors it',
       code: `cors -> express.json -> trust proxy
   -> /api/auth  /api/bug-reports  /api/ask   # pre-auth
   -> auth middleware -> rate limit
   -> /api/tasks /agents /projects /metrics
      /settings /milestones /audit /health
-  -> GET /api/events                        # SSE, mode=diff`,
+  -> GET /api/events                        # SSE, mode=diff
+
+SIGTERM
+  -> drainSseStreams()        # res.end() every open stream
+  -> server.close()           # now it can actually finish
+  -> closeIdleConnections()   # in-flight requests are spared
+  -> exit(0)                  # "closed cleanly in 1ms"`,
     },
     gotcha:
       'A storage failure never advances in-memory state. The store persists first, so a disk error leaves the card untouched and emits no SSE diff — memory is never ahead of disk.',
