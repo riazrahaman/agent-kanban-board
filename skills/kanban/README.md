@@ -2,7 +2,7 @@
 
 **Agents Kanban** — a strict, Kanban-first orchestrator skill for coding agents.
 
-Version `v3.2.2` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
+Version `v3.7.1` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
 
 The skill turns your coding agent into the **admin of a delegated build**. It stops writing code itself. Instead it owns the board, holds the lease on each card, dispatches builder / reviewer / tester workers, and only moves a card forward when there is evidence: command output, test results, commit hashes.
 
@@ -50,7 +50,7 @@ It is not a code generator and it does not replace your CI. It is a protocol tha
 ## Requirements
 
 - An agent runtime that loads `SKILL.md` skills. Primary target: [opencode](https://opencode.ai).
-- A running agent-kanban-board v3.0.0 or later (v3.2.1+ recommended for proxy rate-limiting, strict payload error handling, and credential-map protections); v3 also accepts legacy v2 statuses. No board yet? The skill can deploy one locally (Node.js + npm).
+- A running agent-kanban-board v3.0.0 or later (v3.7.1+ recommended for Ollama/OpenRouter Ask-the-Board, graceful shutdown SSE draining, per-token project isolation, and strict header ByteString enforcement); v3 also accepts legacy v2 statuses. No board yet? The skill can deploy one locally (Node.js + npm).
 - `git` and the GitHub CLI (`gh`) for the issue, branch, merge and tag steps.
 
 ## Install
@@ -93,7 +93,7 @@ Three fields are mandatory: `kanban_url`, `kanban_token`, `project_name`. The sk
 
 `.opencode/` holds tokens. Add it to `.gitignore` before writing the file, and never stage it.
 
-On start, the orchestrator calls `GET /projects` to verify connectivity and that the project exists, and `GET /api/health` to confirm the board is `v3.0.0` or later and inspects `credential_map` (v3.1.0+; project names withheld from unauthenticated probes in v3.2.0+) to verify project token coverage. If `project_name` or `kanban_token` can't be determined, it halts and asks you instead of guessing.
+On start, the orchestrator calls `GET /projects` with authentication headers (`x-api-token: <kanban_token>`) to verify connectivity and that the project exists, and `GET /api/health` to confirm the board is `v3.0.0` or later and inspects `credential_map` (v3.1.0+; project names withheld from unauthenticated probes in v3.2.0+, scoped to authorized projects in v3.3.0+) to verify project token coverage. In `v3.3.0+`, unauthenticated `GET /projects` returns an empty array `[]` (or `401` when read-auth is active), and project-scoped tokens discover only their authorized projects. If `project_name` or `kanban_token` can't be determined, it halts and asks you instead of guessing.
 
 **No board yet?** If `kanban_url` is missing, the skill deploys one locally:
 
@@ -103,7 +103,7 @@ cd agent-kanban-board
 npm --prefix server install
 npm --prefix client install
 npm run build
-npm start          # serves API + UI on http://localhost:4000 by default
+node server/server.js   # or npm start (signal-safe directly to node since v3.5.1; serves on http://localhost:4000)
 ```
 
 ## The lifecycle
@@ -118,7 +118,7 @@ npm start          # serves API + UI on http://localhost:4000 by default
 **Stage B: Build → Review → Test**
 - **IN_PROGRESS:** claim the card from `READY` (`POST /tasks/:id/claim`), start heartbeats, dispatch the builder. Workers PATCH status and append logs; they never claim.
 - **IN_REVIEW:** PATCH to `IN_REVIEW` (no re-claim), dispatch the reviewer with the diff or commit range. Blocking findings are logged and the card goes back to `IN_PROGRESS`.
-- **VALIDATION:** PATCH to `VALIDATION`, dispatch the tester/validator. A fail resets the card to `IN_PROGRESS` (or `READY`) and the cycle restarts.
+- **VALIDATION:** PATCH to `VALIDATION`, dispatch the tester/validator. A fail resets the card to `IN_PROGRESS` and the cycle restarts.
 - **READY_TO_SHIP:** PATCH to `READY_TO_SHIP` once tests pass.
 
 **Stage C: Closure** (from `READY_TO_SHIP`)
@@ -133,27 +133,34 @@ A Build → Review → Test cycle that repeats **3 times** halts and reports blo
 
 - **Roles:** orchestrator = `admin`; workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
 - **Headers on every request:** `x-agent-id`, `x-agent-role`, `x-api-token`.
-- **Claim to own, PATCH to move.** Enter active stages by claiming from `READY`. A status-only PATCH into an active stage without claim produces an ownerless card, which the reaper resets to `READY` after the orphan grace window.
+- **Claim to own, PATCH to move.** Enter active stages by claiming from `READY`. A status-only PATCH into an active stage without claim produces an ownerless card, which the reaper resets to `READY`.
 - **Optimistic locking:** every PATCH sends the fresh current `expected_version` (re-read before each PATCH; intermediate claims, logs, and heartbeats increment card version). Distinguish `409 Version mismatch` (retry with fresh version) from `409 Invalid state transition` (reaper reset after lease loss; re-claim). Stale writes get `409`.
 - **Leases & Progress:** default claim TTL is 10 min (`KANBAN_CLAIM_TTL_MS` = 600,000). Heartbeat at least every 2 minutes while holding a card; logs from the holder also extend the lease. Progress stall timeout (`KANBAN_PROGRESS_STALL_MS`, default 30 min) reaps abandoned claims even if heartbeated. A claim can request its own window with `{"lease_ms": <ms>}`, clamped between 60,000 and 7,200,000.
 - **Evidence or it didn't happen:** no stage transition without command output, test results or a commit hash.
 - **Rate limiting & proxies (v3.2.1+):** the board rate-limits invalid authentication attempts (default 60/min) per client IP using Express's `req.ip`. Reverse proxy setups should configure `KANBAN_TRUST_PROXY` to ensure accurate client IP isolation. If `429 Too Many Requests` is encountered, respect the `Retry-After` header before retrying.
 - **Payload standards (v3.2.1+):** the server strictly translates body errors: unsupported `Content-Encoding` yields `415`, while malformed or oversized payloads return `400`. Always send standard uncompressed `application/json` payloads under 100KB.
+- **HTTP Header ASCII ByteString Requirement (v3.6.3+):** All HTTP header keys and values must be standard ASCII ByteStrings (`U+0000` to `U+00FF`). Non-ASCII characters (e.g. em dashes `—` or unicode quotes) cause Node.js HTTP clients to throw `TypeError` before sending requests.
+- **Graceful shutdown & SSE draining (v3.5.1+):** When stopping or testing the server, run `node server/server.js` or root `npm start` so POSIX `SIGTERM`/`SIGINT` cleanly drains all active SSE event streams (`drainSseStreams()`) before closing listening sockets.
 
 ## Project scoping (the #1 gotcha)
 
-Every path that addresses a specific task must carry `?project=<project_name>`: `/tasks/:id`, `/:id/claim`, `/:id/heartbeat`, `/:id/logs`, and `GET /tasks`. Only `POST /tasks` takes the project in the JSON body. `GET /projects` and `GET /api/health` need no scoping.
+Every path that addresses a specific task must carry `?project=<project_name>`: `/tasks/:id`, `/:id/claim`, `/:id/heartbeat`, `/:id/logs`, and `GET /tasks`. Only `POST /tasks` takes the project in the JSON body. `GET /api/health` needs no project query parameter.
 
-Without it, calls silently resolve against the `default` project.
+Without `?project=`, task calls silently resolve against the `default` project.
+
+**Project Discovery & Isolation (v3.3.0+)**: `GET /projects` requires authentication headers (`x-api-token`). On multi-tenant boards with `KANBAN_PROJECT_TOKENS`, callers only discover the projects mapped to their token (admin tokens see all). Unauthenticated requests return `[]` (or `401` when read-auth is active). Similarly, unscoped `GET /tasks` is automatically restricted to the caller's authorized projects.
 
 ## Troubleshooting
 
 - **`403 ... not authorized for project 'default'`** → missing `?project=` on a task path.
 - **`404` on `GET /tasks/:id`** → same cause, missing `?project=`.
+- **`GET /projects` returns `[]` or `401`** → missing or unauthorized `x-api-token` on v3.3.0+ boards. Provide the configured project token in `x-api-token` or `Authorization: Bearer`.
 - **`409 Invalid state transition from READY to <X>`** → the lease expired (or progress stalled) and the reaper reset the card to `READY`. Re-claim it from `READY` and re-walk the stages. Check `git status` / `git log` on the task branch first: uncommitted work may still be on disk, but it was never committed.
 - **`409` on PATCH with a version mismatch** → someone else wrote first. Re-read the card and retry with the current `version`.
 - **`415 Unsupported Media Type` (`unsupported_encoding`)** → request used an unrecognized `Content-Encoding` header. Send uncompressed UTF-8 JSON.
 - **`429 Too Many Requests` (`authentication rate limit exceeded`)** → too many failed token attempts from this IP. Wait for `Retry-After`, verify token credentials, and check `KANBAN_TRUST_PROXY` if behind a reverse proxy.
+- **`TypeError: Cannot convert argument to a ByteString...`** → An HTTP header value (e.g. `X-Agent-Id`, `X-Title`) contains non-ASCII characters (like an em dash `—`). Use standard ASCII.
+- **Ask-the-Board returns 401 invalid_pass or 502/503** → Check `KANBAN_ASK_PASSWORD`, upstream OpenRouter balance/model or local Ollama daemon status (`ollama serve`). Ask is a human-facing read-only assistant; agents do not use it for task execution.
 - **Card keeps bouncing back to `READY`** → it was moved into an active stage by PATCH instead of claimed, or heartbeats/progress stopped.
 
 ## Optional: Telegram reclaim alerts
@@ -166,6 +173,11 @@ KANBAN_TELEGRAM_CHAT_ID=...
 ```
 
 Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOARD_URL`. The notifier only listens; it never changes the board. Treat an alert as a prompt to inspect and re-claim.
+
+## Public endpoints (Bug Reports and Ask-the-Board)
+
+- **`POST /api/bug-reports`**: Public bug reporting directly to GitHub issues (labelled `user-report`). Unauthenticated, takes no board token, creates no card.
+- **`POST /api/ask` & `GET /api/ask/config`**: Public read-only Q&A over board protocol and repository source context. Gated by password header `x-ask-pass` (`KANBAN_ASK_PASSWORD`). Supports OpenRouter and local Ollama (`KANBAN_ASK_PROVIDER=ollama`). Strictly read-only; agents do not use it for task operations.
 
 ## Data notes
 
