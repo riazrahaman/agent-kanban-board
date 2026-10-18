@@ -22,7 +22,7 @@ import * as storeModule from '../store.js';
  *   KANBAN_ASK_PER_IP_PER_HOUR      default: 3
  *   KANBAN_ASK_TIMEOUT_MS           default: 45000
  *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 6000
- *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 600
+ *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 1500
  *   KANBAN_AUTH_RATE_LIMIT_PER_MIN  wrong-password backoff ceiling (default 10;
  *                                   shared name with the auth middleware, but
  *                                   this router keeps its OWN counter)
@@ -348,7 +348,10 @@ export function createAskRouter(deps = {}) {
       maxTokens: maxPromptTokens,
     });
     const model = modelName(env);
-    const maxOutputTokens = intFrom(env.KANBAN_ASK_MAX_OUTPUT_TOKENS, 600);
+    // 1500, not 600: a question spanning every project produced a table that
+    // was cut off mid-sentence. The budget is a ceiling, not a reservation —
+    // a short answer still costs what it costs.
+    const maxOutputTokens = intFrom(env.KANBAN_ASK_MAX_OUTPUT_TOKENS, 1500);
     const timeoutMs = intFrom(env.KANBAN_ASK_TIMEOUT_MS, 45000);
 
     // 5. Call OpenRouter.

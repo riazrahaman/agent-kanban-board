@@ -91,7 +91,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '618',
+    value: '625',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -878,7 +878,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_ASK_PER_IP_PER_HOUR', purpose: 'Per-IP Ask-the-Board answers cap per hour (default 3).' },
   { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'OpenRouter request timeout for Ask-the-Board, in ms (default 45000).' },
   { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for Ask-the-Board (default 6000).' },
-  { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 600).' },
+  { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 1500).' },
 ]
 
 // ---------------------------------------------------------------------------
