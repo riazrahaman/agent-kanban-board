@@ -406,6 +406,9 @@ console output; on Railway, `railway logs`:
 | `429` | OpenRouter's own rate limit | Retry later, or raise the plan |
 | `400` | Prompt over the model's context | Lower `KANBAN_ASK_MAX_PROMPT_TOKENS` |
 | `5xx` | Provider down or no route | Upstream outage; retry |
+| `could not reach OpenRouter: … ENOTFOUND` | DNS failure from the container | Check the host's outbound DNS / egress |
+| `… ECONNREFUSED` / `ENETUNREACH` | Outbound connection blocked | Check the host's egress networking (on Railway, the service's egress settings) |
+| `… CERT_` / `UNABLE_TO_VERIFY` | TLS interception or a stale CA bundle | Check the base image's CA certificates |
 | `timed out after Nms` | No answer inside `KANBAN_ASK_TIMEOUT_MS` | Raise the budget, or pick a faster model |
 | `empty answer (length)` | 2xx with no content | Raise `KANBAN_ASK_MAX_OUTPUT_TOKENS` |
 

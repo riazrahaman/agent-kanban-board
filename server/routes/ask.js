@@ -375,7 +375,22 @@ export function createAskRouter(deps = {}) {
         logFailure('timeout', `timed out after ${now() - startedAt}ms (KANBAN_ASK_TIMEOUT_MS=${timeoutMs})`);
         return res.status(503).json({ error: 'timeout' });
       }
-      logFailure('network', `could not reach OpenRouter: ${safeLogValue(err?.code || err?.name || 'unknown')}`);
+      // `fetch` reports a transport failure as a bare `TypeError` whose
+      // MESSAGE and `cause` carry the only useful part — the errno. Logging
+      // just the name (v3.6.1) produced "TypeError" and nothing else, which
+      // narrowed nothing: DNS failure, refused connection, unreachable
+      // network and a TLS error all look identical from the name alone.
+      const cause = err?.cause;
+      const detail = [
+        err?.name,
+        err?.message,
+        cause?.code || cause?.errno,
+        cause?.message && cause.message !== err?.message ? cause.message : null,
+        cause?.hostname ? `host=${cause.hostname}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      logFailure('network', `could not reach OpenRouter: ${safeLogValue(detail || 'unknown', 400)}`);
       return res.status(502).json({ error: 'gateway_error' });
     }
 
