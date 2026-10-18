@@ -34,6 +34,10 @@ const DIAGRAM_METADATA = {
       name: '06-realtime-push-sequence.svg',
       title: 'Real-Time Push & UI Synchronization Flow',
     },
+    {
+      name: '13-graceful-shutdown-sequence.svg',
+      title: 'Graceful Shutdown & SSE Drain Sequence',
+    },
   ],
   'docs/FILE_BY_FILE_EXPLANATION.md': [
     {
@@ -145,7 +149,7 @@ async function main() {
     console.log(`✓ Generated document copy: ${path.relative(ROOT, targetCopyPath)}`);
   }
 
-  console.log('\nAll 12 diagrams rendered and documents generated successfully!');
+  console.log('\nAll 13 diagrams rendered and documents generated successfully!');
 }
 
 main().catch((err) => {

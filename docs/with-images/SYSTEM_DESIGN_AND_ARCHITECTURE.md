@@ -475,8 +475,9 @@ sequenceDiagram
     participant SSE as Server-Sent Events Stream
     participant Browser as Browser Client
 
-    Browser->>API: GET /api/events
-    API-->>Browser: HTTP 200 text/event-stream (initial tasks snapshot)
+    Browser->>API: GET /api/events (diff mode is the default)
+    API-->>Browser: HTTP 200 text/event-stream + event: settings
+    Note over Browser,API: No board snapshot rides the connection. The client<br/>primed itself with GET /api/tasks. A whole-board<br/>snapshot costs ~18MB at 3000 tasks and is sent only<br/>for prime=1 or mode=snapshot (PERF-01).
     
     Agent->>API: PATCH /api/tasks/task-1?project=default { status: "IN_REVIEW", expected_version: 3 } (X-Agent-Role: builder)
     API->>Queue: Enqueue mutation
@@ -484,10 +485,77 @@ sequenceDiagram
     Queue->>Disk: writeAtomic(temporary file -> rename)
     Disk-->>Queue: Write & rename complete
     Queue->>Mem: Update in-memory tasks array
-    Queue->>SSE: notify(tasksSnapshot)
-    SSE-->>Browser: event: tasks \ndata: [...]
+    Queue->>SSE: emit diff event to each subscriber
+    SSE-->>Browser: event: task.updated \ndata: { id, project, kind, task }
     Queue-->>API: 200 OK (updated task)
     API-->>Agent: HTTP 200 { id: "task-1", status: "IN_REVIEW", version: 4, ... }
     Browser->>Browser: React re-renders Board & SignalRail instantly
 ```
 </details>
+
+
+---
+
+## 9. Process Lifecycle & Graceful Shutdown
+
+A rolling deploy stops the old container with `SIGTERM`, so shutdown is part of
+the architecture rather than an afterthought: the SSE subsystem in §8 is what
+makes it non-trivial.
+
+`server.close()` stops accepting new connections but only invokes its callback
+once **every existing connection has ended** — and `GET /api/events` is a
+response deliberately held open for the life of a browser tab. Until v3.5.1
+nothing held a reference to those responses (only a count), so nothing could
+end them, the callback never fired, and the process left via a five-second
+forced-exit fallback instead of shutting down. Measured: ~0.12s with no stream
+attached, **5.13s with one**.
+
+The ordering below is therefore load-bearing. `server.js` keeps the open
+responses in an `openSseStreams` set purely so `drainSseStreams()` can end them
+before the close, and ends them (`res.end()`) rather than destroying the socket,
+so the browser's `EventSource` sees a normal stream end and reconnects on its
+own schedule — onto the new container.
+
+![Graceful Shutdown & SSE Drain Sequence](../images/13-graceful-shutdown-sequence.svg)
+
+<details>
+<summary>View Mermaid Source Code</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host (Railway / Docker / K8s)
+    participant Proc as Node Process
+    participant SSE as Open SSE Streams
+    participant HTTP as http.Server
+    participant Browser as Browser Client
+
+    Host->>Proc: SIGTERM (rolling deploy / container stop)
+    Proc->>Proc: registerShutdownHandlers -> shutdown("SIGTERM")
+    Note over Proc,SSE: Drain FIRST. server.close() waits for every open<br/>connection, and an SSE response is held open by<br/>design, so closing first never returns.
+    Proc->>SSE: drainSseStreams(): res.end() on every openSseStreams entry
+    SSE-->>Browser: stream ends normally (not a reset)
+    Browser->>Browser: EventSource schedules its own reconnect
+    Proc->>HTTP: server.close(callback)
+    Proc->>HTTP: closeIdleConnections() - keep-alive sockets between requests
+    Note over Proc,HTTP: An in-flight request is NOT destroyed here.<br/>closeAllConnections() fires 1s later as a backstop.
+    HTTP-->>Proc: close callback (no connections left)
+    Proc->>Proc: log "closed cleanly in Nms"
+    Proc-->>Host: exit(0)
+    Browser->>Host: EventSource reconnects onto the new container
+```
+</details>
+
+**Design rules this encodes:**
+
+| Rule | Why |
+| :-- | :-- |
+| Drain long-lived responses **before** `server.close()` | Closing first waits on exactly the connections that never end by themselves. Any future endpoint that holds a connection open must register in `openSseStreams` the same way. |
+| End the stream, do not destroy the socket | `res.end()` is a normal stream end, which `EventSource` retries on its own. A destroyed socket surfaces to the page as a network error. |
+| `closeIdleConnections()` now, `closeAllConnections()` only after 1s | An idle keep-alive socket is serving nothing and would otherwise hold the close open for its whole keep-alive window. A request still being served is left to finish — destroying it mid-response hands the client a reset whose retry then fails on a version mismatch (§5), which is the opposite of graceful. |
+| Log `closed cleanly in Nms` | Without it, a container that exited gracefully and one the platform killed before it got there are indistinguishable in the deploy log. |
+| Keep the timeout as a backstop, never the normal path | The host's own grace period may be **shorter** than the timeout — in this deployment the container was stopped ~2.8s after `SIGTERM`, well before a 5s timer could fire, so a process relying on that timer is killed rather than exiting. |
+
+Verified in production on a live redeploy with two real SSE streams attached:
+the retired container logged `ended 2 open event stream(s)` and
+`closed cleanly in 1ms`.

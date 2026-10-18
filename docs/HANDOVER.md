@@ -505,8 +505,15 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-- **Version `3.5.0` is the current release** — "Ask-the-Board console + Field
-  Guide Nº 02" (`CHANGELOG.md` `## [3.5.0] — 2026-10-18`). It contains the
+- **Version `3.5.1` is the current release** — "graceful shutdown with open SSE
+  streams" (`CHANGELOG.md` `## [3.5.1] — 2026-10-18`, tag `v3.5.1`). Shutdown
+  now ends the open `/api/events` responses before `server.close()`, which
+  previously waited for connections that never end by design. Verified on a
+  live redeploy: the retired container logged `ended 2 open event stream(s)` /
+  `closed cleanly in 1ms`, against ~5s before. See
+  `SYSTEM_DESIGN_AND_ARCHITECTURE.md` §9 for the sequence and the design rules.
+- **`3.5.0` was "Ask-the-Board console + Field Guide Nº 02"**
+  (`## [3.5.0] — 2026-10-18`). It contains the
   client half of Ask-the-Board (`client/src/lib/ask.ts` + the hero console),
   source retrieval in `server/askKnowledge.js` (`rankSourceFiles` /
   `gatherSourceContext`), the `KANBAN_ASK_MAX_PROMPT_TOKENS` 2000 → 6000 raise,
@@ -518,19 +525,19 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
   four doc version strings synced, `skills/kanban/SKILL.md` frontmatter
   re-synced (it had drifted to `3.3.0`), the `KANBAN_ASK_MAX_PROMPT_TOKENS`
   drift reconciled on 6000, `server/data/` added to `.gitignore`, and
-  `TRUST_METRICS` moved to 605 server / 272 client — the numbers in the hero and
+  `TRUST_METRICS` moved to 608 server / 272 client — the numbers in the hero and
   the numbers strip are now read from that constant instead of retyped into JSX,
   so they cannot drift independently.
 - Obvious next steps:
   1. Port the reference guides' **"← Back to …"** chip (the counterpart to the
      ↑ Top control), which was deliberately left out of v3.5.0.
-  2. Issue **#108** — addressed in v3.5.1. Its original cause (an `npm` wrapper
-     in the Railway start command) was fixed in the dashboard on 2026-10-11 and
-     no crash email has arrived for this service since 2026-10-10. Verifying
-     that turned up a second, real defect — the server never actually exited on
-     `SIGTERM` while an SSE stream was open — which v3.5.1 fixes. Confirm on the
-     next redeploy that the retired container logs `ended N open event stream(s)`
-     followed by `closed cleanly in Nms`, then close the issue.
+  2. Issue **#108** is **closed** (v3.5.1), with the production redeploy log as
+     evidence. Its original cause — an `npm` wrapper in the Railway start
+     command — was fixed in the dashboard on 2026-10-11, and no crash email has
+     arrived for this service since 2026-10-10. The shutdown defect found while
+     verifying that is the one v3.5.1 actually fixes. Note Railway's dashboard
+     start command still overrides `railway.json`, so check there first if the
+     emails ever return.
   3. Keep `aboutContent.ts` `TRUST_METRICS` in lock-step as tests are added
      (§10); `about.test.mjs` fails the build when it drifts.
 

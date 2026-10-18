@@ -296,7 +296,10 @@ flowchart TD
 - **Functions:**
   - `createApp()`: Instantiates Express, mounts CORS, the `/api/auth` handshake router (before auth), the auth middleware and the rate-limit middleware, mounts `/api/tasks`, `/api/projects`, `/api/metrics` and `/api/health`, handles the `/api/events` Server-Sent Events stream (diff events by default; `?mode=snapshot` for whole-board snapshots, `?prime=1` to send an initial `event: tasks` snapshot; `event: settings` rides the same connection in both modes), serves the built client (`client/dist`) with an SPA fallback, and configures the global 500 error handler.
   - `startServer(port, host)`: Asynchronously loads tasks from storage into memory, logs the startup configuration (auth posture, CORS, rate limit), and binds the HTTP server. Host defaults to `0.0.0.0` whenever `PORT` is set (hosted) and `127.0.0.1` otherwise (local dev).
-  - CLI Auto-runner: Detects direct execution and launches the server.
+  - `registerShutdownHandlers(server, opts)`: Attaches the `SIGTERM`/`SIGINT` handlers a rolling deploy depends on. Order is load-bearing — **drain, then close, then drop idle sockets** — and is documented with a sequence diagram in `SYSTEM_DESIGN_AND_ARCHITECTURE.md` §9. `exit`, `log`, `timeoutMs` and `drain` are injectable so the unit tests can observe the ordering without a real socket. Returns a cleanup callback that removes the listeners.
+  - `drainSseStreams()`: Ends every open `/api/events` response and returns how many were ended. Called **before** `server.close()`, which waits for every open connection and would otherwise block forever on streams that are held open by design (#108, v3.5.1). It calls `res.end()` rather than destroying the socket, so the browser's `EventSource` sees a normal stream end and reconnects onto the replacement container by itself.
+  - `openSseStreams` (module-private `Set`) / `liveSseStreamCount()` / `resetSseStreams()`: The set holds the live response objects so they can be ended on shutdown; the count behind `liveSseStreamCount()` backs the `KANBAN_MAX_SSE_STREAMS` cap (SEC-05). A counter alone cannot satisfy the first job — **any future endpoint that holds a connection open must register in this set too**, or it will reintroduce the hang.
+  - CLI Auto-runner: Detects direct execution, starts the server and installs the shutdown handlers.
 
 #### `server/store.js`
 
