@@ -68,7 +68,7 @@ const DESCRIPTIONS = {
   'KANBAN_ASK_DAILY_CAP': 'Global Ask-the-Board answers cap per UTC day (default 50)',
   'KANBAN_ASK_PER_IP_PER_HOUR': 'Per-IP Ask-the-Board answers cap per hour (default 3)',
   'KANBAN_ASK_TIMEOUT_MS': 'OpenRouter request timeout for Ask-the-Board in ms (default 45000)',
-  'KANBAN_ASK_MAX_PROMPT_TOKENS': 'System-prompt token budget for Ask-the-Board (default 2000)',
+  'KANBAN_ASK_MAX_PROMPT_TOKENS': 'System-prompt token budget for Ask-the-Board (default 6000)',
   'KANBAN_ASK_MAX_OUTPUT_TOKENS': 'Max completion tokens for one Ask-the-Board answer (default 600)',
   'PORT': 'HTTP port for the server',
   'HOST': 'Host interface to bind to',

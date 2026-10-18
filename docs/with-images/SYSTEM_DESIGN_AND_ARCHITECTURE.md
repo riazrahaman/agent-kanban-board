@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.4.0        
+**System Version:** 3.5.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -34,22 +34,25 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | Layer / Concern | Technology | Version | Purpose / Rationale |
 |---|---|---|---|
 | **Runtime** | Node.js (ESM) | 20.x, 22.x | Native ES Modules (`"type": "module"`), native `node:test` runner, native `fetch`, native `fs/promises`. |
-| **HTTP Framework** | Express | ^4.19.2 | Minimalist HTTP routing, middleware pipeline, and streaming response handler for SSE. |
+| **HTTP Framework** | Express | ^5.0.1 | Minimalist HTTP routing, middleware pipeline, and streaming response handler for SSE. |
 | **Persistence (YAML)** | `yaml` | ^2.9.0 | High-performance YAML parsing and stringification for Git-backed cards. |
 | **Cross-Origin Control** | `cors` | ^2.8.5 | Restricts browser access strictly to the configured frontend origin. |
 | **Version Control Integration** | `child_process.execFile` (promisified) | Native | Direct execution of `git add` and `git commit` without external Git wrapper overhead. |
 | **Health & Readiness** | `server/routes/health.js` | Native | `GET /api/health` (+ `/healthz`) is a liveness probe that always returns 200 with store/reaper/backup state and `credential_map` (§2.10); `GET /api/health/ready` returns 503 until the store has loaded, and `render.yaml` health-checks that path. |
 | **Credential Coverage (§2.10)** | `server/utils/credentialMap.js` | Native | Boot-time comparison of `KANBAN_PROJECT_TOKENS` against known store projects; exposes `credential_map: { status, covered, missing, extra }` on `GET /api/health` to alert on truncated token maps without taking down the board. |
+| **Stateless Session & Stream Tickets** | `server/middleware/sessionAuth.js`, `server/middleware/streamTicket.js` | Native | HMAC stateless tokens for web sessions and single-use 60s stream tickets for EventSource streaming. |
+| **Anonymous Bug Reports** | `server/routes/bugReports.js` | Native | Public bug reporting with Cloudflare Turnstile verification, honeypot protection, and in-memory rate limiting. |
+| **Ask-the-Board Knowledge Engine** | `server/routes/ask.js`, `server/askKnowledge.js` | Native | Password-gated (`x-ask-pass`) Q&A assistant with verbatim source-code retrieval and in-process live snapshots. |
 
 ### 2.2 Frontend Client
 
 | Layer / Concern | Technology | Version | Purpose / Rationale |
 |---|---|---|---|
-| **Core UI Framework** | React | ^18.3.1 | Functional components, hooks (`useState`, `useEffect`, `useMemo`, `useCallback`, `useLayoutEffect`, `useRef`), `React.memo` render gating on `Column`/`TaskCard`, React.StrictMode. |
-| **DOM Renderer** | React DOM | ^18.3.1 | Client-side root mounting (`createRoot`). |
-| **Build & Dev Server** | Vite | ^5.3.3 | Lightning-fast HMR, ES module bundling, asset optimization, `/api` dev proxy to the backend. |
-| **Language** | TypeScript | ^5.5.3 | Strict type definitions (`types.ts`, `status.ts`, component props). |
-| **Styling Engine** | Tailwind CSS + PostCSS | ^3.4.4 / ^8.4.39 | Utility-first styling adhering to the editorial minimalist design system; `darkMode: 'class'`. |
+| **Core UI Framework** | React | ^19.3.0 | Functional components, hooks (`useState`, `useEffect`, `useMemo`, `useCallback`, `useLayoutEffect`, `useRef`), `React.memo` render gating on `Column`/`TaskCard`, React.StrictMode. |
+| **DOM Renderer** | React DOM | ^19.3.0 | Client-side root mounting (`createRoot`). |
+| **Build & Dev Server** | Vite | ^8.3.3 | Lightning-fast HMR, ES module bundling, asset optimization, `/api` dev proxy to the backend. |
+| **Language** | TypeScript | ^7.0.2 | Strict type definitions (`types.ts`, `status.ts`, component props). |
+| **Styling Engine** | Tailwind CSS v4 | ^4.3.3 | Utility-first styling with `@tailwindcss/vite` adhering to the editorial minimalist design system. |
 | **Theming** | CSS custom properties + `color-scheme` | Browser Native | Warm-cream light / midnight-navy blueprint dark palettes (adopted from the Stack Field Guide); explicit choice beats OS preference; persisted in `localStorage`; native controls follow the active scheme. |
 | **Responsive Layout** | Tailwind breakpoints + `100dvh` + one phone-layout media block | Browser Native | Two layouts (v3.2.4). Desktop/tablet/mouse/landscape: the `h-screen` (`100dvh`) app shell with internal column scrolling, html/body `overflow: hidden`. Phone layout (`(max-width: 47.99rem) and (pointer: coarse)`): the document scrolls like a normal website (html scroller, sticky `.app-header`, full-height columns in the horizontal snap strip, Portfolio/About flow), the only way iOS Safari draws content behind its translucent floating toolbar; full-height overlays lock the document scroll (`lib/scrollLock.ts`). The header pads `env(safe-area-inset-top)` (`viewport-fit=cover`). `.h-screen` stays `100dvh` for TaskSheet/BugReportDialog so their pinned footers stay visible. `85vw` snap-scroll columns below `md` (`w-72` from `md` up) with bottom scroll padding of `safe-area-inset-bottom + 5rem` on coarse pointers below `md` (Column/Portfolio/About) so the last row can clear the floating toolbar, Signal Rail collapses into a slide-over drawer below `md`. Below `md`/`sm` the secondary header and toolbar controls collapse behind a `⋯` / `Filters` disclosure (v2.9.1), the column paging arrows are `hidden … md:flex`, and the task-card badge group wraps full-width so the id stays readable. Phone controls carry `py-1.5` touch padding. `touch-action: pan-x pan-y` on EVERY element (`*`, v3.2.4 — WebKit resets the effective value at each scroll container, so a root-only rule never reached the board) + a JS guard (multi-touch `touchmove`, WebKit `gesture*`; non-passive, capture, on document and window; no wheel listener, so desktop zoom is untouched) block pinch zoom without narrowing any scroll axis; `text-size-adjust: 100%` stops WebKit's text autosizer from inflating prose independently of the `any-pointer: coarse` input-zoom rule. |
 | **Top-Level Views** | React state (no router) | Browser Native | A segmented **Board / Portfolio / About** switcher drives a `useState<'board' \| 'portfolio' \| 'about'>`. The **About** view (`components/About.tsx`, data in `lib/aboutContent.ts`) is an in-app product overview that takes the live server `version` prop so it can never go stale. |
@@ -90,67 +93,98 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 ```mermaid
 flowchart TD
     subgraph Layer1 ["1. Client & Actor Layer"]
-        A_Builder["Autonomous Agent: Builder\n(Code authoring & implementation)"]
+        A_Builder["Autonomous Agent: Builder\n(Implementation & code authoring)"]
         A_Reviewer["Autonomous Agent: Reviewer\n(Diff review & quality gate)"]
-        A_Tester["Autonomous Agent: Tester\n(Verification & regression check)"]
-        A_Runner["Swarm Runner / Human Operator\n(Task initialization & triage)"]
-        WebUI["Web Dashboard UI\n(Vite + React 18 SPA on :5173)"]
+        A_Tester["Autonomous Agent: Tester / Validator\n(Verification & regression check)"]
+        A_Runner["Swarm Runner / Human Admin\n(Task initialization, triage & recovery)"]
+        WebUI["Web Dashboard & Field Guide\n(React 19 + TypeScript + Vite 8 SPA)"]
     end
 
-    subgraph Layer2 ["2. Transport & Ingress Security Layer"]
-        CORS_Gate["CORS Lockdown (A05)\n(Only KANBAN_ALLOWED_ORIGIN allowed;\nNo wildcard '*')"]
-        Auth_Gate["Auth & RBAC Middleware (A07)\n(Bearer/X-API-Token verification;\nRole extraction & validation)"]
+    subgraph Layer2 ["2. Transport, Ingress & Security Pipeline"]
+        CORS_Gate["CORS Allow-List Guard\n(middleware/cors.js)"]
+        BodyParser["Body Parser & Trust Proxy\n(express.json, trust proxy: 1 hop)"]
+        
+        subgraph PreAuth ["Pre-Auth Routes (Mounted before Auth Guard)"]
+            AuthRoute["/api/auth\n(HMAC Session Handshake, Tickets & Revocation)"]
+            BugReports["/api/bug-reports\n(Turnstile Captcha, Honeypot & Rate Limits)"]
+            AskRoute["/api/ask\n(Password Gate 'x-ask-pass' & Rate Limits)"]
+        end
+        
+        AuthMiddleware["Auth & RBAC Middleware\n(Bearer / X-API-Token / KANBAN_PROJECT_TOKENS)"]
+        RateLimitMiddleware["Per-Project Mutation Rate Limiter\n(middleware/rateLimit.js)"]
     end
 
-    subgraph Layer3 ["3. API & Routing Layer"]
-        Router["Express Router (/api/tasks)\nGET, POST, PATCH, /claim, /logs, /issues"]
-        SSE_Route["Streaming Endpoint (/api/events)\ntext/event-stream broadcaster"]
+    subgraph Layer3 ["3. API Routing & Knowledge Layer"]
+        TaskRouter["/api/tasks\n(CRUD, Claim, Heartbeat, Logs, Comments, Assign, Purge)"]
+        AuxRouters["Auxiliary Routers\n(/api/projects, /api/agents, /api/metrics, /api/settings,\n/api/milestones, /api/audit, /api/health)"]
+        AskKnowledge["Ask Knowledge Engine (askKnowledge.js)\n(Verbatim Source-Code Retrieval & Live In-Process Snapshot)"]
+        SSE_Route["Real-Time Streaming (/api/events)\n(SSE mode=diff, 60s Stream Tickets, Cap Guard)"]
     end
 
-    subgraph Layer4 ["4. Core Engine & Concurrency Control"]
-        LockQueue["Process-Local Mutation Lock (ADR-003)\nPromise-based sequential queue"]
-        StateMachine["State Machine Enforcement (KB-01)\nValid transition verification"]
-        RoleGuard["Role Ownership Guard (KB-02)\nRole-to-status permission checks"]
-        ClaimGuard["Contention Controller (KB-03)\nIdempotent claim & conflict detection"]
-        Sanitizer["HTML Sanitizer (A03)\nStored XSS protection"]
+    subgraph Layer4 ["4. Core Engine & Concurrency Control (server/store.js)"]
+        MutationLock["withMutationLock(operation)\n(Process-Local Sequential Promise Queue · ADR-003)"]
+        FieldValidator["Field & Dependency Validator\n(validatePriority, validateDependsOn, validateMetadata)"]
+        StateMachine["State Machine Engine (state-machine.js)\n(8 States + BLOCKED · canTransition · 409 Conflict)"]
+        RoleGuard["Role Permission Guard\n(canRoleTransition · 403 Forbidden)"]
+        ClaimCore["Lease & Claim Controller\n(applyClaim, renewAllLeases, leaseWindowFor)"]
+        Reaper["Background Reaper (Every 30s)\n(Sweeps lease_expired, progress_stalled, orphan_normalized -> READY)"]
     end
 
-    subgraph Layer5 ["5. State & Event Propagation Layer"]
-        MemState["In-Memory Task Cache\nSnapshot of all active board cards"]
-        Listeners["Event Listener Registry\nDispatches snapshot to SSE clients"]
+    subgraph Layer5 ["5. Pluggable Storage Layer — PERSIST FIRST (KB-05)"]
+        StorageFactory["getStorage(project)\n(Atomic Disk Write PRECEDES In-Memory State)"]
+        JsonBackend["JsonStorage\n(writeAtomic tmp-rename to tasks/<project>.json · .journal.jsonl)"]
+        GitBackend["GitYamlStorage\n(1 YAML card/task + 1 Git Commit/transition)"]
     end
 
-    subgraph Layer6 ["6. Pluggable Persistence Layer (KB-09)"]
-        AtomicIO["writeAtomic Protocol (KB-05)\n.tmp write + atomic fs.rename"]
-        JSON_Backend["JsonStorage\nSingle-file tasks.json storage"]
-        Git_Backend["GitYamlStorage\nPer-task YAML card + Git auto-commit"]
+    subgraph Layer6 ["6. In-Memory State & Event Fan-Out Bus"]
+        MemState["In-Memory Cache & Index\n(tasks[] + project/id index updated only on disk success)"]
+        EventBus["notify({ kind, task, prev, project })\nonDiff · onChange · onAudit Listeners"]
+        Notifier["Telegram Notifier (notifier.js)\n(Full-detail alerts on task reclaims)"]
+        Webhooks["Signed Webhooks (webhooks.js)\n(HMAC-SHA256 event envelopes to subscriber URLs)"]
+        AuditSink["Audit Logger (auditLog.js)\n(Appends JSONL audit lines)"]
     end
 
-    A_Builder -->|"HTTP POST/PATCH"| CORS_Gate
+    A_Builder -->|"HTTP POST / PATCH"| CORS_Gate
     A_Reviewer -->|"HTTP PATCH"| CORS_Gate
     A_Tester -->|"HTTP PATCH"| CORS_Gate
-    A_Runner -->|"HTTP POST/PATCH"| CORS_Gate
-    WebUI -->|"HTTP GET /api/tasks"| CORS_Gate
+    A_Runner -->|"HTTP POST / PATCH / DELETE"| CORS_Gate
+    WebUI -->|"HTTP REST /api/*"| CORS_Gate
     WebUI -.->|"SSE /api/events"| SSE_Route
 
-    CORS_Gate --> Auth_Gate
-    Auth_Gate --> Router
+    CORS_Gate --> BodyParser
+    BodyParser --> AuthRoute
+    BodyParser --> BugReports
+    BodyParser --> AskRoute
+    AskRoute --> AskKnowledge
+    BodyParser --> AuthMiddleware
 
-    Router --> LockQueue
-    LockQueue --> Sanitizer
-    Sanitizer --> ClaimGuard
-    ClaimGuard --> StateMachine
+    AuthMiddleware --> RateLimitMiddleware
+    RateLimitMiddleware --> TaskRouter
+    RateLimitMiddleware --> AuxRouters
+
+    TaskRouter --> MutationLock
+    AuxRouters --> MutationLock
+    Reaper -.->|"Scheduled Sweep"| MutationLock
+
+    MutationLock --> FieldValidator
+    FieldValidator --> ClaimCore
+    ClaimCore --> StateMachine
     StateMachine --> RoleGuard
-    RoleGuard --> Layer6
+    RoleGuard --> StorageFactory
 
-    Layer6 --> AtomicIO
-    AtomicIO --> JSON_Backend
-    AtomicIO --> Git_Backend
+    StorageFactory --> JsonBackend
+    StorageFactory --> GitBackend
 
-    AtomicIO -->|"Success"| MemState
-    MemState --> Listeners
-    Listeners --> SSE_Route
-    SSE_Route -->|"Live Snapshot Push"| WebUI
+    JsonBackend -->|"Disk Write Confirmed"| MemState
+    GitBackend -->|"Commit Confirmed"| MemState
+
+    MemState --> EventBus
+    EventBus -->|"Diff Events"| SSE_Route
+    EventBus -->|"Reclaimed Events"| Notifier
+    EventBus -->|"Webhook Envelopes"| Webhooks
+    EventBus -->|"Audit Records"| AuditSink
+
+    SSE_Route -->|"Live Diff Stream"| WebUI
 ```
 </details>
 

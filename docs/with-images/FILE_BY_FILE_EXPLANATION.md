@@ -19,26 +19,28 @@ flowchart TD
         CI["CI Workflow\n(.github/workflows/ci.yml)"]
     end
 
-    subgraph Server_Module ["Server Subsystem (Node.js ESM)"]
-        ServerEntry["server.js\n(Express App & SSE Broadcaster)"]
-        RoutesTasks["routes/tasks.js\n(REST API Router)"]
-        Store["store.js\n(State Engine, RBAC, Persistence)"]
-        AuthMiddleware["middleware/auth.js\n(Token & Role Auth)"]
+    subgraph Server_Module ["Server Subsystem (Node.js ESM · Express 5)"]
+        ServerEntry["server.js\n(Express App & Composition Root)"]
+        PreAuth["Pre-Auth Routers\n(routes/auth.js, routes/bugReports.js, routes/ask.js)"]
+        RoutesTasks["routes/tasks.js\n(Task REST API Router)"]
+        AuxRouters["Auxiliary Routers\n(projects, agents, metrics, settings, milestones, audit, health)"]
+        Store["store.js\n(Mutation Lock Queue, Engine Composition, Reaper)"]
+        StateMachine["state-machine.js\n(8 States + BLOCKED, canTransition, canRoleTransition)"]
+        StorageEngine["storage.js\n(JsonStorage, GitYamlStorage, writeAtomic)"]
+        AskEngine["askKnowledge.js\n(Verbatim Source-Code Retrieval & Live Snapshot)"]
+        AuthMiddleware["middleware/auth.js\n(Token, Role & Project Scope Auth)"]
+        RateLimit["middleware/rateLimit.js\n(Per-Project Mutation Limiter)"]
         CorsMiddleware["middleware/cors.js\n(CORS Origin Lockdown)"]
-        SanitizeServer["utils/sanitize.js\n(HTML Entity Escaper)"]
-        ServerTest["test/kanban.test.js\n(Integration Test Suite)"]
-        TasksJSON["tasks.json\n(JSON Storage File)"]
+        FanOutBus["Fan-Out Event Bus\n(notifier.js, webhooks.js, auditLog.js, SSE diffs)"]
     end
 
-    subgraph Client_Module ["Client Subsystem (Vite + React 18 + Tailwind)"]
+    subgraph Client_Module ["Client Subsystem (Vite 8 + React 19 + Tailwind v4)"]
         ClientEntry["main.tsx\n(React Root Mount)"]
         App["App.tsx\n(App Shell & State Coordinator)"]
         APIClient["api.ts\n(Fetch Client & EventSource SSE)"]
-        BoardModel["board-model.js\n(Task Grouping Algorithm)"]
-        StatusHelper["status.js / lib/status.ts\n(Status Normalizer & Styles)"]
-        SignalStats["lib/signalStats.ts\n(Metric Rollup Pure Function)"]
-        PriorityHelper["priority.ts\n(Triage Rank Normalizer)"]
-        SanitizeClient["sanitize.ts\n(HTML Entity Escaper)"]
+        AskClient["lib/ask.ts\n(Ask-the-Board Client Surface)"]
+        AboutContent["lib/aboutContent.ts\n(Field Guide Data & Pinned Contracts)"]
+        ClaimCoordinator["lib/useClaimCoordinator.ts\n(Single-Writer Heartbeat & Claim Core)"]
         
         subgraph Components ["React Components (components/)"]
             ErrorBoundary["ErrorBoundary.tsx\n(Render Crash Shield)"]
@@ -48,10 +50,14 @@ flowchart TD
             StatusBadge["StatusBadge.tsx\n(Editorial Status Tag)"]
             TaskSheet["TaskSheet.tsx\n(Slide-Over Inspector Drawer)"]
             SignalRail["SignalRail.tsx\n(Metrics & Activity Stream)"]
+            About["About.tsx\n(12-Chapter Interactive Field Guide & Diagram)"]
+            Portfolio["Portfolio.tsx\n(Cross-Project Milestone Rollup)"]
         end
     end
 
     subgraph Scripts_Module ["Operational Scripts (scripts/)"]
+        CheckVersionBump["check-version-bump.sh\n(CI Version Discipline Guard)"]
+        GenConfigRef["gen-config-reference.mjs\n(CONFIGURATION.md Generator)"]
         TestAgents["test-agents.js\n(Headless Multi-Agent Swarm Simulation)"]
         TestClientStatus["test-client-status.js\n(Client Helper Resilience Test)"]
     end
@@ -60,33 +66,41 @@ flowchart TD
     PackageJson --> Client_Module
     PackageJson --> Scripts_Module
 
-    ServerEntry --> AuthMiddleware
     ServerEntry --> CorsMiddleware
+    ServerEntry --> PreAuth
+    ServerEntry --> AuthMiddleware
+    ServerEntry --> RateLimit
     ServerEntry --> RoutesTasks
+    ServerEntry --> AuxRouters
     ServerEntry --> Store
 
     RoutesTasks --> Store
-    Store --> SanitizeServer
-    Store --> TasksJSON
+    AuxRouters --> Store
+    Store --> StateMachine
+    Store --> StorageEngine
+    Store --> FanOutBus
+    PreAuth --> AskEngine
 
     ClientEntry --> App
     App --> ErrorBoundary
     App --> Board
     App --> SignalRail
     App --> TaskSheet
+    App --> About
+    App --> Portfolio
     App --> APIClient
+    App --> ClaimCoordinator
+    About --> AskClient
+    About --> AboutContent
 
     Board --> Column
     Column --> TaskCard
     TaskCard --> StatusBadge
-    TaskCard --> StatusHelper
     TaskSheet --> StatusBadge
-    TaskSheet --> PriorityHelper
-    SignalRail --> SignalStats
 
     TestAgents --> ServerEntry
-    TestClientStatus --> StatusHelper
-    TestClientStatus --> BoardModel
+    CheckVersionBump --> PackageJson
+    GenConfigRef --> Server_Module
 ```
 </details>
 
@@ -102,60 +116,61 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as HTTP Client (Agent / Browser)
+    participant Client as Client (Agent / Browser)
     participant Express as server.js
     participant CORS as middleware/cors.js
-    participant Auth as middleware/auth.js
-    participant Router as routes/tasks.js
-    participant Queue as store.js (withMutationLock)
-    participant Domain as store.js (State Machine & RBAC)
-    participant Storage as JsonStorage / GitYamlStorage
-    participant Broadcast as SSE (/api/events)
+    participant PreAuth as Pre-Auth Routers (/api/auth, /api/bug-reports, /api/ask)
+    participant Auth as middleware/auth.js & rateLimit.js
+    participant Router as routes/*.js
+    participant Engine as store.js (withMutationLock)
+    participant Machine as state-machine.js (RBAC & Transitions)
+    participant Storage as storage.js (JsonStorage / GitYamlStorage)
+    participant EventBus as store.js notify()
+    participant SSE as SSE (/api/events)
+    participant Sinks as Notifier / Webhooks / Audit
 
     Client->>Express: Incoming HTTP Request
     Express->>CORS: Evaluate Origin Header
     alt Disallowed Origin
         CORS-->>Client: Refuse Access-Control-Allow-Origin
-    else Valid Origin or Server-to-Server
-        CORS->>Auth: Pass to Auth Middleware
-    end
-
-    alt Mutating Request (POST, PATCH, PUT, DELETE)
-        Auth->>Auth: Check KANBAN_AUTH_TOKEN configured?
-        alt Token not configured
-            Auth-->>Client: HTTP 503 Service Unavailable
+    else Valid Origin
+        alt Pre-Auth Route (/api/auth, /api/bug-reports, /api/ask)
+            Express->>PreAuth: Route to Pre-Auth Router
+            PreAuth-->>Client: Response (Handshake / Bug Issue / Ask Q&A)
+        else Guarded Route
+            Express->>Auth: Verify Token / Project Scope & Check Rate Limit
+            alt Invalid Token / Unauthorized Project / Rate Limit Exceeded
+                Auth-->>Client: HTTP 401 / 403 / 429
+            else Authorized
+                Auth->>Router: Hand off to Feature Router
+                Router->>Engine: withMutationLock(async operation)
+                Note over Engine,Machine: Sequential Promise queue serializes mutations
+                Engine->>Machine: Verify Transitions & Role Permissions
+                alt State or Role Validation Fails
+                    Machine-->>Router: Error { status: 403 | 409, error }
+                    Router-->>Client: HTTP 403 / 409 Response
+                else Valid Mutation
+                    Engine->>Storage: saveTask(candidate) — PERSIST FIRST (KB-05)
+                    Storage->>Storage: writeAtomic() -> temp file -> rename (or git commit)
+                    alt Disk Write Fails
+                        Storage-->>Engine: Throw Error (Memory Left Untouched)
+                        Engine-->>Router: HTTP 500 / 503
+                        Router-->>Client: Fail-Closed Error Response
+                    else Disk Write Confirmed
+                        Storage-->>Engine: Write Confirmed
+                        Engine->>Engine: Update In-Memory tasks[] & index
+                        Engine->>EventBus: notify({ kind, task, prev, project })
+                        EventBus->>SSE: Emit task.<kind> diff frame
+                        SSE-->>Client: Push SSE diff to browsers
+                        opt Active Alerts / Hooks
+                            EventBus->>Sinks: Post Telegram alert / signed webhook / audit line
+                        end
+                        Engine-->>Router: Success { task }
+                        Router-->>Client: HTTP 200 / 201 Response
+                    end
+                end
+            end
         end
-        Auth->>Auth: Validate Bearer or X-API-Token
-        alt Invalid Token
-            Auth-->>Client: HTTP 401 Unauthorized
-        end
-        Auth->>Auth: Validate Caller Role
-        alt Role missing or invalid
-            Auth-->>Client: HTTP 403 Forbidden
-        end
-    end
-
-    Auth->>Router: Hand off to Router handler
-    Router->>Queue: Enqueue Async Store Operation
-
-    Note over Queue,Domain: Sequential Promise chain prevents race conditions
-    Queue->>Domain: Execute Task Logic (Create / Patch / Claim)
-    Domain->>Domain: Check ID, Valid Transitions, Role Permissions
-    alt Validation / State / RBAC Check Fails
-        Domain-->>Router: Error { status: 400 | 403 | 409, error: msg }
-        Router-->>Client: HTTP 400 / 403 / 409 JSON response
-    else Valid Operation
-        Domain->>Storage: saveTask(candidate, allTasks)
-        Storage->>Storage: writeAtomic() -> temp file -> rename
-        opt Git Storage Backend Active
-            Storage->>Storage: git add & git commit
-        end
-        Storage-->>Domain: Storage write confirmed
-        Domain->>Domain: Update in-memory tasks array
-        Domain->>Broadcast: notify(tasksSnapshot)
-        Broadcast-->>Client: Push updated snapshot over SSE
-        Domain-->>Router: Success { status: 200 | 201, task: candidate }
-        Router-->>Client: HTTP 200 / 201 JSON response
     end
 ```
 </details>
@@ -551,9 +566,10 @@ inherited from `referencedProjects`).
 - **`portfolioMetrics.ts`:** Cross-project rollup calculations for the Portfolio view.
 - **`claimCoordinator.ts` / `useClaimCoordinator.ts`:** Client-side lease heartbeat + auto-claim coordination bound to the operator's agent identity.
 - **`authToken.ts`:** Browser-local storage/wiring of the operator's API token.
-- **`aboutContent.ts`:** Pure data for the About view (trust metrics, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, tour-shot list, `RECLAIM_INTRO` / `RECLAIM_FLOW`, and the architecture data — stack rows, claim flow, safety layers, six-layer summary) — no JSX, so it is unit-testable and keeps the copy out of the component.
+- **`aboutContent.ts`:** Pure data for the About view — since v3.5.0 "Field Guide Nº 02": the twelve `CHAPTERS` (each with an ELI5 line, an under-the-hood paragraph, a labelled real snippet, a gotcha and the files it names), `FIELD_GUIDE` / `HERO` (the hero's italic accent words are pulled out so the component can set them in the display face without splitting the string), `ENV_VARS`, `TRUST_METRICS`, why-cards, lifecycle steps, capabilities, FAQ, curl snippet, `RECLAIM_INTRO` / `RECLAIM_FLOW` and the architecture data. No JSX, so it is unit-testable and keeps the copy out of the component.
+- **`ask.ts`:** v3.5.0 client surface for Ask-the-Board. `getAskConfig()` decides whether the console renders at all; `askQuestion(q, password)` posts to `/api/ask` with the shared password in the `x-ask-pass` **header** (never a query string), and the password is remembered in `localStorage` under `kanban.askPass`. Failures throw a typed `AskError` carrying the HTTP `status` and the server's `error` code, which the console maps to specific messages (401 wrong password, 429 backoff, 502/503 unavailable) rather than one generic failure.
 - **`useVisitCount.ts`:** v2.9.1 anonymous visit counter for the About footer. `useVisitCount()` counts the first page-view per browser session (`sessionStorage` flag `kanban-visit-counted`) against the public `abacus.jasoncameron.dev` counter under its own namespace `agent-kanban.riazrahaman.com`, returning `{count, counted}` (null when offline/blocked — the UI simply omits the line). As of v2.14.2 the hook is called from `App.tsx`, so it counts **every site load** (board-first visitors included) and the state is passed down to `About` as the `visit` prop — previously it lived inside `About` and so only counted About-tab opens. `formatVisitCount` renders `1 visit` / `1,234 visits`. Deliberately not per-visitor tracking. Guarded by `useVisitCount.test.mjs`.
-- **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `filterTasks`, `dashboardMetrics`, `boardSort`, `sanitize`, `about`, `responsive`, `mobileToolbar`, and `useVisitCount` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard (shell, columns, rail, viewport, card-header stacking), and `mobileToolbar.test.mjs` guards the board toolbar's shrink-and-wrap contract, the phone `⋯` / `Filters` disclosures and the mobile paging-arrow rule (v2.5.9/v2.9.1).
+- **Test files (`*.test.mjs`):** `signalStats`, `boardModel`, `memoComparator`, `portfolioMetrics`, `claimCoordinator`, `theme`, `authToken`, `stageOwners`, `filterTasks`, `dashboardMetrics`, `boardSort`, `sanitize`, `about`, `aboutFieldGuide`, `responsive`, `mobileToolbar`, and `useVisitCount` — run under `node:test` (TypeScript compiled on the fly via `esbuild`). The `memoComparator` and `reactStubForMemoTest` pair use a React stub to exercise the `React.memo` comparators directly; `responsive.test.mjs` is the mobile-layout regression guard (shell, columns, rail, viewport, card-header stacking), and `mobileToolbar.test.mjs` guards the board toolbar's shrink-and-wrap contract, the phone `⋯` / `Filters` disclosures and the mobile paging-arrow rule (v2.5.9/v2.9.1).
 
 ---
 

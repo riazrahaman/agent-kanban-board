@@ -8,7 +8,11 @@
     <meta name="theme-color" content="#0c1017" media="(prefers-color-scheme: dark)" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- IBM Plex Sans is loaded for the About / Field Guide view only (see
+         index.css `.about-view`): the editorial pages it is benchmarked
+         against are set in it, and system-ui has no matching 700 display
+         weight. The board itself stays on the system stack (DESIGN.md §9). -->
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>Agent Kanban Board</title>
     <script>
       // Apply the saved theme mode (or OS preference, for 'auto' / no stored
