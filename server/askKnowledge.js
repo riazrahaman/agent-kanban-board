@@ -342,7 +342,7 @@ function safeGet(fn, fallback) {
  *
  * @param {object} store - the imported `server/store.js` module (injectable for tests).
  * @param {object} [opts]
- * @param {number} [opts.maxRecentTasksPerProject=3]
+ * @param {number} [opts.maxRecentTasksPerProject=8]
  * @param {number} [opts.maxTitleChars=80]
  */
 // 8, not 3: the first real question this feature ever answered was "explain
