@@ -185,15 +185,20 @@ Supported providers:
 
 When running the Kanban board on Railway and Ollama on your local development machine:
 
-- **Option 2 (Recommended — Private Tailscale Mesh):**
-  Join the Railway container to your Tailscale tailnet using Tailscale Userspace networking or a subnet router.
-  Set `KANBAN_ASK_PROVIDER=ollama` and `KANBAN_ASK_OLLAMA_HOST=http://<tailscale-ip-or-magicdns>:11434`.
-  Zero public exposure, fully encrypted end-to-end.
+- **Option 1 (Recommended — Tailscale Funnel + Token Gateway):**
+  Uses Tailscale Funnel on your local machine to publish only the local reverse proxy (`scripts/gateway/ollama-tunnel-gateway.js` on port `11435`) as a permanent public HTTPS domain (`https://<node-name>.<tailnet>.ts.net`).
+  Railway never joins your tailnet and has zero access to your private network.
+  The gateway enforces `Authorization: Bearer <token>` before proxying to `http://localhost:11434`.
+  Managed via macOS `launchd` (`~/Library/LaunchAgents/com.riazrahaman.ollama-tunnel-gateway.plist`).
+  On Railway, set `KANBAN_ASK_PROVIDER=ollama`, `KANBAN_ASK_OLLAMA_HOST=https://<node-name>.<tailnet>.ts.net`, and `KANBAN_ASK_OLLAMA_AUTH_HEADER="<token>"`.
 
-- **Option 1 (Cloudflare Tunnel + Token Gateway):**
-  Create a persistent Cloudflare Tunnel (`cloudflared tunnel run`) pointing to a local reverse proxy (`scripts/gateway/ollama-tunnel-gateway.js`).
-  The gateway enforces token authorization before proxying to `http://localhost:11434`.
+- **Option 2 (Cloudflare Tunnel + Token Gateway):**
+  Create a persistent Cloudflare Tunnel (`cloudflared tunnel run`) pointing to the local reverse proxy (`scripts/gateway/ollama-tunnel-gateway.js`).
   On Railway, set `KANBAN_ASK_PROVIDER=ollama`, `KANBAN_ASK_OLLAMA_HOST=https://ollama.your-tunnel-domain.com`, and `KANBAN_ASK_OLLAMA_AUTH_HEADER="<your-secret-token>"`.
+
+- **Option 3 (Private Tailscale Mesh):**
+  Join the Railway container directly to your Tailscale tailnet using Tailscale Userspace networking or a subnet router.
+  Set `KANBAN_ASK_PROVIDER=ollama` and `KANBAN_ASK_OLLAMA_HOST=http://<tailscale-ip-or-magicdns>:11434`.
 
 A wrong password is counted separately from the answer caps, so brute-forcing
 the gate cannot exhaust the day's budget. Verify a deployment with `curl
