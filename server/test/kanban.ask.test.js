@@ -514,6 +514,29 @@ describe('ask: upstream failure diagnostics', () => {
     assert.ok(!line.includes(FAKE_PASSWORD), 'the password must never reach the log');
   });
 
+  it('logs the errno behind a transport failure, not just "TypeError"', async () => {
+    // What `fetch` throws on a transport failure is a bare TypeError; the only
+    // useful part is its cause. v3.6.1 logged the NAME, which produced the
+    // word "TypeError" and narrowed nothing — DNS failure, refused connection
+    // and an unreachable network are indistinguishable from it.
+    const logger = fakeLogger();
+    const err = new TypeError('fetch failed');
+    err.cause = Object.assign(new Error('getaddrinfo ENOTFOUND openrouter.ai'), {
+      code: 'ENOTFOUND',
+      hostname: 'openrouter.ai',
+    });
+    const fetchImpl = makeFetch(() => err);
+    await withApp({ env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 502);
+    });
+    const line = logger.lines.find((l) => l.includes('request failed'));
+    assert.ok(line, 'a transport failure must be logged');
+    assert.match(line, /ENOTFOUND/, 'the errno is the whole point of the line');
+    assert.match(line, /host=openrouter\.ai/);
+    assert.ok(!line.includes(FAKE_KEY) && !line.includes(FAKE_PASSWORD));
+  });
+
   it('distinguishes a timeout from a gateway error in the log', async () => {
     const logger = fakeLogger();
     const abort = Object.assign(new Error('aborted'), { name: 'TimeoutError' });
