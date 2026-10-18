@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,43 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.5.1] — 2026-10-18
+
+### Fixed
+- **The server did not actually shut down gracefully (#108).** `server.close()`
+  waits for every open connection to end, and `GET /api/events` is a response
+  deliberately held open forever — one per browser tab. Nothing tracked those
+  responses, so nothing could end them, so the close callback never fired.
+  Measured locally: with no SSE client the process exits in ~0.1s; with **one**
+  open stream it never reached the callback and left five seconds later via the
+  `graceful shutdown timed out; exiting forcefully` path. In production every
+  tab holds a stream, so that was the normal case, and the v3.5.0 deploy log
+  shows `SIGTERM` followed by the container stopping ~2.8s later with no exit
+  line in between.
+
+  Shutdown now ends the open streams first — a clean `res.end()`, so the
+  browser's `EventSource` treats it as a normal stream end and reconnects onto
+  the new container by itself — then closes the server, then drops idle
+  keep-alive sockets. A request that is still being served is deliberately not
+  destroyed; a backstop one second later catches anything left. Measured after
+  the change: ~0.02s with eight streams attached.
+
+  *Scope note:* the "Deploy Crashed" emails #108 was filed for had an earlier,
+  different cause — an `npm` wrapper in the Railway start command, fixed in the
+  dashboard on 2026-10-11. No crash email has arrived for this service since
+  2026-10-10. This release fixes a second defect found while verifying that
+  one, not the emails themselves.
+- A retired container now logs `closed cleanly in Nms`. Without it, a container
+  that exited gracefully and one that was killed before it ever got there look
+  identical in the deploy log, which is what made the above hard to confirm.
+
+### Changed
+- The repository's own `npm start` is now `node server/server.js` rather than
+  `npm --prefix server start`. The documented quickstart command is therefore
+  the same signal-safe invocation production uses, with no npm process in
+  between to mistranslate the exit status. Paths resolve from the module's own
+  directory, so running from the repository root changes nothing else.
 
 ## [3.5.0] — 2026-10-18
 

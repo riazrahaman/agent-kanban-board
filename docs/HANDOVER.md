@@ -524,8 +524,13 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 - Obvious next steps:
   1. Port the reference guides' **"← Back to …"** chip (the counterpart to the
      ↑ Top control), which was deliberately left out of v3.5.0.
-  2. Issue **#108** — Railway reports "Deploy Crashed" on every redeploy because
-     `npm start` wraps `SIGTERM` — is still open and unrelated to this release.
+  2. Issue **#108** — addressed in v3.5.1. Its original cause (an `npm` wrapper
+     in the Railway start command) was fixed in the dashboard on 2026-10-11 and
+     no crash email has arrived for this service since 2026-10-10. Verifying
+     that turned up a second, real defect — the server never actually exited on
+     `SIGTERM` while an SSE stream was open — which v3.5.1 fixes. Confirm on the
+     next redeploy that the retired container logs `ended N open event stream(s)`
+     followed by `closed cleanly in Nms`, then close the issue.
   3. Keep `aboutContent.ts` `TRUST_METRICS` in lock-step as tests are added
      (§10); `about.test.mjs` fails the build when it drifts.
 
@@ -568,6 +573,13 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 - **`KANBAN_TRUST_PROXY` defaults to `1`** (one trusted hop). Setting it to `true`
   with no real proxy re-opens `X-Forwarded-For` spoofing against the per-IP
   bug-report and auth-failure limiters.
+- **A long-lived response blocks `server.close()`.** `GET /api/events` holds a
+  response open for the life of a browser tab, and `close()` waits for every
+  open connection, so shutdown has to END those streams first or the callback
+  never fires. `server.js` keeps an `openSseStreams` set purely for this;
+  `drainSseStreams()` is called before `close()` on SIGTERM/SIGINT. A plain
+  counter cannot do it — you need the response objects. Any future endpoint
+  that holds a connection open must register the same way.
 - **`round` is required for git-backed persistence** and for `createTask`
   generally (positive integer); a missing value is a `400`.
 

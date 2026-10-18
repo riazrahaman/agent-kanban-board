@@ -37,9 +37,12 @@ Everything runs locally on `localhost` with zero cloud dependencies, accounts, o
 
 ```bash
 # From repository root
-npm start
-# or: cd server && npm install && npm start
+npm start   # = node server/server.js
 ```
+
+`npm start` execs the server directly rather than wrapping it in a second npm
+process, so `SIGTERM` reaches it and a `Ctrl-C` or a container stop is a clean
+exit — the same invocation production uses (see [Deployment](#deployment)).
 
 The REST API and Server-Sent Events stream run on `http://localhost:4000`. The default JSON store is local to this clone, so the server starts with no configuration. Read-only monitoring works immediately; configure `KANBAN_AUTH_TOKEN` before sending mutations. The optional git-backed YAML store is selected explicitly with `KANBAN_STORAGE_BACKEND=git` and `KANBAN_GIT_DIR=/path/to/cards`.
 
@@ -463,7 +466,18 @@ The server is a stateful long-running process (in-memory store, background lease
 - **Render** — [`render.yaml`](render.yaml): a single Node web service that builds the client and serves API + SPA on one port, with a persistent disk at `/data`. The healthcheck probes `GET /api/health/ready`, which returns 503 until the store has loaded, so the platform will not route traffic to a half-booted instance.
 - **Railway** — [`railway.json`](railway.json): Railpack build, start command `node server/server.js`, healthcheck at `/api/health`. The production instance lives at **<https://agent-kanban.riazrahaman.com>** (custom domain on Railway).
 
-  **Do not run `npm start` or `npm --prefix server start` as the Railway start command (v3.2.5).** npm forwards `SIGTERM` to the server correctly, but npm itself then exits non-zero — so Railway reports every clean shutdown, including a routine redeploy, as **"Deploy Crashed"** and emails you about it, even though nothing actually crashed. `railway.json` already sets the correct `node server/server.js` command; a value set in the Railway dashboard under Settings → Deploy → Custom Start Command silently **overrides** `railway.json`, so check there too if emails keep coming.
+  **Do not run `npm --prefix server start` as the Railway start command (v3.2.5).** npm forwards `SIGTERM` to the server correctly, but npm itself then exits non-zero — so Railway reports every clean shutdown, including a routine redeploy, as **"Deploy Crashed"** and emails you about it, even though nothing actually crashed. `railway.json` already sets the correct `node server/server.js` command; a value set in the Railway dashboard under Settings → Deploy → Custom Start Command silently **overrides** `railway.json`, so check there too if emails keep coming. Since v3.5.1 the repo's own `npm start` is that same direct `node server/server.js`, so it is no longer a wrapper either.
+
+  **There was a second cause, fixed in v3.5.1 (#108).** Even started directly, the
+  server did not actually exit on `SIGTERM`: `server.close()` waits for every open
+  connection, and every browser tab parks on the `GET /api/events` SSE stream,
+  which never ends by itself. The process sat there until the 5-second fallback —
+  but Railway stops the container about two seconds sooner, so it was killed
+  rather than exiting, and the platform recorded a crash. Shutdown now ends the
+  open streams first (a clean end, so `EventSource` reconnects to the new
+  container on its own) and then calls `closeAllConnections()`, which takes the
+  measured shutdown from ~5s to ~0.1s. If you are self-hosting an older build
+  behind a short grace period, expect the same symptom.
 
 For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth token (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS`), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
 
