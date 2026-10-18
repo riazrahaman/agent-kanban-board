@@ -505,8 +505,8 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-**Current release: `3.7.0`**, live on Railway, CI green, working tree clean on
-`main`. Tags `v3.5.0` … `v3.7.0` all pushed.
+**Current release: `3.7.1`**, live on Railway, CI green, working tree clean on
+`main`. Tags `v3.5.0` … `v3.7.1` all pushed.
 
 ### The arc of this run, in one line each
 
@@ -522,6 +522,7 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 | `3.6.3` | **The actual bug**: an em dash in the `X-Title` header. |
 | `3.6.4` | Ask answer quality: truncation, self-contradiction, thin activity data. |
 | `3.7.0` | Ask local model support: Ollama provider (`qwen3.6:latest`), Tailscale mesh & Cloudflare tunnel gateway options. |
+| `3.7.1` | Documentation & skill sync: About environment tables, handover notes, and bundled orchestrator skill. |
 
 ### The one worth reading twice
 

@@ -21,6 +21,7 @@ here **and** an annotated git tag. Do not let work accumulate under
 ### Documentation & Reference Sync
 - Updated About page (Field Guide Nº 02) environment variable tables and Chapter 11 Ask surface snippet to document the new Ollama provider and configuration flags (`KANBAN_ASK_PROVIDER`, `KANBAN_ASK_OLLAMA_HOST`, `KANBAN_ASK_OLLAMA_AUTH_HEADER`).
 - Updated system architecture and handover documentation to match live v3.7.1 state.
+- Synchronized bundled orchestrator skill protocol (`skills/kanban/SKILL.md`) and human guide (`skills/kanban/README.md`) with v3.7.1 Ask endpoints, graceful shutdown, and header ByteString safety.
 
 ## [3.7.0] — 2026-10-18
 
