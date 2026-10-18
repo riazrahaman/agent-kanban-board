@@ -913,4 +913,47 @@ describe('ask: ollama provider', () => {
       },
     );
   });
+
+  it('omits max_tokens for Ollama by default so thinking models are not truncated', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(fetchImpl.calls.length, 1);
+        const reqBody = JSON.parse(fetchImpl.calls[0].opts.body);
+        assert.equal(reqBody.max_tokens, undefined, 'Ollama requests should omit max_tokens by default');
+      },
+    );
+  });
+
+  it('honours explicit KANBAN_ASK_MAX_OUTPUT_TOKENS for Ollama if provided', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+          KANBAN_ASK_MAX_OUTPUT_TOKENS: '2500',
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(fetchImpl.calls.length, 1);
+        const reqBody = JSON.parse(fetchImpl.calls[0].opts.body);
+        assert.equal(reqBody.max_tokens, 2500, 'Ollama should honour explicit max_tokens');
+      },
+    );
+  });
 });
