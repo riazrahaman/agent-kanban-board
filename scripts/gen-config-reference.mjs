@@ -42,7 +42,7 @@ const DESCRIPTIONS = {
   'KANBAN_NOTIFY_PROJECTS': 'Comma-separated allow-list of projects that notify',
   'KANBAN_ORPHAN_GRACE_MS': 'Grace before an ownerless active task is normalized (default 300000)',
   'KANBAN_PROGRESS_STALL_MS': 'Progress stall timeout in ms before inactive task is reaped (default 1800000; 0 disables)',
-  'KANBAN_PROJECT_TOKENS': 'JSON map of project id to per-project token',
+  'KANBAN_PROJECT_TOKENS': 'Per-project credentials with optional role binding: "tok" (unbound), {"token":"tok"}, {"token":"tok","role":"builder"} (role forced server-side), or {"credentials":[…]}; one credential per agent role',
   'KANBAN_RATE_LIMIT_PER_MIN': 'Per-project mutation limit per window (0 disables)',
   'KANBAN_RATE_LIMIT_WINDOW_MS': 'Fixed rate-limit window in milliseconds (default 60000)',
   'KANBAN_READ_AUTH': 'Set to "token" to require auth on reads and SSE',

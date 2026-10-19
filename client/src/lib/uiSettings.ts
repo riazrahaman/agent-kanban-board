@@ -6,16 +6,23 @@
 
 export type AppView = 'board' | 'portfolio' | 'about'
 
+/** v2.18.0: values the board severity filter can select. */
+const SEVERITY_FILTER_VALUES = ['green', 'amber', 'red'] as const
+type SeverityFilterValue = (typeof SEVERITY_FILTER_VALUES)[number]
+
 export interface StoredFilters {
   search: string
   priority: string
   assignee: string
+  /** v2.18.0: solo-run severity filter (multi-select; empty means show all). */
+  severity: SeverityFilterValue[]
 }
 
 export const DEFAULT_FILTERS: StoredFilters = Object.freeze({
   search: '',
   priority: 'all',
   assignee: 'all',
+  severity: [],
 })
 
 export const FILTERS_STORAGE_KEY = 'kanban.filters'
@@ -31,18 +38,24 @@ export function isValidView(val: unknown): val is AppView {
 
 /** Read persisted filters (search, priority, assignee). */
 export function readStoredFilters(): StoredFilters {
+  const defaults = (): StoredFilters => ({ ...DEFAULT_FILTERS, severity: [] })
   try {
     const raw = localStorage.getItem(FILTERS_STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_FILTERS }
+    if (!raw) return defaults()
     const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_FILTERS }
+    if (!parsed || typeof parsed !== 'object') return defaults()
     return {
       search: typeof parsed.search === 'string' ? parsed.search : DEFAULT_FILTERS.search,
       priority: typeof parsed.priority === 'string' ? parsed.priority : DEFAULT_FILTERS.priority,
       assignee: typeof parsed.assignee === 'string' ? parsed.assignee : DEFAULT_FILTERS.assignee,
+      severity: Array.isArray(parsed.severity)
+        ? (parsed.severity.filter((s: unknown): s is SeverityFilterValue =>
+            typeof s === 'string' && SEVERITY_FILTER_VALUES.includes(s as SeverityFilterValue),
+          ) as SeverityFilterValue[])
+        : defaults().severity,
     }
   } catch {
-    return { ...DEFAULT_FILTERS }
+    return defaults()
   }
 }
 
@@ -54,8 +67,14 @@ export function writeStoredFilters(filters: Partial<StoredFilters>): void {
       search: filters.search !== undefined ? filters.search : current.search,
       priority: filters.priority !== undefined ? filters.priority : current.priority,
       assignee: filters.assignee !== undefined ? filters.assignee : current.assignee,
+      severity: filters.severity !== undefined ? filters.severity : current.severity,
     }
-    if (next.search === '' && next.priority === 'all' && next.assignee === 'all') {
+    if (
+      next.search === '' &&
+      next.priority === 'all' &&
+      next.assignee === 'all' &&
+      next.severity.length === 0
+    ) {
       localStorage.removeItem(FILTERS_STORAGE_KEY)
     } else {
       localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(next))

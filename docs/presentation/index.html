@@ -413,7 +413,7 @@ html { scroll-behavior: smooth; }
     <div class="brand">
       <b>Agent Kanban Board</b>
       <span class="crumb">Presenter walkthrough</span>
-      <span class="ver">v3.7.3</span>
+      <span class="ver">v3.8.0</span>
     </div>
     <nav class="topnav" id="nav" aria-label="Sections">
       <a href="#idea">Idea</a>
@@ -616,14 +616,14 @@ cp -r skills/kanban ~/.config/opencode/skills/kanban <span class="c"># every pro
         <div class="code-head"><span>Minimum</span><button class="copy" type="button">Copy</button></div>
 <pre>export KANBAN_AUTH_TOKEN="demo-secret"</pre>
       </div>
-      <p class="body">For several projects on one board, give each its own token. A token then sees and touches exactly one project — project lists, task feeds and health metadata all narrow to it, and an anonymous caller gets an empty list.</p>
+      <p class="body">For several projects on one board, give each its own credential. A credential then sees and touches exactly one project — project lists, task feeds and health metadata all narrow to it, and an anonymous caller gets an empty list. Each credential may also <strong>bind one agent role</strong> — planner, builder, reviewer, tester, releaser — and the board then serves that role from the credential itself, ignoring a conflicting <code>X-Agent-Role</code> header (and auditing the mismatch).</p>
       <div class="code">
         <div class="code-head"><span>Per-project isolation</span><button class="copy" type="button">Copy</button></div>
-<pre>export KANBAN_PROJECT_TOKENS='{"demo":"tok-demo","payments":"tok-pay"}'
+<pre>export KANBAN_PROJECT_TOKENS='{"demo":{"credentials":[{"token":"tok-build","role":"builder"},{"token":"tok-review","role":"reviewer"}]},"payments":"tok-pay"}'
 
 <span class="c"># proves it: the wrong project with the right token</span>
 curl -s -X PATCH "localhost:4000/api/tasks/demo-01?project=payments" \
-  -H "X-API-Token: tok-demo" -H "X-Agent-Role: builder" \
+  -H "X-API-Token: tok-build" -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" \
   -d '{"status":"READY","expected_version":1}'
 <span class="c"># -> 403 token is not authorized for project 'payments'</span></pre>
@@ -719,19 +719,20 @@ curl -s localhost:4000/api/ask/config
     <p class="body">Every call carries the version the previous response returned. The 403 only works from <code>READY_TO_SHIP</code>: the server checks the edge before the role, so asking a tester to close a card still in <code>IN_PROGRESS</code> returns <code>409 Invalid state transition</code> instead &mdash; the wrong failure for the point you are making.</p>
     <div class="code">
       <div class="code-head"><span>The three that matter</span><button class="copy" type="button">Copy</button></div>
-<pre>T="X-API-Token: tok-demo"
+<pre>T_BUILD="X-API-Token: tok-build"   <span class="c"># credential-bound: role builder</span>
+T_TEST="X-API-Token: tok-test"     <span class="c"># credential-bound: role tester</span>
 B="localhost:4000/api/tasks"
 
 <span class="c"># 4 — a second builder claims the same card -&gt; 409 contention</span>
-curl -X POST "$B/demo-01/claim?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+curl -X POST "$B/demo-01/claim?project=demo" -H "$T_BUILD" -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" -d '{"agent_id":"builder-2"}'
 
 <span class="c"># 6 — a stale write -&gt; 409 version mismatch</span>
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+curl -X PATCH "$B/demo-01?project=demo" -H "$T_BUILD" -H "X-Agent-Role: builder" \
   -H "Content-Type: application/json" -d '{"status":"IN_REVIEW","expected_version":1}'
 
 <span class="c"># 8 — the wrong role tries to close it -&gt; 403 (only from READY_TO_SHIP)</span>
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: tester" \
+curl -X PATCH "$B/demo-01?project=demo" -H "$T_TEST" -H "X-Agent-Role: tester" \
   -H "Content-Type: application/json" -d '{"status":"DONE","expected_version":7}'</pre>
     </div>
     <p class="body">Short on time? Seed the card beforehand and run only these three.</p>
@@ -779,7 +780,7 @@ curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: tester" \
 
   <footer>
     <p class="mono">agent-kanban.riazrahaman.com &nbsp;·&nbsp; github.com/riazrahaman/agent-kanban-board &nbsp;·&nbsp; MIT</p>
-    <p style="margin-block:8px 0">Agent Kanban Board v3.7.3. This page is kept in the repository at <code>docs/presentation/index.html</code> and is version-pinned by the test suite, so a release that leaves it behind fails CI. Built, reviewed and released by agents coordinating through the board itself.</p>
+    <p style="margin-block:8px 0">Agent Kanban Board v3.8.0. This page is kept in the repository at <code>docs/presentation/index.html</code> and is version-pinned by the test suite, so a release that leaves it behind fails CI. Built, reviewed and released by agents coordinating through the board itself.</p>
   </footer>
 </div>
 

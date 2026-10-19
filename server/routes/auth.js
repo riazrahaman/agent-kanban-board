@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { authSecret, createSessionToken, verifySessionToken, revokeSessionToken } from '../sessionAuth.js';
-import { VALID_ROLES, parseProjectTokens, tokensMatch } from '../middleware/auth.js';
-import { isValidProjectId, defaultProjectName } from '../store.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch } from '../middleware/auth.js';
+import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
 import { authFailuresExceeded, recordAuthFailure } from '../middleware/rateLimit.js';
 
@@ -20,22 +20,30 @@ function extractToken(req) {
  * The mutation auth middleware runs AFTER this router (the handshake must be
  * reachable unauthenticated), so the ticket endpoint performs its own token
  * check. Any recognized credential is accepted: a session token, a per-project
- * token, the admin token, or the global token.
+ * credential, the admin token, or the global token.
+ *
+ * (M1, review of 5d2d4bc) The endpoint returns a CREDENTIAL DESCRIPTOR, not a
+ * boolean, because v3.8.0 derives the ticket role from whatever the caller
+ * proved, the same way the mutation middleware does — never from a caller-
+ * asserted body role alone.
  */
-function hasValidCredential(req) {
+function resolveCredential(req) {
   const provided = extractToken(req);
   if (!provided) return null;
-  if (verifySessionToken(provided)) return true;
+  const session = verifySessionToken(provided);
+  if (session) return { kind: 'session', session };
   const projectTokens = parseProjectTokens();
   if (projectTokens?.map) {
-    for (const token of projectTokens.map.values()) {
-      if (tokensMatch(provided, token)) return true;
+    // Map values are credential ARRAYS since role binding shipped (v3.8.0).
+    for (const creds of projectTokens.map.values()) {
+      const match = creds.find((c) => tokensMatch(provided, c.token));
+      if (match) return { kind: 'project', credential: match };
     }
   }
   const adminToken = process.env.KANBAN_ADMIN_TOKEN;
-  if (adminToken && tokensMatch(provided, adminToken)) return true;
+  if (adminToken && tokensMatch(provided, adminToken)) return { kind: 'admin' };
   const requiredToken = process.env.KANBAN_AUTH_TOKEN;
-  if (requiredToken && tokensMatch(provided, requiredToken)) return true;
+  if (requiredToken && tokensMatch(provided, requiredToken)) return { kind: 'global' };
   return null;
 }
 
@@ -43,6 +51,13 @@ function hasValidCredential(req) {
  * POST /api/auth/stream-ticket — exchange a bearer credential for a 60-second
  * single-use ticket. The SSE client appends `?ticket=<t>` because EventSource
  * cannot set request headers (and the long-lived token must not go in a URL).
+ *
+ * v3.8.0 (M1): for bound credentials the role is DERIVED from the credential
+ * (session role, admin token, or the credential's bound role) — `body.role` is
+ * only honored by legacy UNBOUND credentials, exactly matching the mutation
+ * middleware. A privileged role can never be minted from a non-privileged
+ * credential, mirroring §2.3b: per-project credentials never confer privileged
+ * ops; the legacy global token keeps its historical superuser semantics.
  */
 router.post('/stream-ticket', (req, res) => {
   // ENH-09: rate-limit failed auth (these routes run before the main middleware).
@@ -55,18 +70,58 @@ router.post('/stream-ticket', (req, res) => {
     });
   }
 
-  if (hasValidCredential(req) !== true) {
+  const cred = resolveCredential(req);
+  if (!cred) {
     recordAuthFailure(req);
     return res.status(401).json({ error: 'Unauthorized: valid token required' });
   }
 
   const body = req.body ?? {};
-  const rawRole = body.role;
-  const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
-  if (!role || !VALID_ROLES.has(role)) {
-    recordAuthFailure(req);
-    return res.status(403).json({ error: 'A valid agent role is required' });
+  const rawRole = typeof body.role === 'string' ? body.role.toLowerCase() : null;
+
+  // Derive the role the credential carries (M1): session role, admin token, or
+  // the credential's bound role — body.role is only consulted for UNBOUND
+  // credentials, exactly matching the mutation middleware.
+  let role;
+  let derived = true;
+  if (cred.kind === 'session') {
+    role = cred.session.role;
+  } else if (cred.kind === 'admin') {
+    role = 'admin';
+  } else if (cred.kind === 'project' && cred.credential.role) {
+    role = cred.credential.role;
+  } else {
+    // Legacy UNBOUND credential (per-project or global): the caller asserts its
+    // role — validated below against VALID_ROLES.
+    role = null;
+    derived = false;
   }
+
+  if (derived) {
+    if (rawRole && rawRole !== role) {
+      emitRoleBindingMismatch(req, rawRole, role, defaultProjectName());
+    }
+    // Privileged roles cannot be bound into the map, and sessions carry their
+    // own privilege — this is a defensive guard, not the policy seam.
+    if (isPrivilegedRole(role) && cred.kind === 'project') {
+      return res.status(403).json({ error: `Role '${role}' is privileged and cannot be minted from this credential` });
+    }
+  } else {
+    if (!rawRole || !VALID_ROLES.has(rawRole)) {
+      recordAuthFailure(req);
+      return res.status(403).json({ error: 'A valid agent role is required' });
+    }
+    role = rawRole;
+    // SEC-02 alignment: a per-project credential is by-convention a worker
+    // credential. It may mint tickets for its own functional role, never for a
+    // privileged one. The legacy GLOBAL token keeps its historical semantics.
+    if (isPrivilegedRole(role) && cred.kind === 'project') {
+      return res.status(403).json({
+        error: `Role '${role}' is privileged — stream tickets for privileged roles require the admin token, a privileged session, or the legacy global token`,
+      });
+    }
+  }
+
   const rawProject = body.project;
   const project =
     typeof rawProject === 'string' && isValidProjectId(rawProject)

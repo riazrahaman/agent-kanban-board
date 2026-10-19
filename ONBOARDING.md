@@ -13,10 +13,13 @@ the board owner configures server-side and distributes out-of-band.
 
 1. **A project id** — a short string matching `^[A-Za-z0-9_-]+$` (e.g. `myapp`). You tag it on
    every request; you never "create" it explicitly.
-2. **A token** — issued by the board owner. Ideally scoped per-project via
-   `KANBAN_PROJECT_TOKENS` so your app cannot touch another project's board.
-3. **A role** — one of `builder`, `reviewer`, `tester`, `runner`, `system`, `human`, `admin`,
-   sent on every mutating request. It must match your agent's phase in the loop.
+2. **A token** — issued by the board owner, ideally **bound to your role** in
+   `KANBAN_PROJECT_TOKENS` (`{"token":"…","role":"…"}`) so your app cannot touch another
+   project's board or act as a different role.
+3. **A role** — every agent role (planner, builder, reviewer, tester/validator, releaser)
+   gets **its own token bound to that role**; the server derives the role from the
+   credential (`X-Agent-Role` still works only for legacy unbound tokens). Orchestrators
+   use an explicit `admin` credential.
 
 ---
 
@@ -42,9 +45,9 @@ Reads (`GET`, including the SSE stream) are **open** by default (unless `KANBAN_
 
 | Env var | Scope |
 |---|---|
-| `KANBAN_AUTH_TOKEN` | one global token, valid for every project |
-| `KANBAN_ADMIN_TOKEN` | superuser token, spans all projects (audited as `admin_write`) |
-| `KANBAN_PROJECT_TOKENS` | JSON map `{"myapp":"tok-123", ...}` — **per-project isolation** |
+| `KANBAN_AUTH_TOKEN` | legacy single global token, valid for every project (header role kept) |
+| `KANBAN_ADMIN_TOKEN` | privileged superuser token, spans all projects (audited as `admin_write`); derives the `admin` role |
+| `KANBAN_PROJECT_TOKENS` | JSON map of per-project credentials with **role binding** — `{"myapp":{"credentials":[{"token":"tok-p","role":"planner"},{"token":"tok-b","role":"builder"},…]}}`; a bound credential's role is forced server-side, and a conflicting `X-Agent-Role` header is ignored + audited (`role_binding_mismatch`) |
 | `KANBAN_AUTH_SECRET` | enables HMAC session tokens (handshake below) |
 
 ### Sending the token
@@ -61,11 +64,13 @@ X-API-Token: <token>
 
 ```
 X-Agent-Id: <your-agent-name>
-X-Agent-Role: <role>
+X-Agent-Role: <role>     # only meaningful on a LEGACY UNBOUND credential —
+                         # a role-bound credential forces the role server-side
 ```
 
-(The role may alternatively be a `role` field in the JSON body. Both are lowercased and
-validated against the `VALID_ROLES` set.)
+(The role may alternatively be a `role` field in the JSON body on **create**; a `role`
+field on a `PATCH` is rejected with `400`. Both are lowercased and validated against
+the `VALID_ROLES` set.)
 
 ### Optional: HMAC session tokens (instead of a static bearer token)
 
@@ -95,37 +100,41 @@ and are bound to the role + project issued. The static-token path continues to w
 
 ```bash
 BASE="https://agent-kanban.riazrahaman.com"
-TOKEN="tok-123"            # owner-issued, scoped to "myapp" via KANBAN_PROJECT_TOKENS
+# Owner-issued, role-bound in KANBAN_PROJECT_TOKENS (one credential per agent role):
+TOKEN_PLANNER="tok-plan"    # bound to role planner
+TOKEN="tok-build"           # bound to role builder for THIS agent
 
 # 1. Create the first task — this materializes project "myapp". New cards start in BACKLOG.
 curl -X POST "$BASE/api/tasks" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Agent-Id: myapp-planner" -H "X-Agent-Role: planner" \
+  -H "Authorization: Bearer $TOKEN_PLANNER" \
+  -H "X-Agent-Id: myapp-planner" \
   -H "Content-Type: application/json" \
   -d '{"id":"setup","title":"Provision board","round":1,"status":"BACKLOG","project":"myapp"}'
 
 # 2. Make it claimable: a planner moves BACKLOG -> READY. Every PATCH carries the card's
 #    current version (1 for a new card); a stale one is rejected 409 "Version mismatch".
 curl -X PATCH "$BASE/api/tasks/setup?project=myapp" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: planner" \
+  -H "Authorization: Bearer $TOKEN_PLANNER" \
   -H "Content-Type: application/json" \
   -d '{"status":"READY","expected_version":1}'
 
-# 3. Claim the next READY task in the project (role comes from the header, not the URL).
-#    The claim sets owner + lease and moves READY -> IN_PROGRESS (PLANNING for a planner).
+# 3. Claim the next READY task in the project (the role comes from the bound credential,
+#    not from a header — no X-Agent-Role needed). The claim sets owner + lease and moves
+#    READY -> IN_PROGRESS (PLANNING for a planner credential).
 curl -X POST "$BASE/api/tasks/next-claim?agent_id=myapp-builder&project=myapp" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Id: myapp-builder" -H "X-Agent-Role: builder"
+  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Id: myapp-builder"
 
 # 4. Append a log line (also renews the lease).
 curl -X POST "$BASE/api/tasks/setup/logs?project=myapp" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"myapp-builder","message":"Started implementation."}'
 
 # 5. Move it on (role-gated state machine; ?role= in the URL is ignored). The claim and the
 #    log each bumped the version, so read it first: GET /api/tasks/setup?project=myapp.
+#    A builder credential cannot go past IN_REVIEW — the reviewer's own token takes it from there.
 curl -X PATCH "$BASE/api/tasks/setup?project=myapp" \
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status":"IN_REVIEW","expected_version":4}'
 

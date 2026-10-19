@@ -1,10 +1,10 @@
 <section id="tokens" data-transition="fade" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
-<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">One board, many projects, one token each</h2>
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">One board, many projects, one credential each</h2>
 <div style="display:flex;gap:40px;align-items:stretch">
 <div style="flex:1;background:#211F1A;padding:40px;display:flex;flex-direction:column;gap:20px">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">Per-project isolation</p>
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;line-height:1.6;color:#F6F2E8">export KANBAN_PROJECT_TOKENS=<br>&nbsp;&nbsp;'{"demo":"tok-demo",<br>&nbsp;&nbsp;&nbsp;&nbsp;"payments":"tok-pay"}'</p>
-<p style="font-size:26px;color:#BFD8D5;line-height:1.45">A token sees and touches exactly one project. Project lists, task feeds and health metadata all narrow to it; an anonymous caller gets an empty list.</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;line-height:1.6;color:#F6F2E8">export KANBAN_PROJECT_TOKENS=<br>&nbsp;&nbsp;'{"demo":<br>&nbsp;&nbsp;&nbsp;&nbsp;{"credentials":[<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{"token":"tok-build","role":"builder"},<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{"token":"tok-review","role":"reviewer"}]},<br>&nbsp;&nbsp;&nbsp;&nbsp;"payments":"tok-pay"}'</p>
+<p style="font-size:26px;color:#BFD8D5;line-height:1.45">A credential sees and touches exactly one project — and a bound credential carries exactly one role, served by the board itself. Project lists, task feeds and health metadata all narrow to it; an anonymous caller gets an empty list.</p>
 </div>
 <div style="flex:1;display:flex;flex-direction:column;gap:24px">
 <div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #9F2F2D;padding:32px;display:flex;flex-direction:column;gap:12px">

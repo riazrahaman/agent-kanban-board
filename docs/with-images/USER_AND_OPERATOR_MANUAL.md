@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.7.3
+**System:** Agent Kanban Board v3.8.0
 
 ---
 
@@ -105,7 +105,7 @@ The server and client are configured via environment variables.
 | `HOST` | `127.0.0.1` (local) / `0.0.0.0` (when `PORT` injected) | Network interface to bind. |
 | `KANBAN_AUTH_TOKEN` | *(None)* | **Mandatory for mutations** unless another mechanism is set. Shared secret for all `POST`, `PATCH`, `PUT`, `DELETE`. Unset → mutations return `503`. |
 | `KANBAN_ADMIN_TOKEN` | *(None)* | Superuser token spanning every project. Audited as `admin_write`. |
-| `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map `{"project":"token"}` enabling per-project isolation. Boot check (§2.10) reports any store projects missing from this map. |
+| `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map enabling per-project isolation. Each credential may be role-bound: a legacy string or `{"token":"tok"}` is unbound (header role kept); `{"token":"tok","role":"builder"}` forces that role server-side; `{"credentials":[…]}` carries several credentials per project. Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound. Boot check (§2.10) reports any store projects missing from this map plus bound/unbound counts. |
 | `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h, revocable since v2.10.0 via `POST /api/auth/revoke`). |
 | `KANBAN_AUTH_LOG` | `off` | Set truthy (not `0`/`false`) to emit redacted auth-failure logs. |
 | `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
@@ -287,7 +287,7 @@ Both rely on a `startCommand` and the fact that the server binds `0.0.0.0` whene
 | `KANBAN_DATA_FILE` | `/data/tasks.json` | **Default project** location — its built-in default is the ephemeral `server/tasks.json`. |
 | `KANBAN_DATA_DIR` | `/data` | Named projects (`tasks/<project>.json`) and archives. |
 | `KANBAN_AUTH_TOKEN` | *(secret)* | Required — mutations fail closed with `503` when unset. |
-| `KANBAN_PROJECT_TOKENS` | *(JSON map)* | Optional per-project scoping, e.g. `{"myapp":"tok"}`. |
+| `KANBAN_PROJECT_TOKENS` | *(JSON map, role-bound)* | Per-project credentials, e.g. `{"myapp":{"credentials":[{"token":"tok-b","role":"builder"},…]}}` — one bound credential per agent role. |
 | `KANBAN_ALLOWED_ORIGIN` | *(public URL)* | Comma-separated CORS allow-list. |
 | `HOST` | `0.0.0.0` | Bind all interfaces (auto when `PORT` is set). |
 
@@ -432,7 +432,7 @@ is written only by `POST /api/tasks/:id/claim` (or `next-claim`) — and the
 audit trail records only real transitions and real log/comment calls.
 
 > [!NOTE]
-> The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials. Operators should append manual logs using authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token.
+> The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials; the browser holds a server-issued session whose role comes from the server, never a header. For operator log appends outside the browser, use authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token — under role-bound `KANBAN_PROJECT_TOKENS` that means the admin token (which derives `admin`) or an unbound credential, since `human` cannot be bound to a project credential.
 
 ### 5.4 Signal Overview & Live Activity Feed
 - Located on the right-hand sidebar.
@@ -500,8 +500,8 @@ Autonomous agents interact with the board exclusively through HTTP requests.
 
 ### 6.1 Authentication & Role Headers
 Every mutating request must include:
-1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all), `KANBAN_PROJECT_TOKENS` (per-project map), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; revoke your own token early with `POST /api/auth/revoke`).
-2. **Role:** `X-Agent-Role: <role>` (Allowed: `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`, `runner`, `system`, `human`, `admin`)
+1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all — derives the `admin` role), `KANBAN_PROJECT_TOKENS` (per-project credentials, each optionally **role-bound**: `{"token":"…","role":"…"}`), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; revoke your own token early with `POST /api/auth/revoke`).
+2. **Role:** every agent role (planner, builder, reviewer, tester/validator, releaser) requires **its own token bound to that role in `KANBAN_PROJECT_TOKENS`** — the role is forced server-side from the credential, and a self-declared `X-Agent-Role` header that conflicts with the bound role is ignored and audited (`role_binding_mismatch`). The header still declares the role for legacy **unbound** credentials only; a `role` field on a `PATCH` body is rejected with `400`; privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound and come only from the admin token or a session.
 4. **Project:** every task path carries `?project=<name>` (only `POST /api/tasks` takes `project` in the body instead).
 5. **Version:** every `PATCH` carries the card's current `version` as `expected_version` (or `If-Match`); a stale write is rejected `409 Version mismatch`.
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
@@ -514,11 +514,18 @@ Every mutating request must include:
 
 The v3 lifecycle (ADR-004) is `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`); only `READY` cards can be claimed. Every committed mutation — including a claim and a log entry — bumps the card's `version`, so each `PATCH` below uses the version returned by the previous call (read it from the response, or `GET /api/tasks/:id?project=…`). The numbers shown are what a fresh card goes through; this exact sequence was run against a 3.2.4 server.
 
-#### Step 1: Create a Task (Runner/Orchestrator)
+The examples assume the project is configured with **role-bound credentials** in `KANBAN_PROJECT_TOKENS`:
+
+```bash
+export KANBAN_PROJECT_TOKENS='{"default":{"credentials":[{"token":"tok-build","role":"builder"},{"token":"tok-review","role":"reviewer"},{"token":"tok-test","role":"tester"},{"token":"tok-release","role":"releaser"}]}}'
+```
+
+Each call therefore carries **the credential of the role performing the step** — no `X-Agent-Role` header needed (for a bound credential the role comes from the token; orchestrator steps use the admin credential, which derives `admin`):
+
+#### Step 1: Create a Task (Orchestrator)
 ```bash
 curl -X POST http://localhost:4000/api/tasks \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: runner" \
+  -H "Authorization: Bearer $KANBAN_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "task-auth-01",
@@ -534,8 +541,7 @@ curl -X POST http://localhost:4000/api/tasks \
 #### Step 2: Make it claimable (Planner)
 ```bash
 curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: planner" \
+  -H "Authorization: Bearer $KANBAN_PLANNER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "READY", "expected_version": 1 }'
 ```
@@ -543,8 +549,7 @@ curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
 #### Step 3: Claim the Task (Builder Agent)
 ```bash
 curl -X POST "http://localhost:4000/api/tasks/task-auth-01/claim?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: builder" \
+  -H "Authorization: Bearer $KANBAN_BUILDER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "agent_id": "builder-codex" }'
 ```
@@ -553,8 +558,7 @@ curl -X POST "http://localhost:4000/api/tasks/task-auth-01/claim?project=default
 #### Step 4: Append Progress Logs (Builder Agent)
 ```bash
 curl -X POST "http://localhost:4000/api/tasks/task-auth-01/logs?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: builder" \
+  -H "Authorization: Bearer $KANBAN_BUILDER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "agent_id": "builder-codex",
@@ -565,8 +569,7 @@ curl -X POST "http://localhost:4000/api/tasks/task-auth-01/logs?project=default"
 #### Step 5: Submit for Review (Builder Agent)
 ```bash
 curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: builder" \
+  -H "Authorization: Bearer $KANBAN_BUILDER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "IN_REVIEW", "expected_version": 4 }'
 ```
@@ -574,8 +577,7 @@ curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
 #### Step 6: Approve & Advance to Validation (Reviewer Agent)
 ```bash
 curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: reviewer" \
+  -H "Authorization: Bearer $KANBAN_REVIEWER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "VALIDATION", "expected_version": 5 }'
 ```
@@ -583,8 +585,7 @@ curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
 #### Step 7: Verify (Tester Agent)
 ```bash
 curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: tester" \
+  -H "Authorization: Bearer $KANBAN_TESTER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "READY_TO_SHIP", "expected_version": 6 }'
 ```
@@ -592,12 +593,11 @@ curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
 #### Step 8: Release (Releaser Agent)
 ```bash
 curl -X PATCH "http://localhost:4000/api/tasks/task-auth-01?project=default" \
-  -H "Authorization: Bearer $KANBAN_AUTH_TOKEN" \
-  -H "X-Agent-Role: releaser" \
+  -H "Authorization: Bearer $KANBAN_RELEASER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "DONE", "expected_version": 7 }'
 ```
-*A tester cannot set `DONE` (403); only a releaser (or a privileged role) closes a card.*
+*A tester cannot set `DONE` (403); only a releaser (or a privileged role) closes a card. A single bound token cannot walk the whole pipeline — this is exactly what keeps a rogue builder from shipping its own work; note the demo map above binds no planner credential (plan it first with the admin or a planner credential if you need `READY → PLANNING`).*
 
 ---
 
@@ -609,12 +609,13 @@ import requests
 
 API_URL = "http://localhost:4000/api"
 PROJECT = {"project": os.getenv("KANBAN_PROJECT", "default")}
-TOKEN = os.getenv("KANBAN_AUTH_TOKEN", "default-secret")
+# Role-bound credential for THIS agent (KANBAN_PROJECT_TOKENS binds it to "builder");
+# the server derives the role from the token — no X-Agent-Role header required.
+TOKEN = os.getenv("KANBAN_BUILDER_TOKEN", "default-secret")
 
 def agent_claim_and_build(task_id: str, agent_id: str):
     headers = {
         "Authorization": f"Bearer {TOKEN}",
-        "X-Agent-Role": "builder",
         "X-Agent-Id": agent_id,
         "Content-Type": "application/json"
     }
@@ -680,13 +681,13 @@ flowchart TD
     Err["HTTP Error Encountered"]
     
     Err --> Code503{"Status 503?"}
-    Code503 -- Yes --> Fix503["Cause: No auth mechanism configured (KANBAN_AUTH_TOKEN,\nKANBAN_AUTH_SECRET, and KANBAN_PROJECT_TOKENS all unset),\nor KANBAN_PROJECT_TOKENS is malformed JSON.\nFix: Set a valid token / valid JSON map and restart the server."]
+    Code503 -- Yes --> Fix503["Cause: No auth mechanism configured (KANBAN_AUTH_TOKEN,\nKANBAN_AUTH_SECRET, and KANBAN_PROJECT_TOKENS all unset),\nor KANBAN_PROJECT_TOKENS is malformed (bad JSON, empty token,\nunknown or privileged role in a binding).\nFix: Set a valid token / valid JSON map and restart the server."]
     
     Code503 -- No --> Code401{"Status 401?"}
     Code401 -- Yes --> Fix401["Cause: Missing or incorrect Bearer token / X-API-Token.\nFix: Check token matches server's KANBAN_AUTH_TOKEN."]
 
     Code401 -- No --> Code403{"Status 403?"}
-    Code403 -- Yes --> Fix403["Cause: Missing role or role not allowed to perform transition.\nFix: Supply valid X-Agent-Role matching permission matrix\n(e.g., only a Reviewer can move to VALIDATION, only a Releaser to DONE)."]
+    Code403 -- Yes --> Fix403["Cause: Missing role, role not allowed to perform transition,\nor a credential-bound role denied (the token's bound role applies,\nnot a conflicting X-Agent-Role header).\nFix: Supply valid X-Agent-Role matching permission matrix\n(e.g., only a Reviewer can move to VALIDATION, only a Releaser to DONE);\nfor a role-bound credential, use the token bound to the required role."]
 
     Code403 -- No --> Code409{"Status 409?"}
     Code409 -- Yes --> Fix409["Cause: Illegal state transition (e.g. BACKLOG -> DONE)\nor task is already claimed by a different agent.\nFix: Check transition graph and verify card ownership."]
@@ -703,20 +704,20 @@ flowchart TD
 
 | Status Code | Meaning | Common Cause & Resolution |
 |---|---|---|
-| **`400 Bad Request`** | Validation Error | - Missing `id` or `title` during creation.<br>- `id` contains invalid characters (must match `^[A-Za-z0-9_-]+$`).<br>- Missing or non-positive integer `round`.<br>- Malformed status value. |
+| **`400 Bad Request`** | Validation Error | - Missing `id` or `title` during creation.<br>- `id` contains invalid characters (must match `^[A-Za-z0-9_-]+$`).<br>- Missing or non-positive integer `round`.<br>- Malformed status value.<br>- A `role` field in a `PATCH` body — roles are conferred by the credential (or the `X-Agent-Role` header on an unbound credential), never accepted in a mutation body. |
 | **`401 Unauthorized`** | Authentication Failure | - Missing or mismatched `Authorization: Bearer <token>` or `X-API-Token: <token>`. Check `KANBAN_AUTH_TOKEN`. |
-| **`403 Forbidden`** | Role Access Denied | - Missing `X-Agent-Role` or `role` body property.<br>- Role not permitted to make transition (e.g. `builder` trying to mark `DONE`). |
+| **`403 Forbidden`** | Role Access Denied | - Missing `X-Agent-Role` or `role` body property (unbound credentials).<br>- Role not permitted to make transition (e.g. `builder` trying to mark `DONE`).<br>- On a role-bound `KANBAN_PROJECT_TOKENS` credential the role comes from the credential and a conflicting header is ignored (audited as `role_binding_mismatch`) — use the token bound to the required role. |
 | **`404 Not Found`** | Resource Missing | - Task ID does not exist in store. Verify task ID via `GET /api/tasks`. |
 | **`409 Conflict`** | State Machine or Claim Contention | - Attempting an illegal state transition (e.g. `BACKLOG` $\to$ `DONE`).<br>- Attempting to transition out of terminal state `DONE`.<br>- Attempting to claim a task already held by another agent. |
 | **`500 Internal Error`** | Server / Git Error | - Git persistence failure (e.g. git hook rejection, index lock). Check server terminal logs. |
-| **`503 Unavailable`** | Server Unconfigured | - No auth mechanism is configured (`KANBAN_AUTH_TOKEN`, `KANBAN_AUTH_SECRET`, and `KANBAN_PROJECT_TOKENS` all unset), **or** `KANBAN_PROJECT_TOKENS` is not valid JSON. Mutations are fail-closed until a valid token is configured. |
+| **`503 Unavailable`** | Server Unconfigured | - No auth mechanism is configured (`KANBAN_AUTH_TOKEN`, `KANBAN_AUTH_SECRET`, and `KANBAN_PROJECT_TOKENS` all unset), **or** `KANBAN_PROJECT_TOKENS` is malformed — bad JSON, an empty token, or a binding with an unknown or privileged role (`runner`/`system`/`human`/`admin`). Mutations are fail-closed until a valid token is configured. |
 
 ### 7.3 Credential-Map Coverage Troubleshooting (§2.10)
 
 If `GET /api/health` reports `"credential_map": { "status": "undercovered" }` or the boot log warns `[kanban auth] CREDENTIAL MAP INCOMPLETE`:
 - **Cause**: One or more store projects have no token entry in `KANBAN_PROJECT_TOKENS`. Requests to those projects return `403 Forbidden`.
 - **Diagnosis**: Check `GET /api/health` payload `credential_map.missing` for the list of uncovered projects.
-- **Fix**: Update the `KANBAN_PROJECT_TOKENS` environment variable to include the missing projects. Note that platforms like Railway do not preserve variable history across deployments; recover values from a previous deployment record or your secure secrets vault.
+- **Fix**: Update the `KANBAN_PROJECT_TOKENS` environment variable to include the missing projects. Prefer role-bound credentials — one token per agent role ("builder", "reviewer", …) — so the server can enforce who may make which hop; `credential_map` also reports `bound_credentials`/`unbound_credentials`, and a fully unbound map triggers a boot warning. Note that platforms like Railway do not preserve variable history across deployments; recover values from a previous deployment record or your secure secrets vault.
 
 ### 7.4 Troubleshooting: Could Not File The Report (v3.2.5)
 

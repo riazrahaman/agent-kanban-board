@@ -1,7 +1,7 @@
 # Agent Kanban Board — Presenter's Runbook
 
 **Audience:** whoever is demoing this board live.
-**System:** Agent Kanban Board v3.7.3
+**System:** Agent Kanban Board v3.8.0
 **Status:** living document — see [§11 Keeping this file alive](#11-keeping-this-file-alive). It is version-pinned by `server/test/kanban.version.test.js`, so a release that forgets it fails CI.
 
 This is one ordered path from a clean machine to a live reclaim alert. It does not
@@ -129,15 +129,19 @@ broken for a reason nothing on screen explains.
 `change-me`, which is exactly how this was found). If you build a `.env` by hand, set
 a real map (§5.3) or leave the line empty and rely on `KANBAN_AUTH_TOKEN`.
 
-### 5.3 Per-project tokens
+### 5.3 Per-project tokens (v3.8.0: bound to roles)
 
 ```bash
-export KANBAN_PROJECT_TOKENS='{"demo":"tok-demo","payments":"tok-pay"}'
+export KANBAN_PROJECT_TOKENS='{"demo":{"credentials":[{"token":"tok-plan","role":"planner"},{"token":"tok-build","role":"builder"},{"token":"tok-review","role":"reviewer"},{"token":"tok-test","role":"tester"},{"token":"tok-release","role":"releaser"}]}}'
 unset KANBAN_AUTH_TOKEN      # optional: prove isolation with no global escape hatch
 npm start
 ```
 
-Now `tok-demo` can only touch `?project=demo`. Under v3.3.0+ isolation this also
+Now each credential can only touch `?project=demo`, **and its role is forced by the
+credential itself** — `tok-build` acts as `builder`, no `X-Agent-Role` header
+needed. A header that disagrees with the bound role is ignored and audited as
+`role_binding_mismatch`, so one token can no longer walk a card through every
+stage by re-declaring a role (ADR-005). Under v3.3.0+ isolation this also
 narrows what a token can *see*: `GET /api/projects`, `GET /api/tasks` and the
 `/api/health` metadata all scope to the authorized project, and an anonymous caller
 gets `[]`.
@@ -145,9 +149,9 @@ gets `[]`.
 Demo it in two commands:
 
 ```bash
-curl -s "localhost:4000/api/projects" -H "X-API-Token: tok-demo"
+curl -s "localhost:4000/api/projects" -H "X-API-Token: tok-build"
 curl -s -X PATCH "localhost:4000/api/tasks/demo-01?project=payments" \
-  -H "X-API-Token: tok-demo" -H "X-Agent-Role: builder" \
+  -H "X-API-Token: tok-build" \
   -H "Content-Type: application/json" -d '{"status":"READY","expected_version":1}'
 # -> 403 Forbidden: token is not authorized for project 'payments'
 ```
@@ -172,7 +176,7 @@ export KANBAN_TELEGRAM_CHAT_ID="-1001234567890"   # negative for a group
 
 ```bash
 curl -X POST "localhost:4000/api/tasks/demo-01/claim?project=demo" \
-  -H "X-API-Token: tok-demo" -H "X-Agent-Role: builder" \
+  -H "X-API-Token: tok-build" \
   -H "Content-Type: application/json" \
   -d '{ "agent_id": "builder-1", "lease_ms": 60000 }'
 ```
@@ -244,59 +248,69 @@ detail: manual §3.1.2; variables and troubleshooting: `README.md` §"Ask the Bo
 ## 8. The live demo — one card, start to finish
 
 Run these in order against the local board, with the browser visible. Every call bumps
-`version`, so each `expected_version` is the one the previous response returned.
+`version`, so each `expected_version` is the one the previous response returned. Each
+step carries **that role's own credential** from the §5.3 map — the role comes from
+the credential, so no `X-Agent-Role` header is sent at all.
 
 ```bash
-T="X-API-Token: tok-demo"           # or Authorization: Bearer $KANBAN_AUTH_TOKEN
 B="localhost:4000/api/tasks"
 
 # 1. create  ("round" is REQUIRED)             -> 201 BACKLOG, version 1
-curl -X POST $B -H "$T" -H "X-Agent-Role: runner" -H "Content-Type: application/json" \
+T="X-API-Token: tok-plan"
+curl -X POST $B -H "$T" -H "Content-Type: application/json" \
   -d '{"id":"demo-01","project":"demo","title":"Add retry backoff","status":"BACKLOG","round":1,"priority":"high"}'
 
 # 2. planner makes it claimable                -> 200 READY, version 2
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: planner" \
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"READY","expected_version":1}'
 
 # 3. builder claims it   <- owner + lease set  -> 200 IN_PROGRESS, version 3
-curl -X POST "$B/demo-01/claim?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+T="X-API-Token: tok-build"
+curl -X POST "$B/demo-01/claim?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"agent_id":"builder-1"}'
 
 # 4. a second builder tries the same card      -> 409 "already claimed by builder-1"
-curl -X POST "$B/demo-01/claim?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+curl -X POST "$B/demo-01/claim?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"agent_id":"builder-2"}'
 
 # 5. progress log (also renews the lease)      -> 200, version 4
-curl -X POST "$B/demo-01/logs?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+curl -X POST "$B/demo-01/logs?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"agent_id":"builder-1","message":"Scaffolded; writing tests."}'
 
 # 6. stale write                               -> 409 Version mismatch (expected 4)
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"IN_REVIEW","expected_version":1}'
 
-# 7. walk it out, role by role. Each call takes the version the previous one returned.
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+# 7. walk it out, credential by credential. Each call takes the version the previous one returned.
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"IN_REVIEW","expected_version":4}'      # -> version 5
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: reviewer" \
+T="X-API-Token: tok-review"
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"VALIDATION","expected_version":5}'     # -> version 6
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: tester" \
+T="X-API-Token: tok-test"
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"READY_TO_SHIP","expected_version":6}'  # -> version 7
 
-# 8. the wrong role tries to close it          -> 403 "Role 'tester' is not authorized"
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: tester" \
+# 8. the wrong role tries to close it          -> 403 "Role 'builder' is not authorized"
+T="X-API-Token: tok-build"
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"DONE","expected_version":7}'
 
 # 9. the releaser closes it                    -> 200 DONE
-curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: releaser" \
+T="X-API-Token: tok-release"
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" \
   -H "Content-Type: application/json" -d '{"status":"DONE","expected_version":7}'
 ```
 
 **Why the 403 comes last and not from `IN_PROGRESS`.** `patchTask` checks the edge
 before it checks the role (`store.js`: `canTransition`, then `canRoleTransition`).
-`IN_PROGRESS → DONE` is not a legal edge at all, so asking a tester to close a card
+`IN_PROGRESS → DONE` is not a legal edge at all, so asking a builder to close a card
 mid-flight returns `409 Invalid state transition` and the role gate never runs — the
 wrong failure for the point you are making. At `READY_TO_SHIP` the edge *is* legal and
 only the role is wrong, which is the clean 403 above. Verified against a local board.
+With the bound credentials the point is sharper: step 8 sends the *builder* credential
+with no role header at all, and the server still refuses — the credential decides,
+not the caller (§5.3, ADR-005).
 
 Steps 4, 6 and 8 are the demo. Everything else is scaffolding to reach them. Full
 sequence with expected version numbers: manual §6.2. Python client: §6.3.
@@ -334,7 +348,7 @@ Decision tree and error catalogue: manual §7.
 | The orchestrator protocol itself | `skills/kanban/SKILL.md` |
 | Feature-level detail and API reference | `README.md` |
 | Per-file technical reference | `docs/FILE_BY_FILE_EXPLANATION.md` |
-| Design decisions | `docs/decisions/ADR-001…004` |
+| Design decisions | `docs/decisions/ADR-001…005` |
 | Restore runbook | `docs/RESTORE.md` |
 | This runbook as a shareable web page | `docs/presentation/index.html` |
 | The same material as a 15-slide deck | `docs/presentation/deck/` |

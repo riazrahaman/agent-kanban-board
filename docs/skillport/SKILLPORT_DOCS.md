@@ -92,6 +92,20 @@ admin_token    KANBAN_ADMIN_TOKEN   optional: the board's cross-project admin to
 
 > **`.opencode/` holds tokens.** Add it to `.gitignore` before you write the file. The skill never stages it.
 
+**Credential-bound roles (mandatory as of skill v3.8.0):** on the board, every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`; the orchestrator uses the optional `admin_token` / `KANBAN_ADMIN_TOKEN`. Roles are forced by the credential — a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is rejected/audited. Legacy plain-string tokens keep current unbound behavior (opt-in migration):
+
+```json
+{
+  "<project>": {
+    "credentials": [
+      { "token": "tok-build",   "role": "builder" },
+      { "token": "tok-review", "role": "reviewer" },
+      { "token": "tok-release", "role": "releaser" }
+    ]
+  }
+}
+```
+
 If you're not on opencode, set the env vars and skip the file.
 
 ---
@@ -126,12 +140,11 @@ npm start
 curl -s -X POST "$KANBAN_URL/tasks" \
   -H "x-api-token: $KANBAN_TOKEN" \
   -H "x-agent-id: orchestrator" \
-  -H "x-agent-role: admin" \
   -H "content-type: application/json" \
   -d "{\"id\":\"smoke-1\",\"project\":\"$KANBAN_PROJECT\",\"title\":\"smoke test\",\"status\":\"BACKLOG\",\"round\":1}"
 ```
 
-A `201` with the card JSON means the URL, token and project are all correct. Any other response is covered under **Troubleshooting** below.
+A `201` with the card JSON means the URL, token and project are all correct. Any other response is covered under **Troubleshooting** below. The acting role comes from the credential (admin token → `admin`; a role-bound credential → its bound role). Under the v3.8.0+ credential-bound-roles mandate, a self-declared `x-agent-role` header no longer grants a role on a role-bound credential, and header values that conflict with the bound role are ignored/audited — so `x-agent-role` is omitted here.
 
 ---
 
@@ -189,7 +202,7 @@ GET    /tasks?project=X                  list cards in a project
 GET    /projects                         list projects (no scoping needed)
 ```
 
-Every request carries `x-agent-id`, `x-agent-role` and `x-api-token`.
+Every request carries `x-agent-id`, `x-agent-role` and `x-api-token`. On a role-bound credential (the v3.8.0+ mandate for agent roles), the server derives the role from the credential and a conflicting `x-agent-role` is ignored and audited; the header remains the role source only on legacy unbound tokens.
 
 **Leases**
 - The default lease is `KANBAN_CLAIM_TTL_MS` = 600000 ms (10 min). Send a heartbeat at least every 2 minutes.

@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.7.3
+version: 3.8.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -20,6 +20,30 @@ Mandatory configuration fields:
 Check for these fields in the following order:
 1. `.opencode/config.json` (Expected: `kanban_url`, `kanban_token`, `project_name`, `admin_token`)
 2. Environment Variables: `KANBAN_URL`, `KANBAN_TOKEN`, `KANBAN_PROJECT`, `KANBAN_ADMIN_TOKEN`
+
+### Credential-Bound Roles (MANDATORY as of skill v3.8.0)
+
+> Every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`. Roles are forced by the credential; a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is ignored — the request is served with the credential's role — and the mismatch is audited (`role_binding_mismatch`). Orchestrators use an explicit `admin` (or `runner`) credential.
+
+Role-keyed `KANBAN_PROJECT_TOKENS` schema (the legacy plain-string value shape is still accepted and stays unbound):
+
+```json
+{
+  "<project_name>": {
+    "credentials": [
+      { "token": "tok-planner", "role": "planner" },
+      { "token": "tok-build",   "role": "builder" },
+      { "token": "tok-review", "role": "reviewer" },
+      { "token": "tok-test",   "role": "tester" },
+      { "token": "tok-release", "role": "releaser" }
+    ]
+  }
+}
+```
+
+- `{ "token": "<tok>", "role": "<role>" }` — **role-bound credential**: the server derives the caller's role from the credential on every request. A conflicting header role is ignored and audited as `role_binding_mismatch`.
+- `{ "token": "<tok>" }` or legacy `"tok"` string — **unbound credential**: header-declared roles still apply (backward compatible; migration is opt-in per deployment). Legacy tokens keep current behavior, but per-role credential creation is the mandated configuration from v3.8.0 onward.
+- Privileged roles (`admin`, `runner`, `system`, `human`) are never bound to board credentials; the orchestrator's admin authority comes from the explicit `admin_token` / `KANBAN_ADMIN_TOKEN` credential (or a server-issued session).
 
 ### Automatic Local Deployment
 If `kanban_url` is not provided in `.opencode/config.json` or environment variables, deploy the Kanban server locally:
@@ -86,7 +110,7 @@ Verified endpoint scoping behavior:
 
 The AgentOS 8-state machine is enforced via role-based transitions:
 `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`).
-The Orchestrator operates as `admin` for status resets, unblocking, and lifecycle management.
+The Orchestrator operates as `admin` for status resets, unblocking, and lifecycle management — via an explicit `admin` (or `runner`) **credential** (`admin_token` / `KANBAN_ADMIN_TOKEN`), never by self-declaring the role header. **Credential-bound roles (v3.8.0+)**: each stage role below is exercised by a worker holding that role's own credential bound in `KANBAN_PROJECT_TOKENS` (§1); on bound credentials the acting role is derived server-side from the credential, and `Role:`/`X-Agent-Role` values apply only to legacy unbound tokens.
 
 ### Stage A: Feature Setup
 1. **GitHub Issue**: Check for an existing issue or file a new one (`gh issue create --title "<title>" --body "..."`). Note the issue number `#<N>`. Link to an existing issue only when one already exists for that work (typically filed by the operator; e.g. #75). Do not file a new issue solely because a card was created. If no issue exists yet, leave `issues: []` and link retroactively later (`POST /tasks/:id/issues?project=X`).
@@ -118,10 +142,10 @@ The Orchestrator operates as `admin` for status resets, unblocking, and lifecycl
 **Enter an active stage by CLAIMING from READY, never by a status-only PATCH from BACKLOG.** `POST /tasks/:id/claim` sets the owner and lease, promoting `READY` → `IN_PROGRESS` (or `READY` → `PLANNING` for planner role).
 
 1. **IN_PROGRESS**:
-   - `POST /tasks/:id/claim?project=X` (`agent_id` = orchestrator id, header `X-Agent-Role: builder`). This establishes ownership, sets `claim_expires_at`, promotes `READY` → `IN_PROGRESS`, and stamps `stage_owners.IN_PROGRESS`.
+   - `POST /tasks/:id/claim?project=X` (`agent_id` = orchestrator id, credential bound to `role: "builder"` — header `X-Agent-Role: builder` must not conflict and is otherwise ignored on bound credentials, v3.8.0+). This establishes ownership, sets `claim_expires_at`, promotes `READY` → `IN_PROGRESS`, and stamps `stage_owners.IN_PROGRESS`.
    - `POST /tasks/:id/logs?project=X` (Log: "Starting build phase...").
    - Start the heartbeat loop (§4).
-   - **Dispatch BUILDER**: Pass `task_id`, `repo_path`, `branch`, `kanban_url`, `kanban_token`, and `admin_token`. The builder PATCHes status and appends logs — it must NOT attempt to claim.
+   - **Dispatch BUILDER**: Pass `task_id`, `repo_path`, `branch`, `kanban_url`, and the **builder's own role-bound `kanban_token`** (v3.8.0+: each worker holds only its own role credential — never the orchestrator's or admin credential). The builder PATCHes status and appends logs — it must NOT attempt to claim.
    - Await Builder completion and verification evidence.
 
 2. **IN_REVIEW**:
@@ -158,7 +182,8 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 ## 4. Safety & Reliability Rules
 
 - **Identity & Roles**: Orchestrator = `admin`. Workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
-- **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`.
+- **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is ignored — the request is served with the credential's role — and the mismatch is audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
+- **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`. Header `x-agent-role` alone no longer grants a role on a role-bound credential (v3.8.0+) — the role comes from the credential; the header remains the role source only for legacy unbound tokens.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.
 - **Optimistic Locking**: Every `PATCH` requires the card's CURRENT `version` as `expected_version`. Operations like `POST /claim`, `POST /logs`, and `POST /heartbeat` each increment the card's version on the server, so a version read earlier in the cycle is stale. Always fetch the fresh version before issuing a `PATCH`:
   ```bash

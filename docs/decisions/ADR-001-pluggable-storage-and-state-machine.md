@@ -31,12 +31,14 @@ Any transition outside this graph is refused with `409 Conflict`.
 
 ### 2. Role Ownership Rules (KB-02)
 
-Role identity is passed via `X-Agent-Role` header or request body:
+Role identity is passed via `X-Agent-Role` header or request body (superseded below — see §2 note):
 - **Builder**: may transition to `BUILDING` and `IN_REVIEW`. Transitioning to `IN_TEST` or `DONE` is refused with `403 Forbidden`.
 - **Reviewer**: may transition to `IN_TEST` (PASS) or `BUILDING` (CHANGES_REQUESTED). Transitioning to `DONE` is refused with `403 Forbidden`.
 - **Tester**: may transition to `DONE` (PASS) or `BUILDING` (FAIL).
 - **Runner / System / Human**: controls `BLOCKED` (which is automated from `depends_on` per spec Sec 3.2) and administrative operations.
 - A missing role is refused for status changes; it is never treated as `human`.
+
+> **Superseded in v3.8.0 (ADR-005, credential-bound roles):** the role used by `canRoleTransition` is derived from the credential (role-bound `KANBAN_PROJECT_TOKENS` credentials) or from the credential-derived privileged path (admin token → `admin`, server-issued sessions) — never from the caller-declared header alone. `X-Agent-Role` still declares the role only for legacy unbound credentials; a body `role` on a `PATCH` is rejected with `400`.
 
 ### 3. Claim Contention (KB-03)
 
@@ -65,5 +67,5 @@ explicitly or supplies its own `KANBAN_GIT_DIR`.
 ## Consequences
 
 - Standalone use continues to work without configuration.
-- Desk repos can point an independent clone at `ops/kanban/` via `KANBAN_STORAGE_BACKEND=git` without data cross-wiring (ADR-005).
+- Desk repos can point an independent clone at `ops/kanban/` via `KANBAN_STORAGE_BACKEND=git` without data cross-wiring.
 - Prevents race conditions and unauthorized card movements across multi-agent swarms.

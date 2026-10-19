@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
+import SeverityDot from './SeverityDot'
 import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
@@ -120,6 +121,12 @@ function TaskCard({
           </span>
           <StatusBadge status={task.status} />
         </div>
+        {/* Ownership/severity mark sits LAST in the header row: after the pinned
+            badge group instead of beside the id — the 11px dot next to a
+            truncated mono id read as part of the id chips and collided with
+            project/priority/status on narrow columns (placement feedback,
+            variant B: far-right of the header row). */}
+        <SeverityDot task={task} />
       </div>
 
       {editingTitle ? (
