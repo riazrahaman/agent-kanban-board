@@ -59,16 +59,18 @@ describe('v2.14.4 UI Settings persistence', () => {
       search: '',
       priority: 'all',
       assignee: 'all',
+      severity: [],
     })
   })
 
   it('filters round-trip through writeStoredFilters and readStoredFilters', async () => {
     const m = await importModule('uiSettings.ts')
-    m.writeStoredFilters({ search: 'auth', priority: 'high', assignee: 'builder' })
+    m.writeStoredFilters({ search: 'auth', priority: 'high', assignee: 'builder', severity: ['red'] })
     assert.deepEqual(m.readStoredFilters(), {
       search: 'auth',
       priority: 'high',
       assignee: 'builder',
+      severity: ['red'],
     })
   })
 
@@ -79,25 +81,52 @@ describe('v2.14.4 UI Settings persistence', () => {
       search: 'dashboard',
       priority: 'all',
       assignee: 'all',
+      severity: [],
     })
     m.writeStoredFilters({ priority: 'low' })
     assert.deepEqual(m.readStoredFilters(), {
       search: 'dashboard',
       priority: 'low',
       assignee: 'all',
+      severity: [],
+    })
+    m.writeStoredFilters({ severity: ['green', 'amber'] })
+    assert.deepEqual(m.readStoredFilters(), {
+      search: 'dashboard',
+      priority: 'low',
+      assignee: 'all',
+      severity: ['green', 'amber'],
     })
   })
 
   it('resetStoredFilters clears stored filters', async () => {
     const m = await importModule('uiSettings.ts')
-    m.writeStoredFilters({ search: 'query', priority: 'medium' })
+    m.writeStoredFilters({ search: 'query', priority: 'medium', severity: ['red'] })
     m.resetStoredFilters()
     assert.deepEqual(m.readStoredFilters(), {
       search: '',
       priority: 'all',
       assignee: 'all',
+      severity: [],
     })
     assert.equal(globalThis.localStorage.getItem(m.FILTERS_STORAGE_KEY), null)
+  })
+
+  it('severity filter persistence round-trips correctly', async () => {
+    const m = await importModule('uiSettings.ts')
+    m.writeStoredFilters({ severity: ['green', 'amber'] })
+    assert.deepEqual(m.readStoredFilters().severity, ['green', 'amber'])
+    m.writeStoredFilters({ severity: [] })
+    assert.deepEqual(m.readStoredFilters().severity, [])
+  })
+
+  it('ignores non-string entries in stored severity array', async () => {
+    const m = await importModule('uiSettings.ts')
+    globalThis.localStorage.setItem(
+      m.FILTERS_STORAGE_KEY,
+      JSON.stringify({ search: '', priority: 'all', assignee: 'all', severity: ['green', 123, null, 'red'] }),
+    )
+    assert.deepEqual(m.readStoredFilters().severity, ['green', 'red'])
   })
 
   it('showMetrics persistence round-trips correctly', async () => {
@@ -160,7 +189,7 @@ describe('v2.14.4 UI Settings persistence', () => {
       },
     }
     const m = await importModule('uiSettings.ts')
-    assert.deepEqual(m.readStoredFilters(), { search: '', priority: 'all', assignee: 'all' })
+    assert.deepEqual(m.readStoredFilters(), { search: '', priority: 'all', assignee: 'all', severity: [] })
     assert.equal(m.readStoredShowMetrics(), false)
     assert.equal(m.readStoredView(), 'board')
     assert.equal(m.readStoredRailOpen(), false)

@@ -42,6 +42,7 @@ import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
+import type { SeverityFilter } from './lib/ownership'
 import { useDocumentScrollLock } from './lib/scrollLock'
 import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
@@ -331,6 +332,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState(initialFilters.search)
   const [priorityFilter, setPriorityFilter] = useState(initialFilters.priority)
   const [assigneeFilter, setAssigneeFilter] = useState(initialFilters.assignee)
+  // v2.18.0: solo-run severity filter (multi-select; empty = show all).
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter[]>(
+    initialFilters.severity as SeverityFilter[],
+  )
   // Column ordering is an explicit, persisted control (default: priority).
   // Unlike the removed local reorder buttons, the choice survives SSE
   // snapshots and reloads, because it re-applies on every new tasks array.
@@ -349,9 +354,10 @@ export default function App() {
       search: searchQuery,
       priority: priorityFilter,
       assignee: assigneeFilter,
+      severity: severityFilter,
     })
     return sortTasks(list, boardSort)
-  }, [tasks, searchQuery, priorityFilter, assigneeFilter, boardSort])
+  }, [tasks, searchQuery, priorityFilter, assigneeFilter, severityFilter, boardSort])
 
   const handleSearchChange = useCallback((next: string) => {
     setSearchQuery(next)
@@ -368,6 +374,11 @@ export default function App() {
     writeStoredFilters({ assignee: next })
   }, [])
 
+  const handleSeverityChange = useCallback((next: SeverityFilter[]) => {
+    setSeverityFilter(next)
+    writeStoredFilters({ severity: next })
+  }, [])
+
   const handleSortChange = useCallback((next: BoardSort) => {
     setBoardSort(next)
     writeStoredSort(next)
@@ -377,6 +388,7 @@ export default function App() {
     setSearchQuery('')
     setPriorityFilter('all')
     setAssigneeFilter('all')
+    setSeverityFilter([])
     resetStoredFilters()
   }, [])
 
@@ -834,6 +846,8 @@ export default function App() {
                     columnColors={columnColors}
                     onColumnColorsChange={handleColumnColorsChange}
                     onColumnColorsReset={handleColumnColorsReset}
+                    severity={severityFilter}
+                    onSeverityChange={handleSeverityChange}
                   />
                   {showMetrics && (
                     <MetricsDashboard

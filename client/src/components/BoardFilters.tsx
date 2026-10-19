@@ -1,6 +1,22 @@
 import { useState } from 'react'
 import ColumnColorsControl from './ColumnColorsControl'
+import { SEVERITY_COLORS, type SeverityFilter, type SeverityColor } from '../lib/ownership'
 import { readStoredMobileFiltersOpen, writeStoredMobileFiltersOpen } from '../lib/uiSettings'
+
+const SEVERITY_BUBBLES: Array<{ key: SeverityColor; tooltip: string }> = [
+  {
+    key: 'green',
+    tooltip: 'GREEN: separation held — active stages covered by 2+ different agents',
+  },
+  {
+    key: 'amber',
+    tooltip: 'AMBER: solo-run — one agent held 2–3 active stages of the same card',
+  },
+  {
+    key: 'red',
+    tooltip: 'RED: solo-run severe — same agent walked 4+ active stages — built, reviewed, validated and/or closed its own work',
+  },
+]
 
 type Props = {
   search: string
@@ -22,6 +38,67 @@ type Props = {
   columnColors?: import('../lib/columnColors').ColumnColors | null
   onColumnColorsChange?: (colors: import('../lib/columnColors').ColumnColors) => void
   onColumnColorsReset?: () => void
+  /** v2.18.0: active solo-run severity filter (multi-select; empty = show all). */
+  severity: SeverityFilter[]
+  onSeverityChange: (severity: SeverityFilter[]) => void
+}
+
+function SeverityFilterBubbles({
+  severity,
+  onChange,
+}: {
+  severity: SeverityFilter[]
+  onChange: (severity: SeverityFilter[]) => void
+}) {
+  const toggle = (key: SeverityColor) => {
+    if (severity.includes(key)) {
+      onChange(severity.filter((s) => s !== key))
+    } else {
+      onChange([...severity, key])
+    }
+  }
+
+  const clear = () => onChange([])
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {SEVERITY_BUBBLES.map(({ key, tooltip }) => {
+        const selected = severity.includes(key)
+        return (
+          <span key={key} className="inline-flex pointer-coarse:p-2.5 pointer-coarse:-m-2.5">
+            <button
+              type="button"
+              onClick={() => toggle(key)}
+              aria-pressed={selected}
+              title={tooltip}
+              className={[
+                'flex h-4 w-4 items-center justify-center rounded-[50%] transition-transform active:scale-[0.92]',
+                selected ? 'ring-2 ring-offset-1 ring-ink ring-offset-surface' : '',
+              ].join(' ')}
+              style={{ backgroundColor: SEVERITY_COLORS[key] }}
+            >
+              <span className="sr-only">{tooltip}</span>
+            </button>
+          </span>
+        )
+      })}
+      <span className="inline-flex pointer-coarse:p-2.5 pointer-coarse:-m-2.5">
+        <button
+          type="button"
+          onClick={clear}
+          aria-pressed={severity.length === 0}
+          title="Show all severities"
+          className={[
+            'flex h-4 w-4 items-center justify-center rounded-[50%] border border-line bg-muted-bg text-[9px] font-mono text-muted transition-transform active:scale-[0.92]',
+            severity.length === 0 ? 'ring-2 ring-offset-1 ring-ink ring-offset-surface' : '',
+          ].join(' ')}
+        >
+          <span aria-hidden="true">·</span>
+          <span className="sr-only">Show all severities</span>
+        </button>
+      </span>
+    </div>
+  )
 }
 
 export default function BoardFilters({
@@ -43,8 +120,10 @@ export default function BoardFilters({
   columnColors,
   onColumnColorsChange,
   onColumnColorsReset,
+  severity,
+  onSeverityChange,
 }: Props) {
-  const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all'
+  const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all' || severity.length > 0
   // v2.9.1: below sm the priority/assignee/sort/export/colors/metrics controls
   // collapse behind a Filters disclosure. Left to free-wrap they stacked into
   // ~5 rows and squeezed the board to a sliver (mobile-rendering-issues.md
@@ -141,6 +220,8 @@ export default function BoardFilters({
           <option value="updated">Sort: Recently Updated</option>
           <option value="id">Sort: Task ID</option>
         </select>
+
+        <SeverityFilterBubbles severity={severity} onChange={onSeverityChange} />
 
         {isFiltered && (
           <button

@@ -1,18 +1,21 @@
 import type { Task } from '../types'
 import { normalizePriority } from '../priority'
+import { deriveOwnership, type SeverityFilter } from './ownership'
 
 export type FilterCriteria = {
   search: string
   priority: string
   assignee: string
+  severity: SeverityFilter[]
 }
 
 export function filterTasks(tasks: Task[], criteria: FilterCriteria): Task[] {
   const searchLower = criteria.search.trim().toLowerCase()
   const priorityFilter = criteria.priority.trim().toLowerCase()
   const assigneeFilter = criteria.assignee.trim().toLowerCase()
+  const severityFilter = criteria.severity ?? []
 
-  if (!searchLower && !priorityFilter && !assigneeFilter) {
+  if (!searchLower && !priorityFilter && !assigneeFilter && severityFilter.length === 0) {
     return tasks
   }
 
@@ -46,6 +49,14 @@ export function filterTasks(tasks: Task[], criteria: FilterCriteria): Task[] {
         if (!task.assigned_agent || task.assigned_agent.toLowerCase() !== assigneeFilter) {
           return false
         }
+      }
+    }
+
+    // 4. Solo-run severity filter (multi-select; empty means show all)
+    if (severityFilter.length > 0) {
+      const taskSeverity = deriveOwnership(task.stage_owners).severity
+      if (taskSeverity === 'none' || !severityFilter.includes(taskSeverity)) {
+        return false
       }
     }
 

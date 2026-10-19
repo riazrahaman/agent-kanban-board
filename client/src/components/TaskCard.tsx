@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
+import SeverityDot from './SeverityDot'
 import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
@@ -87,6 +88,7 @@ function TaskCard({
         >
           {task.id}
         </span>
+        <SeverityDot task={task} />
         <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:flex-nowrap">
           {showProject && task.project && (
             <span
