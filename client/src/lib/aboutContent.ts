@@ -98,7 +98,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '296',
+    value: '297',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -280,7 +280,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'How do I connect a new project?',
-    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it out-of-band credentials via KANBAN_PROJECT_TOKENS — one role-bound token per agent role. See ONBOARDING.md for the curl walkthrough.',
+    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it out-of-band credentials via KANBAN_PROJECT_TOKENS — one role-bound token per agent role. Generate each credential value as 24 random hex bytes (openssl rand -hex 24 on macOS and Linux, the PowerShell RNGCryptoServiceProvider one-liner on Windows, or node -p "require(\'crypto\').randomBytes(24).toString(\'hex\')" anywhere). See ONBOARDING.md for the curl walkthrough and the field guide "Who May Write" chapter for the full commands per platform.',
   },
   {
     q: 'Can humans change task state?',
@@ -681,6 +681,16 @@ KANBAN_ORPHAN_GRACE_MS=300000      # grace for an ownerless active card
       label: 'per-role credentials',
       code: `# one credential per agent role, bound in the token map
 KANBAN_PROJECT_TOKENS={"alpha":{"credentials":[{"token":"tok-build","role":"builder"},{"token":"tok-review","role":"reviewer"}]}}
+
+# never hand-write credential values — generate a random 192-bit value per role.
+# macOS and Linux:
+openssl rand -hex 24
+# Windows PowerShell 7+:
+[BitConverter]::ToString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).Replace('-','').ToLower()
+# Windows PowerShell 5.1 (GetBytes is absent before .NET 6):
+$b=[byte[]]::new(24);(New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($b);[BitConverter]::ToString($b).Replace('-','').ToLower()
+# anywhere Node runs — the only portable one-liner:
+node -p "require('crypto').randomBytes(24).toString('hex')"
 
 # a bound credential cannot impersonate another role — the header is ignored and audited
 role_binding_mismatch: declared 'reviewer' conflicts with credential-bound role 'builder'`,

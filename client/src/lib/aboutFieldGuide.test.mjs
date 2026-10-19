@@ -99,6 +99,19 @@ test('chapter 1 maps the lifecycle and notes the normalised legacy spellings + t
   assert.match(states.gotcha, /terminal/i)
 })
 
+test('the credentials chapter shows how to generate a credential value on every OS', () => {
+  const auth = CHAPTERS.find((c) => c.id === 'auth')
+  assert.ok(auth, 'the who-may-write chapter must exist')
+  const code = auth.snippet.code
+  assert.match(code, /macOS and Linux/)
+  assert.match(code, /openssl rand -hex 24/)
+  assert.match(code, /Windows PowerShell/)
+  assert.match(code, /RandomNumberGenerator|RNGCryptoServiceProvider/)
+  assert.match(code, /require\('crypto'\)\.randomBytes\(24\)/)
+  // The sample tokens must look like placeholders, never like live credentials.
+  assert.match(code, /tok-build/)
+})
+
 test('chapter 3 states the reaper reclaims to READY and lists the three reasons', () => {
   const reaper = CHAPTERS.find((c) => c.id === 'reaper')
   assert.ok(reaper)
