@@ -27,6 +27,9 @@ here **and** an annotated git tag. Do not let work accumulate under
 - `GET /api/health`'s `credential_map` reports `credentials_total` / `credentials_bound` / `credentials_unbound` counts, and boot warns when per-project tokens are configured but 100% unbound.
 - Solo-run visibility: task cards show a severity dot derived read-side from `stage_owners` (green = separation held, amber = one agent held 2–3 active stages, red = one agent held 4+ — the self-approval pattern observed live); the filter bar gains matching color bubbles (persisted per client); About page documents the derivation.
 - Legacy single-token mode (`KANBAN_AUTH_TOKEN`) is unchanged; browser sessions already carried server-issued roles.
+- **Ask-the-Board local Ollama rate limits removed.** When `KANBAN_ASK_PROVIDER=ollama` is pointed at a local/tunnel host, hourly and daily rate limits default to `Infinity`, reserving limits strictly for cloud providers.
+- **Ask-the-Board Tailscale DERP DNS failover.** Upstream requests to `*.ts.net` intercept DNS lookups to bypass misconfigured Anycast edge relays that abort TLS handshakes (`ECONNRESET`), prioritizing verified healthy relays.
+- **Tailscale setup script sanitized.** Hardcoded node approval keys and static domains in `scripts/setup-ollama-persistent-tunnel.sh` replaced with dynamic CLI discovery.
 
 ### Documentation
 - README Security/State Machine and Deployment sections, `ONBOARDING.md`, `docs/USER_AND_OPERATOR_MANUAL.md`, `docs/HANDOVER.md`, `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md`, `docs/FILE_BY_FILE_EXPLANATION.md`, `docs/PRESENTER_RUNBOOK.md`, `.env.example`, `docs/CONFIGURATION.md` and the About page updated to mandate and demonstrate per-role credentials (see `docs/decisions/ADR-005-role-bound-roles.md`).
