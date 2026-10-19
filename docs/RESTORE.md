@@ -86,6 +86,40 @@ change): restore the newest snapshot into a scratch directory against a local
 instance, then diff `GET /api/tasks` output against a pre-drill capture. Record
 the drill date in this file.
 
-- Latest drill: 2026-09-24 (v2.5.5 — `restore-backup.mjs` dry-run verified
-  against a seeded fixture; full-volume drill pending first production backup
-  rotation).
+- **Latest drill: 2026-10-19 (v3.7.3) — passed.** A real end-to-end local
+  drill, not a dry run against a fixture:
+  1. A local instance with `KANBAN_BACKUP_ENABLED=1`,
+     `KANBAN_BACKUP_INTERVAL_MS=5000`, `KANBAN_BACKUP_KEEP=3` was seeded with 8
+     cards across two projects (`alpha`, `beta`) — one walked all the way to
+     `DONE`, one left claimed mid-flight with a log and a comment, the rest
+     parked in `BACKLOG`/`READY`.
+  2. The **backup engine itself** wrote the snapshots (three appeared,
+     retention honoured at `keep=3`); `GET /api/tasks` was captured per project
+     beforehand.
+  3. The service was stopped, and the newest snapshot was restored with
+     `scripts/restore-backup.mjs` into a **fresh** data directory — a `--dry-run`
+     first, then a real copy.
+  4. A second instance was started against the restored directory:
+     `store_loaded: true`, `tasks_total: 8`, every card's status and owner
+     intact.
+  5. `GET /api/tasks` diffed against the pre-drill capture, field by field.
+
+  **Result:** the restored board is byte-identical to a plain restart of the
+  original data. The only difference from the pre-drill capture is
+  `reclaim_count` appearing as `0` on cards that had never been claimed — that
+  is the load-path default at `storage.js:427` (`task.reclaim_count ?? 0`), and
+  a plain restart of the *original* directory reproduces it exactly, so it is
+  not restore damage.
+
+  Two notes for whoever runs the next one:
+  - Disable the reaper (`KANBAN_REAP_ENABLED=0`) if the drill data includes a
+    card claimed mid-flight, or the lease will be reaped mid-drill and the diff
+    will show a card that legitimately moved.
+  - With the reaper off, `GET /api/health` reports `status: "degraded"` — the
+    verify step above expects `ok`, which assumes the reaper is enabled
+    (`routes/health.js`: `loaded && reaperEnabled`). That is the drill's own
+    configuration showing up, not a failed restore.
+
+  **Still untested:** a restore from an *off-volume* copy onto the production
+  Railway volume. This drill ran locally, so it exercises the tooling and the
+  data path but not the volume-loss scenario the warning above describes.
