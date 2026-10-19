@@ -1294,7 +1294,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
               </div>
             </section>
 
-            {/* The twelve chapters */}
+            {/* The thirteen chapters */}
             {CHAPTERS.map((chapter) => (
               <section
                 key={chapter.id}
