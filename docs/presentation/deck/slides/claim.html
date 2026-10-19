@@ -1,0 +1,26 @@
+<section id="claim" data-transition="fade" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:52px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">Claim first. Then hold a lease.</h2>
+<div style="display:flex;gap:40px;align-items:stretch">
+<div style="flex:1;display:flex;flex-direction:column;gap:28px">
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #1F5673;padding:36px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:34px;font-weight:600">Only a READY card can be claimed</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">The claim sets an owner <b>and</b> starts a lease. Ten minutes by default.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #8A6A12;padding:36px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:34px;font-weight:600">Work renews the lease</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">Every log line and heartbeat re-arms it. An agent that is working never loses its card.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #9F2F2D;padding:36px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:34px;font-weight:600">A status-only PATCH is not a claim</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">It leaves the card active with no owner — and the reaper resets it to READY.</p>
+</div>
+</div>
+<div style="flex:1;background:#211F1A;padding:44px;display:flex;flex-direction:column;justify-content:center;gap:24px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">The claim</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:27px;line-height:1.6;color:#F6F2E8">POST /api/tasks/demo-01/claim<br>&nbsp;&nbsp;?project=demo<br><br>X-API-Token: tok-demo<br>X-Agent-Role: builder<br><br>{ "agent_id": "builder-1",<br>&nbsp;&nbsp;"lease_ms": 60000 }</p>
+<p style="font-size:26px;color:#BFD8D5;line-height:1.4">READY &#8594; IN_PROGRESS, owner set, clock started.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">KANBAN_CLAIM_TTL_MS 600000 · clamped between KANBAN_MIN_LEASE_MS and KANBAN_MAX_LEASE_MS</p>
+<aside>The lease is the heart of the design. An agent does not promise to finish; it holds a time-boxed right to the card and keeps renewing it by doing visible work. Note the third card specially: a status-only PATCH into an active stage is the most common integration mistake, and the board corrects it rather than trusting it.</aside>
+</section>

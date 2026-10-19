@@ -57,12 +57,29 @@ describe('release versioning', () => {
       'docs/USER_AND_OPERATOR_MANUAL.md',
       'docs/with-images/SYSTEM_DESIGN_AND_ARCHITECTURE.md',
       'docs/with-images/USER_AND_OPERATOR_MANUAL.md',
+      // The presenter's runbook is a living document (docs/PRESENTER_RUNBOOK.md
+      // §11): pinning it here is what makes "living" enforceable rather than a
+      // promise. A release that leaves its version behind fails CI.
+      'docs/PRESENTER_RUNBOOK.md',
+      // The shareable walkthrough page (docs/presentation/index.html) is the
+      // same living document in HTML: pinned here so a release cannot leave the
+      // page people were given a link to showing an older version.
+      'docs/presentation/index.html',
+      // The slide deck's cover carries the version in its footer strip. It is
+      // the same living document again, so a release that forgets the deck
+      // fails here rather than on stage.
+      'docs/presentation/deck/slides/cover.html',
     ];
     for (const rel of docs) {
       const text = readFileSync(join(repoRoot, rel), 'utf8');
-      const marker = rel.includes('SYSTEM_DESIGN')
-        ? /\*\*System Version:\*\*\s*(\d+\.\d+\.\d+)/
-        : /Agent Kanban Board v(\d+\.\d+\.\d+)/;
+      // The deck is inline-styled slide markup, not prose: its marker is the
+      // version the cover actually renders, so there is nothing to keep in
+      // step with a separate header.
+      const marker = rel.endsWith('deck/slides/cover.html')
+        ? />v(\d+\.\d+\.\d+)</
+        : rel.includes('SYSTEM_DESIGN')
+          ? /\*\*System Version:\*\*\s*(\d+\.\d+\.\d+)/
+          : /Agent Kanban Board v(\d+\.\d+\.\d+)/;
       const found = text.match(marker);
       assert.ok(found, `${rel} should declare a system version`);
       assert.equal(

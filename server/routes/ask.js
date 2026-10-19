@@ -13,16 +13,28 @@ import * as storeModule from '../store.js';
  * or writes the board: no token is accepted, and the only board data it sees
  * is the in-process snapshot assembled by `gatherSnapshot(store)`.
  *
- * Off (fail-closed) unless BOTH of these are non-empty:
- *   KANBAN_ASK_OPENROUTER_API_KEY   (secret) turns the feature on
+ * Off (fail-closed). The password is ALWAYS required; the OpenRouter key is
+ * required only for the `openrouter` provider (see resolveProvider below):
  *   KANBAN_ASK_PASSWORD             (secret) the gate on POST /api/ask
+ *   KANBAN_ASK_OPENROUTER_API_KEY   (secret) required for provider=openrouter
+ * Provider selection (v3.7.0):
+ *   KANBAN_ASK_PROVIDER             'openrouter' (default) | 'ollama'; an
+ *                                   explicit value always wins. With no
+ *                                   explicit value, KANBAN_ASK_OLLAMA_HOST set
+ *                                   and no OpenRouter key selects 'ollama'.
+ *   KANBAN_ASK_OLLAMA_HOST          default: http://localhost:11434
+ *   KANBAN_ASK_OLLAMA_AUTH_HEADER   (secret) bearer for a tunnel/gateway
  * Optional knobs (all default, all read here):
- *   KANBAN_ASK_MODEL                default: openai/gpt-oss-20b
+ *   KANBAN_ASK_MODEL                default: openai/gpt-oss-20b (openrouter),
+ *                                   qwen3.6:latest (ollama)
  *   KANBAN_ASK_DAILY_CAP            default: 50 (global, per UTC day)
  *   KANBAN_ASK_PER_IP_PER_HOUR      default: 3
  *   KANBAN_ASK_TIMEOUT_MS           default: 45000
  *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 6000
- *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 1500
+ *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 1500 — but on the ollama provider
+ *                                   max_tokens is OMITTED entirely unless this
+ *                                   is set, because the cap also bounds a
+ *                                   reasoning model's chain of thought (v3.7.2)
  *   KANBAN_AUTH_RATE_LIMIT_PER_MIN  wrong-password backoff ceiling (default 10;
  *                                   shared name with the auth middleware, but
  *                                   this router keeps its OWN counter)

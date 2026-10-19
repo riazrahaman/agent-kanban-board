@@ -1,0 +1,28 @@
+<section id="setup" data-section="Install it, configure it, and wire up alerts and the AI console." data-transition="push" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:44px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">Running it on your own machine</h2>
+<div style="display:flex;gap:40px;align-items:stretch">
+<div style="flex:1;background:#211F1A;padding:44px;display:flex;flex-direction:column;gap:22px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">Install</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.65;color:#F6F2E8">git clone &#8230;/agent-kanban-board<br>cd agent-kanban-board<br>npm --prefix server install<br>npm --prefix client install<br>npm run build</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">Run</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.65;color:#F6F2E8">export KANBAN_AUTH_TOKEN=&quot;demo-secret&quot;<br>npm start</p>
+<p style="font-size:26px;color:#BFD8D5;line-height:1.4">API and the built UI on one port: localhost:4000</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:26px">
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #8A6A12;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:32px;font-weight:600">There is no root npm install</p>
+<p style="font-size:27px;color:#4A4636;line-height:1.4">Server and client each carry their own manifest. Installing at the root gets you nothing.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #9F2F2D;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:32px;font-weight:600">Never launch through an npm wrapper</p>
+<p style="font-size:27px;color:#4A4636;line-height:1.4">A wrapper intercepts SIGTERM, so every clean shutdown is reported as a crash. Use npm start at the root, or node directly.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #346538;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-size:32px;font-weight:600">Check it is really up</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;color:#4A4636;line-height:1.4">curl -s localhost:4000/api/health</p>
+</div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">docs/PRESENTER_RUNBOOK.md §3 · manual §2, §4.1</p>
+<aside>Have the board already running behind this slide so you never type live. Leave the browser open from here on — every change in the rest of the talk appears on it over SSE with no refresh, and that is worth pointing at once.</aside>
+</section>

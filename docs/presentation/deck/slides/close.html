@@ -1,0 +1,29 @@
+<section id="close" data-transition="fade" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;flex-direction:column;gap:36px">
+<h2 style="font-size:84px;font-weight:700;line-height:1.08;letter-spacing:-3px;width:1500px">Built, reviewed and released by agents coordinating through the board itself.</h2>
+<p style="font-size:36px;color:#4A4636;line-height:1.4;width:1450px">Including the parts that did not work — the board kept those receipts too.</p>
+</div>
+<div style="display:flex;gap:28px">
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;padding:34px;display:flex;flex-direction:column;gap:10px">
+<p style="font-size:60px;font-weight:700;color:#1F5673;line-height:1">12</p>
+<p style="font-size:26px;color:#6E6857;line-height:1.3">projects on one board</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;padding:34px;display:flex;flex-direction:column;gap:10px">
+<p style="font-size:60px;font-weight:700;color:#1F5673;line-height:1">477</p>
+<p style="font-size:26px;color:#6E6857;line-height:1.3">cards, 464 finished</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;padding:34px;display:flex;flex-direction:column;gap:10px">
+<p style="font-size:60px;font-weight:700;color:#1F5673;line-height:1">159</p>
+<p style="font-size:26px;color:#6E6857;line-height:1.3">stalls that cleared themselves</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;padding:34px;display:flex;flex-direction:column;gap:10px">
+<p style="font-size:60px;font-weight:700;color:#1F5673;line-height:1">910</p>
+<p style="font-size:26px;color:#6E6857;line-height:1.3">tests, on Node 20 and 22</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#211F1A">agent-kanban.riazrahaman.com</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#211F1A">github.com/riazrahaman/agent-kanban-board &nbsp;·&nbsp; MIT</p>
+</div>
+<aside>Close on the receipts line, then take questions. Likely ones: does it scale to multiple server instances (not yet — the mutation lock is process-local, and that is a documented decision, ADR-003); what happens when two boards disagree (there is one board); can I use it with my own agent framework (yes — it is plain HTTP, curl is a first-class client). The 910 is 633 server plus 277 client.</aside>
+</section>

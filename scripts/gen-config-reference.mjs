@@ -65,7 +65,7 @@ const DESCRIPTIONS = {
   'KANBAN_ASK_PROVIDER': 'LLM provider for Ask-the-Board: "openrouter" or "ollama" (auto-detected if unset)',
   'KANBAN_ASK_OLLAMA_HOST': 'Base URL for Ollama instance (default http://localhost:11434)',
   'KANBAN_ASK_OLLAMA_AUTH_HEADER': '(secret) Optional Authorization header token for Ollama / tunnel gateway',
-  'KANBAN_ASK_OPENROUTER_API_KEY': '(secret) OpenRouter API key that turns Ask-the-Board on',
+  'KANBAN_ASK_OPENROUTER_API_KEY': '(secret) OpenRouter API key; required only for the "openrouter" provider (the default)',
   'KANBAN_ASK_PASSWORD': '(secret) Shared password gate for POST /api/ask',
   'KANBAN_ASK_MODEL': 'Model id for Ask-the-Board (default openai/gpt-oss-20b for OpenRouter, qwen3.6:latest for Ollama)',
   'KANBAN_ASK_DAILY_CAP': 'Global Ask-the-Board answers cap per UTC day (default 50)',

@@ -1,14 +1,14 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.7.2
+version: 3.7.3
 ---
 
 # Kanban Orchestrator Protocol
 
 Load this skill when a delegated build/feature task is initiated using an agent Kanban board. You are a **Strict Orchestrator (Admin)**. You do not write code directly; you manage the state machine, the board, and the workers.
 
-> **Install this skill:** copy this `kanban-orchestrator/` directory into your opencode skills directory — either project-local `.opencode/skills/kanban-orchestrator/` or global `~/.config/opencode/skills/kanban-orchestrator/`. The directory name must match the `name:` in the frontmatter above.
+> **Install this skill:** copy this `kanban/` directory into your opencode skills directory — either project-local `.opencode/skills/kanban/` or global `~/.config/opencode/skills/kanban/`. The directory name must match the `name:` in the frontmatter above (`kanban`).
 
 ## 1. Environment & Local Deployment
 

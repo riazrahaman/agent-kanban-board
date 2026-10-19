@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,53 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.7.3] — 2026-10-19
+
+### Changed
+- **Ask-the-Board configuration prose no longer implies the OpenRouter key is mandatory.**
+  The About page's environment table still described `KANBAN_ASK_OPENROUTER_API_KEY` as the
+  key "that turns Ask-the-Board on". Since v3.7.0 that is true only for the `openrouter`
+  provider: `isEnabled` always requires `KANBAN_ASK_PASSWORD`, and the key only for that
+  provider. Corrected in `client/src/lib/aboutContent.ts`, in the `DESCRIPTIONS` map in
+  `scripts/gen-config-reference.mjs` and therefore in the regenerated `docs/CONFIGURATION.md`.
+- **`ASK_UNCONFIGURED_NOTE` now names every way to switch Ask on.** It listed
+  `KANBAN_ASK_PROVIDER=ollama` but not `KANBAN_ASK_OLLAMA_HOST`, which selects the Ollama
+  provider on its own when no OpenRouter key is set (`resolveProvider`). Completed, not
+  corrected — the old text was incomplete rather than wrong.
+- **`server/routes/ask.js` header comment rewritten.** It still read "Off (fail-closed)
+  unless BOTH of these are non-empty", which predates the two-provider split. It now states
+  the real rule, lists the three provider variables, gives `KANBAN_ASK_MODEL` both defaults,
+  and records that `max_tokens` is omitted entirely on Ollama unless set.
+
+### Documentation
+- **`docs/PRESENTER_RUNBOOK.md` (new)** — one ordered live-demo walkthrough: the idea,
+  install by hand and via the bundled skill, local configuration, per-project tokens,
+  Telegram reclaim alerts, Ask-the-Board, a full `curl` demo and on-stage troubleshooting.
+  A living document: §11 lists the changes that must be reflected in it in the same commit,
+  and its version line is pinned by `kanban.version.test.js`.
+- **`docs/presentation/index.html` (new)** — the same walkthrough as one self-contained,
+  shareable page, pinned by the same test.
+- **`docs/presentation/deck/` (new)** — the same material as a 15-slide deck (`deck.json`
+  plus one HTML file per slide, presenter notes in each slide's `<aside>`), pinned through
+  the version its cover renders.
+- **Demo sequence corrected against a running board.** The runbook, page and deck all
+  showed `POST /api/tasks` without the required `round` field (a hard `400`), and promised
+  a `403` from a tester closing an `IN_PROGRESS` card — `patchTask` checks the edge before
+  the role, so that returns `409 Invalid state transition` and the role gate never runs.
+  The role failure now sits at `READY_TO_SHIP`, where the edge is legal, and every
+  `expected_version` is the value a real run returned.
+- **Ask rate caps documented for presenters**: `KANBAN_ASK_PER_IP_PER_HOUR` defaults to 3,
+  which a rehearsal plus two live questions exhausts.
+- **Orphaned documentation removed** (34 files): the v5 one-pager, `PRESENTATION_NOTES.md`
+  and `presentation-images/`, the superseded multi-project handover and recommendation
+  notes, the Skillport LinkedIn follow-up, and the `.loop/` run artefacts — none referenced
+  by any doc, script or test.
+- **Reference docs resynced**: README test counts (633/277) and the Ask section's two-provider
+  behaviour; both `FILE_BY_FILE_EXPLANATION.md` copies (17 previously undocumented source
+  files, corrected dependency versions); `.env.example`'s `KANBAN_PROJECT_TOKENS` warning
+  that a non-JSON value fails every mutation closed with a `503`; and the install paths in
+  `skills/kanban/SKILL.md`, which named a `kanban-orchestrator/` directory that does not exist.
 
 ## [3.7.2] — 2026-10-18
 

@@ -1,7 +1,7 @@
 // Field Guide Nº 02 · The Agent Board — the About page's content module.
 //
 // Two layers live here on purpose:
-//  1. A compact, code-derived 11-chapter ARTICLE (`CHAPTERS`, `ENV_VARS`) that
+//  1. A compact, code-derived 12-chapter ARTICLE (`CHAPTERS`, `ENV_VARS`) that
 //     is the page's narrative. Every chapter names the real file it describes.
 //  2. The data-driven reference blocks the page has always rendered
 //     (`TRUST_METRICS`, `CAPABILITIES`, `STACK_ROWS`, the claim/reclaim/safety
@@ -261,7 +261,7 @@ export const CAPABILITIES: Capability[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Adoption FAQ (chapter 11)
+// Adoption FAQ (chapter 12)
 // ---------------------------------------------------------------------------
 
 export type FaqItem = {
@@ -877,7 +877,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_STORAGE_BACKEND', purpose: 'Persistence backend: "json" (default) or "git" (one YAML card per task).' },
   { name: 'KANBAN_DATA_DIR', purpose: 'Directory for named-project data, archives and settings.' },
   { name: 'KANBAN_ASK_PROVIDER', purpose: 'LLM provider for Ask-the-Board: "openrouter" or "ollama" (auto-detected if unset).' },
-  { name: 'KANBAN_ASK_OPENROUTER_API_KEY', purpose: 'Secret OpenRouter key that turns Ask-the-Board on.' },
+  { name: 'KANBAN_ASK_OPENROUTER_API_KEY', purpose: 'Secret OpenRouter key — required only for the "openrouter" provider, which is the default.' },
   { name: 'KANBAN_ASK_OLLAMA_HOST', purpose: 'Base URL for Ollama instance (default http://localhost:11434).' },
   { name: 'KANBAN_ASK_OLLAMA_AUTH_HEADER', purpose: 'Optional secret token for Ollama / reverse-proxy gateway.' },
   { name: 'KANBAN_ASK_PASSWORD', purpose: 'Secret shared password gate for POST /api/ask.' },
@@ -894,7 +894,7 @@ export const ENV_VARS: EnvVar[] = [
 // ---------------------------------------------------------------------------
 
 export const ASK_UNCONFIGURED_NOTE =
-  'Ask-the-Board is off on this deployment. An operator switches it on by setting KANBAN_ASK_PASSWORD along with either KANBAN_ASK_OPENROUTER_API_KEY or KANBAN_ASK_PROVIDER=ollama.'
+  'Ask-the-Board is off on this deployment. An operator switches it on by setting KANBAN_ASK_PASSWORD — always required — plus one engine: KANBAN_ASK_OPENROUTER_API_KEY for a hosted model, or KANBAN_ASK_PROVIDER=ollama (or just KANBAN_ASK_OLLAMA_HOST, which selects Ollama on its own when no OpenRouter key is set) for a local one.'
 
 export const ASK_SCOPE_NOTE =
   'The assistant is instructed to stay on this board — its protocol, engine, client, deployment, configuration and source. Answers are read-only; it can never claim, move or delete a card.'

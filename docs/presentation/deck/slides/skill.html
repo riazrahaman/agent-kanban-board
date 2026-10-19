@@ -1,0 +1,27 @@
+<section id="skill" data-transition="fade" style="background:#FDFBF5;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:14px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">Or don’t install it. Tell an agent to.</h2>
+<p style="font-size:34px;color:#6E6857;line-height:1.35">The repo ships the orchestrator as a skill. Drop it in and the agent becomes the board’s admin.</p>
+</div>
+<div style="background:#211F1A;padding:40px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:27px;line-height:1.6;color:#F6F2E8">npx @skillporthq/cli@latest add riazrahaman/agentkanban<br><span style="color:#8C8470">&#35; or from a checkout</span><br>cp -r skills/kanban .opencode/skills/kanban</p>
+<p style="font-size:26px;color:#BFD8D5;line-height:1.4">The directory name must match the skill’s name in its frontmatter.</p>
+</div>
+<div style="display:flex;gap:32px">
+<div style="flex:1;background:#F6F2E8;border:1px solid #E6DFD0;padding:36px;display:flex;flex-direction:column;gap:14px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">It bootstraps</p>
+<p style="font-size:29px;color:#4A4636;line-height:1.4">No board configured? It clones the repo, installs both manifests, builds, starts the server and reads the port back.</p>
+</div>
+<div style="flex:1;background:#F6F2E8;border:1px solid #E6DFD0;padding:36px;display:flex;flex-direction:column;gap:14px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">It verifies</p>
+<p style="font-size:29px;color:#4A4636;line-height:1.4">Calls /api/health, refuses to run against a board older than v3.0.0, and warns when a project has no token entry.</p>
+</div>
+<div style="flex:1;background:#F6F2E8;border:1px solid #E6DFD0;padding:36px;display:flex;flex-direction:column;gap:14px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">It obeys the protocol</p>
+<p style="font-size:29px;color:#4A4636;line-height:1.4">Scopes every path by project, claims before entering a stage, sends expected_version on every write.</p>
+</div>
+</div>
+<p style="font-size:32px;color:#4A4636;line-height:1.4;width:1600px">The orchestrator never writes code. It owns the card and dispatches builder, reviewer and tester workers — and only moves the card when it has evidence.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">skills/kanban/SKILL.md §1 · manual §6.4</p>
+<aside>This is the slide that lands with an audience of agent builders. The install is one line; the interesting part is that the skill will stand the board up for itself if none exists. Mention the gitignored config file holds the token and must never be shown on screen or committed.</aside>
+</section>

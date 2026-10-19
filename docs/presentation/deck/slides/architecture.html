@@ -1,0 +1,15 @@
+<section id="architecture" data-transition="fade" style="background:#FDFBF5;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:44px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">What it is made of</h2>
+<table style="font-family:'IBM Plex Sans', Verdana, sans-serif;font-size:29px;color:#211F1A;padding:18px 20px">
+<tr style="background:#F6F2E8"><th style="width:22%;text-align:left;font-weight:600">Layer</th><th style="width:33%;text-align:left;font-weight:600">What it is</th><th style="width:45%;text-align:left;font-weight:600">Why it matters here</th></tr>
+<tr><td>Agents</td><td>Any HTTP client</td><td>No SDK, no runtime, no language. curl is a first-class client.</td></tr>
+<tr style="background:#F6F2E8"><td>API</td><td>Node + Express 5, ESM</td><td>Claim, lease, transition and audit all live server-side.</td></tr>
+<tr><td>Rules</td><td>state-machine.js</td><td>Pure: no I/O, no state. The legal-transition and role matrix in one file.</td></tr>
+<tr style="background:#F6F2E8"><td>Store</td><td>In-memory + mutation lock</td><td>One writer at a time, so two claims can never both win.</td></tr>
+<tr><td>Storage</td><td>JSON, or git-backed YAML</td><td>Atomic rename-writes. In git mode, one commit per transition.</td></tr>
+<tr style="background:#F6F2E8"><td>Live view</td><td>SSE diff stream</td><td>Humans see every move as it happens. No polling, no refresh.</td></tr>
+<tr><td>UI</td><td>React 19, Vite, Tailwind v4</td><td>Served by the same process on the same origin.</td></tr>
+</table>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md §3</p>
+<aside>Keep this short — it is an orientation slide, not a deep dive. The one row worth pausing on is the mutation lock: that single-writer discipline is what makes the claim-contention 409 reliable rather than racy. If the audience is non-technical, skip to the next slide after reading the first and last rows.</aside>
+</section>

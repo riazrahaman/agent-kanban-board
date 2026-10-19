@@ -1,0 +1,23 @@
+<section id="demo" data-section="One card end to end, built around three deliberate failures." data-transition="push" style="background:#211F1A;color:#F6F2E8;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:14px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px;color:#F6F2E8">One card, start to finish</h2>
+<p style="font-size:32px;color:#BFD8D5;line-height:1.35">Nine calls. Three of them are supposed to fail — those three are the demo.</p>
+</div>
+<div style="display:flex;gap:36px;align-items:stretch">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px">
+<div style="background:#2E2B24;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">1 &nbsp;POST /api/tasks</p><p style="font-size:24px;color:#8C8470">runner creates it — "round": 1 is required</p></div>
+<div style="background:#2E2B24;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">2 &nbsp;PATCH status READY</p><p style="font-size:24px;color:#8C8470">planner makes it claimable</p></div>
+<div style="background:#2E2B24;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">3 &nbsp;POST /claim</p><p style="font-size:24px;color:#8C8470">builder-1 takes it &#8594; owner + lease</p></div>
+<div style="background:#2E2B24;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">5 &nbsp;POST /logs</p><p style="font-size:24px;color:#8C8470">progress — and the lease re-arms</p></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:14px">
+<div style="background:#3A2320;border-left:6px solid #E08B86;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">4 &nbsp;builder-2 claims the same card</p><p style="font-size:24px;color:#E08B86">409 &nbsp;contention — take another card</p></div>
+<div style="background:#3A2320;border-left:6px solid #E08B86;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">6 &nbsp;PATCH with expected_version 1</p><p style="font-size:24px;color:#E08B86">409 &nbsp;version mismatch — re-read, retry</p></div>
+<div style="background:#3A2320;border-left:6px solid #E08B86;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">8 &nbsp;tester sets DONE at READY_TO_SHIP</p><p style="font-size:24px;color:#E08B86">403 &nbsp;only a releaser closes a card</p></div>
+<div style="background:#1F3326;border-left:6px solid #7FB07F;padding:22px 26px;display:flex;flex-direction:column;gap:4px"><p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:25px;color:#F6F2E8">first walk it out, role by role</p><p style="font-size:24px;color:#7FB07F">7 &nbsp;IN_REVIEW &#8594; VALIDATION &#8594; READY_TO_SHIP · 9 &nbsp;releaser DONE</p></div>
+</div>
+</div>
+<p style="font-size:32px;color:#BFD8D5;line-height:1.4;width:1600px">Everything on the left is scaffolding. The three on the right are why the board exists.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#8C8470">docs/PRESENTER_RUNBOOK.md §8 · manual §6.2</p>
+<aside>Run these against the local board with the browser visible so each call lands on screen. Every call bumps the version, so take each expected_version from the previous response. The 403 only lands from READY_TO_SHIP: the server checks the edge before the role, so a tester closing an IN_PROGRESS card returns 409 Invalid state transition instead. If you are short on time, seed the card beforehand and run only the three failures.</aside>
+</section>

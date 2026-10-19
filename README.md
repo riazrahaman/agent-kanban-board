@@ -340,11 +340,11 @@ GitHub issue labelled `user-report`, which you can close once confirmed.
 
 ## Ask the Board
 
-The About page opens with **Ask the Board** (v3.4.0 backend, v3.5.0 console): a
-password-gated, read-only assistant that answers questions about *this* board —
-its protocol, engine, client, deployment and configuration. It is the first
-thing on the page rather than a footnote, because it is the only part of the
-guide a reader can interrogate.
+The About page opens with **Ask the Board** (v3.4.0 backend, v3.5.0 console,
+second provider in v3.7.0): a password-gated, read-only assistant that answers
+questions about *this* board — its protocol, engine, client, deployment and
+configuration. It is the first thing on the page rather than a footnote,
+because it is the only part of the guide a reader can interrogate.
 
 How it answers: the question is tokenised, the most relevant few repository
 files are ranked and a window around the match is folded into the system prompt
@@ -358,20 +358,42 @@ middleware (like bug reports) and carries its own gate and its own limits — a
 global per-day cap, a per-IP per-hour cap, and a separate wrong-password
 counter.
 
-**The feature is OFF until explicitly configured.** It is fail-closed on *both*
-secrets: unset either one and `GET /api/ask/config` reports `{enabled:false}`,
-the console collapses to a one-line note, and `POST /api/ask` is unavailable.
+### Two providers (v3.7.0)
+
+The answer can come from a hosted model or from a model running on your own
+machine. `resolveProvider` picks between them: an explicit `KANBAN_ASK_PROVIDER`
+wins; otherwise the provider is `ollama` when `KANBAN_ASK_OLLAMA_HOST` is set
+*without* an OpenRouter key, and `openrouter` in every other case.
+
+- **`openrouter`** — any model in the OpenRouter catalogue, one API key.
+- **`ollama`** — an Ollama instance. Local by default
+  (`http://localhost:11434`), or a remote one over a tunnel. Two tunnel
+  recipes are documented in
+  [docs/USER_AND_OPERATOR_MANUAL.md](docs/USER_AND_OPERATOR_MANUAL.md): a
+  Cloudflare Tunnel in front of `scripts/gateway/ollama-tunnel-gateway.js`
+  (a token-verifying reverse proxy), or a persistent Tailscale Funnel
+  (`scripts/setup-ollama-persistent-tunnel.sh`). Either way the bearer goes in
+  `KANBAN_ASK_OLLAMA_AUTH_HEADER`.
+
+**The feature is OFF until explicitly configured, and it is fail-closed.**
+`KANBAN_ASK_PASSWORD` is required for *both* providers; `openrouter`
+additionally requires `KANBAN_ASK_OPENROUTER_API_KEY`. Miss a required secret
+and `GET /api/ask/config` reports `{enabled:false}`, the console collapses to a
+one-line note, and `POST /api/ask` is unavailable.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `KANBAN_ASK_OPENROUTER_API_KEY` | yes | Turns the feature on. The upstream key; never returned or logged. |
-| `KANBAN_ASK_PASSWORD` | yes | The shared gate on `POST /api/ask`, sent as the `x-ask-pass` header. |
-| `KANBAN_ASK_MODEL` | no | OpenRouter model id. Default `openai/gpt-oss-20b`. |
+| `KANBAN_ASK_PASSWORD` | yes | The shared gate on `POST /api/ask`, sent as the `x-ask-pass` header. Required by both providers. |
+| `KANBAN_ASK_OPENROUTER_API_KEY` | openrouter only | The upstream key; never returned or logged. |
+| `KANBAN_ASK_PROVIDER` | no | `openrouter` or `ollama`. Auto-detected when unset (see above). |
+| `KANBAN_ASK_OLLAMA_HOST` | no | Base URL of the Ollama instance. Default `http://localhost:11434`. |
+| `KANBAN_ASK_OLLAMA_AUTH_HEADER` | no | Bearer token sent to the Ollama host — the shared secret the tunnel gateway verifies. |
+| `KANBAN_ASK_MODEL` | no | Model id. Default `openai/gpt-oss-20b` (OpenRouter) or `qwen3.6:latest` (Ollama). |
 | `KANBAN_ASK_DAILY_CAP` | no | Global answers per UTC day. Default 50. |
 | `KANBAN_ASK_PER_IP_PER_HOUR` | no | Per-IP answers per hour. Default 3. |
 | `KANBAN_ASK_TIMEOUT_MS` | no | Upstream timeout. Default 45000. |
 | `KANBAN_ASK_MAX_PROMPT_TOKENS` | no | Prompt budget. Default 6000 (raised from 2000 in v3.5.0, since the prompt now carries retrieved source). |
-| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | no | Answer budget. Default 600. |
+| `KANBAN_ASK_MAX_OUTPUT_TOKENS` | no | Answer budget. Default 1500 — **but on the `ollama` provider `max_tokens` is omitted entirely unless this is set explicitly** (v3.7.2), because the cap also bounds a reasoning model's chain of thought and truncated it mid-answer. |
 
 > The topic limit is a **prompt instruction, not a hard fence**. The assistant
 > is told to stay on this board, but it is the same model answering, so treat
@@ -383,7 +405,8 @@ Verify a deployment the same way as report-a-bug:
 curl <board-url>/api/ask/config
 ```
 
-`{"enabled":true,"gated":true,"model":"..."}` confirms configuration; the first
+`{"enabled":true,"gated":true,"provider":"...","model":"..."}` confirms
+configuration — `provider` tells you which engine is live — and the first
 genuine end-to-end check is asking one real question from the page.
 
 ### Troubleshooting: "The assistant is temporarily unavailable"
@@ -396,6 +419,11 @@ console output; on Railway, `railway logs`:
 ```
 [kanban ask] request failed: OpenRouter answered 401 — KANBAN_ASK_OPENROUTER_API_KEY invalid, revoked or a placeholder [model=openai/gpt-oss-20b]
 ```
+
+The table below is the OpenRouter path. On the `ollama` provider the hints
+differ: `404` means the model is not pulled on that instance (`ollama pull
+<model>`), and `401`/`403` means `KANBAN_ASK_OLLAMA_AUTH_HEADER` does not match
+what the tunnel gateway expects.
 
 | Logged status | Meaning | Fix |
 |---|---|---|
@@ -490,7 +518,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
 | `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
 | `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
-| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated, model}`); the console only renders when enabled | Public |
+| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated, provider, model}`; `provider` added v3.7.0); the console only renders when enabled | Public |
 | `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never reads or writes a card | Shared password (not a board token) |
 
 ---
@@ -534,7 +562,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (563 tests, including the v3.2.5 Report-a-bug failure-logging suite (GH incident: a placeholder `KANBAN_REPORT_GITHUB_TOKEN` 401ing on every attempt with nothing in the deploy logs to show it — one line per failed GitHub-filing or Turnstile-verification request, at most one per 60 seconds per status and repo (not every failed attempt), with the status, GitHub's `message` (secrets redacted from the raw value before truncation, so a token straddling the cut can't leak a prefix), a per-status hint (401/403/404/410/422/429/5xx/network error/a 201 with an unreadable body), and the Cloudflare `error-codes` — every remote value run through a shared `safeLogValue` sanitizer that strips C0/C1 control characters and the Unicode line/paragraph separators before logging, so an upstream response can never inject a raw control byte or fake a second log line; while a boot-time check warns when the token/repo/site-key shape looks like a placeholder; neither the token, the Authorization header, the Turnstile secret, the report text, nor the client IP is ever logged), the v3.2.1 auth rate-limiter trust-proxy hardening suite (§SEC-09; GH #90) and body-parser error-translation catch-all suite (GH #91), the v3.2.0 health credential-map project name confidentiality suite (§2.10; withholding project names from anonymous/invalid callers, providing missing/extra arrays to authenticated callers, zero token value leakage), the v3.1.0 credential-map coverage check suite (§2.10; Map/object input flexibility, store-project deduplication, log redaction, non-fatal errors, live /api/health probe integration), the v3.0.0 AgentOS 8-state workflow test suite (state machine transitions, role permissions, backward-compatible alias normalization, transparent store migration), the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (255 tests, including the v3.2.4 About-page audit guards (the v3 8-state lifecycle walk, READY reclaim, real stack versions, 10-minute default lease), including the v3.2.4 phone layout (GH #103) — on a touch phone below `md` the document itself scrolls, like a normal website, so iOS Safari draws the board behind its floating toolbar (desktop/tablet keep the `h-screen` shell with internal column scrolling): the phone-layout media block contract (html scroller, sticky header, columns aligned to the top so short columns stay short, sticky current-column bar), the `phoneBoard.ts` suite (25-card cap with "Show N more", snapped-column tracking, re-aligning the page to a column's top after a swipe), and the `scrollLock.ts` overlay scroll-lock suite (position restore, stacked overlays, rotation across the 768px breakpoint); the v3.2.4 viewport-clamped dropdown placement (`menuPlacement.ts`; the project picker opened off-screen left on iPhone); the v3.2.4 zoom fix: the universal `touch-action: pan-x pan-y` contract (no `manipulation`/`auto`/`pinch-zoom` anywhere) and the pinch guard's multi-touch `touchmove` decision logic on document and window (and that it registers no wheel listener); the v3.2.3 real-iPhone mobile follow-up (GH #103): the `touchend` double-tap guard regression check, `text-size-adjust: 100%`, and the Column/Portfolio/About floating-toolbar bottom-clearance padding, plus the v3.2.2 mobile full-bleed Safari background, bottom clearance reclamation, zoom restriction, and header disclosure persistence suites (GH #103), the v3.2.1 mobile typography & Safari floating bottom bar clearance guards (GH #101; safe-area inset bottom padding, viewport-fit=cover, compact 13px select font, truncation-free placeholders), the v3.1.1 mobile layout density and bottom viewport clearance guards (GH #99; proportional system font on coarse pointers preventing text/placeholder truncation, Board container vertical stretch and tightened mobile padding eliminating bottom dead space), the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (633 tests, including the v3.2.5 Report-a-bug failure-logging suite (GH incident: a placeholder `KANBAN_REPORT_GITHUB_TOKEN` 401ing on every attempt with nothing in the deploy logs to show it — one line per failed GitHub-filing or Turnstile-verification request, at most one per 60 seconds per status and repo (not every failed attempt), with the status, GitHub's `message` (secrets redacted from the raw value before truncation, so a token straddling the cut can't leak a prefix), a per-status hint (401/403/404/410/422/429/5xx/network error/a 201 with an unreadable body), and the Cloudflare `error-codes` — every remote value run through a shared `safeLogValue` sanitizer that strips C0/C1 control characters and the Unicode line/paragraph separators before logging, so an upstream response can never inject a raw control byte or fake a second log line; while a boot-time check warns when the token/repo/site-key shape looks like a placeholder; neither the token, the Authorization header, the Turnstile secret, the report text, nor the client IP is ever logged), the v3.2.1 auth rate-limiter trust-proxy hardening suite (§SEC-09; GH #90) and body-parser error-translation catch-all suite (GH #91), the v3.2.0 health credential-map project name confidentiality suite (§2.10; withholding project names from anonymous/invalid callers, providing missing/extra arrays to authenticated callers, zero token value leakage), the v3.1.0 credential-map coverage check suite (§2.10; Map/object input flexibility, store-project deduplication, log redaction, non-fatal errors, live /api/health probe integration), the v3.0.0 AgentOS 8-state workflow test suite (state machine transitions, role permissions, backward-compatible alias normalization, transparent store migration), the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (277 tests, including the v3.2.4 About-page audit guards (the v3 8-state lifecycle walk, READY reclaim, real stack versions, 10-minute default lease), including the v3.2.4 phone layout (GH #103) — on a touch phone below `md` the document itself scrolls, like a normal website, so iOS Safari draws the board behind its floating toolbar (desktop/tablet keep the `h-screen` shell with internal column scrolling): the phone-layout media block contract (html scroller, sticky header, columns aligned to the top so short columns stay short, sticky current-column bar), the `phoneBoard.ts` suite (25-card cap with "Show N more", snapped-column tracking, re-aligning the page to a column's top after a swipe), and the `scrollLock.ts` overlay scroll-lock suite (position restore, stacked overlays, rotation across the 768px breakpoint); the v3.2.4 viewport-clamped dropdown placement (`menuPlacement.ts`; the project picker opened off-screen left on iPhone); the v3.2.4 zoom fix: the universal `touch-action: pan-x pan-y` contract (no `manipulation`/`auto`/`pinch-zoom` anywhere) and the pinch guard's multi-touch `touchmove` decision logic on document and window (and that it registers no wheel listener); the v3.2.3 real-iPhone mobile follow-up (GH #103): the `touchend` double-tap guard regression check, `text-size-adjust: 100%`, and the Column/Portfolio/About floating-toolbar bottom-clearance padding, plus the v3.2.2 mobile full-bleed Safari background, bottom clearance reclamation, zoom restriction, and header disclosure persistence suites (GH #103), the v3.2.1 mobile typography & Safari floating bottom bar clearance guards (GH #101; safe-area inset bottom padding, viewport-fit=cover, compact 13px select font, truncation-free placeholders), the v3.1.1 mobile layout density and bottom viewport clearance guards (GH #99; proportional system font on coarse pointers preventing text/placeholder truncation, Board container vertical stretch and tightened mobile padding eliminating bottom dead space), the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 CI additionally drives a real headless Chrome over the DevTools protocol
 (`scripts/check-card-layout.mjs`, `scripts/check-browser-smoke.mjs`, and —

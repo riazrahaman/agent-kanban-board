@@ -141,7 +141,7 @@ test('the client chapter explains what a redeploy does to the one open stream', 
 })
 
 // ---------------------------------------------------------------------------
-// The environment table (chapter 9)
+// The environment table (chapter 10)
 // ---------------------------------------------------------------------------
 
 test('the environment table documents every required board variable', () => {
@@ -182,7 +182,7 @@ test('the environment table mirrors the generated configuration reference', () =
 })
 
 // ---------------------------------------------------------------------------
-// The Ask card (chapter 10)
+// The Ask card (chapter 11)
 // ---------------------------------------------------------------------------
 
 test('the ask client helper uses the /api base, the x-ask-pass header and a localStorage key', () => {

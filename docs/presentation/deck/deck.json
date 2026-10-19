@@ -1,0 +1,40 @@
+{
+  "v": 4,
+  "createdOnFiles": { "v": 1, "at": "2026-10-18T00:00:00Z" },
+  "lists": "css",
+  "title": "Agent Kanban Board — Presentation",
+  "order": [
+    "cover",
+    "problem",
+    "statement",
+    "lifecycle",
+    "claim",
+    "conflicts",
+    "reclaim",
+    "architecture",
+    "setup",
+    "skill",
+    "tokens",
+    "telegram",
+    "ask",
+    "demo",
+    "close"
+  ],
+  "sections": {
+    "why": { "description": "Why a board whose users are not human needs a different design.", "start": "cover" },
+    "how": { "description": "The four mechanics that carry the whole talk: lifecycle, claim, conflict, reclaim.", "start": "lifecycle" },
+    "run": { "description": "Install it, configure it, and wire up alerts and the AI console.", "start": "setup" },
+    "demo": { "description": "One card end to end, built around three deliberate failures.", "start": "demo" }
+  },
+  "faces": {
+    "ibm-plex-sans": {
+      "family": "IBM Plex Sans",
+      "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+    },
+    "jetbrains-mono": {
+      "family": "JetBrains Mono",
+      "href": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap"
+    }
+  },
+  "designSystems": []
+}

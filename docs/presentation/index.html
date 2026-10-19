@@ -1,0 +1,866 @@
+<title>Agent Kanban Board Walkthrough</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a fixed left rail of sections on wide screens, a sticky scrolling
+   nav on narrow ones; content in a single measured column of stacked blocks.
+   Palette and faces are the board's own (DESIGN.md): warm paper, hairline
+   structure, operational colour, mono identifiers. */
+:root {
+  --bg: #f6f2e8;
+  --surface: #fdfbf5;
+  --line: #e6dfd0;
+  --ink: #211f1a;
+  --muted: #6e6857;
+  --accent: #1f5673;
+  --accent-soft: #e4ecf0;
+  --ok: #346538;
+  --ok-soft: #e8efe2;
+  --warn: #8a6a12;
+  --warn-soft: #f6efdc;
+  --stop: #9f2f2d;
+  --stop-soft: #f9e7e3;
+  --plan: #6b4e9b;
+  --test: #155e63;
+  --code-bg: #211f1a;
+  --code-fg: #f6f2e8;
+  --code-muted: #a39a85;
+
+  --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Verdana, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, 'Courier New', monospace;
+
+  --gutter-l: max(16px, env(safe-area-inset-left, 0px));
+  --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15140f;
+    --surface: #1e1c16;
+    --line: #35322a;
+    --ink: #f1ece0;
+    --muted: #a39a85;
+    --accent: #7fb3cc;
+    --accent-soft: #1d2a31;
+    --ok: #8fc08f;
+    --ok-soft: #1c2a1c;
+    --warn: #d9b45e;
+    --warn-soft: #2d2616;
+    --stop: #e08b86;
+    --stop-soft: #301c1a;
+    --plan: #b49ede;
+    --test: #68b4b9;
+    --code-bg: #0e0d0a;
+    --code-fg: #f1ece0;
+    --code-muted: #8a8270;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15140f;
+  --surface: #1e1c16;
+  --line: #35322a;
+  --ink: #f1ece0;
+  --muted: #a39a85;
+  --accent: #7fb3cc;
+  --accent-soft: #1d2a31;
+  --ok: #8fc08f;
+  --ok-soft: #1c2a1c;
+  --warn: #d9b45e;
+  --warn-soft: #2d2616;
+  --stop: #e08b86;
+  --stop-soft: #301c1a;
+  --plan: #b49ede;
+  --test: #68b4b9;
+  --code-bg: #0e0d0a;
+  --code-fg: #f1ece0;
+  --code-muted: #8a8270;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  margin: 0;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  background: var(--bg);
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; letter-spacing: -0.015em; }
+p, ul, ol { margin: 0; }
+a { color: var(--accent); }
+
+/* ---------- header ---------- */
+.topbar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 9;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-in {
+  padding-left: var(--gutter-l);
+  padding-right: var(--gutter-r);
+  padding-block: 10px;
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand b { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.crumb {
+  font-size: 13.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.crumb::before { content: "/"; color: var(--line); padding-right: 9px; }
+@media (max-width: 860px) { .crumb { display: none; } }
+.ver {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.topnav {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topnav::-webkit-scrollbar { display: none; }
+.topnav a {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 9px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.topnav a:hover { color: var(--ink); }
+.topnav a[aria-current="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.themebtn {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.themebtn:hover { color: var(--ink); }
+
+/* ---------- shell ---------- */
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-left: var(--gutter-l);
+  padding-right: var(--gutter-r);
+  padding-block: 0 72px;
+}
+section { padding-block: 56px 0; scroll-margin-top: 90px; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+h2 { font-size: clamp(26px, 4.2vw, 38px); font-weight: 600; margin-block: 10px 0; }
+h3 { font-size: 18px; font-weight: 600; }
+.lede { font-size: clamp(17px, 2.4vw, 20px); color: var(--muted); max-width: 62ch; margin-block: 14px 0; }
+.body { max-width: 68ch; margin-block: 16px 0; }
+.sechead { border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+
+/* ---------- hero ---------- */
+.hero { padding-block: 44px 0; }
+.hero h1 {
+  font-size: clamp(34px, 7vw, 62px);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  max-width: 17ch;
+  margin-block: 14px 0;
+}
+.hero .lede { max-width: 56ch; }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin-block: 36px 0;
+}
+.stat { background: var(--surface); padding: 18px 20px; min-width: 0; }
+.stat .n {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.stat .l { font-size: 13.5px; color: var(--muted); margin-block: 4px 0; }
+
+/* ---------- generic blocks ---------- */
+.grid { display: grid; gap: 16px; margin-block: 28px 0; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 20px 22px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card .tag {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.card p { color: var(--muted); font-size: 15px; }
+.card h3 { color: var(--ink); }
+.card.lead-accent { border-left: 4px solid var(--accent); }
+.card.lead-warn { border-left: 4px solid var(--warn); }
+.card.lead-stop { border-left: 4px solid var(--stop); }
+.card.lead-ok { border-left: 4px solid var(--ok); }
+
+.callout {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--stop);
+  background: var(--stop-soft);
+  padding: 18px 20px;
+  margin-block: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.callout h3 { color: var(--stop); font-size: 16px; }
+.callout p { font-size: 15px; }
+
+/* ---------- lifecycle strip ---------- */
+.flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+  margin-block: 28px 0;
+}
+.stage {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--muted);
+  padding: 12px 12px 14px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.stage .s { font-family: var(--mono); font-size: 13px; font-weight: 600; word-break: break-word; }
+.stage .r { font-size: 12.5px; color: var(--muted); }
+.stage[data-c="idle"] { border-top-color: #b6ad96; }
+.stage[data-c="ready"] { border-top-color: var(--muted); }
+.stage[data-c="plan"] { border-top-color: var(--plan); }
+.stage[data-c="build"] { border-top-color: var(--warn); }
+.stage[data-c="review"] { border-top-color: var(--accent); }
+.stage[data-c="test"] { border-top-color: var(--test); }
+.stage[data-c="ship"] { border-top-color: var(--ok); }
+
+/* ---------- code ---------- */
+.code {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  margin-block: 18px 0;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #2e2b24;
+}
+.code-head span {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--code-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.copy {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--code-muted);
+  background: transparent;
+  border: 1px solid #3a362c;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+.copy:hover { color: var(--code-fg); border-color: #5a5445; }
+.code pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--code-fg);
+}
+.code .c { color: var(--code-muted); }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 0; margin-block: 26px 0; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tabs button {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* ---------- table ---------- */
+.tablewrap { overflow-x: auto; margin-block: 24px 0; border: 1px solid var(--line); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; background: var(--surface); }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); font-size: 14.5px; vertical-align: top; }
+th { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td code, p code, li code { font-family: var(--mono); font-size: 0.9em; background: var(--accent-soft); color: var(--accent); padding: 2px 6px; }
+
+/* ---------- steps ---------- */
+.steps { display: flex; flex-direction: column; gap: 10px; margin-block: 26px 0; }
+.step {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 14px;
+  align-items: start;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 13px 16px;
+  min-width: 0;
+}
+.step .no { font-family: var(--mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.step .what { min-width: 0; }
+.step .what code { background: transparent; color: var(--ink); padding: 0; font-size: 13.5px; word-break: break-word; }
+.step .what p { font-size: 14px; color: var(--muted); margin-block: 3px 0; }
+.step .out {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px 10px;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+  align-self: center;
+}
+.step .out.ok { color: var(--ok); background: var(--ok-soft); }
+.step .out.fail { color: var(--stop); background: var(--stop-soft); }
+.step.is-fail { border-color: var(--stop); }
+@media (max-width: 560px) {
+  .step { grid-template-columns: 28px 1fr; }
+  .step .out { grid-column: 2; justify-self: start; }
+}
+
+/* ---------- doc map ---------- */
+.docs { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); margin-block: 26px 0; }
+.doc { background: var(--surface); padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline; min-width: 0; }
+.doc code { font-family: var(--mono); font-size: 13.5px; color: var(--ink); background: transparent; padding: 0; word-break: break-word; }
+.doc span { font-size: 14px; color: var(--muted); }
+
+/* ---------- footer ---------- */
+footer { border-top: 2px solid var(--ink); margin-block: 64px 0; padding-block: 22px 0; }
+footer p { font-size: 13.5px; color: var(--muted); }
+footer .mono { font-family: var(--mono); font-size: 13px; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <b>Agent Kanban Board</b>
+      <span class="crumb">Presenter walkthrough</span>
+      <span class="ver">v3.7.3</span>
+    </div>
+    <nav class="topnav" id="nav" aria-label="Sections">
+      <a href="#idea">Idea</a>
+      <a href="#mechanics">Mechanics</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#install">Install</a>
+      <a href="#configure">Configure</a>
+      <a href="#demo">Demo</a>
+      <a href="#fixit">If it breaks</a>
+      <a href="#docs">Docs</a>
+    </nav>
+    <button class="themebtn" id="theme" type="button">Theme</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="hero" id="idea">
+    <h1>A Kanban board whose users aren’t human.</h1>
+    <p class="lede">Agents claim cards over plain HTTP. The server enforces the lifecycle. Humans watch over a live stream, and don’t arbitrate.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">12</div><div class="l">projects on one board</div></div>
+      <div class="stat"><div class="n">477</div><div class="l">cards, 464 finished</div></div>
+      <div class="stat"><div class="n">159</div><div class="l">stalls that cleared themselves</div></div>
+      <div class="stat"><div class="n">910</div><div class="l">tests, on Node 20 and 22</div></div>
+    </div>
+
+    <div class="grid g3">
+      <div class="card lead-stop">
+        <div class="tag">Agents stall</div>
+        <p>A process dies holding a card. On a human board it sits there until somebody notices, hours later.</p>
+      </div>
+      <div class="card lead-stop">
+        <div class="tag">Agents collide</div>
+        <p>Two workers take the same task. Both do the work. One silently overwrites the other.</p>
+      </div>
+      <div class="card lead-stop">
+        <div class="tag">Agents skip</div>
+        <p>A builder marks its own work done. Nothing reviewed it, nothing tested it, and the board says DONE.</p>
+      </div>
+    </div>
+    <p class="body">Each of those is a convention on a human board. A convention is something an agent will break at 3am, confidently, in parallel, forty times. So the rules live in the server instead.</p>
+  </section>
+
+  <section id="mechanics">
+    <div class="sechead">
+      <p class="eyebrow">The four mechanics</p>
+      <h2>What the server actually enforces</h2>
+    </div>
+
+    <h3 style="margin-block:32px 0">Eight states, with a role gate on every edge</h3>
+    <div class="flow">
+      <div class="stage" data-c="idle"><div class="s">BACKLOG</div><div class="r">not ready</div></div>
+      <div class="stage" data-c="ready"><div class="s">READY</div><div class="r">claimable</div></div>
+      <div class="stage" data-c="plan"><div class="s">PLANNING</div><div class="r">planner</div></div>
+      <div class="stage" data-c="build"><div class="s">IN_PROGRESS</div><div class="r">builder</div></div>
+      <div class="stage" data-c="review"><div class="s">IN_REVIEW</div><div class="r">builder</div></div>
+      <div class="stage" data-c="test"><div class="s">VALIDATION</div><div class="r">reviewer</div></div>
+      <div class="stage" data-c="ship"><div class="s">READY_TO_SHIP</div><div class="r">tester</div></div>
+      <div class="stage" data-c="ship"><div class="s">DONE</div><div class="r">releaser</div></div>
+    </div>
+    <p class="body">Each label names the role allowed to move a card <em>into</em> that state. <code>BLOCKED</code> sits beside the line, and only a privileged role sets it. A builder cannot mark a card done; a tester cannot close one. Those are 403s, not warnings.</p>
+
+    <div class="grid g2">
+      <div class="card lead-accent">
+        <div class="tag">Claim first</div>
+        <h3>Only a READY card can be claimed</h3>
+        <p>The claim sets an owner <strong>and</strong> starts a lease, ten minutes by default. Every log line and heartbeat re-arms it, so an agent that is working never loses its card.</p>
+        <p>A status-only PATCH is not a claim. It leaves the card active with no owner, and the reaper resets it.</p>
+      </div>
+      <div class="card lead-warn">
+        <div class="tag">Two different 409s</div>
+        <h3>Same code, opposite recoveries</h3>
+        <p><strong>Version mismatch</strong> means you wrote against stale data. Re-read the card, re-apply, retry. The work is still yours.</p>
+        <p><strong>Claim contention</strong> means someone else got there first, or the card was never READY. Walk away and take another card. Retrying is wrong.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-block:36px 0">Reclaim: three causes, not one</h3>
+    <p class="body">A background reaper returns a card to <code>READY</code> on its own. Saying “every reclaim is a dead agent” is wrong, and an engineer in the room will catch it.</p>
+    <div class="grid g3">
+      <div class="card">
+        <div class="tag">Cause 1</div>
+        <h3>The lease expired</h3>
+        <p>The holder stopped renewing. Usually a dead process.</p>
+      </div>
+      <div class="card">
+        <div class="tag">Cause 2</div>
+        <h3>No progress past the stall window</h3>
+        <p>Still holding the lease, but nothing logged for 30 minutes. A live agent stuck in a loop. The board treats silence as failure.</p>
+      </div>
+      <div class="card">
+        <div class="tag">Cause 3</div>
+        <h3>Active with no owner</h3>
+        <p>Someone PATCHed a status without claiming. Normalized to READY after a grace window.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="sechead">
+      <p class="eyebrow">Orientation</p>
+      <h2>What it is made of</h2>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Layer</th><th>What it is</th><th>Why it matters here</th></tr>
+        <tr><td>Agents</td><td>Any HTTP client</td><td>No SDK, no runtime, no language. curl is a first-class client.</td></tr>
+        <tr><td>API</td><td>Node + Express 5, ESM</td><td>Claim, lease, transition and audit all live server-side.</td></tr>
+        <tr><td>Rules</td><td><code>state-machine.js</code></td><td>Pure, no I/O. Legal transitions and the role matrix in one file.</td></tr>
+        <tr><td>Store</td><td>In-memory + mutation lock</td><td>One writer at a time, so two claims can never both win.</td></tr>
+        <tr><td>Storage</td><td>JSON, or git-backed YAML</td><td>Atomic rename-writes. In git mode, one commit per transition.</td></tr>
+        <tr><td>Live view</td><td>SSE diff stream</td><td>Humans see every move as it happens. No polling, no refresh.</td></tr>
+        <tr><td>UI</td><td>React 19, Vite, Tailwind v4</td><td>Served by the same process on the same origin.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="sechead">
+      <p class="eyebrow">Step one</p>
+      <h2>Getting it running</h2>
+    </div>
+    <div class="tabs" role="tablist" data-tabs="install">
+      <button type="button" role="tab" aria-selected="true" data-panel="i-manual">By hand</button>
+      <button type="button" role="tab" aria-selected="false" data-panel="i-skill">With the skill</button>
+    </div>
+
+    <div id="i-manual" data-tabpanel="install">
+      <p class="body">There is no root <code>npm install</code>. The server and client each carry their own manifest.</p>
+      <div class="code">
+        <div class="code-head"><span>Install and run</span><button class="copy" type="button">Copy</button></div>
+<pre>git clone https://github.com/riazrahaman/agent-kanban-board.git
+cd agent-kanban-board
+npm --prefix server install
+npm --prefix client install
+npm run build
+
+export KANBAN_AUTH_TOKEN="demo-secret"
+npm start                     <span class="c"># API + built UI on :4000</span></pre>
+      </div>
+      <div class="grid g3">
+        <div class="card lead-stop">
+          <h3>Never launch through an npm wrapper</h3>
+          <p>A wrapper intercepts SIGTERM, so every clean shutdown gets reported as a crash. Use <code>npm start</code> at the root, or node directly.</p>
+        </div>
+        <div class="card lead-ok">
+          <h3>Check it is really up</h3>
+          <p><code>curl -s localhost:4000/api/health</code> returns the running version.</p>
+        </div>
+        <div class="card lead-accent">
+          <h3>Leave the browser open</h3>
+          <p>Everything you do from here appears on it live over SSE. No refresh, ever. Worth pointing at once.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="i-skill" data-tabpanel="install" hidden>
+      <p class="body">The repo ships the orchestrator as a skill. Drop it in and the agent becomes the board’s admin — and will stand the board up for itself if none exists.</p>
+      <div class="code">
+        <div class="code-head"><span>Install the skill</span><button class="copy" type="button">Copy</button></div>
+<pre>npx @skillporthq/cli@latest add riazrahaman/agentkanban
+<span class="c"># or straight from a checkout</span>
+cp -r skills/kanban .opencode/skills/kanban          <span class="c"># this project</span>
+cp -r skills/kanban ~/.config/opencode/skills/kanban <span class="c"># every project</span></pre>
+      </div>
+      <p class="body">The directory name must match <code>name:</code> in the skill’s frontmatter.</p>
+      <div class="grid g3">
+        <div class="card lead-accent">
+          <div class="tag">It bootstraps</div>
+          <p>No board configured? It clones, installs both manifests, builds, starts the server and reads the port back.</p>
+        </div>
+        <div class="card lead-accent">
+          <div class="tag">It verifies</div>
+          <p>Calls <code>/api/health</code>, refuses a board older than v3.0.0, and warns when a project has no token entry.</p>
+        </div>
+        <div class="card lead-accent">
+          <div class="tag">It obeys the protocol</div>
+          <p>Scopes every path by project, claims before entering a stage, sends <code>expected_version</code> on every write.</p>
+        </div>
+      </div>
+      <p class="body">The orchestrator never writes code. It owns the card and dispatches builder, reviewer and tester workers, moving the card only when it has evidence. Its config file holds the board token and is gitignored — never show it on screen.</p>
+    </div>
+  </section>
+
+  <section id="configure">
+    <div class="sechead">
+      <p class="eyebrow">Step two</p>
+      <h2>Configuring it</h2>
+    </div>
+    <div class="tabs" role="tablist" data-tabs="cfg">
+      <button type="button" role="tab" aria-selected="true" data-panel="c-tokens">Project tokens</button>
+      <button type="button" role="tab" aria-selected="false" data-panel="c-telegram">Telegram alerts</button>
+      <button type="button" role="tab" aria-selected="false" data-panel="c-ai">AI console</button>
+    </div>
+
+    <div id="c-tokens" data-tabpanel="cfg">
+      <p class="body">Without an auth mechanism, every mutation fails closed with <code>503</code>, by design. One shared token is enough to start:</p>
+      <div class="code">
+        <div class="code-head"><span>Minimum</span><button class="copy" type="button">Copy</button></div>
+<pre>export KANBAN_AUTH_TOKEN="demo-secret"</pre>
+      </div>
+      <p class="body">For several projects on one board, give each its own token. A token then sees and touches exactly one project — project lists, task feeds and health metadata all narrow to it, and an anonymous caller gets an empty list.</p>
+      <div class="code">
+        <div class="code-head"><span>Per-project isolation</span><button class="copy" type="button">Copy</button></div>
+<pre>export KANBAN_PROJECT_TOKENS='{"demo":"tok-demo","payments":"tok-pay"}'
+
+<span class="c"># proves it: the wrong project with the right token</span>
+curl -s -X PATCH "localhost:4000/api/tasks/demo-01?project=payments" \
+  -H "X-API-Token: tok-demo" -H "X-Agent-Role: builder" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"READY","expected_version":1}'
+<span class="c"># -> 403 token is not authorized for project 'payments'</span></pre>
+      </div>
+      <div class="callout">
+        <h3>The 503 that looks like a broken board</h3>
+        <p>This variable must hold <strong>valid JSON or nothing at all</strong>. A value like <code>change-me</code> fails every mutation closed, and nothing on screen explains why. <code>.env.example</code> now ships it empty with that warning beside it.</p>
+      </div>
+      <div class="card lead-ok" style="margin-block:16px 0">
+        <h3>The board warns you first</h3>
+        <p><code>/api/health</code> carries a credential map. A project holding cards with no token entry reports as <em>undercovered</em> — a future 403, surfaced before it bites.</p>
+      </div>
+    </div>
+
+    <div id="c-telegram" data-tabpanel="cfg" hidden>
+      <p class="body">When the reaper returns a card to READY, the board can post a full-detail alert to a Telegram chat. Both variables are required; alerts stay off until both are set.</p>
+      <div class="code">
+        <div class="code-head"><span>Reclaim alerts</span><button class="copy" type="button">Copy</button></div>
+<pre>export KANBAN_TELEGRAM_BOT_TOKEN="&lt;token from @BotFather&gt;"
+export KANBAN_TELEGRAM_CHAT_ID="-1001234567890"   <span class="c"># negative for a group</span></pre>
+      </div>
+      <div class="grid g3">
+        <div class="card lead-accent">
+          <h3>Make one fire on stage</h3>
+          <p>Claim a card with <code>lease_ms: 60000</code>, then say nothing. About a minute later the reaper takes it back, live, in front of them.</p>
+        </div>
+        <div class="card">
+          <h3>It cannot flood you</h3>
+          <p>Sends are serialized with a minimum gap, so a sweep that reclaims twenty cards never trips Telegram’s rate limit.</p>
+        </div>
+        <div class="card">
+          <h3>It cannot break the board</h3>
+          <p>A failed delivery never affects the reclaim. The card returns to READY either way.</p>
+        </div>
+      </div>
+      <p class="body">No extra dependency is involved — the server calls the Bot API over HTTPS directly.</p>
+    </div>
+
+    <div id="c-ai" data-tabpanel="cfg" hidden>
+      <p class="body">The About page opens with a password-gated, read-only console that answers questions about this board, from the curated protocol <em>and</em> the real source. It is fail-closed: the password is required by both providers.</p>
+      <div class="code">
+        <div class="code-head"><span>Hosted model, or one on your own machine</span><button class="copy" type="button">Copy</button></div>
+<pre><span class="c"># OpenRouter</span>
+export KANBAN_ASK_PASSWORD="demo-pass"
+export KANBAN_ASK_OPENROUTER_API_KEY="sk-or-..."
+
+<span class="c"># or a local Ollama</span>
+export KANBAN_ASK_PASSWORD="demo-pass"
+export KANBAN_ASK_PROVIDER=ollama
+export KANBAN_ASK_OLLAMA_HOST="http://localhost:11434"
+
+<span class="c"># raise the caps for a demo: 3 per IP per hour is the default</span>
+export KANBAN_ASK_PER_IP_PER_HOUR=50
+export KANBAN_ASK_DAILY_CAP=200
+
+curl -s localhost:4000/api/ask/config
+<span class="c"># {"enabled":true,"gated":true,"provider":"ollama","model":"qwen3.6:latest"}</span></pre>
+      </div>
+      <div class="grid g3">
+        <div class="card"><div class="tag">Curated</div><p>A hand-written protocol pack: states, claims, leases, the reaper, the two 409s.</p></div>
+        <div class="card"><div class="tag">Retrieved</div><p>Files ranked by keyword hits in their <em>contents</em>, then a window around where the match clusters.</p></div>
+        <div class="card"><div class="tag">Live</div><p>A board snapshot read in-process through store accessors, never scraped over HTTP.</p></div>
+      </div>
+      <div class="card lead-stop" style="margin-block:16px 0">
+        <h3>Three questions per hour, by default</h3>
+        <p><code>KANBAN_ASK_PER_IP_PER_HOUR</code> defaults to 3 and <code>KANBAN_ASK_DAILY_CAP</code> to 50. One rehearsal question leaves you two on stage. Raise both locally; on the hosted board you cannot, so do not rehearse from the same IP within the hour.</p>
+      </div>
+      <div class="card lead-ok" style="margin-block:16px 0">
+        <h3>The model is never issued a board token</h3>
+        <p>The question path is mounted before authentication and holds no credential. It cannot claim, move or delete a card — not because it is told not to, but because there is nothing on that path to do it with.</p>
+      </div>
+      <p class="body">Good questions to ask live: <em>what are the two different 409s</em>, <em>what does the reaper actually do</em>, <em>why can’t a tester mark a card done</em>. Check <code>/api/ask/config</code> before presenting: if a secret is missing the console collapses to a one-line note rather than failing in front of people.</p>
+    </div>
+  </section>
+
+  <section id="demo">
+    <div class="sechead">
+      <p class="eyebrow">Step three</p>
+      <h2>One card, start to finish</h2>
+    </div>
+    <p class="lede">Nine calls. Three of them are supposed to fail, and those three are the demo.</p>
+    <div class="steps">
+      <div class="step"><div class="no">1</div><div class="what"><code>POST /api/tasks</code><p>runner creates it &mdash; <code>round</code> is required</p></div><div class="out ok">BACKLOG</div></div>
+      <div class="step"><div class="no">2</div><div class="what"><code>PATCH status: READY</code><p>planner makes it claimable</p></div><div class="out ok">READY</div></div>
+      <div class="step"><div class="no">3</div><div class="what"><code>POST /claim</code><p>builder-1 takes it, owner and lease set</p></div><div class="out ok">IN_PROGRESS</div></div>
+      <div class="step is-fail"><div class="no">4</div><div class="what"><code>POST /claim</code> again, as builder-2<p>the same card, a second agent</p></div><div class="out fail">409 contention</div></div>
+      <div class="step"><div class="no">5</div><div class="what"><code>POST /logs</code><p>progress, and the lease re-arms</p></div><div class="out ok">renewed</div></div>
+      <div class="step is-fail"><div class="no">6</div><div class="what"><code>PATCH expected_version: 1</code><p>a stale write</p></div><div class="out fail">409 mismatch</div></div>
+      <div class="step"><div class="no">7</div><div class="what"><code>PATCH</code> &times;3, role by role<p>IN_REVIEW (builder) &rarr; VALIDATION (reviewer) &rarr; READY_TO_SHIP (tester)</p></div><div class="out ok">READY_TO_SHIP</div></div>
+      <div class="step is-fail"><div class="no">8</div><div class="what"><code>PATCH status: DONE</code> as tester<p>the wrong role tries to close it</p></div><div class="out fail">403 forbidden</div></div>
+      <div class="step"><div class="no">9</div><div class="what"><code>PATCH status: DONE</code> as releaser<p>the only role that closes a card</p></div><div class="out ok">DONE</div></div>
+    </div>
+    <p class="body">Every call carries the version the previous response returned. The 403 only works from <code>READY_TO_SHIP</code>: the server checks the edge before the role, so asking a tester to close a card still in <code>IN_PROGRESS</code> returns <code>409 Invalid state transition</code> instead &mdash; the wrong failure for the point you are making.</p>
+    <div class="code">
+      <div class="code-head"><span>The three that matter</span><button class="copy" type="button">Copy</button></div>
+<pre>T="X-API-Token: tok-demo"
+B="localhost:4000/api/tasks"
+
+<span class="c"># 4 — a second builder claims the same card -&gt; 409 contention</span>
+curl -X POST "$B/demo-01/claim?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+  -H "Content-Type: application/json" -d '{"agent_id":"builder-2"}'
+
+<span class="c"># 6 — a stale write -&gt; 409 version mismatch</span>
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: builder" \
+  -H "Content-Type: application/json" -d '{"status":"IN_REVIEW","expected_version":1}'
+
+<span class="c"># 8 — the wrong role tries to close it -&gt; 403 (only from READY_TO_SHIP)</span>
+curl -X PATCH "$B/demo-01?project=demo" -H "$T" -H "X-Agent-Role: tester" \
+  -H "Content-Type: application/json" -d '{"status":"DONE","expected_version":7}'</pre>
+    </div>
+    <p class="body">Short on time? Seed the card beforehand and run only these three.</p>
+  </section>
+
+  <section id="fixit">
+    <div class="sechead">
+      <p class="eyebrow">On stage</p>
+      <h2>If something breaks</h2>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+        <tr><td>Every mutation 503</td><td>No auth configured, or <code>KANBAN_PROJECT_TOKENS</code> is not valid JSON</td><td>Set a valid token or JSON map, restart</td></tr>
+        <tr><td>409 on a PATCH</td><td>Stale <code>expected_version</code></td><td>GET the card, resend with the current version</td></tr>
+        <tr><td>409 on a claim</td><td>Another agent holds it, or the card is not READY</td><td>Expected. This is the point</td></tr>
+        <tr><td>403 on a transition</td><td>Role not permitted for that edge</td><td>Check the role matrix</td></tr>
+        <tr><td>Card snapped back to READY</td><td>Reaper: lease expired, stalled, or ownerless</td><td>Also expected. Also the point</td></tr>
+        <tr><td>Ask console missing</td><td><code>/api/ask/config</code> says <code>enabled:false</code></td><td>A required secret is unset</td></tr>
+        <tr><td>Ask refuses a question</td><td>Rate cap &mdash; 3 per IP per hour, 50 per day by default</td><td>Raise <code>KANBAN_ASK_PER_IP_PER_HOUR</code>; on the hosted board, wait</td></tr>
+        <tr><td><code>400 round must be a positive integer</code></td><td><code>POST /tasks</code> without <code>round</code></td><td>Add <code>"round": 1</code> &mdash; it is required on create</td></tr>
+        <tr><td><code>409 Invalid state transition</code> where you expected <code>403</code></td><td>The edge is illegal, so the role gate never ran</td><td>Reach a state where that edge is legal first</td></tr>
+        <tr><td>Board empty in the browser</td><td>Wrong <code>?project=</code>, or a token that cannot see it</td><td>Check <code>GET /api/projects</code> with that token</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="sechead">
+      <p class="eyebrow">Going deeper</p>
+      <h2>Where everything lives</h2>
+    </div>
+    <div class="docs">
+      <div class="doc"><code>docs/PRESENTER_RUNBOOK.md</code><span>This walkthrough, as a file in the repo</span></div>
+      <div class="doc"><code>docs/USER_AND_OPERATOR_MANUAL.md</code><span>Operator reference: every variable, the UI guide, troubleshooting</span></div>
+      <div class="doc"><code>docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md</code><span>Architecture, the state machine with RBAC, concurrency</span></div>
+      <div class="doc"><code>ONBOARDING.md</code><span>Connecting a new project, from the client side</span></div>
+      <div class="doc"><code>docs/CONFIGURATION.md</code><span>Every environment variable, generated and drift-tested</span></div>
+      <div class="doc"><code>skills/kanban/SKILL.md</code><span>The orchestrator protocol itself</span></div>
+      <div class="doc"><code>docs/FILE_BY_FILE_EXPLANATION.md</code><span>Per-file technical reference</span></div>
+      <div class="doc"><code>docs/decisions/</code><span>ADR-001 to ADR-004, the decisions and their reasons</span></div>
+      <div class="doc"><code>docs/RESTORE.md</code><span>Recovering board data from a snapshot</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="mono">agent-kanban.riazrahaman.com &nbsp;·&nbsp; github.com/riazrahaman/agent-kanban-board &nbsp;·&nbsp; MIT</p>
+    <p style="margin-block:8px 0">Agent Kanban Board v3.7.3. This page is kept in the repository at <code>docs/presentation/index.html</code> and is version-pinned by the test suite, so a release that leaves it behind fails CI. Built, reviewed and released by agents coordinating through the board itself.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // Theme toggle: cycles system -> light -> dark, remembered per viewer.
+  var root = document.documentElement;
+  var btn = document.getElementById('theme');
+  var order = ['', 'light', 'dark'];
+  var label = { '': 'Theme: auto', 'light': 'Theme: light', 'dark': 'Theme: dark' };
+  var current = '';
+  try { current = localStorage.getItem('akb.theme') || ''; } catch (e) { current = ''; }
+  function apply(v) {
+    if (v) { root.setAttribute('data-theme', v); } else { root.removeAttribute('data-theme'); }
+    btn.textContent = label[v];
+    try { localStorage.setItem('akb.theme', v); } catch (e) { /* storage unavailable */ }
+  }
+  apply(current);
+  btn.addEventListener('click', function () {
+    current = order[(order.indexOf(current) + 1) % order.length];
+    apply(current);
+  });
+
+  // Tab groups.
+  document.querySelectorAll('[data-tabs]').forEach(function (group) {
+    var name = group.getAttribute('data-tabs');
+    group.querySelectorAll('button[data-panel]').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        group.querySelectorAll('button[data-panel]').forEach(function (t) {
+          t.setAttribute('aria-selected', String(t === tab));
+        });
+        document.querySelectorAll('[data-tabpanel="' + name + '"]').forEach(function (panel) {
+          panel.hidden = panel.id !== tab.getAttribute('data-panel');
+        });
+      });
+    });
+  });
+
+  // Copy buttons.
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.code').querySelector('pre');
+      var done = function () {
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1400);
+      };
+      var fallback = function () {
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(pre);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.textContent = 'Selected';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pre.innerText).then(done, fallback);
+      } else {
+        fallback();
+      }
+    });
+  });
+
+  // Scroll spy on the section nav.
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var sections = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+  function mark(id) {
+    links.forEach(function (a) {
+      a.setAttribute('aria-current', String(a.getAttribute('href') === '#' + id));
+    });
+  }
+  if ('IntersectionObserver' in window) {
+    var seen = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+      for (var i = 0; i < sections.length; i++) {
+        if (sections[i] && seen[sections[i].id]) { mark(sections[i].id); break; }
+      }
+    }, { rootMargin: '-96px 0px -70% 0px' });
+    sections.forEach(function (s) { if (s) io.observe(s); });
+  }
+  mark('idea');
+})();
+</script>

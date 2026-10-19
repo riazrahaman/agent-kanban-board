@@ -1,0 +1,34 @@
+<section id="ask" data-transition="fade" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:14px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">Ask the board about itself</h2>
+<p style="font-size:34px;color:#6E6857;line-height:1.35">A password-gated, read-only console that answers from the protocol <i>and</i> the source.</p>
+</div>
+<div style="display:flex;gap:36px">
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;border-top:6px solid #1F5673;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">Curated</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">A hand-written protocol pack: states, claims, leases, the reaper, the two 409s.</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;border-top:6px solid #1F5673;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">Retrieved</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">Files ranked by keyword hits in their <i>contents</i>, then a window around where the match clusters.</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;border-top:6px solid #1F5673;padding:34px;display:flex;flex-direction:column;gap:12px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:#1F5673">Live</p>
+<p style="font-size:28px;color:#4A4636;line-height:1.4">A board snapshot read in-process through store accessors — never scraped over HTTP.</p>
+</div>
+</div>
+<div style="display:flex;gap:36px;align-items:stretch">
+<div style="flex:1;background:#211F1A;padding:36px;display:flex;flex-direction:column;gap:16px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">Two engines</p>
+<p style="font-size:30px;color:#F6F2E8;line-height:1.4"><b>OpenRouter</b> for a hosted model — any model in the catalogue, one key.</p>
+<p style="font-size:30px;color:#F6F2E8;line-height:1.4"><b>Ollama</b> for a model on your own machine, reached through a token-verifying tunnel.</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#BFD8D5;line-height:1.5">curl /api/ask/config<br>&#8594; {"enabled":true,"provider":"ollama"}</p>
+</div>
+<div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #346538;padding:36px;display:flex;flex-direction:column;justify-content:center;gap:16px">
+<p style="font-size:36px;font-weight:600;line-height:1.25">The model is never issued a board token.</p>
+<p style="font-size:29px;color:#4A4636;line-height:1.45">The question path is mounted before authentication and holds no credential. It cannot claim, move or delete a card — not because it is told not to, but because there is nothing on that path to do it with.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">routes/ask.js · askKnowledge.js · manual §3.1.2</p>
+<aside>Good live questions: what are the two different 409s, what does the reaper actually do, why can't a tester mark a card done. Ask is capped at 3 questions per IP per hour (KANBAN_ASK_PER_IP_PER_HOUR) and 50 per day, so raise both locally before you demo and do not rehearse from the same IP within the hour. Check /api/ask/config before you present — if a required secret is missing the console collapses to a one-line note rather than failing in front of people. The right-hand card is the point: capability is removed, not forbidden.</aside>
+</section>

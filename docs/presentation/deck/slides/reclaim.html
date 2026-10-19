@@ -1,0 +1,26 @@
+<section id="reclaim" data-transition="fade" style="background:#F6F2E8;color:#211F1A;font-family:'IBM Plex Sans', Verdana, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<h2 style="font-size:72px;font-weight:600;line-height:1.1;letter-spacing:-2px">When an agent dies, the board notices</h2>
+<div style="display:flex;gap:48px;align-items:center">
+<div style="width:460px;background:#211F1A;padding:52px;display:flex;flex-direction:column;gap:18px">
+<p style="font-size:132px;font-weight:700;color:#F6F2E8;line-height:1">159</p>
+<p style="font-size:32px;color:#BFD8D5;line-height:1.35">reclaims on the live board — stalls that cleared themselves instead of waiting for me to notice</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:22px">
+<p style="font-size:34px;color:#4A4636;line-height:1.4">A background reaper returns a card to <code style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:32px">READY</code> for three distinct reasons:</p>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;padding:30px;display:flex;flex-direction:column;gap:8px">
+<p style="font-size:32px;font-weight:600">The lease expired</p>
+<p style="font-size:27px;color:#6E6857;line-height:1.35">The holder stopped renewing. Usually a dead process.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;padding:30px;display:flex;flex-direction:column;gap:8px">
+<p style="font-size:32px;font-weight:600">No progress past the stall window</p>
+<p style="font-size:27px;color:#6E6857;line-height:1.35">Still holding the lease, but nothing logged for 30 minutes. A live agent stuck in a loop.</p>
+</div>
+<div style="background:#FDFBF5;border:1px solid #E6DFD0;padding:30px;display:flex;flex-direction:column;gap:8px">
+<p style="font-size:32px;font-weight:600">Active with no owner at all</p>
+<p style="font-size:27px;color:#6E6857;line-height:1.35">Someone PATCHed a status without claiming. Normalized after a grace window.</p>
+</div>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">reapExpiredClaims · KANBAN_PROGRESS_STALL_MS 1800000 · KANBAN_ORPHAN_GRACE_MS 300000</p>
+<aside>Resist the shorthand "every reclaim is a dead agent" — it is wrong and an engineer will catch it. The second cause is the interesting one: an agent that is alive, holding its lease, and achieving nothing. The board treats silence as failure. Optional line: nobody noticed that agent died; the board did.</aside>
+</section>
