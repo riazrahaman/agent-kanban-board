@@ -16,6 +16,27 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.8.1] — 2026-10-20
+
+Documentation-and-presentation patch: formally versions the storefront polish that
+shipped across the last few pushes (the Version Bump Guard flags user-visible
+client-source changes without a version bump, and the About chapter had earned one).
+
+### Changed
+- **README storefront header**: centered hero (`# 🎯 Agent Kanban Board`) with tagline
+  and pitch, live/shields badge row (Release · CI · Tests 964 passing · License · Railway
+  deploy), anchor navigation, the recaptured board screenshot with a 🟢🟡🔴 severity-dot
+  caption, and a `[!TIP]` callout routing new-project setup to `ONBOARDING.md`.
+- **About page gains a "Solo-Run Marks" chapter** (13 chapters total): read-side
+  derivation from `stage_owners`, the green/amber/red thresholds, the
+  `role_binding_mismatch` pairing in the gotcha, and the filter-bubble persistence.
+- **Credential-value generation commands** for macOS / Windows PowerShell 5.1+ / and any
+  Node runtime added to the About "Who May Write" chapter and the project-connect FAQ.
+- **Landing screenshots recaptured** against the v3.8.0 UI with a seeded severity story
+  (`client/public/landing/*.png`: board, dark, mobile, portfolio, task-sheet, picker).
+- Trust metrics synced everywhere: 666 server + 298 client = **964 tests passing**
+  (About metrics, README badge, slide deck cover/close).
+
 ## [3.8.0] — 2026-10-19
 
 ### Breaking
