@@ -1,8 +1,44 @@
+import dns from 'node:dns';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherSourceContext } from '../askKnowledge.js';
 import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
+
+// Map of temporarily failed Tailscale Funnel ingress IPs -> timestamp
+const failedTunnelIps = new Map();
+// Pre-seed known dead Tailscale DERP edge node in Paris that terminates TLS handshakes with ECONNRESET
+failedTunnelIps.set('176.58.90.63', Date.now());
+
+function setupTailscaleDnsFallback() {
+  if (globalThis.__tailscaleDnsFallbackInstalled) return;
+  globalThis.__tailscaleDnsFallbackInstalled = true;
+  const originalLookup = dns.lookup;
+  dns.lookup = function (hostname, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    if (typeof hostname === 'string' && hostname.endsWith('.ts.net')) {
+      return originalLookup(hostname, { all: true }, (err, addresses) => {
+        if (err || !Array.isArray(addresses) || addresses.length <= 1) {
+          return originalLookup(hostname, options, callback);
+        }
+        const now = Date.now();
+        for (const [ip, ts] of failedTunnelIps) {
+          if (now - ts > 600000) failedTunnelIps.delete(ip);
+        }
+        const healthy = addresses.filter((a) => !failedTunnelIps.has(a.address));
+        const pool = healthy.length > 0 ? healthy : addresses;
+        if (options && options.all) {
+          return callback(null, pool);
+        }
+        return callback(null, pool[0].address, pool[0].family);
+      });
+    }
+    return originalLookup(hostname, options, callback);
+  };
+}
 
 /**
  * Ask-the-Board (v3.4.0) — a read-only, password-gated Q&A endpoint.
@@ -222,6 +258,7 @@ export function isLocalOllama(env) {
  * @param {object} [deps.env] injectable environment; defaults to process.env.
  */
 export function createAskRouter(deps = {}) {
+  setupTailscaleDnsFallback();
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
   const store = deps.store || storeModule;
@@ -505,7 +542,7 @@ export function createAskRouter(deps = {}) {
       reqBody.max_tokens = maxOutputTokens;
     }
 
-    const maxAttempts = isOllama ? 2 : 1;
+    const maxAttempts = isOllama ? 3 : 1;
     let lastErr = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
