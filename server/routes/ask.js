@@ -201,6 +201,20 @@ function ollamaHost(env) {
 }
 
 /**
+ * Returns true if Ollama is configured to run against a local model/host,
+ * rather than a hosted cloud Ollama endpoint (e.g. ollama.com) or cloud model (:cloud).
+ */
+export function isLocalOllama(env) {
+  if (resolveProvider(env) !== 'ollama') return false;
+  const host = ollamaHost(env).toLowerCase();
+  const model = modelName(env).toLowerCase();
+  if (host.includes('ollama.com') || host.includes('ollama.ai') || model.endsWith(':cloud')) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * @param {object} deps
  * @param {typeof fetch} [deps.fetch] injectable so tests never hit OpenRouter.
  * @param {() => number} [deps.now] injectable clock for the rate-limit tests.
@@ -307,26 +321,44 @@ export function createAskRouter(deps = {}) {
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
   function dailyCap() {
+    if (isLocalOllama(env)) {
+      return isNonEmpty(env.KANBAN_ASK_DAILY_CAP) ? intFrom(env.KANBAN_ASK_DAILY_CAP, Infinity) : Infinity;
+    }
     return intFrom(env.KANBAN_ASK_DAILY_CAP, 50);
   }
 
   function perIpHourlyLimit() {
+    if (isLocalOllama(env)) {
+      return isNonEmpty(env.KANBAN_ASK_PER_IP_PER_HOUR) ? intFrom(env.KANBAN_ASK_PER_IP_PER_HOUR, Infinity) : Infinity;
+    }
     return intFrom(env.KANBAN_ASK_PER_IP_PER_HOUR, 3);
   }
 
   function checkLimits(ip) {
+    const daily = dailyCap();
+    const hourly = perIpHourlyLimit();
+    if (!Number.isFinite(daily) && !Number.isFinite(hourly)) {
+      return null;
+    }
     pruneGlobal();
-    if (globalTimestamps.length >= dailyCap()) return 'daily_cap_reached';
+    if (Number.isFinite(daily) && globalTimestamps.length >= daily) return 'daily_cap_reached';
     const list = pruneIp(ip);
-    if (list.length >= perIpHourlyLimit()) return 'ip_limit_reached';
+    if (Number.isFinite(hourly) && list.length >= hourly) return 'ip_limit_reached';
     return null;
   }
 
   function consume(ip) {
+    const daily = dailyCap();
+    const hourly = perIpHourlyLimit();
+    if (!Number.isFinite(daily) && !Number.isFinite(hourly)) {
+      return;
+    }
     const ts = now();
-    globalTimestamps.push(ts);
-    if (!ipTimestamps.has(ip)) ipTimestamps.set(ip, []);
-    ipTimestamps.get(ip).push(ts);
+    if (Number.isFinite(daily)) globalTimestamps.push(ts);
+    if (Number.isFinite(hourly)) {
+      if (!ipTimestamps.has(ip)) ipTimestamps.set(ip, []);
+      ipTimestamps.get(ip).push(ts);
+    }
   }
 
   /** ms until the oldest timestamp in the exhausted window ages out. */
