@@ -98,7 +98,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '297',
+    value: '298',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -548,7 +548,7 @@ export const ARCH_DIAGRAM_CALLOUTS = {
 } as const
 
 // ---------------------------------------------------------------------------
-// The article: 12 chapters, each ELI5 → Under the hood → Real snippet → Gotcha
+// The article: 13 chapters, each ELI5 → Under the hood → Real snippet → Gotcha
 // ---------------------------------------------------------------------------
 
 export type ChapterSnippet = {
@@ -771,8 +771,36 @@ const claimed = await nextClaim(who, { project: proj, role: 'builder' })`,
     files: ['client/src/App.tsx', 'client/src/lib/useClaimCoordinator.ts'],
   },
   {
-    id: 'architecture',
+    id: 'solo',
     number: '09',
+    emoji: '🚦',
+    title: 'Solo-Run Marks',
+    eli5:
+      'Every card carries a small colored dot: green means two or more agents covered its stages, amber means one agent walked most of it alone, red means one agent walked it all — and shipped its own work.',
+    underTheHood:
+      'client/src/lib/ownership.ts derives the mark READ-SIDE from stage_owners alone — no server schema changed when this shipped in v3.8.0. It collects the agents recorded per active stage (legacy spellings `building`/`in_test` alias back to IN_PROGRESS/VALIDATION), normalizes ids for counting (case and whitespace), and thresholds the distinct count: one agent holding 2–3 active stages is amber, four or more is red. The mark is a property of the card’s whole ownership history, so it shows in every lane — including DONE, where self-approval evidence matters most — and cards with at most one held stage stay unmarked. The toolbar’s green/amber/red bubbles filter on it (multi-select, persisted per client), and the dot’s tooltip spells out the walk: who held which stage.',
+    snippet: {
+      label: 'thresholds (client/src/lib/ownership.ts)',
+      code: `agents >= 2                 -> green   # separation held across the walk
+agents == 1 && stages <= 3  -> amber   # solo-run: no independent pair-break
+agents == 1 && stages >= 4  -> red     # solo-run severe: built, reviewed,
+                                       # validated and/or closed its own work
+stages <= 1                 -> none    # too little history to judge
+
+# filter bar (BoardFilters): green/amber/red bubbles + reset,
+# persisted per client in localStorage under kanban.filters`,
+    },
+    gotcha:
+      'The dot reports the WALK, not a verdict. Orchestrators and CI runners legitimately hold several roles; a red dot is a review prompt for a human, not an accusation — pair it with the role_binding_mismatch audit (chapter 5) for the enforced version of the same discipline.',
+    files: [
+      'client/src/lib/ownership.ts',
+      'client/src/components/SeverityDot.tsx',
+      'client/src/components/BoardFilters.tsx',
+    ],
+  },
+  {
+    id: 'architecture',
+    number: '10',
     emoji: '🏗️',
     title: 'Architecture',
     eli5:
@@ -806,7 +834,7 @@ SIGTERM
   },
   {
     id: 'config',
-    number: '10',
+    number: '11',
     emoji: '⚙️',
     title: 'Configuration',
     eli5:
@@ -824,7 +852,7 @@ node scripts/gen-config-reference.mjs`,
   },
   {
     id: 'ask',
-    number: '11',
+    number: '12',
     emoji: '💬',
     title: 'Ask the Board',
     eli5:
@@ -846,7 +874,7 @@ POST /api/ask
   },
   {
     id: 'faq',
-    number: '12',
+    number: '13',
     emoji: '❓',
     title: 'FAQ',
     eli5:

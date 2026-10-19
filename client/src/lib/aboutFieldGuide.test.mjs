@@ -47,11 +47,11 @@ const cssSource = readFileSync(join(CLIENT_SRC, 'index.css'), 'utf8')
 // The article
 // ---------------------------------------------------------------------------
 
-test('the field guide has exactly twelve numbered chapters, in order', () => {
-  assert.equal(CHAPTERS.length, 12)
+test('the field guide has exactly thirteen numbered chapters, in order', () => {
+  assert.equal(CHAPTERS.length, 13)
   assert.deepEqual(
     CHAPTERS.map((c) => c.number),
-    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
+    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'],
   )
   const ids = CHAPTERS.map((c) => c.id)
   assert.equal(new Set(ids).size, ids.length, 'chapter ids must be unique (they are DOM anchors)')
@@ -97,6 +97,20 @@ test('chapter 1 maps the lifecycle and notes the normalised legacy spellings + t
   assert.match(text, /building/i)
   assert.match(text, /in_test/i)
   assert.match(states.gotcha, /terminal/i)
+})
+
+test('the solo-run chapter documents the severity thresholds and read-side derivation', () => {
+  // v3.8.0 shipped the marks; the guide is where a newcomer first sees them.
+  const solo = CHAPTERS.find((c) => c.id === 'solo')
+  assert.ok(solo, 'the solo-run marks chapter must exist')
+  const text = `${solo.eli5} ${solo.underTheHood} ${solo.snippet.code}`
+  assert.match(text, /stage_owners/, 'the derivation source must be named')
+  assert.match(text, /`building`|`in_test`/, 'the legacy stage aliases must be mentioned')
+  assert.ok(text.includes('amber') && text.includes('red'), 'amber and red thresholds must be stated')
+  // Threshold pin: red begins at four solo stages, amber ends at three.
+  assert.match(text, /2[–-]3/)
+  assert.match(text, /4 or more|>= 4|>=4/)
+  assert.match(solo.gotcha, /verdict|review prompt/i, 'the gotcha must defuse the accusation reading')
 })
 
 test('the credentials chapter shows how to generate a credential value on every OS', () => {
