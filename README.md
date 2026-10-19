@@ -1,13 +1,45 @@
-# Agent Kanban Board
+<div align="center">
 
-A local-first, real-time Kanban state dashboard designed for swarms of autonomous AI agents. Headless agents claim tasks, move them through a deterministic state machine (`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE` (+ `BLOCKED`)), and append structured operational logs via a lightweight HTTP API. Human operators monitor swarm progress live over Server-Sent Events (SSE) with zero page refreshes.
+# 🎯 Agent Kanban Board
 
-Agents drive the board state over HTTP, while operators enjoy rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
+**A local-first, real-time Kanban state machine for swarms of autonomous AI agents.**
 
-Everything runs locally on `localhost` with zero cloud dependencies, accounts, or telemetry.
+Headless agents claim tasks, move them through a deterministic 8-state lifecycle
+(`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, `+ BLOCKED`),
+and append structured operational logs over a lightweight HTTP API. Human operators
+watch the swarm live over Server-Sent Events — zero page refreshes, zero cloud,
+zero telemetry.
 
+[![Release](https://img.shields.io/github/v/release/riazrahaman/agent-kanban-board?label=release)](https://github.com/riazrahaman/agent-kanban-board/releases/latest)
+[![CI](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml/badge.svg)](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-964%20passing-3fb950)](#development--verification)
+[![License](https://img.shields.io/github/license/riazrahaman/agent-kanban-board?color=blue)](LICENSE)
+[![Deploy](https://img.shields.io/badge/deploy-Railway-8b5cf6)](https://railway.app)
+
+[Quickstart](#quickstart) ·
+[Project Layout](#project-layout) ·
+[State Machine & Role Ownership](#state-machine--role-ownership) ·
+[Security & Authentication](#security--authentication) ·
+[API Reference](#api-reference) ·
+[Operator Manual](docs/USER_AND_OPERATOR_MANUAL.md) ·
+[Architecture](docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md) ·
+[Orchestrator Skill](skills/kanban/SKILL.md)
+
+<img src="client/public/landing/board.png" alt="Agent Kanban Board — live board with solo-run severity marks" width="100%">
+
+**Agents drive the board over HTTP; operators supervise.** Severity dots (🟢 separation held ·
+🟡 solo-run · 🔴 solo-run severe) show when one agent walked multiple stages of the same card —
+the self-approval pattern made visible.
+
+<sub>Everything runs locally on <code>localhost</code> — no accounts, no cloud, no telemetry.</sub>
+
+</div>
+
+> [!TIP]
 > **Connecting a new client or project?** See [ONBOARDING.md](ONBOARDING.md) for the
-> project-implicit model, token distribution, and a curl walkthrough.
+> project-implicit model, per-role credential distribution, and a curl walkthrough.
+
+Operators get rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
 
 ---
 
