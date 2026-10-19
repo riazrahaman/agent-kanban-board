@@ -12,7 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot } from '../askKnowledge.js';
-import { hintForUpstreamStatus, looksLikeOpenRouterKey } from '../routes/ask.js';
+import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
  *  failure can assert on the output rather than scribbling on the run. */
@@ -1009,5 +1009,89 @@ describe('ask: ollama provider', () => {
       },
     );
   });
+
+  it('correctly classifies local Ollama vs cloud mode with isLocalOllama', () => {
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama' }), true);
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://rstudio.taile9308c.ts.net' }), true);
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'http://127.0.0.1:11434' }), true);
+    // Cloud host
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://ollama.com' }), false);
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://api.ollama.ai' }), false);
+    // Cloud model
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_MODEL: 'qwen3.6:cloud' }), false);
+    // OpenRouter provider
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'openrouter' }), false);
+  });
+
+  it('local Ollama has no rate limits by default (more than 3 requests in an hour succeed)', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        // 5 consecutive requests from the same IP (default limit would be 3)
+        for (let i = 0; i < 5; i++) {
+          const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+          assert.equal(res.res.status, 200, `request ${i + 1} should succeed without rate limiting`);
+        }
+        assert.equal(fetchImpl.calls.length, 5);
+      },
+    );
+  });
+
+  it('honours explicit rate limit overrides even for local Ollama if configured', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+          KANBAN_ASK_PER_IP_PER_HOUR: '2',
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const first = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(first.res.status, 200);
+        const second = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(second.res.status, 200);
+        const third = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(third.res.status, 429);
+        assert.equal(third.body.error, 'ip_limit_reached');
+      },
+    );
+  });
+
+  it('enforces default rate limits when Ollama is in cloud mode', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+          KANBAN_ASK_MODEL: 'qwen:cloud',
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        for (let i = 0; i < 3; i++) {
+          const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+          assert.equal(res.res.status, 200);
+        }
+        const fourth = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(fourth.res.status, 429);
+        assert.equal(fourth.body.error, 'ip_limit_reached');
+      },
+    );
+  });
 });
+
 
