@@ -39,10 +39,25 @@ async function getTask(id) {
 
 const AUTH_TOKEN = process.env.KANBAN_AUTH_TOKEN || '';
 
+/**
+ * v3.8.0: roles are credential-bound. With a role-bound KANBAN_PROJECT_TOKENS
+ * map, each stage's requests MUST use that role's credential — set
+ * KANBAN_TOKEN_PLANNER, KANBAN_TOKEN_BUILDER, KANBAN_TOKEN_REVIEWER,
+ * KANBAN_TOKEN_TESTER, KANBAN_TOKEN_RELEASER... (missing entries fall back to
+ * KANBAN_AUTH_TOKEN, whose legacy header semantics keep this script working
+ * against unconfigured boards). The X-Agent-Role header stays advisory: a
+ * bound credential overrides it and audits a mismatch.
+ */
+function resolveToken(role) {
+  const bound = role ? process.env[`KANBAN_TOKEN_${role.toUpperCase()}`] : null;
+  return bound || AUTH_TOKEN;
+}
+
 function getHeaders(role = 'builder') {
   const headers = { 'Content-Type': 'application/json' };
-  if (AUTH_TOKEN) {
-    headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+  const token = resolveToken(role);
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
   if (role) {
     headers['X-Agent-Role'] = role;
@@ -54,7 +69,9 @@ async function claimTask(id, agentId, role = 'builder') {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/claim${q}`, {
     method: 'POST',
     headers: getHeaders(role),
-    body: JSON.stringify({ agent_id: agentId, role }),
+    // v3.8.0: body `role` is no longer read — identity comes from the
+    // credential + X-Agent-Role header only.
+    body: JSON.stringify({ agent_id: agentId }),
   });
   if (!res.ok) {
     throw new Error(`POST /api/tasks/${id}/claim failed: ${res.status} ${res.statusText}`);
@@ -63,13 +80,15 @@ async function claimTask(id, agentId, role = 'builder') {
 }
 
 async function patchTask(id, patch) {
-  const role = patch.role || 'builder';
+  const { role, ...rest } = patch;
   // Optimistic concurrency: send the version we just read (409 if stale).
   const current = await getTask(id);
   const res = await fetch(`${BASE_URL}/api/tasks/${id}${q}`, {
     method: 'PATCH',
     headers: getHeaders(role),
-    body: JSON.stringify({ ...patch, expected_version: current.version }),
+    // v3.8.0: a body `role` is rejected with 400 ('role is not mutable') —
+    // the role travels in the header (or lives in the credential) only.
+    body: JSON.stringify({ ...rest, expected_version: current.version }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -82,7 +101,7 @@ async function addLog(id, agentId, message, role = 'builder') {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}/logs${q}`, {
     method: 'POST',
     headers: getHeaders(role),
-    body: JSON.stringify({ agent_id: agentId, message, role }),
+    body: JSON.stringify({ agent_id: agentId, message }),
   });
   if (!res.ok) {
     throw new Error(`POST /api/tasks/${id}/logs failed: ${res.status} ${res.statusText}`);
@@ -159,7 +178,8 @@ async function ensureTask(id, title) {
     const created = await fetch(`${BASE_URL}/api/tasks`, {
       method: 'POST',
       headers: getHeaders('runner'),
-      body: JSON.stringify({ id, title, status: 'BACKLOG', round: 1, role: 'runner', project: PROJECT }),
+      // v3.8.0: body role removed — identity comes from credential + header.
+      body: JSON.stringify({ id, title, status: 'BACKLOG', round: 1, project: PROJECT }),
     });
     if (!created.ok) {
       throw new Error(`POST /api/tasks ${id} failed: ${created.status} ${await created.text().catch(() => '')}`);
