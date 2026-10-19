@@ -214,6 +214,9 @@ export function createAskRouter(deps = {}) {
   const env = deps.env || readEnv();
   const router = express.Router();
   const logger = deps.logger || console;
+  const retryDelayMs = deps.retryDelayMs !== undefined
+    ? deps.retryDelayMs
+    : (deps.fetch || process.env.NODE_ENV === 'test' ? 1 : 750);
 
   const provider = resolveProvider(env);
 
@@ -457,6 +460,9 @@ export function createAskRouter(deps = {}) {
       ],
       temperature: 0.2,
     };
+    if (isOllama) {
+      reqBody.keep_alive = -1;
+    }
     // For OpenRouter: clamp output tokens to prevent runaway credit spend.
     // For Ollama (local): do not impose a token limit unless explicitly set
     // in KANBAN_ASK_MAX_OUTPUT_TOKENS, so thinking/reasoning models (qwen3.6)
@@ -467,33 +473,48 @@ export function createAskRouter(deps = {}) {
       reqBody.max_tokens = maxOutputTokens;
     }
 
-    try {
-      upstream = await fetchImpl(targetUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (err) {
-      const aborted =
-        err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
-      // The upstream BODY is still never logged — only the shape of the
-      // failure, which is what an operator needs and a visitor cannot abuse.
-      if (aborted) {
-        logFailure('timeout', `timed out after ${now() - startedAt}ms (KANBAN_ASK_TIMEOUT_MS=${timeoutMs})`);
-        return res.status(503).json({ error: 'timeout' });
+    const maxAttempts = isOllama ? 2 : 1;
+    let lastErr = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        upstream = await fetchImpl(targetUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(reqBody),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const aborted =
+          err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
+        // The upstream BODY is still never logged — only the shape of the
+        // failure, which is what an operator needs and a visitor cannot abuse.
+        if (aborted) {
+          logFailure('timeout', `timed out after ${now() - startedAt}ms (KANBAN_ASK_TIMEOUT_MS=${timeoutMs})`);
+          return res.status(503).json({ error: 'timeout' });
+        }
+        if (attempt < maxAttempts) {
+          if (retryDelayMs > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+          continue;
+        }
       }
+    }
+
+    if (lastErr) {
       // `fetch` reports a transport failure as a bare `TypeError` whose
       // MESSAGE and `cause` carry the only useful part — the errno. Logging
       // just the name (v3.6.1) produced "TypeError" and nothing else, which
       // narrowed nothing: DNS failure, refused connection, unreachable
       // network and a TLS error all look identical from the name alone.
-      const cause = err?.cause;
+      const cause = lastErr?.cause;
       const detail = [
-        err?.name,
-        err?.message,
+        lastErr?.name,
+        lastErr?.message,
         cause?.code || cause?.errno,
-        cause?.message && cause.message !== err?.message ? cause.message : null,
+        cause?.message && cause.message !== lastErr?.message ? cause.message : null,
         cause?.hostname ? `host=${cause.hostname}` : null,
       ]
         .filter(Boolean)

@@ -956,4 +956,58 @@ describe('ask: ollama provider', () => {
       },
     );
   });
+
+  it('sets keep_alive: -1 for Ollama so model stays loaded in memory', async () => {
+    const fetchImpl = makeOllamaFetch();
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(fetchImpl.calls.length, 1);
+        const reqBody = JSON.parse(fetchImpl.calls[0].opts.body);
+        assert.equal(reqBody.keep_alive, -1);
+      },
+    );
+  });
+
+  it('retries transient transport drops (ECONNRESET) on Ollama and succeeds on second attempt', async () => {
+    const logger = fakeLogger();
+    let calls = 0;
+    const fetchImpl = makeOllamaFetch(() => {
+      calls++;
+      if (calls === 1) {
+        const err = new TypeError('fetch failed');
+        err.cause = { code: 'ECONNRESET', message: 'Client network socket disconnected before secure TLS connection was established' };
+        return err;
+      }
+      return fakeResponse(200, okAnswerBody('Recovered answer'));
+    });
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+        },
+        fetch: fetchImpl,
+        store: fakeStore(),
+        logger,
+        retryDelayMs: 1,
+      },
+      async (baseUrl) => {
+        const res = await jsonRequest(baseUrl, '/api/ask', askRequest());
+        assert.equal(res.res.status, 200);
+        assert.equal(res.body.answer, 'Recovered answer');
+        assert.equal(calls, 2);
+      },
+    );
+  });
 });
+
