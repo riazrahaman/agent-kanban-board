@@ -1012,7 +1012,7 @@ describe('ask: ollama provider', () => {
 
   it('correctly classifies local Ollama vs cloud mode with isLocalOllama', () => {
     assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama' }), true);
-    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://rstudio.taile9308c.ts.net' }), true);
+    assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://local-machine.ts.net' }), true);
     assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'http://127.0.0.1:11434' }), true);
     // Cloud host
     assert.equal(isLocalOllama({ KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'https://ollama.com' }), false);

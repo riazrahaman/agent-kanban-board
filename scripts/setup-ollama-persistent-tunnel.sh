@@ -4,7 +4,7 @@
 # Sets up a permanent, persistent link between the Railway Kanban Board
 # and your local Ollama instance via Tailscale Funnel + Local Token Gateway.
 #
-# Unlike Quick Tunnels, this gives a permanent domain (https://rstudio.taile9308c.ts.net)
+# Unlike Quick Tunnels, this gives a permanent domain (https://<node-name>.<tailnet>.ts.net)
 # that never changes, does not require keeping a terminal window open, and does not
 # expose your private tailnet/network to Railway.
 
@@ -92,12 +92,17 @@ echo "=== [3/4] Enabling Tailscale Funnel on Port ${GATEWAY_PORT} ==="
 FUNNEL_OUTPUT=$(tailscale funnel --yes --bg ${GATEWAY_PORT} 2>&1 || true)
 
 if echo "${FUNNEL_OUTPUT}" | grep -q "login.tailscale.com"; then
+  APPROVAL_URL=$(echo "${FUNNEL_OUTPUT}" | grep -o 'https://login\.tailscale\.com/f/funnel[^ "]*' | head -n1 || true)
   echo ""
   echo "************************************************************************"
   echo "ACTION REQUIRED: Funnel needs one-time activation on your Tailnet."
   echo "Please open this link in your browser and click 'Enable Funnel':"
   echo ""
-  echo "  https://login.tailscale.com/f/funnel?node=nmUEH2BA2421CNTRL"
+  if [ -n "${APPROVAL_URL}" ]; then
+    echo "  ${APPROVAL_URL}"
+  else
+    echo "  Check your Tailscale admin console or run 'tailscale funnel status'."
+  fi
   echo ""
   echo "After enabling it in your browser, run this script again."
   echo "************************************************************************"
@@ -108,7 +113,13 @@ echo "✓ Tailscale Funnel enabled."
 tailscale funnel status
 
 echo "=== [4/4] Configuring Railway Production Environment ==="
-STATIC_HOST="https://rstudio.taile9308c.ts.net"
+TS_DOMAIN=$(tailscale status --json | grep -m1 '"DNSName"' | cut -d'"' -f4 | sed 's/\.$//' || true)
+if [ -z "${TS_DOMAIN}" ]; then
+  echo "Error: Could not determine Tailscale MagicDNS domain name."
+  echo "Please specify STATIC_HOST manually, e.g.: STATIC_HOST=\"https://<node>.<tailnet>.ts.net\" ./scripts/setup-ollama-persistent-tunnel.sh"
+  exit 1
+fi
+STATIC_HOST="https://${TS_DOMAIN}"
 railway variable set \
   KANBAN_ASK_PROVIDER="ollama" \
   KANBAN_ASK_OLLAMA_HOST="${STATIC_HOST}" \
