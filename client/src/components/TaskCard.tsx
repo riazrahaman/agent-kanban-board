@@ -88,7 +88,6 @@ function TaskCard({
         >
           {task.id}
         </span>
-        <SeverityDot task={task} />
         <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:flex-nowrap">
           {showProject && task.project && (
             <span
@@ -122,6 +121,12 @@ function TaskCard({
           </span>
           <StatusBadge status={task.status} />
         </div>
+        {/* Ownership/severity mark sits LAST in the header row: after the pinned
+            badge group instead of beside the id — the 11px dot next to a
+            truncated mono id read as part of the id chips and collided with
+            project/priority/status on narrow columns (placement feedback,
+            variant B: far-right of the header row). */}
+        <SeverityDot task={task} />
       </div>
 
       {editingTitle ? (

@@ -20,7 +20,7 @@ export default function SeverityDot({ task }: Props) {
       role="img"
       aria-label={tooltip}
     >
-      <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 w-56 rounded border border-line bg-surface p-2 font-sans text-[11px] leading-snug text-ink opacity-0 transition-opacity duration-150 group-hover/tooltip:opacity-100 group-focus-within/tooltip:opacity-100">
+      <span className="pointer-events-none absolute right-0 top-full z-20 mt-1 w-56 rounded border border-line bg-surface p-2 font-sans text-[11px] leading-snug text-ink opacity-0 transition-opacity duration-150 group-hover/tooltip:opacity-100 group-focus-within/tooltip:opacity-100">
         {tooltip}
       </span>
     </span>
