@@ -93,7 +93,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '633',
+    value: '649',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -108,9 +108,9 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'every push is built on both',
   },
   {
-    value: '4',
+    value: '5',
     label: 'ADRs',
-    detail: 'storage, git recovery, mutation serialization, 8-state workflow',
+    detail: 'storage, git recovery, mutation serialization, 8-state workflow, credential-bound roles',
   },
 ]
 
@@ -138,7 +138,7 @@ export const WHY_CARDS: WhyCard[] = [
   {
     title: 'An agent skips the workflow',
     body: 'A rogue or buggy agent could jump a card straight to DONE, a builder could approve its own work, or a tester could ship what it only verified.',
-    mechanism: 'canTransition + canRoleTransition — illegal moves 409, wrong roles 403, enforced server-side',
+    mechanism: 'canTransition + canRoleTransition — illegal moves 409; roles come from the credential and are forced server-side (403)',
   },
   {
     title: 'A task is silently reclaimed',
@@ -280,7 +280,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: 'How do I connect a new project?',
-    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it a token out of band via KANBAN_PROJECT_TOKENS. See ONBOARDING.md for the curl walkthrough.',
+    a: 'There is no registration step. A project materialises the first time you post a task under its id; you give it out-of-band credentials via KANBAN_PROJECT_TOKENS — one role-bound token per agent role. See ONBOARDING.md for the curl walkthrough.',
   },
   {
     q: 'Can humans change task state?',
@@ -301,14 +301,15 @@ export const FAQ: FaqItem[] = [
 // ---------------------------------------------------------------------------
 
 export const CLAIM_CURL = `curl -s -X POST "$BOARD/api/tasks/next-claim?project=$PROJECT&agent_id=builder-1" \\
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder"`
+  -H "Authorization: Bearer $BUILDER_TOKEN"   # the credential is bound to the builder role`
 
 export const CURL_SNIPPET = `# an agent drives the board headlessly (claims READY -> IN_PROGRESS)
 ${CLAIM_CURL}
 
-# every PATCH carries the card's current version (409 if stale)
+# every PATCH carries the card's current version (409 if stale) — and no role header:
+# the role-bound credential decides, a self-declared X-Agent-Role cannot switch it
 curl -s -X PATCH "$BOARD/api/tasks/$ID?project=$PROJECT" \\
-  -H "Authorization: Bearer $TOKEN" -H "X-Agent-Role: builder" \\
+  -H "Authorization: Bearer $BUILDER_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"status":"IN_REVIEW","expected_version":2}'
 
@@ -675,17 +676,17 @@ KANBAN_ORPHAN_GRACE_MS=300000      # grace for an ownerless active card
     eli5:
       'Every write carries a credential, and the credential decides which projects it may touch. What you claim to be in a header counts for nothing.',
     underTheHood:
-      'server/middleware/auth.js resolves the request against KANBAN_ADMIN_TOKEN (spans every project), KANBAN_PROJECT_TOKENS (a JSON map — a token only works for the projects it names, otherwise 403 "token is not authorized for project \'X\'"), an HMAC session token from KANBAN_AUTH_SECRET (revocable via jti), or the legacy global KANBAN_AUTH_TOKEN. The SSE stream cannot set headers, so it accepts a short-lived, single-use 60-second ticket. Malformed or missing config fails closed with a 503 rather than opening an unauthenticated write API.',
+      'server/middleware/auth.js resolves the request against KANBAN_ADMIN_TOKEN (spans every project), KANBAN_PROJECT_TOKENS (per-project credentials — a token only works for the projects it names, otherwise 403 "token is not authorized for project \'X\'", and each credential may be role-bound {"token":"…","role":"…"} so the server derives the role), an HMAC session token from KANBAN_AUTH_SECRET (revocable via jti), or the legacy global KANBAN_AUTH_TOKEN. The SSE stream cannot set headers, so it accepts a short-lived, single-use 60-second ticket. Malformed or missing config fails closed with a 503 rather than opening an unauthenticated write API.',
     snippet: {
-      label: 'per-project isolation',
-      code: `# a token is scoped to the projects it names
-KANBAN_PROJECT_TOKENS={"alpha":"tok-a","beta":"tok-b"}
+      label: 'per-role credentials',
+      code: `# one credential per agent role, bound in the token map
+KANBAN_PROJECT_TOKENS={"alpha":{"credentials":[{"token":"tok-build","role":"builder"},{"token":"tok-review","role":"reviewer"}]}}
 
-# a write aimed at the wrong project
-403 Forbidden: token is not authorized for project 'beta'`,
+# a bound credential cannot impersonate another role — the header is ignored and audited
+role_binding_mismatch: declared 'reviewer' conflicts with credential-bound role 'builder'`,
     },
     gotcha:
-      'Privilege comes from the CREDENTIAL, never from the self-asserted X-Agent-Role header. A per-project worker token can assert builder/reviewer/tester but can never confer an admin-only operation.',
+      'Privilege AND role come from the CREDENTIAL, never from the self-asserted X-Agent-Role header. A role-bound worker token cannot re-declare itself reviewer; a conflicting header is ignored and audited, and only legacy unbound tokens still honor the header.',
     files: ['server/middleware/auth.js'],
   },
   {
@@ -808,7 +809,7 @@ SIGTERM
 node scripts/gen-config-reference.mjs`,
     },
     gotcha:
-      'Prefer the per-project tokens over the legacy global KANBAN_AUTH_TOKEN: the global token opens every project, which is exactly the isolation KANBAN_PROJECT_TOKENS exists to give you.',
+      'Prefer the per-project tokens over the legacy global KANBAN_AUTH_TOKEN: the global token opens every project and lets one agent re-declare any role per request — exactly what per-project role-bound credentials exist to prevent.',
     files: ['docs/CONFIGURATION.md', 'scripts/gen-config-reference.mjs'],
   },
   {
@@ -864,7 +865,7 @@ export type EnvVar = {
 }
 
 export const ENV_VARS: EnvVar[] = [
-  { name: 'KANBAN_PROJECT_TOKENS', purpose: 'JSON map of project id to per-project token — a token only works for the projects it names.' },
+  { name: 'KANBAN_PROJECT_TOKENS', purpose: 'Per-project credentials with optional role binding ({"token","role"} — the role is forced server-side); a token only works for the projects it names.' },
   { name: 'KANBAN_ADMIN_TOKEN', purpose: 'Privileged token that spans every project (audited as admin_write).' },
   { name: 'KANBAN_AUTH_TOKEN', purpose: 'Legacy global shared token gating every mutating request (opens every project — prefer per-project tokens).' },
   { name: 'KANBAN_AUTH_SECRET', purpose: 'HMAC secret that enables stateless, revocable session tokens.' },

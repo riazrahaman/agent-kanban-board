@@ -31,7 +31,7 @@ Client tests are `.test.mjs` files in `client/src/**` and mostly import `.ts` mo
 
 CI (`.github/workflows`) runs, on Node 20 and 22: `scripts/check-version-bump.sh`, `npm ci`, `npm audit --audit-level=high`, `make sec`, tests, build. `make sec` fails on any tracked file containing a `/Users/<name>` or `/home/<name>` path and on `dangerouslySetInnerHTML` in `client/src`, so never write absolute home paths into tracked files (including docs and this file).
 
-Configuration is env-driven; the generated reference is `docs/CONFIGURATION.md` (regenerate with `node scripts/gen-config-reference.mjs`). Mutations need `KANBAN_AUTH_TOKEN` (or per-project `KANBAN_PROJECT_TOKENS` / `KANBAN_ADMIN_TOKEN`); reads are open unless `KANBAN_READ_AUTH=token`.
+Configuration is env-driven; the generated reference is `docs/CONFIGURATION.md` (regenerate with `node scripts/gen-config-reference.mjs`). Mutations need `KANBAN_AUTH_TOKEN` (or per-project `KANBAN_PROJECT_TOKENS` / `KANBAN_ADMIN_TOKEN`); reads are open unless `KANBAN_READ_AUTH=token`. Since v3.8.0 `KANBAN_PROJECT_TOKENS` credentials may be role-bound (`{"token":"…","role":"builder"}`) — the role is then forced server-side from the credential and a conflicting `X-Agent-Role` header is ignored + audited (`role_binding_mismatch`); every agent role needs its own token.
 
 ## Architecture
 

@@ -249,10 +249,16 @@ Credential families, resolved in `middleware/auth.js` `getAuthorizedProjects`:
 - **`KANBAN_AUTH_TOKEN`** — legacy single global token; opens **every** project.
 - **`KANBAN_ADMIN_TOKEN`** — privileged superuser; spans every project; admin
   writes are audited (`admin_write`).
-- **`KANBAN_PROJECT_TOKENS`** — JSON map `{"project":"token"}`. A token only works
-  for the projects it names; malformed JSON is a config failure → mutations `503`
-  (never a silent fallback to global). A per-project token confers
-  `privileged=false` by convention.
+- **`KANBAN_PROJECT_TOKENS`** — JSON map of per-project credentials. Value shapes:
+  a legacy string or `{"token":"tok"}` is **unbound** (header role kept);
+  `{"token":"tok","role":"builder"}` is **role-bound** — the role is forced
+  server-side from the credential, a conflicting `X-Agent-Role` header is ignored
+  and audited (`role_binding_mismatch`), and a bound credential may never carry a
+  privileged role; `{"credentials":[…]}` carries several credentials per project
+  (one per agent role). Malformed JSON *or any invalid entry* (empty token,
+  unknown role, privileged role) is a config failure → mutations `503` (never a
+  silent fallback to global). A per-project token confers `privileged=false` by
+  convention. Admin token → `caller.role = "admin"`.
 - **`KANBAN_AUTH_SECRET`** — HMAC stateless session tokens (`sessionAuth.js`):
   `POST /api/auth/session` (proof-of-secret handshake) → self-describing token
   `base64url(payload).hmac` with `{cn,sn,jti,exp,role,project}`, 24 h expiry, and
@@ -272,7 +278,10 @@ writing to B).
 **Credential-derived privilege.** `req.caller.privileged` is set from the
 credential (admin token, or a session role that is privileged), never from the
 self-asserted `X-Agent-Role` header. `destructivePrivilege`/`callerIsPrivileged`
-gate delete/purge/assign on that flag.
+gate delete/purge/assign on that flag. **Roles work the same way (v3.8.0,
+ADR-005):** a role-bound credential's role is derived server-side and overrides
+the header; only unbound credentials honor `X-Agent-Role`, and every agent role
+needs its own token.
 
 **Fail-closed 503s.** No auth mechanism configured on a mutation → `503`; malformed
 `KANBAN_PROJECT_TOKENS` → `503`; `/api/auth/session` with no secret → `503`;
@@ -478,8 +487,9 @@ Local credentials live in a **gitignored** `.opencode/config.json` (the whole
 {
   "kanban_url":   "https://agent-kanban.riazrahaman.com",
   "project_name": "<your project id>",
-  "kanban_token": "<a project or global token>",
-  "admin_token":  "<KANBAN_ADMIN_TOKEN>"
+  "kanban_token": "<the credential for THIS agent's role — role-bound (planner/builder/reviewer/tester/releaser) in KANBAN_PROJECT_TOKENS, or the legacy unbound token>",
+  "kanban_token_builder": "<alternative: swap per-phase tokens by role>",
+  "admin_token":  "<KANBAN_ADMIN_TOKEN> — confers role admin"
 }
 ```
 

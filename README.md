@@ -60,7 +60,7 @@ Open `http://localhost:5173` in your browser to view the board. The header switc
 
 ### 3. Drive It With the Orchestrator Skill
 
-The repo bundles an opencode skill at **`skills/kanban/SKILL.md`** — the strict orchestrator protocol that turns a coding agent into the board's admin: claim-first transitions, `?project=` scoping on every task path, `expected_version` optimistic locking, and builder / reviewer / tester dispatch. It also documents the optional Telegram reclaim alerts (off unless `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set), the out-of-band signal for the lease-loss recovery path. Copy it into your opencode skill path to load it:
+The repo bundles an opencode skill at **`skills/kanban/SKILL.md`** — the strict orchestrator protocol that turns a coding agent into the board's admin: claim-first transitions, `?project=` scoping on every task path, `expected_version` optimistic locking, and builder / reviewer / tester dispatch. Each role uses **its own token, bound to that role in `KANBAN_PROJECT_TOKENS`** (`{"token":"…","role":"…"}`) — the server derives the caller's role from the credential, so a header cannot re-declare it. It also documents the optional Telegram reclaim alerts (off unless `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set), the out-of-band signal for the lease-loss recovery path. Copy it into your opencode skill path to load it:
 
 ```bash
 # project-local (gitignored) or global
@@ -90,7 +90,7 @@ BACKLOG ──► READY ──► PLANNING ──► IN_PROGRESS ──► IN_RE
   - **Validator / Tester**: Advances `VALIDATION → READY_TO_SHIP`, or returns `VALIDATION → IN_PROGRESS`. Cannot mark `DONE`.
   - **Releaser**: Advances `READY_TO_SHIP → DONE`.
   - **Runner / Admin**: May administer `BLOCKED` state transitions and orchestrate recoveries.
-  - Callers provide their role via request body (`{"role": "builder"}`) or header (`X-Agent-Role: builder`); a missing role cannot pass a status transition. Unauthorized role transitions return `403 Forbidden`.
+  - Roles are **server-enforced**. With role-bound `KANBAN_PROJECT_TOKENS` credentials (`{"token":"…","role":"builder"}`), the role comes from the credential that proved the request — an `X-Agent-Role` header that conflicts with the bound role is ignored and audited (`role_binding_mismatch`), and a `role` field in a PATCH body is rejected with `400`. Header-declared roles continue to work only for legacy unbound tokens (and browser sessions, whose roles are server-issued); the admin token derives `admin`. A missing role cannot pass a status transition; unauthorized role transitions return `403 Forbidden`.
 - **Claim Contention**: Only `READY` tasks can be claimed (`POST /api/tasks/:id/claim`). Once an agent claims a task, a second agent cannot claim or hijack it (`409 Conflict`) until released or expired. Claiming a `READY` task as builder automatically lifts to `IN_PROGRESS`; claiming as planner lifts to `PLANNING`.
 
 ---
@@ -160,9 +160,9 @@ The board features pluggable persistence:
 - **Authentication (A07)**:
   - Configure `KANBAN_AUTH_TOKEN=<secret>` in your environment; there is no default or fallback token.
   - Mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `Authorization: Bearer <token>` or `X-API-Token: <token>`. If the token is not configured, mutations fail closed with `503`.
-  - Per-project isolation via `KANBAN_PROJECT_TOKENS` (JSON map `{"project":"token"}`); an admin token (`KANBAN_ADMIN_TOKEN`) spans every project and is audited as `admin_write`. Under isolation mode (v3.3.0+), client tokens strictly isolate project listings (`GET /api/projects`), health probe metadata (`GET /api/health`), and task feeds (`GET /api/tasks`).
+  - Per-project isolation via `KANBAN_PROJECT_TOKENS`; each credential may be role-bound — `{"project":"tok"}` (legacy string), `{"project":{"token":"tok","role":"builder"}}` (one role-bound credential), or several under `{"project":{"credentials":[{"token":"…","role":"planner"},{"token":"…","role":"builder"},…]}}`. A role-bound credential's role is forced server-side; roles `runner`/`system`/`human`/`admin` can never be bound to a shared credential. An admin token (`KANBAN_ADMIN_TOKEN`) spans every project, derives the `admin` role, and is audited as `admin_write`. Under isolation mode (v3.3.0+), client tokens strictly isolate project listings (`GET /api/projects`), health probe metadata (`GET /api/health`), and task feeds (`GET /api/tasks`).
   - HMAC session tokens are available when `KANBAN_AUTH_SECRET` is set — clients negotiate a stateless 24h token via `POST /api/auth/session` instead of holding a static secret. See [ONBOARDING.md](ONBOARDING.md).
-  - Identity is sent as `X-Agent-Id` + `X-Agent-Role` (or `body.role`), lowercased, validated against `VALID_ROLES`.
+  - Identity is sent as `X-Agent-Id` + `X-Agent-Role`, lowercased, validated against `VALID_ROLES`. For role-bound credentials the role is conferred by the credential itself and a conflicting header is ignored/audited; headers (or a `body.role` on create) only matter for legacy unbound tokens.
   - Read-only endpoints (`GET /api/tasks`, `GET /api/events`) remain open for non-blocking monitoring, but scope to authorized projects when `KANBAN_PROJECT_TOKENS` is active.
 - **CORS Lockdown (A05)**:
   - CORS is restricted to `http://localhost:5173` by default. Set `KANBAN_ALLOWED_ORIGIN` (a comma-separated list) to allow other client origins; wildcard `*` is prohibited.
@@ -543,7 +543,7 @@ The server is a stateful long-running process (in-memory store, background lease
   measured shutdown from ~5s to ~0.1s. If you are self-hosting an older build
   behind a short grace period, expect the same symptom.
 
-For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth token (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS`), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
+For either host, attach a **persistent volume/disk** and point the storage env vars at it (`KANBAN_DATA_FILE=/data/tasks.json` for the default project, `KANBAN_DATA_DIR=/data` for named projects + archives), set an auth mechanism (`KANBAN_AUTH_TOKEN`, or scoped `KANBAN_PROJECT_TOKENS` — ideally one role-bound credential per agent role), and set `KANBAN_ALLOWED_ORIGIN` to the public URL. Without a disk, data is lost on every redeploy. The server auto-binds `0.0.0.0` when `PORT` is injected.
 
 ---
 

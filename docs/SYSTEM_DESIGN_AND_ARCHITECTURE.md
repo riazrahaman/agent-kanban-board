@@ -190,6 +190,8 @@ flowchart TD
 
 The loop lifecycle is strictly deterministic (ADR-001). Arbitrary state transitions are rejected with `409 Conflict`. Role violations are rejected with `403 Forbidden`.
 
+**Roles are server-derived, not caller-declared (v3.8.0, ADR-005).** `req.caller.role` comes from the credential that proved the request: a role-bound `KANBAN_PROJECT_TOKENS` credential (`{"token":"…","role":"…"}`) forces its role and a conflicting `X-Agent-Role` header is ignored (audited as `role_binding_mismatch`); the `KANBAN_ADMIN_TOKEN` derives `admin`; session tokens carry their server-issued role; only legacy unbound credentials honor the header (never the `PATCH` body — a body `role` is a `400`). Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound to a shared credential.
+
 ```mermaid
 flowchart LR
     subgraph Legend ["Permissions Legend (v3, ADR-004)"]
@@ -407,11 +409,11 @@ flowchart TD
 | Threat / Vulnerability | OWASP Category | Defense Implemented in Code |
 |---|---|---|
 | **Unauthenticated Mutation** | A07: Identification and Authentication Failures | All mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require a token. No mechanism configured (`KANBAN_AUTH_TOKEN`, `KANBAN_PROJECT_TOKENS`, or `KANBAN_AUTH_SECRET`) → fail-closed `503`. Invalid token returns `401`. |
-| **Cross-Project Privilege Escalation** | A01: Broken Access Control | `KANBAN_PROJECT_TOKENS` (JSON map `project→token`) isolates writes per project; `referencedProjects` authorizes *every* project a request touches (body/query/header/composite path). `KANBAN_ADMIN_TOKEN` spans all but is audited as `admin_write`. |
+| **Cross-Project Privilege Escalation** | A01: Broken Access Control | `KANBAN_PROJECT_TOKENS` (per-project credentials, optionally role-bound) isolates writes per project; `referencedProjects` authorizes *every* project a request touches (body/query/header/composite path). `KANBAN_ADMIN_TOKEN` spans all, derives `admin`, and is audited as `admin_write`. |
 | **Long-Lived Secret Exposure** | A07: Identification and Authentication Failures | HMAC session tokens via `POST /api/auth/session` (stateless, 24h, role+project bound) let clients hold a short-lived token instead of a static secret. Raw secret is never transmitted. v2.10.0: tokens carry a `jti` and can be revoked before expiry through `POST /api/auth/revoke` (ENH-12). |
 | **Module Boundaries** | A04: Insecure Design | v2.10.0 (ENH-11) split `store.js` into `state-machine.js` (pure lifecycle), `task-identity.js` (ids/paths/`writeAtomic`), `task-fields.js` (pure validation), and `storage.js` (persistence backends); `store.js` re-exports every symbol so importers are unchanged. |
 | **Unauthenticated Reads** | A01: Broken Access Control | Reads are open by default, but `KANBAN_READ_AUTH=token` requires a credential on every GET/SSE. `EventSource` cannot set headers, so browsers exchange their token for a 60 s **single-use** HMAC ticket via `POST /api/auth/stream-ticket` and present `?ticket=`; the `jti` is consumed on first use. Liveness probes stay open. |
-| **Unauthorized State Hijacking** | A01: Broken Access Control | Role ownership matrix enforced in `server/store.js`. Missing role returns `403 Forbidden`. Unauthorized transitions blocked. `next-claim` role is read from the authenticated caller, not the URL. |
+| **Unauthorized State Hijacking** | A01: Broken Access Control | Role ownership matrix enforced in `server/store.js`. Missing role returns `403 Forbidden`. Unauthorized transitions blocked. `next-claim` role is read from the authenticated caller, not the URL. v3.8.0: roles are derived from the credential (role-bound `KANBAN_PROJECT_TOKENS`, admin token, or server-issued session) instead of the caller-declared `X-Agent-Role` header — one token can no longer walk a card through every stage by re-declaring a role (ADR-005). |
 | **Stored Cross-Site Scripting (XSS)** | A03: Injection | All agent-authored titles, descriptions, agent IDs, issue IDs, and log messages are sanitized with `escapeHtml` before persistence. Client renders exclusively via React JSX text nodes; `dangerouslySetInnerHTML` is explicitly banned in CI. |
 | **Cross-Origin API Abuse** | A05: Security Misconfiguration | `server/middleware/cors.js` forbids wildcard `*`. Restricted to an explicit allow-list (`KANBAN_ALLOWED_ORIGIN`, comma-separated, default `http://localhost:5173`). Untrusted origins receive no `Access-Control-Allow-Origin` header. |
 | **Abuse / DoS by Request Flood** | A05 / A10 | Per-project fixed-window rate limiting on mutations (`KANBAN_RATE_LIMIT_PER_MIN`), with `X-RateLimit-*` budget headers on `429`. |
@@ -444,7 +446,7 @@ sequenceDiagram
     API-->>Browser: HTTP 200 text/event-stream + event: settings
     Note over Browser,API: No board snapshot rides the connection. The client<br/>primed itself with GET /api/tasks. A whole-board<br/>snapshot costs ~18MB at 3000 tasks and is sent only<br/>for prime=1 or mode=snapshot (PERF-01).
     
-    Agent->>API: PATCH /api/tasks/task-1?project=default { status: "IN_REVIEW", expected_version: 3 } (X-Agent-Role: builder)
+    Agent->>API: PATCH /api/tasks/task-1?project=default { status: "IN_REVIEW", expected_version: 3 } (role-bound builder credential)
     API->>Queue: Enqueue mutation
     Queue->>Queue: Check state machine & role auth
     Queue->>Disk: writeAtomic(temporary file -> rename)

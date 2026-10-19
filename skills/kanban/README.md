@@ -2,7 +2,7 @@
 
 **Agents Kanban** — a strict, Kanban-first orchestrator skill for coding agents.
 
-Version `v3.7.3` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
+Version `v3.8.0` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
 
 The skill turns your coding agent into the **admin of a delegated build**. It stops writing code itself. Instead it owns the board, holds the lease on each card, dispatches builder / reviewer / tester workers, and only moves a card forward when there is evidence: command output, test results, commit hashes.
 
@@ -93,6 +93,22 @@ Three fields are mandatory: `kanban_url`, `kanban_token`, `project_name`. The sk
 
 `.opencode/` holds tokens. Add it to `.gitignore` before writing the file, and never stage it.
 
+**Credential-bound roles (MANDATORY as of skill v3.8.0):** every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`; the orchestrator uses an explicit `admin` (or `runner`) credential. Roles are forced by the credential — a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is rejected/audited (`role_binding_mismatch`). Legacy plain-string tokens keep current unbound behavior; migration is opt-in:
+
+```json
+{
+  "<project_name>": {
+    "credentials": [
+      { "token": "tok-planner", "role": "planner" },
+      { "token": "tok-build",   "role": "builder" },
+      { "token": "tok-review", "role": "reviewer" },
+      { "token": "tok-test",   "role": "tester" },
+      { "token": "tok-release", "role": "releaser" }
+    ]
+  }
+}
+```
+
 On start, the orchestrator calls `GET /projects` with authentication headers (`x-api-token: <kanban_token>`) to verify connectivity and that the project exists, and `GET /api/health` to confirm the board is `v3.0.0` or later and inspects `credential_map` (v3.1.0+; project names withheld from unauthenticated probes in v3.2.0+, scoped to authorized projects in v3.3.0+) to verify project token coverage. In `v3.3.0+`, unauthenticated `GET /projects` returns an empty array `[]` (or `401` when read-auth is active), and project-scoped tokens discover only their authorized projects. If `project_name` or `kanban_token` can't be determined, it halts and asks you instead of guessing.
 
 **No board yet?** If `kanban_url` is missing, the skill deploys one locally:
@@ -132,7 +148,8 @@ A Build → Review → Test cycle that repeats **3 times** halts and reports blo
 ## Rules the orchestrator follows
 
 - **Roles:** orchestrator = `admin`; workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
-- **Headers on every request:** `x-agent-id`, `x-agent-role`, `x-api-token`.
+- **Credential-bound roles (MANDATORY, v3.8.0+):** each role above needs its own token bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential, so headers alone no longer grant a role on bound credentials.
+- **Headers on every request:** `x-agent-id`, `x-agent-role`, `x-api-token`. On a role-bound credential the server derives the role from the credential; a conflicting `x-agent-role` is ignored and audited (`role_binding_mismatch`). The header remains the role source only for legacy unbound tokens.
 - **Claim to own, PATCH to move.** Enter active stages by claiming from `READY`. A status-only PATCH into an active stage without claim produces an ownerless card, which the reaper resets to `READY`.
 - **Optimistic locking:** every PATCH sends the fresh current `expected_version` (re-read before each PATCH; intermediate claims, logs, and heartbeats increment card version). Distinguish `409 Version mismatch` (retry with fresh version) from `409 Invalid state transition` (reaper reset after lease loss; re-claim). Stale writes get `409`.
 - **Leases & Progress:** default claim TTL is 10 min (`KANBAN_CLAIM_TTL_MS` = 600,000). Heartbeat at least every 2 minutes while holding a card; logs from the holder also extend the lease. Progress stall timeout (`KANBAN_PROGRESS_STALL_MS`, default 30 min) reaps abandoned claims even if heartbeated. A claim can request its own window with `{"lease_ms": <ms>}`, clamped between 60,000 and 7,200,000.
@@ -189,7 +206,7 @@ Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOAR
 
 - **Network:** your configured `kanban_url`, GitHub (via `git` / `gh`, including the board clone for local deploy), and your deployment's status / health check.
 - **Files:** your repo's working tree and branches, plus `.opencode/config.json` if you store config there.
-- **Tokens:** read from config or environment; `.opencode/` is kept out of git and never staged.
+- **Tokens:** read from config or environment; `.opencode/` is kept out of git and never staged. One role-bound credential per agent role (v3.8.0+ mandate), plus an explicit admin credential for the orchestrator.
 
 ## Versioning & releases
 

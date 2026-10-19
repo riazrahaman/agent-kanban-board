@@ -16,6 +16,20 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.8.0] — 2026-10-19
+
+### Breaking
+- **Roles are no longer trusted from the caller.** `KANBAN_PROJECT_TOKENS` credentials may now be **role-bound** (`{"token":"…","role":"builder"}`, or several per project under `credentials`). For a bound credential the role used by `canRoleTransition` is derived server-side from the token that proved the request; a conflicting `X-Agent-Role` header is ignored and audited as `role_binding_mismatch`. The header (or a create-body role) still works for legacy unbound credentials only. Deployments where one agent held one token and re-declared a role per lifecycle stage — the exact failure mode observed live — must migrate to one credential per role (planner/builder/reviewer/tester/releaser). Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound to a credential; they come only from the admin token or server-issued sessions.
+
+### Changed
+- A `role` field in a task `PATCH` body is rejected with `400` (it was a fallback side door in `patchTask`).
+- The `KANBAN_ADMIN_TOKEN` bearer now derives `caller.role = "admin"` instead of keeping the header role; `runner`/`system`/`human` can never be bound to a shared credential.
+- `GET /api/health`'s `credential_map` reports `bound_credentials` / `unbound_credentials` counts, and boot warns when per-project tokens are configured but 100% unbound.
+- Legacy single-token mode (`KANBAN_AUTH_TOKEN`) is unchanged; browser sessions already carried server-issued roles.
+
+### Documentation
+- README Security/State Machine and Deployment sections, `ONBOARDING.md`, `docs/USER_AND_OPERATOR_MANUAL.md`, `docs/HANDOVER.md`, `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md`, `docs/FILE_BY_FILE_EXPLANATION.md`, `docs/PRESENTER_RUNBOOK.md`, `.env.example`, `docs/CONFIGURATION.md` and the About page updated to mandate and demonstrate per-role credentials (see `docs/decisions/ADR-005-role-bound-roles.md`).
+
 ## [3.7.3] — 2026-10-19
 
 ### Changed
