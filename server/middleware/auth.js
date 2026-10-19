@@ -30,14 +30,29 @@ export const VALID_ROLES = new Set([
 ]);
 
 /**
- * Parses `KANBAN_PROJECT_TOKENS`, a JSON object mapping project id -> token:
- *   {"alpha":"tok-a","beta":"tok-b"}
- * A token may authorize several projects by appearing under each. Returns null
- * when unset/empty, which selects the legacy single-token path.
+ * Parses `KANBAN_PROJECT_TOKENS`, a JSON object mapping project id -> credential.
  *
- * Malformed JSON is a configuration failure and returns a sentinel rather than
- * silently falling back to the global token — quietly degrading to "one token
- * opens every project" is precisely the isolation failure this exists to stop.
+ * Accepted value shapes (v3.8.0 role binding):
+ *   "tok-a"                                      → legacy unbound credential
+ *   {"token":"tok-a"}                            → unbound credential
+ *   {"token":"tok-b","role":"builder"}           → ROLE-BOUND credential: the
+ *                                                  role is conferred by the
+ *                                                  credential itself, never by
+ *                                                  the caller-declared header.
+ *   {"credentials":[{"token":"tok-c","role":"reviewer"},
+ *                   {"token":"tok-d","role":"tester"}]}
+ *                                                → several credentials per project
+ *
+ * A token may authorize several projects by appearing under each. Roles that
+ * confer privilege (runner/system/human/admin) must never be bound to a shared
+ * map credential — privileged access belongs to KANBAN_ADMIN_TOKEN or a
+ * server-issued session, the same rule §2.3b (SEC-02) set for destructive ops.
+ *
+ * Malformed JSON (or any invalid entry — empty token, unknown role, privileged
+ * role, empty credentials array) is a configuration failure and returns a
+ * sentinel rather than silently falling back to the global token — quietly
+ * degrading to "one token opens every project" is precisely the isolation
+ * failure this exists to stop.
  */
 export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
   if (raw === undefined || raw === null || String(raw).trim() === '') return null;
@@ -50,11 +65,52 @@ export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { malformed: true };
   }
+  const normalizeCredential = (token, role) => {
+    if (typeof token !== 'string' || token === '') return null;
+    if (role === undefined || role === null) return { token, role: null };
+    if (typeof role !== 'string') return null;
+    const normalized = role.toLowerCase();
+    // Only functional roles may be bound to a credential. Privileged roles in
+    // the map would let a leaked shared token become a superuser credential.
+    if (!VALID_ROLES.has(normalized) || isPrivilegedRole(normalized)) return null;
+    return { token, role: normalized };
+  };
   const map = new Map();
-  for (const [project, token] of Object.entries(parsed)) {
-    if (typeof token !== 'string' || token === '') return { malformed: true };
+  for (const [project, value] of Object.entries(parsed)) {
     if (!isValidProjectId(project)) return { malformed: true };
-    map.set(project, token);
+    let creds;
+    if (typeof value === 'string') {
+      if (value === '') return { malformed: true };
+      creds = [{ token: value, role: null }];
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (typeof value.token === 'string') {
+        const cred = normalizeCredential(value.token, value.role);
+        if (!cred) return { malformed: true };
+        creds = [cred];
+      } else if (Array.isArray(value.credentials)) {
+        if (value.credentials.length === 0) return { malformed: true };
+        creds = [];
+        for (const entry of value.credentials) {
+          const cred = entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? normalizeCredential(entry.token, entry.role)
+            : null;
+          if (!cred) return { malformed: true };
+          creds.push(cred);
+        }
+      } else {
+        return { malformed: true };
+      }
+    } else {
+      return { malformed: true };
+    }
+    // The same token twice under one project is ambiguous — which role wins?
+    // Fail closed instead of guessing.
+    const seen = new Set();
+    for (const cred of creds) {
+      if (seen.has(cred.token)) return { malformed: true };
+      seen.add(cred.token);
+    }
+    map.set(project, creds);
   }
   if (map.size === 0) return { malformed: true };
   return { map };
@@ -157,8 +213,8 @@ export function getAuthorizedProjects(req) {
   const projectTokens = parseProjectTokens();
   if (projectTokens?.map) {
     const authorized = new Set();
-    for (const [project, token] of projectTokens.map.entries()) {
-      if (tokensMatch(providedToken, token)) {
+    for (const [project, creds] of projectTokens.map.entries()) {
+      if (creds.some((cred) => tokensMatch(providedToken, cred.token))) {
         authorized.add(project);
       }
     }
@@ -201,6 +257,31 @@ export function hasReadCredential(req) {
   return authorizeRead(req);
 }
 
+/**
+ * v3.8.0 — a caller-declared `X-Agent-Role` header disagreed with the role the
+ * presented credential carries. The request is served with the CREDENTIAL's
+ * role (the header cannot win), and the disagreement is made observable: one
+ * redacted console line and a `role_binding_mismatch` audit entry. This is not
+ * an auth failure — the caller proved identity — so it never touches the
+ * failed-auth rate limiter.
+ */
+function emitRoleBindingMismatch(req, declared, bound, scope) {
+  const agentId = req.caller?.agent_id || 'anonymous';
+  console.warn(
+    `[kanban auth] role_binding_mismatch on ${req.method} ${req.originalUrl} ` +
+    `(project: ${scope || defaultProjectName()}, agent: ${agentId}) ` +
+    `declared: '${declared || 'none'}' — serving with credential-bound role '${bound}'`
+  );
+  emitAudit({
+    ts: new Date().toISOString(),
+    kind: 'role_binding_mismatch',
+    project: scope || defaultProjectName(),
+    task: null,
+    actor: agentId,
+    reason: `declared '${declared || 'none'}' conflicts with credential-bound role '${bound}'`,
+  });
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a
@@ -215,9 +296,11 @@ export function createAuthMiddleware() {
       });
     }
 
-    // Extract caller identity
+    // Extract caller identity. The role here is the CALLER-DECLARED assertion
+    // only (header). It is advisory: a credential-bound role always overrides
+    // it, and a body-supplied role is rejected downstream (v3.8.0 Phase 2).
     const agentId = req.headers['x-agent-id'] || req.body?.agent_id || null;
-    const rawRole = req.headers['x-agent-role'] || req.body?.role || null;
+    const rawRole = req.headers['x-agent-role'] || null;
     const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
     req.caller = { agent_id: agentId, role };
 
@@ -309,21 +392,50 @@ export function createAuthMiddleware() {
       const isAdmin = adminToken ? tokensMatch(providedToken, adminToken) : false;
 
       if (!isAdmin) {
+        // First token match wins for binding resolution; v3.8.0 map values are
+        // credential arrays, so the same token under two projects resolves its
+        // role from the first referenced project — document in operator manual.
+        let binding = null;
+        let bindingScope = null;
         for (const scope of scopes) {
           const expected = projectTokens.map.get(scope);
-          if (!expected || !tokensMatch(providedToken, expected)) {
+          const matched = expected?.find((cred) => tokensMatch(providedToken, cred.token));
+          if (!matched) {
             logAuthFailure(req, 403, `token not valid for project '${scope}'`);
             recordAuthFailure(req);
             return res.status(403).json({
               error: `Forbidden: token is not authorized for project '${scope}'`,
             });
           }
+          if (!binding) {
+            binding = matched;
+            bindingScope = scope;
+          }
         }
         // A per-project token is by-convention a worker credential: functional
         // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
         req.caller.privileged = false;
+        if (binding.role) {
+          // v3.8.0: the role comes from the credential. A conflicting header is
+          // ignored and audited — it can neither escalate nor downgrade.
+          if (role && role !== binding.role) {
+            emitRoleBindingMismatch(req, role, binding.role, bindingScope);
+          }
+          req.caller.role = binding.role;
+          req.caller.roleSource = 'credential';
+        } else if (role) {
+          // Legacy unbound credential keeps the historical header semantics.
+          req.caller.roleSource = 'header';
+        }
       } else {
         req.caller.privileged = true;
+        // v3.8.0: the admin token DERIVES its role from the credential — 'admin'
+        // is what the credential says, never what the header asserts.
+        if (role && role !== 'admin') {
+          emitRoleBindingMismatch(req, role, 'admin', scopes[0] || undefined);
+        }
+        req.caller.role = 'admin';
+        req.caller.roleSource = 'admin_token';
         // Admin token spans every project — intended superuser behaviour, but
         // kept observable. Emit a distinct audit entry so admin usage is
         // distinguishable from ordinary per-project writes in the audit log.
@@ -345,8 +457,12 @@ export function createAuthMiddleware() {
       return unauthorized();
     }
 
-    if (!role || !VALID_ROLES.has(role)) {
-      logAuthFailure(req, 403, `invalid-role (role: ${role || 'missing'})`);
+    // Validate the RESOLVED role (credential-bound or header-declared), not the
+    // raw declaration — a bound credential is valid even when the header is
+    // absent or garbled, because the credential is the authority.
+    const effectiveRole = req.caller.role;
+    if (!effectiveRole || !VALID_ROLES.has(effectiveRole)) {
+      logAuthFailure(req, 403, `invalid-role (role: ${effectiveRole || 'missing'})`);
       recordAuthFailure(req);
       return res.status(403).json({
         error: 'A valid agent role is required for mutating operations',

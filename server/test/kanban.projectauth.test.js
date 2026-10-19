@@ -256,7 +256,48 @@ describe('§2.3 per-project auth + rate limiting', () => {
     assert.ok(parseProjectTokens('{"alpha":""}').malformed, 'an empty token is not a secret');
     assert.ok(parseProjectTokens('{"alpha":1}').malformed, 'a non-string token');
     assert.ok(parseProjectTokens('{"bad project":"t"}').malformed, 'an invalid project id');
-    assert.equal(parseProjectTokens('{"alpha":"t"}').map.get('alpha'), 't');
+    // v3.8.0: map values are normalized credential arrays [{token, role}]; a
+    // legacy string value stays accepted and becomes an unbound credential.
+    const legacy = parseProjectTokens('{"alpha":"t"}');
+    assert.deepEqual(legacy.map.get('alpha'), [{ token: 't', role: null }]);
+    });
+
+  // v3.8.0 credential shapes: strings stay legacy-unbound; object and
+  // credentials-array values bind (or refuse) roles.
+  it('11b. credential shapes — unbound objects, bound roles, arrays, rejections', () => {
+    assert.deepEqual(
+      parseProjectTokens('{"alpha":{"token":"t"}}').map.get('alpha'),
+      [{ token: 't', role: null }],
+      'an object without a role is an unbound credential'
+    );
+    assert.deepEqual(
+      parseProjectTokens('{"alpha":{"token":"t","role":"Builder"}}').map.get('alpha'),
+      [{ token: 't', role: 'builder' }],
+      'a role binds case-insensitively, lowercased'
+    );
+    const multi = parseProjectTokens(
+      '{"alpha":{"credentials":[{"token":"t1","role":"reviewer"},{"token":"t2"}]}}'
+    );
+    assert.deepEqual(
+      multi.map.get('alpha'),
+      [{ token: 't1', role: 'reviewer' }, { token: 't2', role: null }],
+      'a credentials array carries mixed bound/unbound entries'
+    );
+    for (const bad of [
+      '{"alpha":{"token":"t","role":"admin"}}',   // privileged role never binds
+      '{"alpha":{"token":"t","role":"runner"}}',
+      '{"alpha":{"token":"t","role":"system"}}',
+      '{"alpha":{"token":"t","role":"human"}}',
+      '{"alpha":{"token":"t","role":"nope"}}',     // unknown role
+      '{"alpha":{"token":"t","role":7}}',          // non-string role
+      '{"alpha":{"token":""}}',                    // empty token in object
+      '{"alpha":{"credentials":[]}}',              // empty credentials array
+      '{"alpha":{"credentials":[{"token":"t"},{"token":"t","role":"builder"}]}}', // dup token
+      '{"alpha":{"credentials":"t"}}',
+      '{"alpha":[]}',                              // array value, not an object
+    ]) {
+      assert.ok(parseProjectTokens(bad).malformed, `malformed: ${bad}`);
+    }
     });
 
   it('12. rate limiting is per project, and one project cannot starve another', async () => {

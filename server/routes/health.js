@@ -66,6 +66,11 @@ router.get('/', asyncHandler(async (req, res) => {
       covered: coverage.covered.length,
       missing_count: coverage.missing.length,
       extra_count: coverage.extra.length,
+      // v3.8.0 role binding visibility (§2.10): how many credentials carry a
+      // bound role vs. leave roles to the caller-declared X-Agent-Role header.
+      credentials_total: coverage.credentials_total,
+      credentials_bound: coverage.credentials_bound,
+      credentials_unbound: coverage.credentials_unbound,
       ...(nameDisclosure !== null ? nameDisclosure : {}),
     },
     version: APP_VERSION,

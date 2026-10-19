@@ -47,12 +47,14 @@
 export function checkCredentialCoverage(storeProjects = [], tokenInput = null, parsedLegacy = null) {
   if (parsedLegacy?.malformed || tokenInput?.malformed) {
     return { status: 'malformed', covered: [], missing: [], extra: [],
+             credentials_total: 0, credentials_bound: 0, credentials_unbound: 0,
              summary: 'KANBAN_PROJECT_TOKENS is malformed JSON' };
   }
 
   let covered;
   if (!tokenInput || Array.isArray(tokenInput)) {
     return { status: 'unset', covered: [], missing: [], extra: [],
+             credentials_total: 0, credentials_bound: 0, credentials_unbound: 0,
              summary: 'KANBAN_PROJECT_TOKENS is unset — legacy single-token mode' };
   } else if (tokenInput?.map instanceof Map) {
     covered = Array.from(tokenInput.map.keys()).sort();
@@ -62,7 +64,24 @@ export function checkCredentialCoverage(storeProjects = [], tokenInput = null, p
     covered = Object.keys(tokenInput).sort();
   } else {
     return { status: 'unset', covered: [], missing: [], extra: [],
+             credentials_total: 0, credentials_bound: 0, credentials_unbound: 0,
              summary: 'KANBAN_PROJECT_TOKENS is unset — legacy single-token mode' };
+  }
+
+  // v3.8.0 role binding: count credentials (map values are arrays) and how many
+  // carry a bound role. These counts surface on /api/health so an operator can
+  // see at a glance whether roles are still self-declared.
+  let credentialsTotal = 0;
+  let credentialsBound = 0;
+  if (tokenInput?.map instanceof Map) {
+    for (const creds of tokenInput.map.values()) {
+      if (!Array.isArray(creds)) continue;
+      for (const cred of creds) {
+        if (!cred || typeof cred.token !== 'string') continue;
+        credentialsTotal += 1;
+        if (cred.role) credentialsBound += 1;
+      }
+    }
   }
 
   const projects = Array.isArray(storeProjects)
@@ -80,6 +99,9 @@ export function checkCredentialCoverage(storeProjects = [], tokenInput = null, p
     return {
       status: extra.length > 0 ? 'overcovered' : 'ok',
       covered, missing, extra,
+      credentials_total: credentialsTotal,
+      credentials_bound: credentialsBound,
+      credentials_unbound: credentialsTotal - credentialsBound,
       summary: extra.length > 0
         ? `${covered.length} projects covered; ${extra.length} in the map have no store file`
         : `${covered.length} projects covered, all store projects have a token`,
@@ -87,6 +109,9 @@ export function checkCredentialCoverage(storeProjects = [], tokenInput = null, p
   }
   return {
     status: 'undercovered', covered, missing, extra,
+    credentials_total: credentialsTotal,
+    credentials_bound: credentialsBound,
+    credentials_unbound: credentialsTotal - credentialsBound,
     summary: `${missing.length} of ${projects.length} store projects have NO token`,
   };
 }
@@ -139,5 +164,16 @@ export function reportCredentialCoverage(storeProjects, tokenInput = null, parse
   // overcovered
   logger.warn(`[kanban auth] credential map: ${report.summary} — ` +
               `unused entries: ${report.extra.join(', ')}`);
+  // v3.8.0 role binding: a fully-unbound map means every role is still whatever
+  // the client asserts in X-Agent-Role. Not fatal, but exactly the gap this
+  // release closes — say so at boot.
+  if (report.credentials_total > 0 && report.credentials_bound === 0) {
+    logger.warn(
+      '[kanban auth] credential map: all credentials are UNBOUND — agent roles ' +
+      'are self-declared. Bind roles to credentials ' +
+      '({"token":"...","role":"builder"} in KANBAN_PROJECT_TOKENS) so roles are ' +
+      'enforced server-side.'
+    );
+  }
   return report;
 }

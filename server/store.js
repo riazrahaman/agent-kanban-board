@@ -1416,6 +1416,13 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       return { error: 'project is not mutable', status: 400 };
       }
 
+      // v3.8.0 Phase 2: `role` is conferred by the credential (or a server-issued
+      // session), never by request bodies. Accepting a body role here was the
+      // side door that let one agent self-approve through every state.
+      if (patch && typeof patch === 'object' && 'role' in patch) {
+        return { error: 'role is not mutable — it is bound to the agent credential', status: 400 };
+      }
+
       // §2.6: enforce the expected-version guard BEFORE building the candidate
       // so a stale read rejects without touching storage. The route injects the
       // If-Match header as `patch.expected_version`; a body-supplied field is
@@ -1425,7 +1432,9 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     if (conflict) return conflict;
 
     const candidate = structuredClone(task);
-    const role = caller.role || patch.role || null;
+    // v3.8.0 Phase 2: caller.role only — the `|| patch.role` fallback is gone.
+    // A body can no longer confer the role that gates KB-02 transitions.
+    const role = caller.role || null;
        // §2.5: detect a *transition into DONE* so we can fire the completion hook
        // after this write commits. The pre-write status is the live task's status
        // (updateInMemoryTask has not run yet, so `task` still carries the old one).
