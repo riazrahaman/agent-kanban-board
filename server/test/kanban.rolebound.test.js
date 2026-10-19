@@ -16,7 +16,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
-import { parseProjectTokens } from '../middleware/auth.js';
+import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
 import { resetRateLimits } from '../middleware/rateLimit.js';
 import { reportCredentialCoverage } from '../utils/credentialMap.js';
 import * as store from '../store.js';
@@ -397,5 +397,166 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     assert.notEqual(last.response.status, 200); // still the state-machine 403
     delete process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN;
     resetRateLimits();
+  });
+});
+
+describe('§2.3d-rv — review findings on 5d2d4bc (stream tickets, parser ambiguities)', () => {
+  let tmpDir;
+  let server;
+  let baseUrl;
+  const auditEntries = [];
+
+  before(async () => {
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_DATA_FILE;
+    delete process.env.KANBAN_DEFAULT_PROJECT;
+    delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_SESSION_SECRET;
+    // Stream tickets sign with KANBAN_AUTH_SECRET (else the global token, which
+    // is unset in this per-project suite) — set it so ticket minting is live.
+    process.env.KANBAN_AUTH_SECRET = 'rolebound-review-secret-0123456789abcdef';
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-rolebound-rv-'));
+    store.setStorage(null);
+    process.env.KANBAN_DATA_DIR = tmpDir;
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    process.env.KANBAN_PROJECT_TOKENS = PROJECT_TOKENS;
+    process.env.KANBAN_ADMIN_TOKEN = ADMIN_TOKEN;
+    await store.loadStore();
+    store.onAudit((entry) => auditEntries.push(entry));
+    ({ server, baseUrl } = await startTestServer(createApp()));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.setStorage(null);
+    delete process.env.KANBAN_AUTH_SECRET;
+    delete process.env.KANBAN_ADMIN_TOKEN;
+    delete process.env.KANBAN_PROJECT_TOKENS;
+    delete process.env.KANBAN_DATA_DIR;
+    delete process.env.KANBAN_DATA_FILE;
+    await rm(tmpDir, { recursive: true, force: true });
+    resetRateLimits();
+  });
+
+  it('F1a: bound credential mints a stream ticket with the DERIVED role (B1 blocker pin)', async () => {
+    const { response, body } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers(CREDENTIALS.builder, null),
+      body: JSON.stringify({ role: 'reviewer', project: PROJECT }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.role, 'builder', 'body role must not override the bound role');
+    assert.ok(body.ticket);
+    const mismatch = auditEntries.filter((e) => e.kind === 'role_binding_mismatch');
+    assert.ok(mismatch.length > 0);
+    assert.match(mismatch.at(-1).reason, /declared 'reviewer' conflicts with credential-bound role 'builder'/);
+  });
+
+  it('F1b: bound credential with NO body role still mints from the credential', async () => {
+    const { response, body } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers(CREDENTIALS.reviewer, null),
+      body: JSON.stringify({ project: PROJECT }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.role, 'reviewer');
+  });
+
+  it('F1c: unbound credential keeps legacy body-role semantics', async () => {
+    const { response, body } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers(CREDENTIALS.legacy, null),
+      body: JSON.stringify({ role: 'builder', project: PROJECT }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.role, 'builder');
+  });
+
+  it('F1d: unbound per-project credential can NEVER mint a privileged ticket (M1)', async () => {
+    const { response, body } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers(CREDENTIALS.legacy, null),
+      body: JSON.stringify({ role: 'admin', project: PROJECT }),
+    });
+    assert.equal(response.status, 403);
+    assert.match(body.error, /privileged/);
+  });
+
+  it('F1e: admin token derives role admin at mint', async () => {
+    const { response, body } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers(ADMIN_TOKEN, null),
+      body: JSON.stringify({ project: PROJECT }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.role, 'admin');
+  });
+
+  it('F1f: unknown credential is still 401', async () => {
+    const { response } = await jsonRequest(baseUrl, '/api/auth/stream-ticket', {
+      method: 'POST',
+      headers: headers('tok-nope', null),
+      body: JSON.stringify({ role: 'builder' }),
+    });
+    assert.equal(response.status, 401);
+  });
+
+  it('F2: one token bound to DIFFERENT roles across projects is malformed (M2)', () => {
+    const raw = JSON.stringify({
+      alpha: { token: 'tok-shared', role: 'builder' },
+      beta: { token: 'tok-shared', role: 'reviewer' },
+    });
+    assert.deepEqual(parseProjectTokens(raw), { malformed: true });
+  });
+
+  it('F2b: bound-in-one-project + unbound-in-another stays LEGAL (documented first-match)', () => {
+    const raw = JSON.stringify({
+      alpha: { token: 'tok-shared2', role: 'builder' },
+      beta: { token: 'tok-shared2' },
+    });
+    const parsed = parseProjectTokens(raw);
+    assert.ok(parsed.map);
+    assert.equal(parsed.map.get('alpha')[0].role, 'builder');
+    assert.equal(parsed.map.get('beta')[0].role, null);
+  });
+
+  it('F3: a value carrying BOTH token and credentials is malformed (M5)', () => {
+    const raw = JSON.stringify({ pipe: { token: 'tok-x', credentials: [{ token: 'tok-y', role: 'builder' }] } });
+    assert.deepEqual(parseProjectTokens(raw), { malformed: true });
+  });
+
+  it('F4: bound credential resolves its project scope for reads (getAuthorizedProjects pin)', () => {
+    const req = { headers: { authorization: `Bearer ${CREDENTIALS.builder}` }, query: {} };
+    const scope = getAuthorizedProjects(req);
+    assert.ok(scope instanceof Set);
+    assert.deepEqual([...scope], [PROJECT]);
+  });
+
+  it('F5: heartbeat by a non-holder reviewer credential is rejected (owner gate trumps role)', async () => {
+    const id = 'rv-hb-1';
+    const create = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST',
+      headers: headers(ADMIN_TOKEN, 'admin'),
+      body: JSON.stringify({ id, project: PROJECT, title: 'hb', round: 1, status: 'BACKLOG' }),
+    });
+    assert.equal(create.response.status, 201);
+    await jsonRequest(baseUrl, `/api/tasks/${id}?project=${PROJECT}`, {
+      method: 'PATCH',
+      headers: headers(ADMIN_TOKEN, 'admin'),
+      body: JSON.stringify({ status: 'READY', expected_version: create.body.version }),
+    });
+    const claim = await jsonRequest(baseUrl, `/api/tasks/${id}/claim?project=${PROJECT}`, {
+      method: 'POST',
+      headers: headers(CREDENTIALS.builder, 'builder'),
+      body: JSON.stringify({ agent_id: 'rv-builder-1' }),
+    });
+    assert.equal(claim.response.status, 200);
+    const hb = await jsonRequest(baseUrl, `/api/tasks/${id}/heartbeat?project=${PROJECT}`, {
+      method: 'POST',
+      headers: headers(CREDENTIALS.reviewer, 'reviewer'),
+      body: JSON.stringify({ agent_id: 'rv-reviewer-1' }),
+    });
+    assert.equal(hb.response.status, 409);
+    assert.equal(hb.body.reason, 'not_lease_holder');
   });
 });

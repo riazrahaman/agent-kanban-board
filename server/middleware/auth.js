@@ -47,10 +47,15 @@ export const VALID_ROLES = new Set([
  * confer privilege (runner/system/human/admin) must never be bound to a shared
  * map credential — privileged access belongs to KANBAN_ADMIN_TOKEN or a
  * server-issued session, the same rule §2.3b (SEC-02) set for destructive ops.
+ * A token bound to DIFFERENT roles under different projects is ambiguous at
+ * resolution time (roles resolve per referenced project) and is rejected; a
+ * token bound in one project and unbound in another is fine and resolves by
+ * first referenced project.
  *
  * Malformed JSON (or any invalid entry — empty token, unknown role, privileged
- * role, empty credentials array) is a configuration failure and returns a
- * sentinel rather than silently falling back to the global token — quietly
+ * role, empty credentials array, a value carrying both `token` and
+ * `credentials`, or one token bound to conflicting roles across projects) is a
+ * configuration failure and returns a sentinel rather than silently falling back to the global token — quietly
  * degrading to "one token opens every project" is precisely the isolation
  * failure this exists to stop.
  */
@@ -83,6 +88,11 @@ export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
       if (value === '') return { malformed: true };
       creds = [{ token: value, role: null }];
     } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (typeof value.token === 'string' && Array.isArray(value.credentials)) {
+        // A value carrying BOTH key shapes is two configurations in one — the
+        // silent winner would be whichever branch ran first. Fail closed.
+        return { malformed: true };
+      }
       if (typeof value.token === 'string') {
         const cred = normalizeCredential(value.token, value.role);
         if (!cred) return { malformed: true };
@@ -113,6 +123,23 @@ export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
     map.set(project, creds);
   }
   if (map.size === 0) return { malformed: true };
+  // (M2, review of 5d2d4bc) One token bound to DIFFERENT roles under different
+  // projects: the effective role would depend on which referenced project a
+  // request names — an identity that changes with scope is exactly the kind of
+  // ambiguity this parser exists to reject. Bound-vs-unbound mixing stays
+  // legal (the unbound side keeps legacy header semantics, documented).
+  const boundRolesByToken = new Map();
+  for (const creds of map.values()) {
+    for (const cred of creds) {
+      if (!cred.role) continue;
+      const roles = boundRolesByToken.get(cred.token) || new Set();
+      roles.add(cred.role);
+      boundRolesByToken.set(cred.token, roles);
+    }
+  }
+  for (const roles of boundRolesByToken.values()) {
+    if (roles.size > 1) return { malformed: true };
+  }
   return { map };
 }
 
@@ -265,7 +292,7 @@ export function hasReadCredential(req) {
  * an auth failure — the caller proved identity — so it never touches the
  * failed-auth rate limiter.
  */
-function emitRoleBindingMismatch(req, declared, bound, scope) {
+export function emitRoleBindingMismatch(req, declared, bound, scope) {
   const agentId = req.caller?.agent_id || 'anonymous';
   console.warn(
     `[kanban auth] role_binding_mismatch on ${req.method} ${req.originalUrl} ` +
@@ -365,6 +392,7 @@ export function createAuthMiddleware() {
     const session = verifySessionToken(providedToken);
     if (session) {
       req.caller.role = session.role;
+      req.caller.roleSource = 'session';
       req.caller.privileged = isPrivilegedRole(session.role);
       const referenced = referencedProjects(req);
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];

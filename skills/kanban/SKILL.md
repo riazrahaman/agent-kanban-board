@@ -23,7 +23,7 @@ Check for these fields in the following order:
 
 ### Credential-Bound Roles (MANDATORY as of skill v3.8.0)
 
-> Every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`. Roles are forced by the credential; a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is rejected/audited. Orchestrators use an explicit `admin` (or `runner`) credential.
+> Every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`. Roles are forced by the credential; a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is ignored — the request is served with the credential's role — and the mismatch is audited (`role_binding_mismatch`). Orchestrators use an explicit `admin` (or `runner`) credential.
 
 Role-keyed `KANBAN_PROJECT_TOKENS` schema (the legacy plain-string value shape is still accepted and stays unbound):
 
@@ -182,7 +182,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 ## 4. Safety & Reliability Rules
 
 - **Identity & Roles**: Orchestrator = `admin`. Workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
-- **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is rejected/ignored and audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
+- **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is ignored — the request is served with the credential's role — and the mismatch is audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
 - **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`. Header `x-agent-role` alone no longer grants a role on a role-bound credential (v3.8.0+) — the role comes from the credential; the header remains the role source only for legacy unbound tokens.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.
 - **Optimistic Locking**: Every `PATCH` requires the card's CURRENT `version` as `expected_version`. Operations like `POST /claim`, `POST /logs`, and `POST /heartbeat` each increment the card's version on the server, so a version read earlier in the cycle is stale. Always fetch the fresh version before issuing a `PATCH`:

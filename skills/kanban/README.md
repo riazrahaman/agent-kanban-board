@@ -93,7 +93,7 @@ Three fields are mandatory: `kanban_url`, `kanban_token`, `project_name`. The sk
 
 `.opencode/` holds tokens. Add it to `.gitignore` before writing the file, and never stage it.
 
-**Credential-bound roles (MANDATORY as of skill v3.8.0):** every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`; the orchestrator uses an explicit `admin` (or `runner`) credential. Roles are forced by the credential — a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is rejected/audited (`role_binding_mismatch`). Legacy plain-string tokens keep current unbound behavior; migration is opt-in:
+**Credential-bound roles (MANDATORY as of skill v3.8.0):** every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`; the orchestrator uses an explicit `admin` (or `runner`) credential. Roles are forced by the credential — a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is ignored (the request is served with the credential's role) and the mismatch is audited (`role_binding_mismatch`). Legacy plain-string tokens keep current unbound behavior; migration is opt-in:
 
 ```json
 {
