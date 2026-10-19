@@ -136,6 +136,18 @@ export function reportCredentialCoverage(storeProjects, tokenInput = null, parse
   }
 
   const report = checkCredentialCoverage(storeProjects, tokenInput, parsed);
+  // v3.8.0 role binding: a fully-unbound map means every role is still whatever
+  // the client asserts in X-Agent-Role. Not fatal, but exactly the gap this
+  // release closes — say so at boot, for every healthy status too.
+  if (report.credentials_total > 0 && report.credentials_bound === 0 &&
+      (report.status === 'ok' || report.status === 'overcovered')) {
+    logger.warn(
+      '[kanban auth] credential map: all credentials are UNBOUND — agent roles ' +
+      'are self-declared. Bind roles to credentials ' +
+      '({"token":"...","role":"builder"} in KANBAN_PROJECT_TOKENS) so roles are ' +
+      'enforced server-side.'
+    );
+  }
   if (report.status === 'ok') {
     logger.info(`[kanban auth] credential map: ${report.summary}`);
     return report;
