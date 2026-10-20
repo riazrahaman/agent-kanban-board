@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.8.2
+**System:** Agent Kanban Board v3.8.3
 
 ---
 
@@ -460,6 +460,7 @@ The header's segmented switcher (**Board / Portfolio / About**) opens a third to
 - **Hero:** the product pitch ("A trusted state register for swarms of coding agents"), a short lead, and two calls to action (open the live demo / fork on GitHub).
 - **Headless-first snippet:** a `curl` walkthrough showing an agent claiming the next task and advancing it, to make the API-first model concrete.
 - **Trust strip:** key credibility metrics (server/client test counts, the Node 20 & 22 CI matrix, the count of architecture decision records).
+- **System walkthrough video (v3.8.3):** a 24-minute high-definition video walkthrough (`/media/kanban-video.mp4`) with an interactive chapter navigator, dual playhead controls, and 12 timestamped jump chips spanning the protocol, multi-agent lifecycle, and deployment.
 - **"Why a normal board isn't enough":** three cards pairing each failure mode with the exact mechanism that handles it (`withMutationLock`, the lease plus reaper, the transition graph + role matrix).
 - **Lifecycle walk:** the v3 8-state lifecycle (`BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, plus `BLOCKED`) with the role that moves a card into each state.
 - **Capabilities table:** each capability mapped to the source file that implements it.

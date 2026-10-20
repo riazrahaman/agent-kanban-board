@@ -12,7 +12,7 @@ zero telemetry.
 
 [![Release](https://img.shields.io/github/v/release/riazrahaman/agent-kanban-board?label=release)](https://github.com/riazrahaman/agent-kanban-board/releases/latest)
 [![CI](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml/badge.svg)](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-964%20passing-3fb950)](#development--verification)
+[![Tests](https://img.shields.io/badge/tests-965%20passing-3fb950)](#development--verification)
 [![License](https://img.shields.io/github/license/riazrahaman/agent-kanban-board?color=blue)](LICENSE)
 [![Deploy](https://img.shields.io/badge/deploy-Railway-8b5cf6)](https://railway.app)
 
@@ -48,7 +48,8 @@ Operators get rich supervisory tools: real-time substring search, multi-criteria
 ```
 .
 ├── client/           Vite + React + Tailwind frontend (editorial-minimalist design system)
-│   └── public/landing/  Screenshots served to the in-app About view
+│   ├── public/landing/  Screenshots served to the in-app About view
+│   └── public/media/    24-minute system walkthrough video & poster
 ├── DESIGN.md         The visual contract: tokens, typography, components, bans
 ├── skills/           Bundled agent skills — skills/kanban/SKILL.md is the orchestrator protocol
 ├── server/           Node/Express API with atomic JSON & git-backed YAML storage
@@ -88,7 +89,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
+Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, a 24-minute interactive system walkthrough video with chapter jump chips, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
 
 ### 3. Drive It With the Orchestrator Skill
 

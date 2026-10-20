@@ -98,7 +98,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '298',
+    value: '299',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -937,3 +937,49 @@ export const ASK_UNCONFIGURED_NOTE =
 
 export const ASK_SCOPE_NOTE =
   'The assistant is instructed to stay on this board — its protocol, engine, client, deployment, configuration and source. Answers are read-only; it can never claim, move or delete a card.'
+
+// ---------------------------------------------------------------------------
+// Video Walkthrough
+// ---------------------------------------------------------------------------
+
+export type VideoChapter = {
+  time: number
+  label: string
+  timestamp: string
+}
+
+export type VideoWalkthrough = {
+  title: string
+  subtitle: string
+  badge: string
+  description: string
+  src: string
+  poster: string
+  duration: string
+  chapters: VideoChapter[]
+}
+
+export const VIDEO_WALKTHROUGH: VideoWalkthrough = {
+  title: 'The System in Motion',
+  subtitle: 'Setup, usage, and the machinery underneath',
+  badge: 'VIDEO FIELD GUIDE · 24 MIN',
+  description:
+    'An end-to-end architectural tour: why human boards fail concurrent agents, the eight strict states, role-gated leases, the background reaper, the mutation lock corridor, and real receipts.',
+  src: '/media/kanban-video.mp4',
+  poster: '/media/kanban-video-poster.jpg',
+  duration: '24:06',
+  chapters: [
+    { time: 0, timestamp: '00:00', label: 'Cold Open (The Failure)' },
+    { time: 64, timestamp: '01:04', label: 'Why Not a Human Board' },
+    { time: 171, timestamp: '02:51', label: 'Setup & Deployment' },
+    { time: 374, timestamp: '06:14', label: 'The Eight States' },
+    { time: 488, timestamp: '08:08', label: 'Role Ownership' },
+    { time: 534, timestamp: '08:54', label: 'Claims & Leases' },
+    { time: 627, timestamp: '10:27', label: 'The Orchestrator Skill' },
+    { time: 765, timestamp: '12:45', label: 'The Request Corridor' },
+    { time: 792, timestamp: '13:12', label: 'The Mutation Lock' },
+    { time: 910, timestamp: '15:10', label: 'The Reaper & Recovery' },
+    { time: 1066, timestamp: '17:46', label: 'Solo-Run Marks' },
+    { time: 1306, timestamp: '21:46', label: 'The Receipts & Architecture' },
+  ],
+}
