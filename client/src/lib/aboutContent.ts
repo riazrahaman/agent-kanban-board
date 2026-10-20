@@ -108,9 +108,9 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'every push is built on both',
   },
   {
-    value: '5',
+    value: '6',
     label: 'ADRs',
-    detail: 'storage, git recovery, mutation serialization, 8-state workflow, credential-bound roles',
+    detail: 'storage, git recovery, mutation serialization, 8-state workflow, credential-bound roles, deferred role-crossing toggle',
   },
 ]
 
