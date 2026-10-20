@@ -52,6 +52,7 @@ const {
   ARCH_LAYERS,
   ARCH_INTRO,
   ORCHESTRATOR_SKILL,
+  VIDEO_WALKTHROUGH,
 } = content
 
 // ---------------------------------------------------------------------------
@@ -236,6 +237,20 @@ test('the claim flow walks the real next-claim path in order', () => {
   assert.match(text, /applyClaim/, 'the flow must describe applyClaim writing the owner')
   assert.match(text, /persist/i, 'the flow must state persist-before-memory')
   assert.match(text, /notify/, 'the flow must end by pushing an SSE diff')
+})
+
+test('the video walkthrough defines valid metadata, poster, and chapter marks', () => {
+  assert.ok(VIDEO_WALKTHROUGH, 'VIDEO_WALKTHROUGH must be exported')
+  assert.ok(VIDEO_WALKTHROUGH.title, 'walkthrough must have a title')
+  assert.ok(VIDEO_WALKTHROUGH.src, 'walkthrough must have a src')
+  assert.ok(VIDEO_WALKTHROUGH.poster, 'walkthrough must have a poster')
+  assert.ok(Array.isArray(VIDEO_WALKTHROUGH.chapters), 'walkthrough must have chapters')
+  assert.ok(VIDEO_WALKTHROUGH.chapters.length >= 5, 'expected at least 5 chapters')
+  for (const ch of VIDEO_WALKTHROUGH.chapters) {
+    assert.equal(typeof ch.time, 'number', 'chapter time must be a number')
+    assert.ok(ch.label, 'chapter must have a label')
+    assert.ok(ch.timestamp, 'chapter must have a timestamp')
+  }
 })
 
 test('the safety layers name all three guards plus the persist-first footer', () => {
