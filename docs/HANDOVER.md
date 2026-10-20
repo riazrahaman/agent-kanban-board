@@ -577,6 +577,11 @@ the real `Headers` and `Request` constructors — verified to fail on the em das
    but the real key, the credit balance and the model have only now started
    round-tripping. A second, independent problem could still surface.
 
+Deferred ideas are parked in [`docs/decisions/`](decisions/) — see
+[ADR-006](decisions/ADR-006-role-crossing-audit-toggle.md) (a per-deployment
+toggle for the `role_crossing` audit signal — proposed, deliberately not
+implemented yet).
+
 ---
 
 ## 14. Gotchas
