@@ -24,3 +24,7 @@ opencode.json
 .claude/
 skillport.lock
 .impeccable/
+
+# Rendered explainer-video artifacts (an ~86 MB MP4 plus its subtitles).
+# Build output, not source — it would bloat the history permanently.
+video-out/
