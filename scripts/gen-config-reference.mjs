@@ -44,6 +44,7 @@ const DESCRIPTIONS = {
   'KANBAN_PROGRESS_STALL_MS': 'Progress stall timeout in ms before inactive task is reaped (default 1800000; 0 disables)',
   'KANBAN_PROJECT_TOKENS': 'Per-project credentials with optional role binding: "tok" (unbound), {"token":"tok"}, {"token":"tok","role":"builder"} (role forced server-side), or {"credentials":[…]}; one credential per agent role',
   'KANBAN_RATE_LIMIT_PER_MIN': 'Per-project mutation limit per window (0 disables)',
+  'KANBAN_ROLE_CROSSING_AUDIT': 'Set truthy to emit a role_crossing audit event when one agent presents bound credentials for several roles (off by default; ADR-006)',
   'KANBAN_RATE_LIMIT_WINDOW_MS': 'Fixed rate-limit window in milliseconds (default 60000)',
   'KANBAN_READ_AUTH': 'Set to "token" to require auth on reads and SSE',
   'KANBAN_REAP_ENABLED': 'Set falsy to disable the background lease reaper',

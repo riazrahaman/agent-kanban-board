@@ -1,7 +1,7 @@
 # ADR-006 — Per-Deployment Toggle for the `role_crossing` Audit Signal
 
 **Task:** Optional kill switch for the multi-role audit signal  
-**Status:** proposed (deferred — not implemented)  
+**Status:** accepted (implemented v3.9.0 — the signal ships **off by default**)  
 **Date:** 2026-10-20
 
 ## Context
@@ -20,26 +20,52 @@ is *rare by construction* — it needs a header that conflicts with the bound
 role. `role_crossing` is not: a deployment whose agents hold several role-bound
 credentials on purpose will emit an event on each such mutation.
 
-## Decision (deferred)
+## Decision
 
-No toggle in the first release of the signal. If a deployment needs to
-suppress the noise, add a per-deployment kill switch with the same flag shape
-as `KANBAN_AUDIT_LOG` (`server/auditLog.js:23` — `off` / `0` / `false` disable,
-anything else enables):
+**The signal ships OFF by default, behind a per-deployment kill switch.** The
+switch uses the same flag shape as `KANBAN_AUDIT_LOG` (`server/auditLog.js:23`
+— `off` / `0` / `false` disable, anything else enables):
 
 ```
 KANBAN_ROLE_CROSSING_AUDIT=off
 ```
 
+A deployment opts in by setting the flag to anything truthy. The default is
+therefore the *quieter* behaviour: a deployment whose agents legitimately hold
+several role-bound credentials emits nothing until an operator asks for the
+signal.
+
 | | Behaviour | Cost |
 | :-- | :-- | :-- |
-| **A — no knob (planned default)** | Signal always on; operators filter by `actor`. | None. |
-| **B — `KANBAN_ROLE_CROSSING_AUDIT=off`** | Per-deployment suppression. | New config surface: a description in `scripts/gen-config-reference.mjs` + regenerated `docs/CONFIGURATION.md`, a docs row, a test, and boot/health reporting in the `credential_map` style. |
+| **A — no knob** | Signal always on; operators filter by `actor`. | None. |
+| **B — `KANBAN_ROLE_CROSSING_AUDIT`** ✅ **chosen** | Per-deployment opt-in, **off by default**. | A config description in `scripts/gen-config-reference.mjs` + regenerated `docs/CONFIGURATION.md`, a `.env.example` row, and tests. |
 
-**Trigger to revisit.** A deployment reports audit noise it cannot filter —
-e.g. an orchestrator holding several role-bound credentials produces a crossing
-on every mutation — or an operator wants the signal suppressed outside
-production without a code change.
+**Why B over A:** the operator's choice is kept, but the *default* is the
+conservative one. `role_binding_mismatch` is rare by construction (it needs a
+header that conflicts with the bound role); `role_crossing` is not. A
+deployment that never asked for the signal should not get it by default, and
+the client-side severity marks — which do the same job visually, read-side,
+with no server involvement — keep working regardless.
+
+## Implementation (v3.9.0)
+
+- `server/utils/roleCrossing.js` — `roleCrossingAuditEnabled()` (flag shape
+  above, default off) and `noteRolePresentation(project, agentId, role)`,
+  which records the bound roles an agent has presented per project in a
+  process-local map and reports a **crossing** when the same agent presents a
+  *different* bound role on the same project.
+- `server/middleware/auth.js` — the bound-credential branch calls
+  `noteRolePresentation()` and, on a crossing, `emitRoleCrossing()`: one
+  redacted console line and one `role_crossing` audit entry
+  (`{kind, project, task: null, actor, reason}`). It is **never** an auth
+  failure, so it never touches the failed-auth rate limiter, and it never
+  blocks the request.
+- The admin-token path and legacy unbound credentials are **not tracked**:
+  the admin token is privileged by design, and an unbound credential has no
+  bound role to speak of.
+- Tests: `server/test/kanban.rolecrossing.test.js` (12 cases — flag shape,
+  default-off, same-role repeat, different agents, legacy credential, admin
+  path, per-project scoping, and token redaction).
 
 ## Scope when picked
 
@@ -52,9 +78,9 @@ reason}`, and the audit log is only written when `KANBAN_AUDIT_LOG` is enabled
 ## Consequences
 
 - The signal's value is its prompt, not its alarm: a human decides whether a
-  crossing was legitimate. Suppressing it removes that prompt for a whole
-  deployment, which is why it is a deliberate, per-deployment decision rather
-  than a default.
+  crossing was legitimate. Because it is opt-in, a deployment that has not
+  enabled it keeps the previous behaviour exactly — which is why the default
+  is off rather than on.
 - Nothing about the **client-side severity rule** depends on this signal: the
   dots are derived read-side from `stage_owners` and re-color regardless of
   whether the audit signal is enabled.
