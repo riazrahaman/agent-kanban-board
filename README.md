@@ -12,7 +12,7 @@ zero telemetry.
 
 [![Release](https://img.shields.io/github/v/release/riazrahaman/agent-kanban-board?label=release)](https://github.com/riazrahaman/agent-kanban-board/releases/latest)
 [![CI](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml/badge.svg)](https://github.com/riazrahaman/agent-kanban-board/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-965%20passing-3fb950)](#development--verification)
+[![Tests](https://img.shields.io/badge/tests-977%20passing-3fb950)](#development--verification)
 [![License](https://img.shields.io/github/license/riazrahaman/agent-kanban-board?color=blue)](LICENSE)
 [![Deploy](https://img.shields.io/badge/deploy-Railway-8b5cf6)](https://railway.app)
 

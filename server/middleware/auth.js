@@ -15,6 +15,7 @@ import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } fro
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
 import { authFailuresExceeded, recordAuthFailure } from './rateLimit.js';
+import { noteRolePresentation } from '../utils/roleCrossing.js';
 
 export const VALID_ROLES = new Set([
   'planner',
@@ -309,6 +310,34 @@ export function emitRoleBindingMismatch(req, declared, bound, scope) {
   });
 }
 
+/**
+ * ADR-006 — one agent presented BOUND credentials for more than one role on
+ * this project. The request is served normally: the signal is a REVIEW PROMPT,
+ * not a violation, and the server cannot judge intent (an orchestrator, a CI
+ * runner, or an agent doing planner+builder work all cross legitimately).
+ *
+ * Emitted only when `KANBAN_ROLE_CROSSING_AUDIT` is enabled — the default is
+ * OFF, so a deployment that has not opted in behaves exactly as before.
+ * Never an auth failure, so it never touches the failed-auth rate limiter.
+ */
+export function emitRoleCrossing(req, roles, scope) {
+  const agentId = req.caller?.agent_id || 'anonymous';
+  const roleList = Array.from(roles).sort().join(', ');
+  console.warn(
+    `[kanban auth] role_crossing on ${req.method} ${req.originalUrl} ` +
+    `(project: ${scope || defaultProjectName()}, agent: ${agentId}) ` +
+    `agent presented bound credentials for roles: ${roleList}`
+  );
+  emitAudit({
+    ts: new Date().toISOString(),
+    kind: 'role_crossing',
+    project: scope || defaultProjectName(),
+    task: null,
+    actor: agentId,
+    reason: `agent presented bound credentials for roles: ${roleList}`,
+  });
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a
@@ -451,6 +480,13 @@ export function createAuthMiddleware() {
           }
           req.caller.role = binding.role;
           req.caller.roleSource = 'credential';
+          // ADR-006: note the bound role this agent presented. When the same
+          // agent presents a DIFFERENT bound role on this project, the signal
+          // fires — a review prompt, never a rejection. Disabled by default.
+          const crossing = noteRolePresentation(bindingScope, agentId, binding.role);
+          if (crossing?.crossing) {
+            emitRoleCrossing(req, crossing.roles, bindingScope);
+          }
         } else if (role) {
           // Legacy unbound credential keeps the historical header semantics.
           req.caller.roleSource = 'header';

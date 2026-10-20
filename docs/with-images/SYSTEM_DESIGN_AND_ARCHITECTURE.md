@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.8.3        
+**System Version:** 3.9.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -197,6 +197,8 @@ flowchart TD
 The loop lifecycle is strictly deterministic (ADR-001). Arbitrary state transitions are rejected with `409 Conflict`. Role violations are rejected with `403 Forbidden`.
 
 **Roles are server-derived, not caller-declared (v3.8.0, ADR-005).** `req.caller.role` comes from the credential that proved the request: a role-bound `KANBAN_PROJECT_TOKENS` credential (`{"token":"…","role":"…"}`) forces its role and a conflicting `X-Agent-Role` header is ignored (audited as `role_binding_mismatch`); the `KANBAN_ADMIN_TOKEN` derives `admin`; session tokens carry their server-issued role; only legacy unbound credentials honor the header (never the `PATCH` body — a body `role` is a `400`). Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound to a shared credential.
+
+**Multi-role detection (v3.9.0, ADR-006).** Because the role is derived from the credential, the server can also see when ONE `X-Agent-Id` presents **bound credentials for more than one role** on the same project. `server/utils/roleCrossing.js` records the bound roles each agent has presented (process-local, per project) and the middleware emits a `role_crossing` audit event — one console line plus one audit entry naming the roles, never a token value. The event is a **review prompt, not a violation**: the request is always served, the failed-auth rate limiter is untouched, and the admin token and legacy unbound credentials are not tracked. The signal is **off by default** (`KANBAN_ROLE_CROSSING_AUDIT`), because unlike `role_binding_mismatch` a crossing is easy to produce legitimately (an orchestrator, a CI runner, planner+builder work) — a deployment opts in deliberately. It is independent of the client-side solo-run severity marks, which are derived read-side from `stage_owners` and need no server signal.
 
 ![State Machine Transition Graph with RBAC](../images/02-state-machine-rbac-graph.svg)
 

@@ -2,7 +2,7 @@
 
 **Agents Kanban** — a strict, Kanban-first orchestrator skill for coding agents.
 
-Version `v3.8.0` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
+Version `v3.9.0` · MIT · Verified on [SkillPort](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban)
 
 The skill turns your coding agent into the **admin of a delegated build**. It stops writing code itself. Instead it owns the board, holds the lease on each card, dispatches builder / reviewer / tester workers, and only moves a card forward when there is evidence: command output, test results, commit hashes.
 
@@ -206,6 +206,7 @@ Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOAR
 
 - **Network:** your configured `kanban_url`, GitHub (via `git` / `gh`, including the board clone for local deploy), and your deployment's status / health check.
 - **Files:** your repo's working tree and branches, plus `.opencode/config.json` if you store config there.
+- **One agent per role (MANDATORY, v3.9.0+):** dispatch each stage to a distinct `x-agent-id` **and** its own role-bound credential — never swap one agent's credential across stages to cover a card yourself. The board's opt-in `role_crossing` audit signal (`KANBAN_ROLE_CROSSING_AUDIT`, off by default) reports one agent id presenting several bound roles; it never rejects, but the correct posture is to never trigger it.
 - **Tokens:** read from config or environment; `.opencode/` is kept out of git and never staged. One role-bound credential per agent role (v3.8.0+ mandate), plus an explicit admin credential for the orchestrator.
 
 ## Versioning & releases

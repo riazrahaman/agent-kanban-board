@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.8.3
+**System:** Agent Kanban Board v3.9.0
 
 ---
 
@@ -506,6 +506,24 @@ Every mutating request must include:
 4. **Project:** every task path carries `?project=<name>` (only `POST /api/tasks` takes `project` in the body instead).
 5. **Version:** every `PATCH` carries the card's current `version` as `expected_version` (or `If-Match`); a stale write is rejected `409 Version mismatch`.
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
+
+> To connect a brand-new project, see [ONBOARDING.md](../../ONBOARDING.md).
+
+**Optional — the `role_crossing` audit signal (ADR-006).** Set
+`KANBAN_ROLE_CROSSING_AUDIT` to a truthy value to have the server emit a
+`role_crossing` audit event whenever **one `X-Agent-Id` presents bound
+credentials for more than one role** on the same project. A crossing is a
+**review prompt, not a violation**: the request is still served, the event
+never blocks anything, and the server cannot judge intent — an orchestrator, a
+CI runner, or an agent that legitimately does planner+builder work all cross
+without wrongdoing. The signal is **off by default**, so a deployment sees
+nothing until it opts in. When enabled, the event appears in the audit log
+(`KANBAN_AUDIT_LOG` + `GET /api/audit`) as
+`{kind: "role_crossing", project, task: null, actor, reason}` — the reason
+lists the roles the agent presented, never any token value. The admin token
+and legacy unbound credentials are not tracked.
+
+
 
 > To connect a brand-new project, see [ONBOARDING.md](../../ONBOARDING.md).
 

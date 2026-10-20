@@ -16,6 +16,43 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.0] — 2026-10-20
+
+### Added
+- **`role_crossing` audit signal (ADR-006, implemented).** Because the role is
+  derived from the credential (v3.8.0), the server can now see when **one
+  `X-Agent-Id` presents bound credentials for more than one role** on the same
+  project. `server/utils/roleCrossing.js` records the bound roles each agent has
+  presented (process-local, per project) and the mutation middleware emits a
+  `role_crossing` audit event — one console line plus one audit entry that
+  names the **roles**, never a token value. The event shape is
+  `{kind, project, task, actor, reason}`, matching the other audit kinds.
+  - The signal is a **review prompt, not a violation**: the request is always
+    served, the failed-auth rate limiter is never touched, and the admin token
+    and legacy unbound credentials are not tracked.
+  - **Off by default.** `KANBAN_ROLE_CROSSING_AUDIT` enables it (same flag
+    shape as `KANBAN_AUDIT_LOG`: unset / empty / `0` / `false` = off, anything
+    else = on). A deployment that never opted in behaves exactly as before —
+    `role_binding_mismatch` is rare by construction, a crossing is not, so
+    enabling the signal is a deliberate per-deployment decision.
+  - Independent of the client-side solo-run severity marks, which are derived
+    read-side from `stage_owners` and need no server signal.
+  - Covered by `server/test/kanban.rolecrossing.test.js` (12 cases: flag
+    shape, default-off behaviour, crossing detection, same-role repeats,
+    distinct identities, legacy and admin paths, per-project scoping, and
+    token-value redaction).
+
+### Changed
+- ADR-006 is **accepted** (it was parked as "proposed — not implemented"):
+  `docs/decisions/ADR-006-role-crossing-audit-toggle.md` now records the
+  decision, the implementation and the reasoning for a conservative default.
+- Operator documentation: the `role_crossing` signal is documented in
+  `docs/USER_AND_OPERATOR_MANUAL.md` §6.1 and `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md`
+  (and their `docs/with-images/` mirrors), with a `KANBAN_ROLE_CROSSING_AUDIT`
+  row in `docs/CONFIGURATION.md` and a block in `.env.example`.
+- Trust metrics resynced: **678 server + 299 client = 977 tests passing**
+  (About page, README badge, slide deck cover/close).
+
 ## [3.8.3] — 2026-10-20
 
 ### Added

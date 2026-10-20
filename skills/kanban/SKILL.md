@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.8.0
+version: 3.9.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -183,6 +183,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 
 - **Identity & Roles**: Orchestrator = `admin`. Workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
 - **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is ignored — the request is served with the credential's role — and the mismatch is audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
+- **One Agent per Role (MANDATORY, v3.9.0+)**: dispatch each stage to a **distinct agent identity** — a different `x-agent-id` AND a different role-bound credential per role. Do not swap one agent's credential across stages to cover a card yourself. The board's `role_crossing` audit signal (opt-in per deployment via `KANBAN_ROLE_CROSSING_AUDIT`, off by default) reports when one `x-agent-id` presents bound credentials for several roles on a project; a crossing is a review prompt, never a rejection — but the correct posture is to never need it.
 - **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`. Header `x-agent-role` alone no longer grants a role on a role-bound credential (v3.8.0+) — the role comes from the credential; the header remains the role source only for legacy unbound tokens.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.
 - **Optimistic Locking**: Every `PATCH` requires the card's CURRENT `version` as `expected_version`. Operations like `POST /claim`, `POST /logs`, and `POST /heartbeat` each increment the card's version on the server, so a version read earlier in the cycle is stale. Always fetch the fresh version before issuing a `PATCH`:
