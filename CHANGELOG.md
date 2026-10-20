@@ -16,6 +16,27 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.8.2] — 2026-10-20
+
+Documentation-only patch: parks one deliberately deferred decision as a numbered
+ADR so it is discoverable long after this conversation.
+
+### Added
+- **ADR-006 — Per-Deployment Toggle for the `role_crossing` Audit Signal**
+  (`docs/decisions/ADR-006-role-crossing-audit-toggle.md`). *Proposed, not
+  implemented.* It records the deferred knob
+  (`KANBAN_ROLE_CROSSING_AUDIT=off`, same flag shape as `KANBAN_AUDIT_LOG`),
+  why the `role_crossing` signal ships always-on for now, the trigger to
+  revisit it, and the exact scope when it is picked up. The signal itself is
+  planned with the v3.9.0 severity-rule work; the *toggle* is the deferred
+  part.
+
+### Changed
+- `docs/HANDOVER.md` §13 points at the parked ADR so the next person reading
+  the handover finds it.
+- About page ADR counter 5 → 6 (the count is derived from
+  `docs/decisions/`, so the trust metric follows the folder automatically).
+
 ## [3.8.1] — 2026-10-20
 
 Documentation-and-presentation patch: formally versions the storefront polish that
