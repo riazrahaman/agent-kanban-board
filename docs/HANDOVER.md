@@ -515,8 +515,8 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-**Current release: `3.7.3`**, CI green on Node 20 and 22, tag `v3.7.3` pushed.
-Tags `v3.5.0` … `v3.7.3` all pushed. Railway redeploys from `main` once CI
+**Current release: `3.9.0`**, CI green on Node 20 and 22, tag `v3.9.0` pushed.
+Tags `v3.5.0` … `v3.9.0` all pushed. Railway redeploys from `main` once CI
 passes, so `/api/health` is the check for what the board is actually running.
 
 ### The arc of this run, in one line each
@@ -536,6 +536,9 @@ passes, so `/api/health` is the check for what the board is actually running.
 | `3.7.1` | Documentation & skill sync: About environment tables, handover notes, and bundled orchestrator skill. |
 | `3.7.2` | Ask answer UI: scrollable answer window & uncapped output tokens for local Ollama. |
 | `3.7.3` | Ask configuration prose corrected where it still implied the OpenRouter key was mandatory; presenter runbook, shareable page and slide deck added. |
+| `3.8.0` | **Credential-bound roles** (ADR-005): a role now comes from the credential, not a self-declared header. Plus the solo-run severity dots on the board. |
+| `3.8.3` | About field guide chapter for solo-run marks; landing screenshots recaptured; storefront README. |
+| `3.9.0` | **`role_crossing` audit signal** (ADR-006) — off by default, opt in per deployment with `KANBAN_ROLE_CROSSING_AUDIT`. |
 | `current` | Persistent Tailscale Funnel public ingress with macOS `launchd` token gateway for zero-network-exposure Ollama hosting. |
 
 ### The one worth reading twice
@@ -579,8 +582,8 @@ the real `Headers` and `Request` constructors — verified to fail on the em das
 
 Deferred ideas are parked in [`docs/decisions/`](decisions/) — see
 [ADR-006](decisions/ADR-006-role-crossing-audit-toggle.md) (a per-deployment
-toggle for the `role_crossing` audit signal — proposed, deliberately not
-implemented yet).
+toggle for the `role_crossing` audit signal — **implemented in v3.9.0 and off
+by default**; set `KANBAN_ROLE_CROSSING_AUDIT` to enable it).
 
 ---
 
@@ -594,7 +597,7 @@ implemented yet).
   `server/data`.
 - **`aboutContent.ts` trust counts must be bumped whenever a test is added.**
   `client/src/lib/about.test.mjs` counts the real suite sizes from the files and
-  fails if `TRUST_METRICS` drifts. As of v3.5.0 it declares `605` server / `272`
+  fails if `TRUST_METRICS` drifts. As of v3.9.0 it declares `678` server / `299`
   client, and the About hero and numbers strip read those values from the
   constant rather than repeating them in JSX.
 - **The reaper returns cards to `READY`, but some comments/changelog wording still

@@ -1,7 +1,18 @@
 # ADR-001 — Pluggable Storage Backend, Loop State Machine, and Access Controls
 
 **Task:** PI-03 (KB-01, KB-02, KB-03, KB-04, KB-05, KB-08, KB-09)  
-**Status:** accepted
+**Status:** accepted — **partially superseded** by [ADR-004](ADR-004-agentos-8-state-workflow-migration.md) (§1 statuses) and [ADR-005](ADR-005-role-bound-roles.md) (§2 role ownership, §4 role-bearing authentication). See the notes on each section.
+
+> **Superseded in part.** This ADR remains in force for its storage, atomicity and
+> claim-contention decisions (§3, §5, §6). Two areas have since been replaced:
+> - **§1 Canonical Loop Statuses & Transitions** — replaced by
+>   [ADR-004](ADR-004-agentos-8-state-workflow-migration.md) (the AgentOS 8-state
+>   workflow: `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION →
+>   READY_TO_SHIP → DONE`, `+ BLOCKED`).
+> - **§2 Role Ownership Rules and §4 API Authentication** — replaced by
+>   [ADR-005](ADR-005-role-bound-roles.md) (credential-bound roles, shipped in
+>   v3.8.0). The role is derived from the credential, not from a self-declared
+>   header; the header is the role source only for legacy unbound credentials.
 
 ## Context
 
@@ -47,6 +58,15 @@ Role identity is passed via `X-Agent-Role` header or request body (superseded be
 ### 4. API Authentication (KB-04 / OWASP A07)
 
 All mutating endpoints (`POST`, `PATCH`, `PUT`, `DELETE`) require `KANBAN_AUTH_TOKEN` and a valid `Authorization: Bearer <token>` or `X-API-Token: <token>`. Unauthenticated or invalid requests receive `401 Unauthorized`; if the token is not configured, mutations fail closed with `503`. Read routes remain open for monitoring.
+
+> **Superseded in v3.8.0 (ADR-005, credential-bound roles):** authentication is
+> unchanged, but the *role* is no longer part of the request. A per-project
+> credential may carry a bound role (`{"token": "...", "role": "builder"}`), and
+> the server derives the caller's role from that credential. `X-Agent-Role`
+> remains meaningful only for legacy unbound credentials; a body `role` on a
+> `PATCH` is refused with `400`. Privileged roles (`runner`/`system`/`human`/
+> `admin`) cannot be bound to a shared credential — they come from the admin
+> token or a server-issued session.
 
 ### 5. Atomic Persistence (KB-05)
 
