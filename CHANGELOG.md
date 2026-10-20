@@ -16,6 +16,16 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.8.3] — 2026-10-20
+
+### Added
+- **24-minute system walkthrough video integrated into About page**:
+  - Embedded the full documentary walkthrough video (`kanban-video.mp4`) and title poster in `client/public/media/` with instant progressive byte-range (`206 Partial Content`) streaming support.
+  - Implemented `VideoShowcase` in `About.tsx` with responsive 16:9 framing, custom poster, play overlay, and an interactive 12-section chapter jump bar with active playhead tracking.
+  - Exported `VIDEO_WALKTHROUGH` metadata and chapter definitions in `client/src/lib/aboutContent.ts`.
+  - Enforced strict blueprint aesthetic compliance (zero `shadow-*`, zero `rounded-full` tokens).
+  - Pinned by updated data contracts and verified with 666 server tests + 299 client tests (965 total tests).
+
 ## [3.8.2] — 2026-10-20
 
 Documentation-only patch: parks one deliberately deferred decision as a numbered
