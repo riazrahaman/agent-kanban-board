@@ -11,6 +11,7 @@ import {
   isValidStatus,
   canTransition,
   canRoleTransition,
+  ACTIVE_STATUS_SET,
 } from '../state-machine.js';
 
 describe('AgentOS 8-state state-machine module', () => {
@@ -40,6 +41,12 @@ describe('AgentOS 8-state state-machine module', () => {
     assert.equal(normalizeStatus('ready'), 'READY');
     assert.equal(normalizeStatus('planning'), 'PLANNING');
     assert.equal(normalizeStatus('ready_to_ship'), 'READY_TO_SHIP');
+    // Every stage the client counts as owned must be recorded server-side,
+    // otherwise a tester's READY_TO_SHIP work leaves no owner behind.
+    assert.ok(ACTIVE_STATUS_SET.has('READY_TO_SHIP'));
+    assert.ok(ACTIVE_STATUS_SET.has('VALIDATION'));
+    assert.ok(!ACTIVE_STATUS_SET.has('READY'));
+    assert.ok(!ACTIVE_STATUS_SET.has('BACKLOG'));
     assert.equal(normalizeStatus('validation'), 'VALIDATION');
     assert.equal(normalizeStatus('unknown'), null);
     assert.equal(normalizeStatus(null), null);

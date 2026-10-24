@@ -33,6 +33,10 @@ export const ACTIVE_STATUSES = [
   STATUSES.IN_PROGRESS,
   STATUSES.IN_REVIEW,
   STATUSES.VALIDATION,
+  // READY_TO_SHIP belongs here too: the tester owns the stage it enters, and the
+  // client's ownership analysis already counts it. Leaving it out meant a
+  // tester's transition to READY_TO_SHIP recorded no stage owner at all.
+  STATUSES.READY_TO_SHIP,
 ];
 
 export const ACTIVE_STATUS_SET = new Set(ACTIVE_STATUSES);
