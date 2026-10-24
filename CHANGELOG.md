@@ -16,6 +16,28 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.4] — 2026-10-24
+
+### Fixed
+- **`READY_TO_SHIP` is now an active status everywhere, not just in the engine.**
+  `server/state-machine.js` started counting READY_TO_SHIP as active so a tester's
+  transition records a `stage_owners` entry, but the same list is consumed in two
+  more places and both still said "four": `client/src/lib/status.ts` (dashboard
+  WIP/overdue and signal stats) and a private copy in `server/askKnowledge.js`
+  (the Ask snapshot). The engine could therefore call a card in flight while the
+  dashboard and the assistant called it idle.
+  - `server/askKnowledge.js` imports `ACTIVE_STATUSES` instead of defining its own.
+  - `client/src/lib/status.ts` includes READY_TO_SHIP.
+  - New drift guard in `server/test/kanban.statemachine.test.js`: the client list
+    must equal the server list, and the Ask module must import rather than copy it.
+  - `server/test/kanban.stageowners.test.js` now expects the tester under the
+    READY_TO_SHIP stage key.
+- **The version-bump guard caught a real omission.** Commit `90b2572` changed
+  `server/state-machine.js` but left the version at 3.9.3, so CI failed in nine
+  seconds and Railway (`checkSuites: true`) skipped the deploy. This release
+  carries that change with the bump and changelog it was missing.
+
+Trust metrics: **685 server + 299 client**.
 ## [3.9.3] — 2026-10-24
 
 ### Security

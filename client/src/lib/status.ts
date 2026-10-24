@@ -19,12 +19,24 @@ export const CANONICAL_STATUSES = {
 
 export type CanonicalStatus = (typeof CANONICAL_STATUSES)[keyof typeof CANONICAL_STATUSES]
 
-/** The four statuses meaning "someone is actively working on this." */
+/**
+ * The statuses meaning "someone is actively working on this."
+ *
+ * v3.9.4: READY_TO_SHIP is included. The tester owns that stage, the server
+ * records it in `stage_owners`, and `server/state-machine.js` counts it as
+ * active — leaving it out here made the dashboard's WIP count and the Ask
+ * snapshot disagree with the engine.
+ *
+ * This list MUST stay identical to `ACTIVE_STATUSES` in
+ * `server/state-machine.js`; `server/test/kanban.statemachine.test.js` asserts
+ * that (the drift guard), so a change to one without the other fails CI.
+ */
 export const ACTIVE_STATUSES: readonly CanonicalStatus[] = [
   CANONICAL_STATUSES.PLANNING,
   CANONICAL_STATUSES.IN_PROGRESS,
   CANONICAL_STATUSES.IN_REVIEW,
   CANONICAL_STATUSES.VALIDATION,
+  CANONICAL_STATUSES.READY_TO_SHIP,
 ]
 
 export const CANONICAL_STATUS_LIST = Object.values(CANONICAL_STATUSES)

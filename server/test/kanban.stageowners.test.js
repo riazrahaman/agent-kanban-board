@@ -145,10 +145,13 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
 
   it('6. all stage keys present at the end, assigned_agent still the original claimer', async () => {
     const t = store.getTask('so-5');
+    // v3.9.4: READY_TO_SHIP is an active status, so the tester who moved the card
+    // there is recorded. That was the point of adding it to ACTIVE_STATUSES.
     assert.deepEqual(t.stage_owners, {
       IN_PROGRESS: 'builder-d',
       IN_REVIEW: 'builder-d',
       VALIDATION: 'reviewer-b',
+      READY_TO_SHIP: 'tester-a',
       DONE: 'releaser-a',
     });
     assert.equal(t.assigned_agent, 'builder-d', 'lease holder unchanged by transitions');
