@@ -79,7 +79,11 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/ci-layout /tmp/ci-layout-off
-          node server/server.js &
+          # v3.9.5: the deploy-drift monitor is DISABLED for the layout guard.
+          # Its header chip appears only when the check fails or drifts, and this
+          # guard asserts exact header heights — an outbound GitHub call (and its
+          # per-IP rate limit on CI runners) must not be able to change them.
+          KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0 node server/server.js &
           SERVER_PID=$!
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:4000/api/health >/dev/null && break
@@ -93,6 +97,7 @@ jobs:
           # scripts/check-header-layout.mjs.
           env -u KANBAN_REPORT_GITHUB_TOKEN -u KANBAN_REPORT_REPO -u TURNSTILE_SECRET -u TURNSTILE_SITE_KEY \
             PORT=4001 KANBAN_DATA_DIR=/tmp/ci-layout-off KANBAN_DATA_FILE=/tmp/ci-layout-off/tasks.json \
+            KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0 \
             node server/server.js &
           SERVER_OFF_PID=$!
           for i in $(seq 1 30); do

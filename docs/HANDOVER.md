@@ -515,9 +515,12 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-**Current release: `3.9.0`**, CI green on Node 20 and 22, tag `v3.9.0` pushed.
-Tags `v3.5.0` … `v3.9.0` all pushed. Railway redeploys from `main` once CI
-passes, so `/api/health` is the check for what the board is actually running.
+**Current release: `3.9.5`**, CI green on Node 20 and 22, tag `v3.9.5` pushed.
+Tags `v3.5.0` … `v3.9.5` all pushed. Railway redeploys from `main` once CI
+passes, so `/api/health` is the check for what the board is actually running —
+and since v3.9.5 its `deploy_drift` block answers that question without a
+human comparing two version strings (a Railway service with `checkSuites: true`
+**skips** a deploy when CI is red and keeps serving the previous build).
 
 ### The arc of this run, in one line each
 
@@ -539,6 +542,11 @@ passes, so `/api/health` is the check for what the board is actually running.
 | `3.8.0` | **Credential-bound roles** (ADR-005): a role now comes from the credential, not a self-declared header. Plus the solo-run severity dots on the board. |
 | `3.8.3` | About field guide chapter for solo-run marks; landing screenshots recaptured; storefront README. |
 | `3.9.0` | **`role_crossing` audit signal** (ADR-006) — off by default, opt in per deployment with `KANBAN_ROLE_CROSSING_AUDIT`. |
+| `3.9.1` | Card header overflow with a milestone chip: chips moved to a wrapping footer meta row (Option C). |
+| `3.9.2` | `KANBAN_ASK_PASSWORD` documented as a board-wide **owner** credential (closes #114); new optional `KANBAN_ASK_SNAPSHOT_PROJECTS` allow-list; the snapshot is delimited as data. |
+| `3.9.3` | `body-parser` 2.3.0 → 2.4.0 (GHSA-27r3-jxmh-p828) — the first green CI after the skipped deploys. |
+| `3.9.4` | `READY_TO_SHIP` is an active status **everywhere** (`client/src/lib/status.ts`, `server/askKnowledge.js`), with a client/server drift guard. |
+| `3.9.5` | **Deploy-drift monitor**: `deploy_drift` in `/api/health`, Telegram on transitions, a GitHub-issue workflow, and a header chip that appears only when something is wrong. |
 | `current` | Persistent Tailscale Funnel public ingress with macOS `launchd` token gateway for zero-network-exposure Ollama hosting. |
 
 ### The one worth reading twice
@@ -597,7 +605,7 @@ by default**; set `KANBAN_ROLE_CROSSING_AUDIT` to enable it).
   `server/data`.
 - **`aboutContent.ts` trust counts must be bumped whenever a test is added.**
   `client/src/lib/about.test.mjs` counts the real suite sizes from the files and
-  fails if `TRUST_METRICS` drifts. As of v3.9.0 it declares `678` server / `299`
+  fails if `TRUST_METRICS` drifts. As of v3.9.5 it declares `695` server / `301`
   client, and the About hero and numbers strip read those values from the
   constant rather than repeating them in JSX.
 - **The reaper returns cards to `READY`, but some comments/changelog wording still

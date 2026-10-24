@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
 import { getBugReportConfig, getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
+import { driftChip } from './lib/deployDrift'
+import type { DeployDrift } from './lib/deployDrift'
 import type { DiffEvent } from './api'
 import type { ColumnColors } from './lib/columnColors'
 import { isStockPalette, readStoredColumnColors, writeStoredColumnColors } from './lib/columnColors'
@@ -92,6 +94,9 @@ export default function App() {
     // Deployed server version, shown in the header so operators can tell at a
     // glance which build is live. Sourced from /api/health (server/package.json).
     const [version, setVersion] = useState<string | null>(null)
+    // v3.9.5: is that version the newest release? Polled with the version (the
+    // header chip renders ONLY when something is wrong — see driftChip()).
+    const [deployDrift, setDeployDrift] = useState<DeployDrift | null>(null)
     // Visit counter runs at the app shell, not inside About: it must count every
     // site load (a board-first visitor may never open the About tab), and the
     // footer label ("Visit count so far") promises site traffic. Passed down to
@@ -295,18 +300,29 @@ export default function App() {
   }, [])
 
 
-  // Fetch the deployed version once on mount; failure just hides the chip.
+  // Fetch the deployed version once on mount, then re-check every 10 minutes
+  // (v3.9.5): a redeploy changes the version, and a skipped deploy changes the
+  // drift verdict, without this tab reloading. Failure just hides the chips.
   useEffect(() => {
     let cancelled = false
-    getHealth()
-      .then((h) => {
-        if (!cancelled) setVersion(h.version)
-      })
-      .catch(() => {/* the header simply omits the version */})
+    const load = () => {
+      getHealth()
+        .then((h) => {
+          if (cancelled) return
+          setVersion(h.version)
+          setDeployDrift(h.deploy_drift ?? null)
+        })
+        .catch(() => {/* the header simply omits the version/drift chips */})
+    }
+    load()
+    const timer = setInterval(load, 10 * 60 * 1000)
     return () => {
       cancelled = true
+      clearInterval(timer)
     }
   }, [])
+
+  const drift = driftChip(deployDrift)
 
   // v2.16.0 (opt-public-bug-reports): fetch once on mount, fail quiet. The
   // entry point (header + About CTA) only renders when the operator has
@@ -565,6 +581,20 @@ export default function App() {
                  title={`Deployed server version (${version})`}
                >
                  v{version}
+               </span>
+             )}
+             {/* v3.9.5: rendered only on a bad day (drift or a failed check), so
+                 a healthy board shows nothing extra. Compact + truncated on a
+                 phone so it can never push the header into another row. */}
+             {drift && (
+               <span
+                 className={`max-w-[9rem] truncate font-mono text-[10px] sm:max-w-none ${
+                   drift.tone === 'warn' ? 'text-warn' : 'text-muted'
+                 }`}
+                 title={drift.title}
+                 role="status"
+               >
+                 {drift.label}
                </span>
              )}
             </div>

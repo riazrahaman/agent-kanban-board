@@ -1,0 +1,139 @@
+name: Deploy drift
+
+# v3.9.5 — is the LIVE board the newest release?
+#
+# Railway runs with `checkSuites: true`, so a red CI does not fail a deployment:
+# it SKIPS it, and the previous build keeps serving with a green /api/health.
+# Nothing is broken, so nothing alerts. This job reads the board's own
+# `/api/health` → `deploy_drift` (computed by the server every 30 minutes) and
+# turns a skipped deploy into ONE GitHub issue labelled `ops`.
+#
+# A drift is REPORTED, never raised as a CI failure: a red run here would be
+# indistinguishable from the workflow itself being broken. The job only fails on
+# an unexpected error (an unparseable payload, a gh failure).
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deploy-drift
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HEALTH_URL: https://agent-kanban.riazrahaman.com/api/health
+      DRIFT_LABEL: ops
+    steps:
+      - name: Read deploy_drift from /api/health
+        id: health
+        run: |
+          set -euo pipefail
+          # The board being down is an expected condition for a health probe, not
+          # a workflow bug: warn and stop, do not fail the run.
+          if ! body="$(curl -fsS --max-time 20 "$HEALTH_URL")"; then
+            echo "::warning::$HEALTH_URL is unreachable; no drift verdict this run"
+            echo "status=unavailable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          status="$(printf '%s' "$body" | jq -r '.deploy_drift.status // "unknown"')"
+          running="$(printf '%s' "$body" | jq -r '.deploy_drift.running // .version // "unknown"')"
+          latest="$(printf '%s' "$body" | jq -r '.deploy_drift.latest_tag // "unknown"')"
+          checked="$(printf '%s' "$body" | jq -r '.deploy_drift.checked_at // "never"')"
+          since="$(printf '%s' "$body" | jq -r '.deploy_drift.drift_since // "unknown"')"
+
+          {
+            echo "status=$status"
+            echo "running=$running"
+            echo "latest=$latest"
+            echo "checked=$checked"
+            echo "since=$since"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "deploy_drift: status=$status running=v$running latest=v$latest checked=$checked since=$since"
+          case "$status" in
+            in_sync|drift|unknown) ;;
+            *)
+              # A field we do not understand is a real bug in this workflow's
+              # contract with the server — fail loudly rather than silently skip.
+              echo "::error::unexpected deploy_drift.status '$status'"
+              exit 1
+              ;;
+          esac
+
+      - name: Open or update the drift issue
+        if: steps.health.outputs.status == 'drift'
+        env:
+          RUNNING: ${{ steps.health.outputs.running }}
+          LATEST: ${{ steps.health.outputs.latest }}
+          CHECKED: ${{ steps.health.outputs.checked }}
+          SINCE: ${{ steps.health.outputs.since }}
+        run: |
+          set -euo pipefail
+          title="Deploy drift: live v${RUNNING}, latest tag v${LATEST}"
+
+          # The label must exist before it can be applied (idempotent).
+          gh api "repos/${GITHUB_REPOSITORY}/labels/${DRIFT_LABEL}" >/dev/null 2>&1 \
+            || gh label create "$DRIFT_LABEL" --color FBCA04 --description "operator / deployment" >/dev/null
+
+          existing="$(gh issue list --label "$DRIFT_LABEL" --state open --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title | startswith("Deploy drift:"))][0].number // empty')"
+
+          body="$(printf '%s\n' \
+            "The live board is running **v${RUNNING}**, but the newest release is **v${LATEST}**." \
+            "" \
+            "| field | value |" \
+            "| :-- | :-- |" \
+            "| running | \`v${RUNNING}\` |" \
+            "| latest tag | \`v${LATEST}\` |" \
+            "| first seen | \`${SINCE}\` |" \
+            "| last check | \`${CHECKED}\` |" \
+            "" \
+            "**Most likely the deploy was SKIPPED, not failed.** A Railway service with" \
+            "\`checkSuites: true\` skips a push-triggered deployment when CI is red, and the" \
+            "previous build keeps serving with a healthy \`/api/health\`." \
+            "" \
+            "Check the CI run for the release commit; once green, redeploy" \
+            "(\`railway up\` or re-run the deployment)." \
+            "" \
+            "*Filed and closed automatically by \`.github/workflows/deploy-drift.yml\` from the board's own \`/api/health\`.*")"
+
+          if [ -n "$existing" ]; then
+            echo "Updating existing deployment-drift issue #${existing}"
+            gh issue comment "$existing" --body "$body"
+            gh issue edit "$existing" --title "$title"
+          else
+            echo "Opening a new deployment-drift issue"
+            gh issue create --title "$title" --label "$DRIFT_LABEL" --body "$body"
+          fi
+
+      - name: Close the drift issue when back in sync
+        if: steps.health.outputs.status == 'in_sync'
+        env:
+          RUNNING: ${{ steps.health.outputs.running }}
+          LATEST: ${{ steps.health.outputs.latest }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --label "$DRIFT_LABEL" --state open --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title | startswith("Deploy drift:"))][0].number // empty')"
+          if [ -z "$existing" ]; then
+            echo "No open deployment-drift issue; nothing to close."
+            exit 0
+          fi
+          gh issue comment "$existing" --body "Back in sync: the live board now runs \`v${RUNNING}\`, matching the newest release \`v${LATEST}\`. Closing."
+          gh issue close "$existing" --reason completed
+
+      - name: Note an unavailable check
+        if: steps.health.outputs.status == 'unknown'
+        run: echo "::notice::deploy_drift is 'unknown' — the board could not reach GitHub. Not an outage; not a drift."

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,75 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.9.5] — 2026-10-24
+
+**Headline: the board now says when a release never reached it.** A Railway
+service configured with `checkSuites: true` does not fail a push-triggered
+deployment when CI is red — it **skips** it, and the previous build keeps
+serving a green `/api/health`. Nothing is broken, so nothing alerts, and three
+releases in a row shipped while the live board stayed behind. v3.9.5 makes that
+observable, alerts on the transition, and stays silent on a healthy day.
+
+### Added
+- **Deploy-drift monitor (`server/deployDrift.js`).** Once shortly after boot and
+  then every `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` (default 30 min; `<= 0` disables),
+  the server reads the newest release from
+  `https://api.github.com/repos/riazrahaman/agent-kanban-board/releases/latest`
+  (`KANBAN_DEPLOY_DRIFT_API_URL` overrides it) and compares its `tag_name` with
+  the running `APP_VERSION` from `server/package.json`. A mismatch is only called
+  `drift` after it has persisted `KANBAN_DEPLOY_DRIFT_GRACE_MS` (default 45 min),
+  so the minutes between "tag cut" and "new container live" never alert. Any
+  fetch/parse failure is `unknown` and never throws. The timer mirrors
+  `startReaper`/`startBackup`: unref'd, started only from `startServer`, stopped
+  on shutdown — never from `createApp`, so the HTTP-contract tests never touch
+  the network. No new secret and no GitHub token: the release feed is public.
+- **`deploy_drift` in `GET /api/health`.** Public, secret-free:
+  `{status: 'in_sync' | 'drift' | 'unknown', running, latest_tag, checked_at,
+  drift_since}`. `checked_at: null` means no check has run (monitor disabled or
+  just booted) — the client treats that as "nothing to say", not a warning.
+- **Alert on transitions only.** Reusing the existing `KANBAN_TELEGRAM_BOT_TOKEN`
+  + `KANBAN_TELEGRAM_CHAT_ID` (and `KANBAN_BOARD_URL`), one Telegram message when
+  the status becomes `drift` and one when it returns to `in_sync`. Unset either
+  and it stays silent; a send failure logs at most one line and never affects
+  the board.
+- **`.github/workflows/deploy-drift.yml`.** Every 30 minutes (plus
+  `workflow_dispatch`) it reads the live `/api/health`, and on `drift` opens or
+  updates exactly one issue titled
+  `Deploy drift: live v<running>, latest tag v<latest_tag>` labelled `ops`
+  (existing open issue → comment, not a duplicate). On `in_sync` it comments and
+  closes that issue. Uses only `secrets.GITHUB_TOKEN` with
+  `issues: write, contents: read`. A drift is **reported, never raised as a CI
+  failure** — the job fails only on an unexpected error, and an unreachable board
+  is a warning (the board being down must not turn into a red workflow).
+- **Header drift chip (client).** `client/src/lib/deployDrift.ts` maps the
+  snapshot to a compact chip and is pure/unit-tested; `App.tsx` now re-polls
+  `getHealth()` every 10 minutes (interval cleared on unmount) and renders the
+  chip **only when something is wrong**: amber `deploy drift · <running> ≠
+  <latest_tag>` (tooltip dates `drift_since`), muted `deploy check unavailable`
+  for `unknown`. Hidden on `in_sync` and when no check has ever run, truncated on
+  phones.
+
+### Changed
+- **Bundled skill 3.9.5.** `skills/kanban/SKILL.md` §2.10 is now "Version,
+  Credential-Map & Deploy-Drift Check": `drift` means the deploy was SKIPPED, not
+  failed (check CI; do not retry writes or halt), and `unknown` means GitHub was
+  unreachable, not an outage. `deploy_drift (v3.9.5+)` is in the endpoint table
+  and the skill README's health note.
+- **The skill version is now pinned by a test.** `server/test/kanban.version.test.js`
+  reads `skills/kanban/SKILL.md`'s frontmatter `version:` and fails the release
+  if it disagrees with `server/package.json` — the skill and the server can no
+  longer be released apart.
+- **Docs truth pass.** The About page's Configuration chapter says what the check
+  does and that silence is not proof of health (if the process is down, nothing
+  checks); HANDOVER §13, the doc version headers, the presenter deck and the
+  README test badge were all stale and now report the real state (695 server +
+  301 client tests).
+- **Dependency batch (from `feat/deps-batch`, merged into the same release).**
+  react/react-dom 19.3.1, a refreshed `@types/node`, vite, and express 5.3.0.
+  They land in v3.9.5 alongside this work; see that branch for the audit result.
+
+Trust metrics: **695 server + 301 client**.
 
 ## [3.9.4] — 2026-10-24
 

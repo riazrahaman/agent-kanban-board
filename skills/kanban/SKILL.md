@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.9.1
+version: 3.9.5
 ---
 
 # Kanban Orchestrator Protocol
@@ -71,12 +71,16 @@ If `kanban_url` is not provided in `.opencode/config.json` or environment variab
 
 **Verification Step**: Once mandatory fields are acquired, perform `GET /projects` using `kanban_token` in headers (`x-api-token` or `Authorization: Bearer`) to verify connectivity and project existence. Under v3.3.0+ per-token project isolation, unauthenticated calls return `[]` (or 401 when read-auth is active), and project-scoped tokens only discover their authorized project.
 
-**Version & Credential-Map Check**: Call `GET /api/health` and inspect the response:
+**Version, Credential-Map & Deploy-Drift Check (§2.10)**: Call `GET /api/health` and inspect the response:
 1. **Board Version Gate**: Read the `version` field from the response to verify the board is **v3.0.0 or later** (semver `>= 3.0.0`, with **v3.7.1+ recommended**). Note that `GET /projects` does not return a version field; only `GET /api/health` reports the server version (present on both v2.16.2 and v3.0.0+). If the version is below 3.0.0, **HALT immediately** and ask the user to upgrade their agent-kanban-board instance to v3.0.0+. The skill requires v3.0.0+ for proper status handling (v3 accepts legacy v2 statuses for compatibility).
 2. **Credential-Map Coverage Verification (§2.10)**: When connecting to `agent-kanban-board` v3.1.0+, `GET /api/health` includes a `credential_map: {status, covered, missing_count, extra_count}` payload (plus `missing` and `extra` project name arrays when authenticated with a valid token in v3.2.0+, scoped to authorized projects in v3.3.0+):
    - Check if `credential_map.status` is `"undercovered"` or `"malformed"`.
    - When authenticated, check if your configured `project_name` is listed in `credential_map.missing` (`missing?.includes(project_name)`). Unauthenticated probes alert on `credential_map.missing_count > 0`.
    - If your project is missing or the credential map is undercovered, **warn or halt immediately**: the board has stored tasks for the project but lacks an active token entry in `KANBAN_PROJECT_TOKENS`. Future task mutations will fail with `403 Forbidden: token is not authorized for project '<project_name>'`. Alert the operator to restore the missing token in the server's environment configuration (e.g. Railway / Render).
+3. **Deploy-Drift Check (v3.9.5+)**: `GET /api/health` also carries `deploy_drift: {status, running, latest_tag, checked_at, drift_since}` — the running version compared with the newest GitHub release.
+   - `status: "drift"` means the release on GitHub is **not** the build that is live. Treat it as **the deploy was SKIPPED, not failed**: a hosted service set to require a green CI skips a push-triggered deployment when CI is red, and the previous build keeps serving a healthy board. Check the CI run for the release commit and let the operator redeploy. **Do not retry writes or re-file work because of drift** — the board's data and API are healthy; a write that failed failed for its own reason.
+   - `status: "unknown"` means the check itself failed (GitHub unreachable, bad payload, or the monitor is disabled/just booted). It is **not** a board outage — `/api/health` answered, so the process is up. Report it, do not halt.
+   - `status: "in_sync"` needs no action. A mismatch is only reported after a grace window (default 45 min), so a release that has just been tagged and not yet redeployed is normal, not drift.
 
 **Security**: Never commit configuration files. `.opencode/` holds authentication tokens. Confirm it is added to `.gitignore` before writing, and never stage `.opencode/` in git commits.
 
@@ -98,7 +102,7 @@ Verified endpoint scoping behavior:
 | `GET /tasks/:id` (no `?project=`) | None | Fails with `404 Not Found` |
 | `GET /tasks?project=X` | Query parameter: `?project=X` | Lists tasks within project |
 | `GET /projects` | Header `x-api-token` mandatory | Returns authorized project summaries (anonymous returns []) |
-| `GET /api/health` | No scoping needed | Server health, version probe (`version`), and credential-map status (`credential_map` v3.1.0+, project name privacy v3.2.0+, project scope isolation v3.3.0+) |
+| `GET /api/health` | No scoping needed | Server health, version probe (`version`), credential-map status (`credential_map` v3.1.0+, project name privacy v3.2.0+, project scope isolation v3.3.0+), and deploy-drift verdict (`deploy_drift` v3.9.5+) |
 | `GET /api/events` | Optional: `?project=X` | EventSource SSE real-time event stream (diffs or snapshots) |
 | `POST /api/bug-reports` | No scoping needed | Public human bug reporting to GitHub (takes no token, creates no card) |
 | `POST /api/ask` | No scoping needed | Password-gated Q&A (`x-ask-pass` mandatory; read-only assistant, takes no board token) |
