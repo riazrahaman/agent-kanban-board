@@ -16,6 +16,22 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.3] — 2026-10-24
+
+### Security
+- **`body-parser` 2.3.0 -> 2.4.0 (GHSA-27r3-jxmh-p828).** A high-severity advisory:
+  denial of service via trailing bytes after a compressed request body. `express@5.2.1`
+  resolves `body-parser@^2.x`, so the lockfile now pins 2.4.0 and
+  `npm --prefix server audit --audit-level=high` reports **0 vulnerabilities**.
+
+### Fixed
+- **CI is green again, which is what unblocks deployment.** The workflow runs
+  `npm audit --audit-level=high` on both workspaces, so the advisory failed every
+  build since 2026-10-23. Railway's service has `checkSuites: true`, which means a red
+  CI causes the push-triggered deployment to be **SKIPPED** rather than failing loudly:
+  that is why the last three pushes never reached the live board and had to be
+  deployed by hand with `railway up`.
+
 ## [3.9.2] — 2026-10-24
 
 ### Changed
