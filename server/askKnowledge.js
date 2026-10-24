@@ -23,6 +23,13 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// v3.9.4: do NOT keep a local copy of this list. It previously read
+// ['PLANNING','IN_PROGRESS','IN_REVIEW','VALIDATION'] and silently went stale
+// when READY_TO_SHIP was added to the lifecycle, so the Ask snapshot counted a
+// "ready to ship" card as not-active while the server counted it as active.
+// The state machine is the single source of truth; the drift guard in
+// kanban.statemachine.test.js pins the client copy to it as well.
+import { ACTIVE_STATUSES } from './state-machine.js';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('./package.json');
@@ -35,9 +42,6 @@ const SELF_PATH = 'server/askKnowledge.js';
 
 /** Public repository the guardrail points at for source-code questions. */
 export const ASK_REPO_URL = 'https://github.com/riazrahaman/agent-kanban-board';
-
-/** Statuses counted as "someone is actively working". */
-const ACTIVE_STATUSES = ['PLANNING', 'IN_PROGRESS', 'IN_REVIEW', 'VALIDATION'];
 
 /** Rough characters-per-token used to keep the prompt inside its budget. */
 const CHARS_PER_TOKEN = 4;

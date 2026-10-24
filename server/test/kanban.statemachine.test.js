@@ -3,10 +3,12 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   STATUSES,
   VALID_STATUS_LIST,
   VALID_TRANSITIONS,
+  ACTIVE_STATUSES,
   normalizeStatus,
   isValidStatus,
   canTransition,
@@ -161,5 +163,46 @@ describe('AgentOS 8-state state-machine module', () => {
     assert.equal(canRoleTransition('releaser', 'READY_TO_SHIP', 'DONE'), true);
     assert.equal(canRoleTransition('releaser', 'READY_TO_SHIP', 'IN_PROGRESS'), true);
     assert.equal(canRoleTransition('releaser', 'IN_PROGRESS', 'IN_REVIEW'), false);
+  });
+});
+
+/**
+ * v3.9.4 — the ACTIVE_STATUSES drift guard.
+ *
+ * This list is consumed in three places and had already drifted once: adding
+ * READY_TO_SHIP to the server set left `client/src/lib/status.ts` (dashboard WIP
+ * and signal stats) and a private copy in `server/askKnowledge.js` (the Ask
+ * snapshot) still believing there were four active statuses. Same board, two
+ * answers about whether a card is "in flight".
+ *
+ * The state machine is the source of truth. This test fails the moment either
+ * consumer disagrees, so the next person who edits one list is told to edit the
+ * other in the same commit.
+ */
+describe('ACTIVE_STATUSES is one list, not three', () => {
+  it('the client copy matches the state machine exactly', () => {
+    const clientSrc = readFileSync(new URL('../../client/src/lib/status.ts', import.meta.url), 'utf8');
+    const block = clientSrc.match(/export const ACTIVE_STATUSES[^=]*=\s*\[([\s\S]*?)\]/);
+    assert.ok(block, 'client/src/lib/status.ts must declare ACTIVE_STATUSES');
+    const clientActive = [...block[1].matchAll(/CANONICAL_STATUSES\.([A-Z_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(
+      [...clientActive].sort(),
+      [...ACTIVE_STATUSES].sort(),
+      'client ACTIVE_STATUSES must equal server ACTIVE_STATUSES',
+    );
+  });
+
+  it('askKnowledge imports the list instead of copying it', () => {
+    const askSrc = readFileSync(new URL('../askKnowledge.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(
+      askSrc,
+      /const ACTIVE_STATUSES\s*=/,
+      'server/askKnowledge.js must import ACTIVE_STATUSES from state-machine.js, not keep a local copy',
+    );
+    assert.match(
+      askSrc,
+      /import \{[^}]*ACTIVE_STATUSES[^}]*\} from '\.\/state-machine\.js'/,
+      'server/askKnowledge.js must import ACTIVE_STATUSES from state-machine.js',
+    );
   });
 });
