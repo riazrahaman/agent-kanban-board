@@ -12,7 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot } from '../askKnowledge.js';
-import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama } from '../routes/ask.js';
+import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama, snapshotProjects } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
  *  failure can assert on the output rather than scribbling on the run. */
@@ -143,7 +143,7 @@ describe('ask: feature gate', () => {
     await withApp({ env: baseEnv(), fetch: makeFetch(), store: fakeStore() }, async (baseUrl) => {
       const cfg = await jsonRequest(baseUrl, '/api/ask/config');
       assert.equal(cfg.res.status, 200);
-      assert.deepEqual(cfg.body, { enabled: true, gated: true, provider: 'openrouter', model: DEFAULT_MODEL });
+      assert.deepEqual(cfg.body, { enabled: true, gated: true, provider: 'openrouter', model: DEFAULT_MODEL, scope: 'all' });
       const raw = JSON.stringify(cfg.body);
       assert.doesNotMatch(raw, new RegExp(FAKE_KEY));
       assert.doesNotMatch(raw, new RegExp(FAKE_PASSWORD));
@@ -1095,3 +1095,63 @@ describe('ask: ollama provider', () => {
 });
 
 
+
+/**
+ * v3.9.2 — snapshot scope.
+ *
+ * The Ask password is an OWNER credential: the default snapshot is the whole
+ * board, because the person using the board is entitled to see it. The allow-
+ * list exists only for a deployment that shares the password and wants the
+ * assistant to see a subset. Both directions are asserted here, including the
+ * fail-closed one: a list that matches nothing must yield an empty board rather
+ * than silently widening back to every project.
+ */
+describe('ask: snapshot scope (v3.9.2)', () => {
+  const tasks = [
+    { id: 'a1', project: 'alpha', status: 'DONE', title: 'Alpha one' },
+    { id: 'b1', project: 'beta', status: 'BACKLOG', title: 'Beta one' },
+  ];
+  const store = {
+    getTasks: () => tasks,
+    isStoreLoaded: () => true,
+    isReaperEnabled: () => true,
+    isReaperRunning: () => true,
+  };
+
+  it('defaults to every project — the owner-credential behaviour', () => {
+    const snap = gatherSnapshot(store);
+    assert.equal(snap.scope, 'all');
+    assert.deepEqual(Object.keys(snap.by_project).sort(), ['alpha', 'beta']);
+    assert.equal(snap.tasks_total, 2);
+  });
+
+  it('limits the snapshot to the allow-list', () => {
+    const snap = gatherSnapshot(store, { projects: ['alpha'] });
+    assert.deepEqual(Object.keys(snap.by_project), ['alpha']);
+    assert.equal(snap.tasks_total, 1);
+    assert.deepEqual(snap.scope, ['alpha']);
+  });
+
+  it('an allow-list matching nothing yields an empty board, never all', () => {
+    const snap = gatherSnapshot(store, { projects: ['does-not-exist'] });
+    assert.deepEqual(snap.by_project, {});
+    assert.equal(snap.tasks_total, 0);
+  });
+
+  it('formatSnapshot delimiters the data and names a narrow scope', () => {
+    const text = formatSnapshot(gatherSnapshot(store, { projects: ['alpha'] }));
+    assert.match(text, /^<board_snapshot>/);
+    assert.match(text, /<\/board_snapshot>$/);
+    assert.match(text, /scope: this deployment limits the snapshot to: alpha/);
+  });
+
+  it('snapshotProjects parses the env var, trimming and de-duplicating', () => {
+    assert.equal(snapshotProjects({}), null);
+    assert.equal(snapshotProjects({ KANBAN_ASK_SNAPSHOT_PROJECTS: '' }), null);
+    assert.equal(snapshotProjects({ KANBAN_ASK_SNAPSHOT_PROJECTS: '   ' }), null);
+    assert.deepEqual(
+      snapshotProjects({ KANBAN_ASK_SNAPSHOT_PROJECTS: ' a , b ,, a ' }),
+      ['a', 'b'],
+    );
+  });
+});

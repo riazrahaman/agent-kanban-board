@@ -93,7 +93,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '678',
+    value: '683',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -858,7 +858,7 @@ node scripts/gen-config-reference.mjs`,
     eli5:
       'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, so it can explain the code itself as well as the protocol, alongside a live read-only snapshot.',
     underTheHood:
-      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token.',
+      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token. By default the snapshot covers EVERY project on the board: the ask password is an owner credential, not a per-project token. KANBAN_ASK_SNAPSHOT_PROJECTS narrows it to a comma-separated allow-list when a deployment shares the password.',
     snippet: {
       label: 'the ask surface',
       code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "provider": "ollama", "model": "..." }
@@ -919,7 +919,8 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_ASK_OPENROUTER_API_KEY', purpose: 'Secret OpenRouter key — required only for the "openrouter" provider, which is the default.' },
   { name: 'KANBAN_ASK_OLLAMA_HOST', purpose: 'Base URL for Ollama instance (default http://localhost:11434).' },
   { name: 'KANBAN_ASK_OLLAMA_AUTH_HEADER', purpose: 'Optional secret token for Ollama / reverse-proxy gateway.' },
-  { name: 'KANBAN_ASK_PASSWORD', purpose: 'Secret shared password gate for POST /api/ask.' },
+  { name: 'KANBAN_ASK_PASSWORD', purpose: 'Secret password gate for POST /api/ask — an owner credential: by default it reads every project.' },
+  { name: 'KANBAN_ASK_SNAPSHOT_PROJECTS', purpose: 'Comma-separated allow-list limiting the ask snapshot; unset = every project.' },
   { name: 'KANBAN_ASK_MODEL', purpose: 'Model id for Ask-the-Board (default openai/gpt-oss-20b for OpenRouter, qwen3.6:latest for Ollama).' },
   { name: 'KANBAN_ASK_DAILY_CAP', purpose: 'Global Ask-the-Board answers cap per UTC day (default 50).' },
   { name: 'KANBAN_ASK_PER_IP_PER_HOUR', purpose: 'Per-IP Ask-the-Board answers cap per hour (default 3).' },

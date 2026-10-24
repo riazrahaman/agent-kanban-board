@@ -206,6 +206,7 @@ function readEnv() {
     KANBAN_ASK_TIMEOUT_MS: process.env.KANBAN_ASK_TIMEOUT_MS,
     KANBAN_ASK_MAX_PROMPT_TOKENS: process.env.KANBAN_ASK_MAX_PROMPT_TOKENS,
     KANBAN_ASK_MAX_OUTPUT_TOKENS: process.env.KANBAN_ASK_MAX_OUTPUT_TOKENS,
+    KANBAN_ASK_SNAPSHOT_PROJECTS: process.env.KANBAN_ASK_SNAPSHOT_PROJECTS,
     KANBAN_AUTH_RATE_LIMIT_PER_MIN: process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN,
   };
 }
@@ -227,6 +228,28 @@ function modelName(env) {
   if (isNonEmpty(env.KANBAN_ASK_MODEL)) return env.KANBAN_ASK_MODEL.trim();
   const provider = resolveProvider(env);
   return provider === 'ollama' ? DEFAULT_OLLAMA_MODEL : DEFAULT_OPENROUTER_MODEL;
+}
+
+/**
+ * v3.9.2 — optional snapshot scope.
+ *
+ * The Ask password is an OWNER credential: by default the snapshot covers every
+ * project on the board, because the person using the board is entitled to see
+ * it. `KANBAN_ASK_SNAPSHOT_PROJECTS` exists for the other case — a deployment
+ * that shares the password and wants the assistant to see only some projects.
+ *
+ * Unset / empty / whitespace -> null, meaning "all projects" (the historical
+ * behaviour, and the one this board runs with). A non-empty list is parsed and
+ * de-duplicated; an entry that names no existing project simply matches nothing,
+ * so a typo narrows the answer rather than silently widening it.
+ */
+export function snapshotProjects(env) {
+  const raw = env.KANBAN_ASK_SNAPSHOT_PROJECTS;
+  if (!isNonEmpty(raw)) return null;
+  const list = raw.split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return list.length > 0 ? Array.from(new Set(list)) : null;
 }
 
 function ollamaHost(env) {
@@ -437,7 +460,16 @@ export function createAskRouter(deps = {}) {
 
   router.get('/config', (req, res) => {
     if (!isEnabled(env)) return res.json({ enabled: false });
-    res.json({ enabled: true, gated: true, provider, model: modelName(env) });
+    const scoped = snapshotProjects(env);
+    res.json({
+      enabled: true,
+      gated: true,
+      provider,
+      model: modelName(env),
+      // v3.9.2: 'all' means the password is an owner credential over the whole
+      // board; a list means this deployment deliberately narrowed the snapshot.
+      scope: scoped ? scoped : 'all',
+    });
   });
 
   // express.json() already ran globally in server.js before this router is
@@ -478,7 +510,7 @@ export function createAskRouter(deps = {}) {
     //    read-only snapshot.
     const maxPromptTokens = intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, 6000);
     const retrieved = gatherSourceContext(question.trim());
-    const snapshot = gatherSnapshot(store);
+    const snapshot = gatherSnapshot(store, { projects: snapshotProjects(env) });
     const fallback = !snapshot || snapshot.available === false;
     if (fallback) {
       console.warn('[kanban ask] live board snapshot unavailable; answering from the static knowledge pack');
