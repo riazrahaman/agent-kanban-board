@@ -16,6 +16,28 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.2] — 2026-10-24
+
+### Changed
+- **The Ask password is documented as an owner credential (closes #114).** `KANBAN_ASK_PASSWORD`
+  is a board-wide read credential: by default the snapshot handed to the model covers
+  **every** project, including recent card titles. That is intentional — the person using
+  the board is entitled to see the whole board — but it was never stated, so a reader could
+  reasonably assume the password respected per-token project isolation. It does not, and
+  now the About page, \`docs/CONFIGURATION.md\` and the configuration table say so.
+- **New \`KANBAN_ASK_SNAPSHOT_PROJECTS\` (optional, default = every project).** A
+  comma-separated allow-list that narrows the snapshot for a deployment that shares the
+  password. Unset keeps today's behaviour exactly. An allow-list that matches no project
+  yields an empty board rather than silently widening back to all, so a typo narrows the
+  answer instead of leaking. \`GET /api/ask/config\` reports \`scope\` (\`"all"\` or the list).
+
+### Security
+- **The snapshot is now delimited as data.** It is wrapped in
+  \`<board_snapshot> … </board_snapshot>\` and the guardrail instructs the model to treat
+  everything inside as content to describe, never as instructions — card titles are written
+  by board users and a crafted one could otherwise try to address the model.
+
+Trust metrics: **683 server + 299 client**.
 ## [3.9.1] — 2026-10-24
 
 ### Fixed
