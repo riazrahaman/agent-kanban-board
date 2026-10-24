@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, getProjectSummaries, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
+import { startDeployDrift, stopDeployDrift } from './deployDrift.js';
 import { startWebhooks, stopWebhooks } from './webhooks.js';
 import tasksRouter from './routes/tasks.js';
 import projectsRouter from './routes/projects.js';
@@ -369,6 +370,14 @@ export async function startServer(
       server.on('close', () => unsubAudit());
       startBackup();
       server.on('close', () => stopBackup());
+      // §2.10 (v3.9.5): deploy-drift monitor. Compares the running version with
+      // the newest GitHub release so a SKIPPED deploy (red CI -> Railway skips
+      // rather than fails) becomes visible in /api/health and, on a transition,
+      // in Telegram. Started only here, never in createApp: the HTTP-contract
+      // tests must never make a network call. Unref'd and off with
+      // KANBAN_DEPLOY_DRIFT_INTERVAL_MS <= 0.
+      startDeployDrift();
+      server.on('close', () => stopDeployDrift());
       // §2.11: outbound Telegram alerts for reclaims. Off unless a bot token +
       // chat id are configured, so tests and unconfigured deployments stay inert.
       const notifier = startNotifier();

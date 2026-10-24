@@ -93,12 +93,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '685',
+    value: '695',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '299',
+    value: '301',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -840,7 +840,7 @@ SIGTERM
     eli5:
       'Everything that changes how the board behaves is an environment variable. Set none and you get a safe, local, single-token board.',
     underTheHood:
-      'The server reads its configuration from the environment at call time, so tests and redeploys can change behaviour without a code change. Secrets are server-only — they are never inlined into the client bundle (the client stores its one write token in localStorage rather than a build-time env var). A feature whose prerequisite secrets are unset stays off: Ask-the-Board, reclaim alerts and bug reports are all fail-closed by default.',
+      'The server reads its configuration from the environment at call time, so tests and redeploys can change behaviour without a code change. Secrets are server-only — they are never inlined into the client bundle (the client stores its one write token in localStorage rather than a build-time env var). A feature whose prerequisite secrets are unset stays off: Ask-the-Board, reclaim alerts and bug reports are all fail-closed by default. This deployment also checks every 30 minutes whether the version it is running is the newest GitHub release, reports `in_sync`, `drift` or `unknown` under `deploy_drift` in `/api/health`, and raises one GitHub issue plus a Telegram message when a release is not live — silence there is not proof of health, because if the process is down nothing checks at all.',
     snippet: {
       label: 'docs/CONFIGURATION.md is generated',
       code: `# regenerate the reference table from the code
@@ -927,6 +927,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'Upstream request timeout for Ask-the-Board, in ms (default 45000).' },
   { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for Ask-the-Board (default 6000).' },
   { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 1500).' },
+  { name: 'KANBAN_DEPLOY_DRIFT_INTERVAL_MS', purpose: 'Deploy-drift check interval (default 1800000 = 30 min; <= 0 disables). KANBAN_DEPLOY_DRIFT_GRACE_MS (default 2700000 = 45 min) is how long a version mismatch must hold before it is called drift.' },
 ]
 
 // ---------------------------------------------------------------------------

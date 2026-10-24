@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.9.4
+**System:** Agent Kanban Board v3.9.5
 
 ---
 
@@ -123,6 +123,7 @@ The server and client are configured via environment variables.
 | `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / *(default)* | Lease reaper switch and interval. |
 | `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` (enabled by default in `render.yaml` since v2.5.5) | Periodic snapshot of task data into `backups/`, rotated to a bounded count. Status is surfaced in the `backup` block of `GET /api/health`; restore with `scripts/restore-backup.mjs` per `docs/RESTORE.md`. |
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
+| `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` / `KANBAN_DEPLOY_DRIFT_GRACE_MS` / `KANBAN_DEPLOY_DRIFT_API_URL` | `1800000` / `2700000` / GitHub releases URL | v3.9.5 — deploy-drift monitor: compares the running version with the newest release once after boot and then every 30 min, and reports `in_sync`/`drift`/`unknown` in the `deploy_drift` block of `GET /api/health`. A mismatch only becomes `drift` after the 45-min grace; an interval `<= 0` disables it. Public release feed — no GitHub token. |
 | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET + SSE). `EventSource` cannot set headers, so browsers mint a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open; `/api/health` and `/healthz` stay open for healthchecks. |
 | `KANBAN_WEBHOOK_URLS` | *(unset)* | v2.11.0 — comma-separated URLs that receive signed outbound JSON webhooks on every task diff event. Off when unset. |
 | `KANBAN_WEBHOOK_SECRET` | *(unset)* | v2.11.0 — optional HMAC-SHA256 key; when set each webhook carries `x-kanban-signature: sha256=<hex>` over `${timestamp}.${body}`. |
@@ -285,7 +286,7 @@ Both rely on a `startCommand` and the fact that the server binds `0.0.0.0` whene
 | `KANBAN_ALLOWED_ORIGIN` | *(public URL)* | Comma-separated CORS allow-list. |
 | `HOST` | `0.0.0.0` | Bind all interfaces (auto when `PORT` is set). |
 
-Generate secrets with `openssl rand -hex 32`. Liveness probes can target `GET /api/health` (or `/healthz`), which always answers 200 and reports store-load state, reaper status, backup status, and `credential_map: { status, covered, missing, extra }` (§2.10; detects truncated per-project token configuration without taking down the board). Readiness probes should target `GET /api/health/ready`, which returns 503 until the store has finished loading — `render.yaml` health-checks this path so a platform does not route traffic to a half-booted instance.
+Generate secrets with `openssl rand -hex 32`. Liveness probes can target `GET /api/health` (or `/healthz`), which always answers 200 and reports store-load state, reaper status, backup status, `credential_map: { status, covered, missing, extra }` (§2.10; detects truncated per-project token configuration without taking down the board), and `deploy_drift` (v3.9.5; the running version versus the newest release, so a SKIPPED deploy is not mistaken for a healthy one). Readiness probes should target `GET /api/health/ready`, which returns 503 until the store has finished loading — `render.yaml` health-checks this path so a platform does not route traffic to a half-booted instance.
 
 ---
 

@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.9.4        
+**System Version:** 3.9.5        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -40,6 +40,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Version Control Integration** | `child_process.execFile` (promisified) | Native | Direct execution of `git add` and `git commit` without external Git wrapper overhead. |
 | **Health & Readiness** | `server/routes/health.js` | Native | `GET /api/health` (+ `/healthz`) is a liveness probe that always returns 200 with store/reaper/backup state and `credential_map` (§2.10); `GET /api/health/ready` returns 503 until the store has loaded, and `render.yaml` health-checks that path. |
 | **Credential Coverage (§2.10)** | `server/utils/credentialMap.js` | Native | Boot-time comparison of `KANBAN_PROJECT_TOKENS` against known store projects; exposes `credential_map: { status, covered, missing, extra }` on `GET /api/health` to alert on truncated token maps without taking down the board. |
+| **Deploy Drift (§2.10, v3.9.5)** | `server/deployDrift.js` | Native | Compares the running `server/package.json` version with the newest GitHub release once after boot and every `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` (default 30 min), and exposes `deploy_drift: { status, running, latest_tag, checked_at, drift_since }` on `GET /api/health`. A mismatch only becomes `drift` after `KANBAN_DEPLOY_DRIFT_GRACE_MS` (default 45 min); the timer is started only from `startServer` and the Telegram alert fires on transitions only. It exists because a hosted service with `checkSuites: true` SKIPS a deploy when CI is red and keeps serving the previous build with a green health probe. |
 | **Stateless Session & Stream Tickets** | `server/middleware/sessionAuth.js`, `server/middleware/streamTicket.js` | Native | HMAC stateless tokens for web sessions and single-use 60s stream tickets for EventSource streaming. |
 | **Anonymous Bug Reports** | `server/routes/bugReports.js` | Native | Public bug reporting with Cloudflare Turnstile verification, honeypot protection, and in-memory rate limiting. |
 | **Ask-the-Board Knowledge Engine** | `server/routes/ask.js`, `server/askKnowledge.js` | Native | Password-gated (`x-ask-pass`) Q&A assistant with verbatim source-code retrieval and in-process live snapshots. Supports OpenRouter API and local Ollama (`qwen3.6:latest`) models. |
@@ -457,7 +458,7 @@ flowchart TD
 
 When per-project token isolation is configured via `KANBAN_PROJECT_TOKENS`, a valid JSON payload that omits projects locks those projects out while allowing the server to boot without warnings. To make truncated configuration visible immediately:
 1. **Boot Check**: At server startup, `reportCredentialCoverage()` compares the projects declared in `KANBAN_PROJECT_TOKENS` against projects present in the store. An under-covered map emits a prominent error to console logs naming the missing projects, alongside recovery instructions. The check is non-fatal to ensure already-covered projects continue serving without downtime.
-2. **Health Probe**: `GET /api/health` exposes `credential_map: { status, covered, missing, extra }`, allowing automated uptime monitoring probes to alert on partial credential coverage without inspecting server logs. Token values are never logged or exposed.
+2. **Health Probe**: `GET /api/health` exposes `credential_map: { status, covered, missing, extra }`, allowing automated uptime monitoring probes to alert on partial credential coverage without inspecting server logs. Token values are never logged or exposed. The same probe carries `deploy_drift` (v3.9.5) — `in_sync`, `drift` or `unknown` for the running version versus the newest release, plus `checked_at` and `drift_since` — so a skipped deployment is visible to monitoring without a human diffing versions.
 
 ---
 

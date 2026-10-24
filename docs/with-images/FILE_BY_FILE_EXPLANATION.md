@@ -400,6 +400,15 @@ project-scope guard); `PUT /api/settings?project=X` persists a validated
 `column_colors` override (any authenticated token, per-project token isolation
 inherited from `referencedProjects`).
 
+#### `server/deployDrift.js`
+- **Path:** [`server/deployDrift.js`](../server/deployDrift.js)
+- **Role (v3.9.5):** the deploy-drift monitor. `startDeployDrift()` runs one check shortly after boot and then every `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` (default 30 min, `<= 0` disables); each check reads the newest release from `https://api.github.com/repos/riazrahaman/agent-kanban-board/releases/latest` (override with `KANBAN_DEPLOY_DRIFT_API_URL`, no token required) and compares its `tag_name` with `APP_VERSION` from `server/package.json`.
+- **Why it exists:** a Railway service with `checkSuites: true` does not fail a push-triggered deployment when CI is red — it **skips** it, and the previous build keeps answering `/api/health` with 200. That is a silent failure, so the board now says it out loud.
+- **Decision:** the pure `evaluateDrift({ running, latestTag, now, driftSince, graceMs })` helper returns `in_sync` inside the grace window (default 45 min, `KANBAN_DEPLOY_DRIFT_GRACE_MS`) and `drift` only once the mismatch has persisted; equality clears `drift_since`. Any fetch/parse failure is `unknown` and never throws.
+- **State & wiring:** `deployDriftStatus()` is read by `server/routes/health.js` for the public, secret-free `deploy_drift` block. The timer mirrors `startReaper`/`startBackup` — unref'd, started only from `startServer` (never `createApp`, so the HTTP-contract tests make no network call), stopped on shutdown.
+- **Alerts:** reuses `KANBAN_TELEGRAM_BOT_TOKEN` + `KANBAN_TELEGRAM_CHAT_ID` and `KANBAN_BOARD_URL`, sends exactly one message on the transition into `drift` and one on the return to `in_sync`, and stays silent when either is unset. `.github/workflows/deploy-drift.yml` mirrors that verdict into one GitHub issue labelled `ops`.
+- **Client:** `client/src/lib/deployDrift.ts` (`driftChip`) renders a header chip only when the status is bad; `in_sync`, and "never checked", render nothing.
+
 #### `server/notifier.js`
 - **Path:** [`server/notifier.js`](../server/notifier.js)
 - **Purpose:** §2.11 outbound Telegram alerts when the lease reaper returns a task to `READY`.

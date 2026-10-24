@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import * as store from '../store.js';
 import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
 import { checkCredentialCoverage } from '../utils/credentialMap.js';
+import { deployDriftStatus } from '../deployDrift.js';
 
 const require = createRequire(import.meta.url);
 // Single source of truth for the deployed version: server/package.json.
@@ -61,6 +62,11 @@ router.get('/', asyncHandler(async (req, res) => {
       running: store.isReaperRunning(),
     },
     backup: store.backupStatus(),
+    // §2.10 (v3.9.5): is the RUNNING version the newest release? Public and
+    // secret-free. `unknown` means the check itself failed (GitHub unreachable),
+    // not that the board is unhealthy; `checked_at: null` means no check has run
+    // yet (monitor disabled or just booted).
+    deploy_drift: deployDriftStatus(),
     credential_map: {
       status: coverage.status,
       covered: coverage.covered.length,

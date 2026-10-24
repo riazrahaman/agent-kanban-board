@@ -1,4 +1,5 @@
 import type { Task, ProjectSummary, MetricsResponse, MilestoneSummary } from './types'
+import type { DeployDrift } from './lib/deployDrift'
 import { authHeaders, readStoredToken } from './lib/authToken'
 
 // Same-origin `/api`: the deployed server serves the client bundle AND the API
@@ -270,10 +271,20 @@ export async function nextClaim(
 /**
  * §health — deployed server version + liveness. Open GET.
  * GET /health
+ *
+ * v3.9.5: also carries `deploy_drift` — whether the RUNNING version is the
+ * newest release (`in_sync` | `drift` | `unknown`). Optional in the type because
+ * a board older than v3.9.5 does not send it, and the header chip hides then.
  */
-export async function getHealth(): Promise<{ version: string; status: string }> {
+export type HealthResponse = {
+  version: string
+  status: string
+  deploy_drift?: DeployDrift | null
+}
+
+export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`, { headers: readHeaders() })
-  return handleResponse<{ version: string; status: string }>(res)
+  return handleResponse<HealthResponse>(res)
 }
 
 /**

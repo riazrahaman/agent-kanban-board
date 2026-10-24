@@ -191,6 +191,8 @@ KANBAN_TELEGRAM_CHAT_ID=...
 
 Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOARD_URL`. The notifier only listens; it never changes the board. Treat an alert as a prompt to inspect and re-claim.
 
+**Deploy drift (v3.9.5+):** `GET /api/health` reports `deploy_drift` (`in_sync` | `drift` | `unknown`) — the running version versus the newest GitHub release; `drift` means the deploy was skipped (red CI), not that the board is broken, so keep using it and let the operator redeploy, and `unknown` means the check could not reach GitHub, not an outage.
+
 ## Public endpoints (Bug Reports and Ask-the-Board)
 
 - **`POST /api/bug-reports`**: Public bug reporting directly to GitHub issues (labelled `user-report`). Unauthenticated, takes no board token, creates no card.

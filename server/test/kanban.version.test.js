@@ -69,6 +69,11 @@ describe('release versioning', () => {
       // the same living document again, so a release that forgets the deck
       // fails here rather than on stage.
       'docs/presentation/deck/slides/cover.html',
+      // v3.9.5: the bundled orchestrator skill declares the board version it
+      // ships with. Pinning it here is what stops the skill telling agents about
+      // a board surface (e.g. `deploy_drift`) that the shipped version does not
+      // have — the skill and the server must never be released apart.
+      'skills/kanban/SKILL.md',
     ];
     for (const rel of docs) {
       const text = readFileSync(join(repoRoot, rel), 'utf8');
@@ -77,9 +82,13 @@ describe('release versioning', () => {
       // step with a separate header.
       const marker = rel.endsWith('deck/slides/cover.html')
         ? />v(\d+\.\d+\.\d+)</
-        : rel.includes('SYSTEM_DESIGN')
-          ? /\*\*System Version:\*\*\s*(\d+\.\d+\.\d+)/
-          : /Agent Kanban Board v(\d+\.\d+\.\d+)/;
+        : rel.endsWith('skills/kanban/SKILL.md')
+          // The skill's frontmatter `version:` is the board release it ships
+          // with (multiline: the marker is not on line 1).
+          ? /^version:\s*(\d+\.\d+\.\d+)/m
+          : rel.includes('SYSTEM_DESIGN')
+            ? /\*\*System Version:\*\*\s*(\d+\.\d+\.\d+)/
+            : /Agent Kanban Board v(\d+\.\d+\.\d+)/;
       const found = text.match(marker);
       assert.ok(found, `${rel} should declare a system version`);
       assert.equal(
