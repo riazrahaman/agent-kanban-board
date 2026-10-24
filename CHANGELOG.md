@@ -16,6 +16,24 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.1] — 2026-10-24
+
+### Fixed
+- **Card header overflow when a milestone chip is present (Option C).** A card
+  carrying a milestone rendered its header wider than the column: the row put up
+  to five fixed-width chips beside the task id with `shrink-0 sm:flex-nowrap`, so
+  a 10rem `◇ milestone` chip pushed `MEDIUM`/`READY` past the card edge and
+  clipped them, while the id absorbed all the shrink and collapsed to `re…`.
+  - The header now carries only the id (with a `min-w-[4ch]` floor so it can
+    never collapse), the priority badge, the status badge and the severity dot.
+  - Project, milestone and estimate moved to the card's footer meta row, which
+    wraps (`flex-wrap`) and ellipsises each chip (`max-w-full truncate`), so any
+    length of milestone is contained by the card.
+  - Regression guards updated in `client/src/lib/mobileToolbar.test.mjs` and
+    `client/src/lib/responsive.test.mjs` (no `sm:flex-nowrap`; wrapping footer
+    row; readable id floor). Verified against a 270px card whose
+    `scrollWidth === clientWidth` with no chip overflow.
+
 ## [3.9.0] — 2026-10-20
 
 ### Added

@@ -301,8 +301,8 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
     )
     assert.match(
       idTag,
-      /\bmin-w-0\b/,
-      'the task id <span> must carry `min-w-0`: without it, `min-width:auto` lets the flex row shrink it to a sliver',
+      /min-w-\[4ch\]/,
+      'the task id <span> must carry `min-w-[4ch]`: a readable floor, so the flex row cannot collapse it to a sliver',
     )
     assert.match(
       idTag,
@@ -319,9 +319,11 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
       /title=\{task\.id\}/,
       'the task id <span> must expose the full value via `title` since it can be ellipsised',
     )
-    // v2.9.1: the badge group is pinned (`shrink-0`) so it can never squeeze
-    // the id, and on phones it takes its own full-width line (`w-full
-    // sm:w-auto`) so it stops competing with the id on an 85vw column.
+    // v3.9.1 (option C): the header badge group is pinned (`shrink-0`) and
+    // carries only priority + status. Project / milestone / estimate moved to
+    // a wrapping footer row, so the old full-width-on-phones workaround is no
+    // longer needed — and `sm:flex-nowrap` must never come back, because it
+    // made a 10rem milestone chip overflow the card.
     const badgeGroup = taskCardSource.match(
       /<div className="([^"]*shrink-0[^"]*items-center gap-1\.5[^"]*)"/,
     )?.[1]
@@ -331,10 +333,15 @@ test('Column is responsive (w-[85vw] below md, md:w-72 from md up) and snap-star
       /\bshrink-0\b/,
       'the header badge group must carry `shrink-0` so it cannot squeeze the id',
     )
-    assert.match(
+    assert.doesNotMatch(
       badgeGroup,
-      /\bw-full\b[^"]*\bsm:w-auto\b/,
-      'the header badge group must stack full-width on phones (`w-full sm:w-auto`) so it does not compete with the id',
+      /\bsm:flex-nowrap\b/,
+      'the header badge group must never be pinned to one unshrinkable row',
+    )
+    assert.match(
+      taskCardSource,
+      /flex min-w-0 flex-wrap items-center gap-1\.5/,
+      'project / milestone / estimate must live in a wrapping footer row',
     )
 
     assert.doesNotMatch(

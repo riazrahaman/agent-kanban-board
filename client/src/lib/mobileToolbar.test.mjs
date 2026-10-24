@@ -208,15 +208,34 @@ test('the column scroll-arrow buttons provide high-contrast tactile affordance (
   }
 })
 
-test('the card header stacks the badge group so the id keeps real width', () => {
-  // Issue 3: the id collapsed to a sliver against a wide badge row on mobile.
+test('the card header keeps the id readable and never overflows (v3.9.1 option C)', () => {
+  // v3.9.1: only id + priority + status + severity dot remain in the header.
+  // Project / milestone / estimate moved to the wrapping footer meta row, so
+  // the old "stack the whole badge group on phones" workaround is obsolete.
   const cardSource = readFileSync(join(CLIENT_SRC, 'components', 'TaskCard.tsx'), 'utf8')
+
+  assert.match(
+    cardSource,
+    /min-w-\[4ch\][^"]*truncate/,
+    'the id must keep a readable floor and ellipsise',
+  )
+
   const badgeGroup = cardSource.match(
     /<div className="([^"]*shrink-0[^"]*items-center gap-1\.5[^"]*)"/,
   )?.[1]
   assert.ok(badgeGroup, 'the card header must render a badge group')
-  assert.match(badgeGroup, /\bw-full\b/, 'the badge group must take a full row on phones')
-  assert.match(badgeGroup, /\bsm:w-auto\b/, 'the badge group returns inline from sm up')
+  assert.doesNotMatch(
+    badgeGroup,
+    /\bsm:flex-nowrap\b/,
+    'the badge group must never be pinned to one unshrinkable row',
+  )
+
+  assert.match(
+    cardSource,
+    /flex min-w-0 flex-wrap items-center gap-1\.5/,
+    'the detail chips must live in a wrapping row',
+  )
+  assert.match(cardSource, /◇ \{task\.milestone\}/, 'the milestone chip must still render')
 })
 
 // ---------------------------------------------------------------------------
