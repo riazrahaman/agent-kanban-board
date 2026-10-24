@@ -1,4 +1,4 @@
-import { deriveTaskOwnership, ownershipTooltip, SEVERITY_COLORS } from '../lib/ownership'
+import { deriveTaskOwnership, severityPresentation, SEVERITY_COLORS } from '../lib/ownership'
 import type { Task } from '../types'
 
 type Props = {
@@ -7,15 +7,20 @@ type Props = {
 
 export default function SeverityDot({ task }: Props) {
   const summary = deriveTaskOwnership(task)
-  if (summary.severity === 'none') return null
+  const mark = severityPresentation(summary, task.status)
+  if (!mark) return null
 
-  const color = SEVERITY_COLORS[summary.severity]
-  const tooltip = ownershipTooltip(summary)
+  // v3.9.6: a card filed straight into DONE has no stage history. A hollow mark
+  // says "nobody witnessed this work", which is different from "separation held"
+  // (green) and from an unstarted card (no mark at all).
+  const hollow = mark.tone === 'hollow'
+  const color = mark.tone === 'hollow' ? 'transparent' : SEVERITY_COLORS[mark.tone]
+  const tooltip = mark.tooltip
 
   return (
     <span
-      className="group/tooltip relative inline-flex h-[11px] w-[11px] shrink-0 cursor-help rounded-[50%] outline-none focus-visible:ring-1 focus-visible:ring-blue focus-visible:ring-offset-1"
-      style={{ backgroundColor: color }}
+      className={`group/tooltip relative inline-flex h-[11px] w-[11px] shrink-0 cursor-help rounded-[50%] outline-none focus-visible:ring-1 focus-visible:ring-blue focus-visible:ring-offset-1${hollow ? ' border border-muted bg-transparent' : ''}`}
+      style={hollow ? undefined : { backgroundColor: color }}
       tabIndex={0}
       role="img"
       aria-label={tooltip}

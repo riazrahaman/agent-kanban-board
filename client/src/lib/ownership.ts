@@ -137,3 +137,27 @@ export function ownershipTooltip(summary: OwnershipSummary): string {
 
   return ''
 }
+
+/**
+ * What the card header should render for a task's ownership.
+ *
+ * `none` is ambiguous on its own: it covers both a card that has not started
+ * (BACKLOG/READY — nothing to show) and a card filed straight into DONE, where
+ * the absence of stage history is itself informative. v3.9.6 distinguishes the
+ * second with a hollow mark, so "no one witnessed this work" reads differently
+ * from "separation was evaluated and held".
+ */
+export function severityPresentation(
+  summary: OwnershipSummary,
+  status: string,
+): { tone: 'hollow' | 'green' | 'amber' | 'red'; tooltip: string } | null {
+  if (summary.severity === 'none') {
+    if (String(status).toUpperCase() !== 'DONE') return null
+    return {
+      tone: 'hollow',
+      tooltip:
+        'No stage history — this card was filed directly as DONE, so separation of duties cannot be evaluated.',
+    }
+  }
+  return { tone: summary.severity, tooltip: ownershipTooltip(summary) }
+}

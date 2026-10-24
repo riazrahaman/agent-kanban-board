@@ -22,7 +22,7 @@ const result = await build({
 const tmpDir = await mkdtemp(join(tmpdir(), 'ownership-test-'))
 const tmpFile = join(tmpDir, 'ownership.bundle.mjs')
 await writeFile(tmpFile, result.outputFiles[0].text)
-const { deriveOwnership, deriveTaskOwnership, ownershipTooltip, SEVERITY_COLORS } = await import(
+const { deriveOwnership, deriveTaskOwnership, ownershipTooltip, severityPresentation, SEVERITY_COLORS } = await import(
   pathToFileURL(tmpFile).href
 )
 await rm(tmpDir, { recursive: true, force: true })
@@ -199,4 +199,22 @@ test('legacy stage keys BUILDING/IN_TEST are tolerated (F3)', () => {
     task({ BUILDING: 'a', IN_TEST: 'a', READY_TO_SHIP: 'a', DONE: 'a' }),
   )
   assert.equal(red.severity, 'red')
+})
+
+test('no stage history shows nothing unless the card was filed as DONE', () => {
+  const none = deriveOwnership({})
+  assert.equal(severityPresentation(none, 'BACKLOG'), null)
+  assert.equal(severityPresentation(none, 'READY'), null)
+  const filed = severityPresentation(none, 'DONE')
+  assert.equal(filed.tone, 'hollow')
+  assert.match(filed.tooltip, /No stage history/)
+})
+
+test('a scored card keeps its severity tone and tooltip', () => {
+  const green = severityPresentation(
+    deriveOwnership({ IN_PROGRESS: 'a', IN_REVIEW: 'b' }),
+    'DONE',
+  )
+  assert.equal(green.tone, 'green')
+  assert.match(green.tooltip, /separation held/i)
 })
