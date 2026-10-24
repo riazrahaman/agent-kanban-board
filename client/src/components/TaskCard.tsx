@@ -68,51 +68,26 @@ function TaskCard({
         isHigh ? 'border-r-2 border-r-fail' : '',
       ].join(' ')}
     >
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        {/* The id is an identifier, not prose: it must stay on ONE line. Wrapping
-            it (overflow-wrap:anywhere) was a regression — `anywhere` lowers the
-            element's min-content size, and with `min-width:auto` in this flex row
-            the span then absorbed nearly all the shrink, collapsing a long id into
-            a ~30px sliver wrapped character-by-character over 11 lines. `min-w-0
-            flex-1 truncate` lets it claim the row and ellipsise instead, with the
-            full value in the tooltip. The badge group is pinned so it cannot be
-            squeezed either.
-            v2.9.1: the badge group now takes its own full-width line on phones
-            (`w-full sm:w-auto`), so the id gets the whole row instead of
-            competing with it on an 85vw column (mobile-rendering-issues.md
-            Issue 3). `min-w-0` is kept so desktop keeps ellipsising rather than
-            wrapping. */}
+      <div className="mb-1.5 flex items-center gap-2">
+        {/* The id is an identifier, not prose: it stays on ONE line and
+            ellipsises, with the full value in the tooltip.
+            v3.9.1 (option C): the header carries ONLY the id, priority, status
+            and the severity dot. Project, milestone and estimate moved to the
+            footer meta row. The old header put up to five fixed-width chips
+            beside the id with `shrink-0 sm:flex-nowrap`, so a 10rem milestone
+            chip made the row wider than the card: the id absorbed all the
+            shrink (collapsing to `re…`) and the chips still overflowed and were
+            clipped by the column. `min-w-[4ch]` keeps the id readable; the
+            footer chips use `flex-wrap` + `max-w-full truncate`, so any length
+            of milestone ellipsises inside the card instead of pushing its
+            neighbours out. */}
         <span
-          className="min-w-0 flex-1 truncate font-mono text-xs tabular-nums text-ink tracking-wider"
+          className="min-w-[4ch] flex-1 truncate font-mono text-xs tabular-nums text-ink tracking-wider"
           title={task.id}
         >
           {task.id}
         </span>
-        <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:flex-nowrap">
-          {showProject && task.project && (
-            <span
-              className="max-w-[10rem] truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"
-              title={`Project: ${task.project}`}
-            >
-              {task.project}
-            </span>
-          )}
-          {task.milestone && (
-            <span
-              className="max-w-[10rem] truncate border border-live bg-live-bg px-1 py-0.5 font-mono text-[10px] text-live"
-              title={`Milestone: ${task.milestone}`}
-            >
-              ◇ {task.milestone}
-            </span>
-          )}
-          {estimate !== undefined && estimate !== '' && (
-            <span
-              className="border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted"
-              title={`Estimate / Effort: ${estimate}`}
-            >
-              ⚡ {String(estimate)}
-            </span>
-          )}
+        <div className="flex shrink-0 items-center gap-1.5">
           <span
             className={`border px-1 py-0.5 font-mono text-[10px] uppercase tracking-wider ${priorityBadgeClass(task.priority)}`}
             title={`Priority: ${task.priority}`}
@@ -160,7 +135,8 @@ function TaskCard({
         </p>
       )}
 
-      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 pt-2 text-[11px]">
+      <div className="mt-2.5 border-t border-line/60 pt-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 text-[11px]">
         {task.assigned_agent ? (
           /* Agent ids are identifiers: one line, ellipsised, full value in the
              tooltip. `inline-flex` + overflow-wrap let this wrap into a narrow
@@ -176,11 +152,38 @@ function TaskCard({
           <span className="font-mono text-muted/60 italic">unassigned</span>
         )}
 
-        {task.issues && task.issues.length > 0 && (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-warn px-1 py-0.5 bg-warn-bg border border-line">
-            {task.issues.length} {task.issues.length === 1 ? 'issue' : 'issues'}
-          </span>
-        )}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {showProject && task.project && (
+            <span
+              className="max-w-full min-w-0 truncate border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] text-muted"
+              title={`Project: ${task.project}`}
+            >
+              {task.project}
+            </span>
+          )}
+          {task.milestone && (
+            <span
+              className="max-w-full min-w-0 truncate border border-live bg-live-bg px-1 py-0.5 font-mono text-[10px] text-live"
+              title={`Milestone: ${task.milestone}`}
+            >
+              ◇ {task.milestone}
+            </span>
+          )}
+          {estimate !== undefined && estimate !== '' && (
+            <span
+              className="border border-line bg-muted-bg px-1 py-0.5 font-mono text-[10px] tabular-nums text-muted"
+              title={`Estimate / Effort: ${estimate}`}
+            >
+              ⚡ {String(estimate)}
+            </span>
+          )}
+          {task.issues && task.issues.length > 0 && (
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-warn px-1 py-0.5 bg-warn-bg border border-line">
+              {task.issues.length} {task.issues.length === 1 ? 'issue' : 'issues'}
+            </span>
+          )}
+        </div>
+        </div>
       </div>
 
       {task.stage_owners && Object.keys(task.stage_owners).length > 0 && (
