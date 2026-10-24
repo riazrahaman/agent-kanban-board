@@ -16,6 +16,19 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.9.6] — 2026-10-24
+
+### Added
+- **A hollow severity mark for cards filed straight into DONE.** The solo-run dot is
+  derived from `stage_owners`, so a card created directly in DONE has no stage history:
+  `severity` was `none` and the header rendered nothing — indistinguishable at a glance
+  from "separation held" (green). It now renders a hollow ring whose tooltip reads
+  "No stage history — this card was filed directly as DONE, so separation of duties
+  cannot be evaluated." Unstarted cards (BACKLOG / READY) still render nothing, and every
+  scored card keeps its existing green/amber/red mark and tooltip.
+- `severityPresentation()` in `client/src/lib/ownership.ts` makes that render decision
+  pure and unit-tested.
+
 ## [3.9.5] — 2026-10-24
 
 **Headline: the board now says when a release never reached it.** A Railway
