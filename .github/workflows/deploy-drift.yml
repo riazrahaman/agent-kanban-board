@@ -30,6 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # There is no `actions/checkout` in this job — it only needs the public
+      # health endpoint. Without a working tree `gh` cannot infer the repository
+      # and dies with "fatal: not a git repository"; GH_REPO supplies it directly.
+      GH_REPO: ${{ github.repository }}
       HEALTH_URL: https://agent-kanban.riazrahaman.com/api/health
       DRIFT_LABEL: ops
     steps:
