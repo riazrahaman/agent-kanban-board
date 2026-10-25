@@ -515,8 +515,8 @@ Plus the auth/storage/deploy keys the board needs in production, e.g.
 
 ## 13. Current state & next steps
 
-**Current release: `3.9.5`**, CI green on Node 20 and 22, tag `v3.9.5` pushed.
-Tags `v3.5.0` … `v3.9.5` all pushed. Railway redeploys from `main` once CI
+**Current release: `3.10.0`**, CI green on Node 20 and 22, tag `v3.10.0` pending merge + push (branch `rev/security-hardening`).
+Tags `v3.5.0` … `v3.9.6` pushed; `v3.10.0` waits on the merge of the deep-review hardening branch. Railway redeploys from `main` once CI
 passes, so `/api/health` is the check for what the board is actually running —
 and since v3.9.5 its `deploy_drift` block answers that question without a
 human comparing two version strings (a Railway service with `checkSuites: true`
@@ -547,6 +547,8 @@ human comparing two version strings (a Railway service with `checkSuites: true`
 | `3.9.3` | `body-parser` 2.3.0 → 2.4.0 (GHSA-27r3-jxmh-p828) — the first green CI after the skipped deploys. |
 | `3.9.4` | `READY_TO_SHIP` is an active status **everywhere** (`client/src/lib/status.ts`, `server/askKnowledge.js`), with a client/server drift guard. |
 | `3.9.5` | **Deploy-drift monitor**: `deploy_drift` in `/api/health`, Telegram on transitions, a GitHub-issue workflow, and a header chip that appears only when something is wrong. |
+| `3.9.6` | **Hollow severity mark** for cards filed straight into DONE (`severityPresentation`). |
+| `3.10.0` | **Deep-review hardening release** — the full five-reviewer audit: P0 trash-restore persistence, full per-token read isolation on every endpoint and stream, next-claim sweep guard, stream-ticket scope binding, claim/heartbeat holder binding, reaper SAFE for READY_TO_SHIP and fixed for READY-with-owner leases, heartbeat renewals no longer bump CAS, assign refreshes progress, archived blockers never wedged, client SSE re-mints tickets + primes on the stream + composite task identity + 'deleted' kind, deploy-drift transition memory, Ask budget enforcement, webhook delivery serialization + status surfacing, audit rotation + settings audit, sink-first JSON persistence, notifier defaults. |
 | `current` | Persistent Tailscale Funnel public ingress with macOS `launchd` token gateway for zero-network-exposure Ollama hosting. |
 
 ### The one worth reading twice

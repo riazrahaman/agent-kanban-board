@@ -5,11 +5,12 @@ import { decodeStored } from '../sanitize'
 
 type Props = {
   tasks: Task[]
-  onOpen: (id: string) => void
+  onOpen: (project: string, id: string) => void
 }
 
 type ActivityItem = {
-  taskId: string
+  taskId: string,
+  project: string
   taskTitle: string
   agentId: string
   message: string
@@ -39,6 +40,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
      for (const task of tasks) {
        for (const log of Array.isArray(task.agent_logs) ? task.agent_logs : []) {
         items.push({
+          project: task.project,
           taskId: task.id,
           taskTitle: decodeStored(task.title),
           agentId: log.agent_id,
@@ -122,7 +124,7 @@ export default function SignalRail({ tasks, onOpen }: Props) {
             activities.map((item, idx) => (
               <button
                 key={`${item.taskId}-${item.timestamp}-${idx}`}
-                onClick={() => onOpen(item.taskId)}
+                onClick={() => onOpen(item.project, item.taskId)}
                 type="button"
                 className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted-bg/50 transition-colors pointer-coarse:min-h-11"
                 title={`${item.taskTitle}: ${item.message}`}

@@ -23,7 +23,9 @@
 import { onDiff } from './store.js';
 
 export const DEFAULT_BOARD_URL = 'https://agent-kanban.riazrahaman.com';
-export const DEFAULT_EVENTS = ['lease_expired', 'orphan_normalized'];
+// progress_stalled is the loudest signal of a wedged worker — it belongs in
+// the default alert set (deep-review: previously it was silently swallowed).
+export const DEFAULT_EVENTS = ['lease_expired', 'orphan_normalized', 'progress_stalled'];
 export const TELEGRAM_TEXT_LIMIT = 4096;
 export const DESCRIPTION_LIMIT = 300;
 const SEND_TIMEOUT_MS = 5000;

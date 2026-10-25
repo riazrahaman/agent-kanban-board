@@ -25,7 +25,15 @@ router.get('/', asyncHandler(async (req, res) => {
   const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : null;
   const kind = typeof req.query.kind === 'string' && req.query.kind ? req.query.kind : null;
   const entries = await readAudit({ limit, since, project, kind });
-  res.json({ entries, count: entries.length, enabled: auditLogEnabled() });
+  // Deep-review (auth P2): audit entries name agents, projects and reasons —
+  // they are read-scoped like every other list, not open to every credential.
+  // A scoped caller's project filter is additionally honoured: asking for a
+  // project outside their scope simply yields an empty result.
+  const allowed = req.caller?.authorizedProjects;
+  const scoped = (allowed instanceof Set)
+    ? entries.filter((e) => !e.project || allowed.has(e.project))
+    : entries;
+  res.json({ entries: scoped, count: scoped.length, enabled: auditLogEnabled() });
 }));
 
 export default router;

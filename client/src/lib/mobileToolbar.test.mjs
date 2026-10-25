@@ -413,7 +413,7 @@ test('the Portfolio project link buttons reach 44px on coarse pointers', () => {
 
 test('the SignalRail activity items reach 44px on coarse pointers', () => {
   const item = signalRailSource.match(
-    /onClick=\{\(\) => onOpen\(item\.taskId\)\}[\s\S]*?className="([^"]*)"/,
+    /onClick=\{\(\) => onOpen\(item\.project, item\.taskId\)\}[\s\S]*?className="([^"]*)"/,
   )?.[1]
   assert.ok(item, 'SignalRail must render its activity-feed buttons')
   assert.match(item, COARSE_TARGET, 'each SignalRail activity item needs a 44px touch height')

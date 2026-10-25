@@ -35,9 +35,15 @@ function resolveCredential(req) {
   const projectTokens = parseProjectTokens();
   if (projectTokens?.map) {
     // Map values are credential ARRAYS since role binding shipped (v3.8.0).
-    for (const creds of projectTokens.map.values()) {
+    // Deep-review (auth P1): a token valid under several projects may mint for
+    // ANY of them; never find-first and let the caller name a different one.
+    const matches = [];
+    for (const [proj, creds] of projectTokens.map.entries()) {
       const match = creds.find((c) => tokensMatch(provided, c.token));
-      if (match) return { kind: 'project', credential: match };
+      if (match) matches.push({ project: proj, credential: match });
+    }
+    if (matches.length) {
+      return { kind: 'project', credential: matches[0].credential, projects: matches.map((m) => m.project) };
     }
   }
   const adminToken = process.env.KANBAN_ADMIN_TOKEN;
@@ -123,10 +129,30 @@ router.post('/stream-ticket', (req, res) => {
   }
 
   const rawProject = body.project;
-  const project =
-    typeof rawProject === 'string' && isValidProjectId(rawProject)
-      ? rawProject
-      : defaultProjectName();
+  let project;
+  if (typeof rawProject === 'string' && isValidProjectId(rawProject)) {
+    project = rawProject;
+  } else if (cred.kind === 'session') {
+    project = cred.session.project ?? defaultProjectName();
+  } else if (cred.kind === 'project' && cred.projects.length === 1) {
+    project = cred.projects[0];
+  } else {
+    project = defaultProjectName();
+  }
+
+  // Deep-review (auth P1): a stream ticket carries role AND project — so the
+  // mint must be scope-checked, or a caller mints a ticket for a project its
+  // credential cannot see and the enforced read gates are bypassed.
+  if (cred.kind === 'project' && !cred.projects.includes(project)) {
+    return res.status(403).json({
+      error: `Forbidden: token is not authorized for project '${project}'`,
+    });
+  }
+  if (cred.kind === 'session' && cred.session.project && project !== cred.session.project) {
+    return res.status(403).json({
+      error: `Forbidden: token is not authorized for project '${project}'`,
+    });
+  }
 
   const minted = createStreamTicket({ role, project });
   if (!minted) {

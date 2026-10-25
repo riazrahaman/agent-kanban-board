@@ -472,7 +472,7 @@ export function subscribeToEvents(
 
 /** The per-task event kinds the server's diff stream can emit (§2.2). */
 export const DIFF_KINDS = [
-  'created', 'updated', 'removed', 'archived',
+  'created', 'deleted', 'updated', 'removed', 'archived',
   'claimed', 'renewed', 'unblocked', 'reclaimed',
 ] as const
 
@@ -531,28 +531,47 @@ export interface DiffEvent {
 
 /**
  * Subscribes to the server's per-task diff stream (§2.2, now the DEFAULT mode
- * via PERF-01), optionally scoped to one project. Unlike `subscribeToEvents` —
- * which re-broadcasts the whole task array on every mutation — this delivers
- * exactly one event per changed task. An optional `onSettings` callback
- * receives the `event: settings` frames the combined stream now carries
- * (PERF-01c). Returns an unsubscribe that closes the EventSource.
+ * via PERF-01), optionally scoped to one project, emitting:
+ *   - `tasks`          priming snapshot on every (re)connect (?prime=1)
+ *   - `task.<kind>`    per-task diffs thereafter (including 'deleted' since v3.10)
+ *   - `settings`       board settings (optional)
+ * Deep-review fixes:
+ *   - the 60s single-use ticket is RE-MINTED on every reconnect — a network
+ *     blip on a read-gated deployment 401s against the consumed ticket and the
+ *     native EventSource retry then dies permanently.
+ *   - reconnect uses backoff + jitter and re-primes via the stream (a GET done
+ *     at another time can never clobber a newer diff).
  */
 export function subscribeToDiffs(
   onEvent: (event: DiffEvent) => void,
-  opts: { project?: string; onSettings?: (settings: SettingsResponse) => void } = {},
+  opts: {
+    project?: string
+    onSettings?: (settings: SettingsResponse) => void
+    onTasks?: (tasks: Task[]) => void
+    onError?: (reason: string) => void
+  } = {},
 ): () => void {
   let source: EventSource | null = null
   let cancelled = false
   let attached: Array<readonly [string, (evt: MessageEvent<string>) => void]> = []
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retries = 0
 
-  const open = (ticket: string | null) => {
-    if (cancelled) return
-    const params = new URLSearchParams({ mode: 'diff' })
-    if (opts.project) params.set('project', opts.project)
-    if (ticket) params.set('ticket', ticket)
-    source = new EventSource(`${API_BASE}/events?${params.toString()}`)
-
-    attached = DIFF_KINDS.map((kind) => {
+  const listen = () => {
+    attached = []
+    if (!source) return
+    if (opts.onTasks) {
+      const h = (evt: MessageEvent<string>) => {
+        try {
+          opts.onTasks!(JSON.parse(evt.data) as Task[])
+        } catch (err) {
+          console.error('Failed to parse SSE tasks payload', err)
+        }
+      }
+      source.addEventListener('tasks', h as EventListener)
+      attached.push(['tasks', h] as const)
+    }
+    for (const kind of DIFF_KINDS) {
       const handler = (evt: MessageEvent<string>) => {
         try {
           onEvent(JSON.parse(evt.data) as DiffEvent)
@@ -560,10 +579,9 @@ export function subscribeToDiffs(
           console.error(`Failed to parse SSE task.${kind} payload`, err)
         }
       }
-      source!.addEventListener(`task.${kind}`, handler as EventListener)
-      return [`task.${kind}`, handler] as const
-    })
-
+      source.addEventListener(`task.${kind}`, handler as EventListener)
+      attached.push([`task.${kind}`, handler] as const)
+    }
     if (opts.onSettings) {
       const settingsHandler = (evt: MessageEvent<string>) => {
         try {
@@ -573,23 +591,57 @@ export function subscribeToDiffs(
         }
       }
       source.addEventListener('settings', settingsHandler as EventListener)
-      attached = [...attached, ['settings', settingsHandler] as const]
-    }
-
-    source.onerror = (err) => {
-      // EventSource auto-reconnects on its own; just log for visibility.
-      console.error('SSE diff connection error', err)
+      attached.push(['settings', settingsHandler] as const)
     }
   }
 
-  mintStreamTicket(opts.project).then((ticket) => open(ticket))
+  const closeSource = () => {
+    if (!source) return
+    for (const [name, handler] of attached) {
+      source.removeEventListener(name, handler as EventListener)
+    }
+    attached = []
+    source.close()
+    source = null
+  }
+
+  const connect = () => {
+    if (cancelled) return
+    mintStreamTicket(opts.project).then((ticket) => {
+      if (cancelled) return
+      closeSource()
+      const params = new URLSearchParams({ mode: 'diff', prime: '1' })
+      if (opts.project) params.set('project', opts.project)
+      if (ticket) params.set('ticket', ticket)
+      source = new EventSource(`${API_BASE}/events?${params.toString()}`)
+      listen()
+      source.addEventListener('open', () => {
+        retries = 0
+      })
+      source.onerror = () => {
+        if (cancelled || !source) return
+        // A clean close or a terminal 401 both surface here. Either way: drop
+        // this source and re-mint a fresh ticket — never let EventSource retry
+        // against the single-use ticket it already consumed.
+        const delay = Math.min(30000, 1000 * 2 ** retries) + Math.floor(Math.random() * 500)
+        retries += 1
+        closeSource()
+        retryTimer = setTimeout(connect, delay)
+      }
+    }).catch(() => {
+      if (cancelled) return
+      const delay = Math.min(30000, 1000 * 2 ** retries) + Math.floor(Math.random() * 500)
+      retries += 1
+      retryTimer = setTimeout(connect, delay)
+    })
+  }
+
+  connect()
 
   return () => {
     cancelled = true
-    for (const [name, handler] of attached) {
-      source?.removeEventListener(name, handler as EventListener)
-    }
-    source?.close()
+    if (retryTimer) clearTimeout(retryTimer)
+    closeSource()
   }
 }
 
@@ -604,7 +656,7 @@ export function subscribeToDiffs(
 export function subscribeToBoard(
   onDiffEvent: (event: DiffEvent) => void,
   onSettings: (settings: SettingsResponse) => void,
-  { project }: { project?: string } = {},
+  { project, onTasks }: { project?: string; onTasks?: (tasks: Task[]) => void } = {},
 ): () => void {
-  return subscribeToDiffs(onDiffEvent, { project, onSettings })
+  return subscribeToDiffs(onDiffEvent, { project, onSettings, onTasks })
 }

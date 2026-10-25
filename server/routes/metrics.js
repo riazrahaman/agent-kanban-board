@@ -20,12 +20,22 @@ router.use(projectScopeGuard());
  */
 router.get('/', asyncHandler(async (req, res) => {
   // Lazy sweep first, so archived counts and cycle time reflect current state.
-  await store.runArchiveSweep();
+  await store.runArchiveSweep({ lazy: true });
   const raw = rawProjectScope(req);
   const project = typeof raw === 'string' && raw !== '' ? raw : undefined;
-  const metrics = store.getMetrics(project);
+  let metrics = store.getMetrics(project);
   if (!metrics) {
     return res.status(400).json({ error: `Invalid project scope: ${String(raw)}` });
+  }
+  // Deep-review (auth P2): per-token read isolation applies to metrics too —
+  // a caller whose authorized set excludes a project must see nothing from it.
+  const allowed = req.caller?.authorizedProjects;
+  if (allowed instanceof Set) {
+    if (project && !allowed.has(project)) {
+      metrics = [];
+    } else if (Array.isArray(metrics)) {
+      metrics = metrics.filter((m) => allowed.has(m.project));
+    }
   }
   res.json(metrics);
 }));

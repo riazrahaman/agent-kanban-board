@@ -18,7 +18,17 @@ router.get('/', (req, res) => {
     return res.status(400).json({ error: `Invalid project scope: ${String(raw)}` });
   }
   const project = typeof raw === 'string' && raw !== '' ? raw : undefined;
-  res.json({ milestones: store.getMilestones(project) });
+  let milestones = store.getMilestones(project);
+  // Deep-review (auth P2): per-token read isolation applies to milestones too.
+  const allowed = req.caller?.authorizedProjects;
+  if (allowed instanceof Set) {
+    if (project) {
+      if (!allowed.has(project)) milestones = [];
+    } else {
+      milestones = milestones.filter((m) => allowed.has(m.project));
+    }
+  }
+  res.json({ milestones });
 });
 
 export default router;

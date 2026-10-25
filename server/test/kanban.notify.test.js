@@ -102,7 +102,7 @@ describe('§2.11 Telegram reclaim notifier', () => {
   it('2. applies the documented defaults, and env overrides', () => {
     const d = notifierConfig(BASE_ENV);
     assert.equal(d.boardUrl, DEFAULT_BOARD_URL);
-    assert.deepEqual([...d.events].sort(), ['lease_expired', 'orphan_normalized']);
+    assert.deepEqual([...d.events].sort(), ['lease_expired', 'orphan_normalized', 'progress_stalled']);
     assert.equal(d.projects, null, 'no allow-list ⇒ every project');
     assert.equal(d.includeDesc, true, 'full layout by default');
     assert.equal(d.minIntervalMs, 1000);

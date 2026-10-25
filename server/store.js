@@ -567,6 +567,8 @@ export async function loadStore() {
     }
   }
 
+  // Boot sweep is always forced — the process-level mutation serial must never
+  // skip the one sweep that reconciles on-disk age with the live index.
   await runArchiveSweep();
   storeLoaded = true;
   notify();
@@ -715,7 +717,13 @@ function dispatchDiffEvents({ actor = 'user', reason = null, semantic = null } =
  *              inferred kind for a specific mutated task (claim -> 'claimed',
  *              reclaim -> 'reclaimed', unlock -> 'unblocked').
  */
+let mutationSerial = 0;
+let lastSweepSerial = -1; // first sweep always runs (boot + seed); then only when serial advanced.
+
 export function notify(opts = {}) {
+  // Deep-review: counts every committed mutation batch, so the archive sweep
+  // can skip itself only when NOTHING has changed since its last pass.
+  mutationSerial += 1;
   const snapshot = tasks;
    for (const listener of listeners) {
     try {
@@ -1053,7 +1061,9 @@ function rebuildAggregates() {
 
 export function getProjectSummaries() {
   rebuildAggregates();
-  return cachedSummaries;
+  // Deep-review: return a copy — a caller (or a route handler mutating entries)
+  // must never be able to edit the shared aggregate cache in place.
+  return cachedSummaries.map((s) => ({ ...s }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1871,18 +1881,22 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
     candidate.stage_owners = { ...owners, [targetStatus]: agentId };
   }
   candidate.updated = isoFromMs(nowMs);
-  candidate.version = nextVersionFor(task);
   if (!renew) {
     // E-1: a fresh claim is progress on THIS card specifically — distinct from
     // the lease-window renewal above, which only proves the AGENT is alive.
     // Never set by a sibling renewal (renewAllLeasesInner does not touch it).
     candidate.last_progress_at = candidate.updated;
   }
+  // Deep-review (I-1): a lease-only renewal is not a content change and must not
+  // bump the CAS `version`. renewAllLeasesInner already honors that; the targeted
+  // heartbeat path did not, so every browser heartbeat invalidated anyone else's
+  // expected_version PATCH on the held card.
+  if (!renew) candidate.version = nextVersionFor(task);
   if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
   if (!renew) {
     candidate.agent_logs.push({
       timestamp: candidate.updated,
-      message: `${agentId} claimed this task.`,
+      message: `${escapeHtml(agentId)} claimed this task.`,
       agent_id: agentId,
     });
   }
@@ -2000,8 +2014,10 @@ async function maybeUnlockDependentsInner(completedRef, nowMs) {
     }
   // Each unlock fired its own semantic event inside unlockTaskInner; this
      // extra snapshot notify is a no-op re-broadcast so downstream listeners
-     // see the whole set in one tick.
-  notify({ actor: 'system', reason: 'unblocked_batch' });
+     // see the whole set in one tick. Only worth the broadcast when something
+     // actually unblocked (deep-review: don't re-broadcast a snapshot per DONE
+     // transition that unblocked nothing).
+  if (unblocked.length > 0) notify({ actor: 'system', reason: 'unblocked_batch' });
   return { unblocked };
 }
 
@@ -2071,15 +2087,20 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
       return { error: 'Task is not claimed', status: 409, reason: 'not_claimed' };
      }
 
-       // A non-privileged caller must be the current holder.
-    if (!isPrivilegedRole(caller.role) && task.assigned_agent !== agentId) {
+       // A non-privileged caller must be the current holder. Privilege must be
+    // DERIVED FROM THE CREDENTIAL (callerIsPrivileged), never the self-asserted
+    // header role — otherwise any bearer can assert X-Agent-Role: admin and renew
+    // any agent's lease.
+    if (!callerIsPrivileged(caller) && task.assigned_agent !== agentId) {
       return { error: 'Caller is not the lease holder', status: 409, reason: 'not_lease_holder' };
      }
 
        // Shared core in renew mode: extends the lease, no status move, no log.
     const lease = resolveLeaseMs(requestedLease);
     if (!lease.ok) return { error: lease.error, status: lease.status };
-    return applyClaim(task, agentId, caller, nowFn(), { renew: true, leaseMs: requestedLease === undefined || requestedLease === null ? null : lease.ms });
+    // Pin the window only on an EXPLICIT request: '' arrives as explicit:false and
+    // would otherwise write a lease_ms the caller never asked for.
+    return applyClaim(task, agentId, caller, nowFn(), { renew: true, leaseMs: lease.explicit ? lease.ms : null });
        });
        }
 
@@ -2220,6 +2241,12 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       }
     }
     candidate.updated = isoFromMs(nowMs);
+    if (!release) {
+      // Deep-review: a fresh assignment is new work on the card — refresh the
+      // progress clock, otherwise the very next stall sweep reclaims the card
+      // again on a LIVE lease (the stall branch ignores lease validity).
+      candidate.last_progress_at = candidate.updated;
+    }
     candidate.version = nextVersionFor(task);
     if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
     const actor = caller?.agent_id || caller?.agentId || 'operator';
@@ -2367,7 +2394,31 @@ export function getMilestones(project) {
       const candidateReasons = new Map();
       const candidates = tasks.filter((t) => {
         const active = ACTIVE_STATUS_SET.has(t.status);
-        if (!active) return false;
+        if (!active) {
+          // READY is not an active status, so the sweep below never sees it —
+          // but a card can be READY WITH an owner: a planner claims READY→PLANNING
+          // (owner + lease set), then a role-gated PATCH drops it back to READY,
+          // a transition that deliberately keeps the lease. Once that lease
+          // lapses the card is permanently unclaimable (contention 409, and
+          // nextClaim skips owned cards). Reclaim it the moment its lease dies.
+          if (
+            t.status === STATUSES.READY &&
+            t.assigned_agent !== null &&
+            t.claim_expires_at != null
+          ) {
+            const rdyExpires = Date.parse(t.claim_expires_at);
+            if (!Number.isNaN(rdyExpires) && rdyExpires <= nowMs) {
+              candidateReasons.set(t, 'lease_expired');
+              return true;
+            }
+          }
+          return false;
+        }
+        // Deep-review P1: a card in READY_TO_SHIP is DONE with its working
+        // stages — the tester's job is finished; nothing legitimately advances
+        // last_progress_at, so the stall sweep would reclaim approved work to
+        // READY mid-release. Never reclaim a card awaiting release.
+        if (t.status === STATUSES.READY_TO_SHIP) return false;
         if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
           // Orphan: active with no owner/lease. Normally this is a status-only
           // PATCH that has not yet been claimed — a legitimate intermediate state,
@@ -2626,14 +2677,11 @@ export async function getTaskLogs(id, project, { offset = 0, limit = 50, include
   // Inline logs: newest-first (reverse of append order).
   const inline = [...logs].reverse();
   const spilled_count = await countSpill(task.project, id);
-  let entries = [];
-  if (include_spilled) {
-    const allSpilled = await readSpill(task.project, id);
-    entries = allSpilled;
-  } else {
-    const allSpilled = await readSpill(task.project, id);
-    entries = allSpilled.slice(offset, offset + limit);
-  }
+  // Deep-review: `include_spilled=1` must mean "the spilled page", not "the
+  // entire spill file regardless of offset/limit" — a reclamation-storm card
+  // would otherwise return its whole history on every open read.
+  const allSpilled = await readSpill(task.project, id);
+  const entries = allSpilled.slice(offset, offset + limit);
   return { inline, spilled_count, entries, status: 200 };
 }
 
@@ -2832,18 +2880,33 @@ function isEligibleForArchive(task, days, nowMs) {
  * then created_at, then updated) into their project's archive. Idempotent and
  * safe to run on every boot and lazily before reads. 0 disables the sweep.
  */
-export async function runArchiveSweep() {
+export async function runArchiveSweep({ lazy = false } = {}) {
   return withMutationLock(async () => {
     // v2.5.6: the trash-retention sweep rides the same cadence (any read path
     // that sweeps the archive also ages out the trash sink). Called via the
     // UNLOCKED inner — runArchiveSweep already holds the lock; awaiting the
     // locked wrapper here would deadlock the non-reentrant promise chain.
+    // Deep-review: retention only changes on committed mutations, so a sequence
+    // of reads with no writes between them needs no resweep. Forced calls
+    // (POST /tasks/archive/sweep) and the boot sweep always run.
+    if (lazy && mutationSerial === lastSweepSerial) return 0;
+    lastSweepSerial = mutationSerial;
     await runTrashSweepInner();
     const days = getArchiveAfterDays();
     if (days === 0) return 0;
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
+
+    // Deep-review P1: a DONE card that still blocks a live dependency must NOT
+    // be archived. dependencyGate resolves deps in the LIVE index only, so an
+    // archived blocker becomes permanently dangling and its dependents can
+    // never again be claimed or even PATCH-ed (their gate 409s forever).
+    const blockedByLive = new Set();
+    for (const t of tasks) {
+      if (t.status === STATUSES.DONE) continue;
+      for (const dep of t.depends_on || []) blockedByLive.add(dep);
+    }
 
     // Group live tasks by project; also track projects that already hold
     // archived rows (so their archive sink gets a consistent write even when
@@ -2859,7 +2922,7 @@ export async function runArchiveSweep() {
     const archivedSemantic = new Map();
 
     const runFor = async (project, liveList) => {
-      const eligible = (liveList || []).filter((t) => isEligibleForArchive(t, days, nowMs));
+      const eligible = (liveList || []).filter((t) => !blockedByLive.has(t.id) && isEligibleForArchive(t, days, nowMs));
       const storage = getStorage(project);
       const isGit = storage instanceof GitYamlStorage;
 
@@ -2887,15 +2950,14 @@ export async function runArchiveSweep() {
           await storage.saveArchiveTask(archived);
         }
       } else {
-        // Live partition rewrite: the project had live rows, so the dropped
-        // ones must be reflected on disk. (Archive-only projects hit the
-        // early return above and never reach this branch.)
+        // Deep-review: write the SAFETY SINK first, then the partition — a
+        // crash between the two must leave the moved cards parked in the
+        // archive, never lost in both (Git's saveArchiveTask already removes
+        // the live card last). Sink rewrite is gated on a real move (FIX 3).
         const survivors = (liveList || []).filter((t) => !eligibleIds.has(t.id));
-        await storage.save(survivors);
-        // Archive sink rewrite is gated on a real move (FIX 3): no churn when
-        // this project moved nothing, and we merge onto any existing rows.
         const merged = [...(archive[project] || []), ...newArchived];
         await storage.saveArchive(merged);
+        await storage.save(survivors);
       }
 
       // (c) Only after every persistence call succeeded: drop the moved rows
@@ -3016,10 +3078,13 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
     if (storage instanceof GitYamlStorage) {
       await storage.trashTask(task);
     } else {
+      // Deep-review: write the SAFETY SINK first, then the partition. A crash
+      // between the two must leave the card parked in trash, never lost in both
+      // (the Git backend already writes the sink first).
       const survivors = getProjectBucket(task.project).filter((t) => t.id !== task.id);
-      await storage.save(survivors);
       const sink = [...(trash[task.project] || []), trashed];
       await storage.saveTrash(sink);
+      await storage.save(survivors);
     }
 
     trash[task.project] = [...(trash[task.project] || []), trashed];
@@ -3159,7 +3224,7 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
         } else {
           const deleteIds = new Set(list.map((t) => t.id));
           const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
-          await storage.save(survivors);
+          // Deep-review: write the SAFETY SINK first, then the partition.
           const sink = [
             ...(trash[p] || []),
             ...list.map((t) => Object.assign(structuredClone(t), {
@@ -3169,6 +3234,7 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
             })),
           ];
           await storage.saveTrash(sink);
+          await storage.save(survivors);
         }
         trash[p] = [
           ...(trash[p] || []),
@@ -3278,7 +3344,11 @@ export async function restoreFromTrash(id, { caller = {}, project } = {}) {
       await storage.saveTask(restored);
       await storage.trashRemove(trashed);
     } else {
-      await storage.saveTask(restored, getProjectBucket(authorizedProject));
+      // BUGFIX (deep-review P0): persist the partition WITH the restored card.
+      // The previous call persisted `getProjectBucket(authorizedProject)` — the
+      // live bucket WITHOUT `restored` — so the card existed only in memory and
+      // any restart silently lost it while the trash copy was already gone.
+      await storage.saveTask(restored, projectBucket(authorizedProject, restored));
       await trashPersistRemove(authorizedProject, trashed);
     }
 

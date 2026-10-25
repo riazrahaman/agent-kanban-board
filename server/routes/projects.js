@@ -11,7 +11,7 @@ const router = Router();
  */
 router.get('/', asyncHandler(async (req, res) => {
   // Lazy archive sweep so archived_count reflects the freshest state.
-  await store.runArchiveSweep();
+  await store.runArchiveSweep({ lazy: true });
   const projectTokens = parseProjectTokens();
   const authorized = getAuthorizedProjects(req);
 

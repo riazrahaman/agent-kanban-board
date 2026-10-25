@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectSummary, Task } from './types'
-import { getBugReportConfig, getHealth, getProjects, getSettings, getTasks, saveSettings, subscribeToBoard } from './api'
+import { getBugReportConfig, getHealth, getProjects, getSettings, saveSettings, subscribeToBoard } from './api'
 import { driftChip } from './lib/deployDrift'
 import type { DeployDrift } from './lib/deployDrift'
 import type { DiffEvent } from './api'
@@ -198,25 +198,14 @@ export default function App() {
     // scoped server-side (§2.2), so a scoped board never receives another
     // project's tasks in the first place.
     // PERF-01: the SSE stream is now diff+settings combined (ONE EventSource).
-    // The client primes via GET /api/tasks, then applies per-task `task.<kind>`
-    // events by upsert on the local tasks array, and receives `event: settings`
-    // on the same stream.
+    // Priming arrives on the stream itself (`?prime=1`): state-at-connect and
+    // every later diff travel on ONE ordered channel, so a slow parallel GET can
+    // never clobber a newer diff (deep-review). Reconnects re-prime the same way.
     useEffect(() => {
     let cancelled = false
     const scope = project || undefined
     setLoading(true)
     setError(null)
-
-    getTasks(scope)
-       .then((data) => {
-        if (!cancelled) setTasks(data)
-       })
-       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load tasks')
-       })
-       .finally(() => {
-        if (!cancelled) setLoading(false)
-       })
 
     // Apply a single diff event to the local tasks array by upsert.
     // Match on project + id; on removed/archived, drop it.
@@ -224,7 +213,7 @@ export default function App() {
       if (cancelled) return
       setTasks((prev) => {
         const kind = evt.kind
-        if (kind === 'removed' || kind === 'archived') {
+        if (kind === 'removed' || kind === 'archived' || kind === 'deleted') {
           return prev.filter(
             (t) => !(t.id === evt.task.id && (t.project ?? '') === (evt.project ?? '')),
           )
@@ -250,7 +239,12 @@ export default function App() {
       }
     }
 
-    const unsubscribe = subscribeToBoard(applyDiff, applySettings, { project: scope })
+    const unsubscribe = subscribeToBoard(applyDiff, applySettings, {
+      project: scope,
+      onTasks: (fresh) => {
+        if (!cancelled) { setTasks(fresh); setLoading(false) }
+      },
+    })
 
     return () => {
       cancelled = true
@@ -422,7 +416,7 @@ export default function App() {
   }, [tasks, project])
 
   const openTask = useMemo(
-     () => tasks.find((t) => t.id === openTaskId) ?? null,
+     () => tasks.find((t) => `${t.project}/${t.id}` === openTaskId) ?? null,
      [tasks, openTaskId],
   )
 

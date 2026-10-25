@@ -10,7 +10,7 @@ import { patchTask } from '../api'
 
 type Props = {
   task: Task
-  onOpen: (id: string) => void
+  onOpen: (project: string, id: string) => void
   /** Show the owning project — only meaningful on the unscoped "all projects" board. */
   showProject?: boolean
 }
@@ -59,7 +59,7 @@ function TaskCard({
   return (
     <div
       data-id={task.id}
-      onClick={() => onOpen(task.id)}
+      onClick={() => onOpen(task.project, task.id)}
       className={[
         'group cursor-pointer border border-line bg-surface p-3 transition-colors',
         'hover:bg-muted-bg/50',

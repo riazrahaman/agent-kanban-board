@@ -146,6 +146,7 @@ let checkTimer = null;
 let bootTimer = null;
 let inFlight = false;
 let lastLoggedFailure = null; // one log line per distinct failure, not per tick
+let lastDecisionStatus = null; // transition memory: last of drift|in_sync (never 'unknown')
 
 /**
  * Read-only snapshot for `GET /api/health`. Contains the running version, the
@@ -160,6 +161,7 @@ export function deployDriftStatus() {
 export function resetDeployDriftState() {
   state = emptyState();
   lastLoggedFailure = null;
+  lastDecisionStatus = null;
   return deployDriftStatus();
 }
 
@@ -334,16 +336,25 @@ export async function runDeployDriftCheck({
   if (send) {
     const target = telegramTarget(env);
     if (target.enabled) {
-      if (previous.status !== 'drift' && state.status === 'drift') {
-        await sendTelegram(formatDeployDriftMessage('drift', state, target.boardUrl), {
-          env,
-          fetchImpl,
-        });
-      } else if (previous.status === 'drift' && state.status === 'in_sync') {
-        await sendTelegram(formatDeployDriftMessage('in_sync', state, target.boardUrl), {
-          env,
-          fetchImpl,
-        });
+      // Deep-review: transitions are evaluated against the last DECISION state
+      // (drift or in_sync), never the raw previous tick. An `unknown` interlude
+      // (GitHub outage, unreachable release feed) used to make the same drift
+      // alert twice (unknown -> drift) or silently swallow the recovery it was
+      // covering (unknown -> in_sync).
+      const decision = state.status;
+      if (decision !== 'unknown') {
+        if (lastDecisionStatus !== 'drift' && decision === 'drift') {
+          await sendTelegram(formatDeployDriftMessage('drift', state, target.boardUrl), {
+            env,
+            fetchImpl,
+          });
+        } else if (lastDecisionStatus === 'drift' && decision === 'in_sync') {
+          await sendTelegram(formatDeployDriftMessage('in_sync', state, target.boardUrl), {
+            env,
+            fetchImpl,
+          });
+        }
+        lastDecisionStatus = decision;
       }
     }
   }
