@@ -159,6 +159,9 @@ export const FILE_MAP = [
   { path: 'client/src/lib/claimCoordinator.ts', note: 'Pure claim/heartbeat decisions honouring per-task lease windows.' },
   { path: 'client/src/lib/useClaimCoordinator.ts', note: 'The single writer that claims and heartbeats from the UI.' },
   { path: 'client/src/components/About.tsx', note: 'The About / walkthrough page (this feature is surfaced here).' },
+  { path: 'CHANGELOG.md', note: 'The release history — every shipped change, newest first. "What changed recently" questions live here.' },
+  { path: 'docs/HANDOVER.md', note: 'The current state of the project: release table, recent arc, gotchas.' },
+  { path: 'docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md', note: 'The full architecture record (ADR list, request pipeline, isolation model).' },
 ];
 
 /** Builds the file-map text block, keeping the prompt budget honest. */

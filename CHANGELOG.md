@@ -16,6 +16,30 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.1] — 2026-10-26
+
+### Changed
+- **Ask-the-Board can now answer "what changed recently" from the release
+  history.** Its retrieval corpus previously contained only the current source
+  files, so a history question matched engine keywords and cited nothing
+  relevant. `FILE_MAP` now includes `CHANGELOG.md` (release notes, newest first),
+  `docs/HANDOVER.md` (current state + arc) and the architecture record — the
+  ranked retrieval returns those for change/recent/version questions, with real
+  excerpt windows into the newest `## [x.y.z]` sections.
+- The assistant still reads the source **shipped inside the deployed build**
+  (never the live GitHub repo and never git history — the container ships the
+  working tree, not `.git`); release-granularity history now comes from the
+  CHANGELOG.
+
+### Added
+- `scripts/start-ollama-cloudflare-tunnel.sh` — the permanent Cloudflare
+  named-tunnel setup for the Ask/local-Ollama path (connector as a launchd agent
+  with RunAtLoad + KeepAlive, in front of the token-verifying gateway on :11435).
+  Deployed: `ollama.riazrahaman.com` → gateway → local Ollama; the Tailscale-
+  funnel DERP reset class is gone. Ask currently runs provider=ollama
+  (qwen3.6:latest) through it; the verified OpenRouter key stays configured as
+  the switchable fallback.
+
 ## [3.10.0] — 2026-10-26
 
 **Deep-review hardening release.** A five-reviewer audit on kimi-k3 (server core, auth & security, subsystems + AI, client, and feature research) verified the good discipline and surfaced one data-loss P0 plus three P1 clusters. Everything that follows was **verified live against scratch instances** and is pinned by `server/test/kanban.deepeview.test.js` (11 new cases; 706 server + 303 client tests).
