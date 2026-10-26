@@ -159,7 +159,7 @@ export const FILE_MAP = [
   { path: 'client/src/lib/claimCoordinator.ts', note: 'Pure claim/heartbeat decisions honouring per-task lease windows.' },
   { path: 'client/src/lib/useClaimCoordinator.ts', note: 'The single writer that claims and heartbeats from the UI.' },
   { path: 'client/src/components/About.tsx', note: 'The About / walkthrough page (this feature is surfaced here).' },
-  { path: 'CHANGELOG.md', note: 'The release history — every shipped change, newest first. "What changed recently" questions live here.' },
+  { path: 'CHANGELOG.md', head: true, note: 'The release history — every shipped change, NEWEST FIRST. "What changed recently" questions live here.' },
   { path: 'docs/HANDOVER.md', note: 'The current state of the project: release table, recent arc, gotchas.' },
   { path: 'docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md', note: 'The full architecture record (ADR list, request pipeline, isolation model).' },
 ];
@@ -313,7 +313,11 @@ export function gatherSourceContext(question, { maxFiles = 3, maxCharsPerFile = 
   for (const f of picked) {
     const full = readSourceFile(f.path);
     if (!full) continue;
-    const body = excerptWindow(full, question, { maxChars: maxCharsPerFile });
+    // Release-history artifacts (CHANGELOG.md) are NEWEST-FIRST files: their
+    // relevance lives at the head, and a keyword-density window lands on the
+    // old entries (deep-review: the changelog's "Changed" paragraphs made an
+    // old v2.x release win the density match). Head-anchor such files.
+    const body = f.head ? readSourceExcerpt(f.path, maxCharsPerFile) : excerptWindow(full, question, { maxChars: maxCharsPerFile });
     if (!body) continue;
     const block = `--- ${f.path} (excerpt) ---\n${body}`;
     if (total + block.length > maxTotalChars) break;
@@ -543,7 +547,9 @@ export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}
   // the protocol pack as trimmable — a board with dozens of projects otherwise
   // blows straight past the model's context (or cost) on exactly the
   // "explain every project" question this feature is for.
-  // Priority order: live snapshot → protocol rules → code excerpts → file map.
+  // Priority order: RANKED EXCERPTS (the question's answer source) → live
+  // snapshot → protocol rules → file map. Excerpts must be trimmed LAST or the
+  // most-relevant material is what gets cut.
   let remaining = maxTokens - estimateTokens(`${header}\n\n${GUARDRAIL_INSTRUCTION}`);
   const cut = (text, fraction, note) => {
     if (remaining <= 0) return `[${note} omitted — prompt budget exhausted]`;
@@ -557,9 +563,9 @@ export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}
     return trimmed;
   };
 
-  const snapshotText = cut(snapshotRaw, 0.45, 'board snapshot');
-  const protocol = cut(PROTOCOL_KNOWLEDGE, 0.8, 'protocol summary');
-  const retrievedText = cut(retrievedRaw, 1, 'source excerpts');
+  const retrievedText = cut(retrievedRaw, 0.6, 'source excerpts');
+  const snapshotText = cut(snapshotRaw, 0.6, 'board snapshot');
+  const protocol = cut(PROTOCOL_KNOWLEDGE, 1, 'protocol summary');
   const fileMapText = cut(fileMapRaw, 1, 'file map');
 
   return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, retrievedText, snapshotText].join('\n\n');

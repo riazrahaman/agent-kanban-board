@@ -16,6 +16,23 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.3] — 2026-10-26
+
+### Fixed
+- **Release-history excerpts anchor at the TOP of the changelog.** `CHANGELOG.md`
+  is a newest-first artifact: the density-window retriever landed on an old
+  `Changed` section instead of the newest release, and — combined with the
+  v3.10.2 budget order that trims the source excerpts LAST — a history question
+  reached the model with no release excerpt at all ("I don't have a changelog
+  excerpt in the current context"). Two fixes:
+  - `FILE_MAP` marks `CHANGELOG.md` as `head: true` (its excerpt is the head of
+    the file, where the newest releases live);
+  - `buildSystemPrompt` allocates the budget to the ranked excerpts FIRST (then
+    the snapshot, then the protocol pack, then the file map), so the most
+    question-relevant material is the last thing trimmed.
+  Verified: the prompt stays within budget (~5.9k of 6k) and now carries the
+  newest `## [x.y.z]` section.
+
 ## [3.10.2] — 2026-10-26
 
 ### Changed
