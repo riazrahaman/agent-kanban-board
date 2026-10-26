@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
-import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot } from '../askKnowledge.js';
+import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot, resetRecentCommits } from '../askKnowledge.js';
 import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama, snapshotProjects } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
@@ -96,6 +96,11 @@ async function jsonRequest(baseUrl, route, options = {}) {
 }
 
 async function withApp(askDeps, fn) {
+  // The commit-history section must be inert in this suite: a stubbed fetch
+  // that answers !ok, and a cleared cache, so prompts never vary from a real
+  // api.github.com hit.
+  resetRecentCommits();
+  askDeps = { commitsFetch: async () => ({ ok: false, status: 403 }), ...askDeps };
   const app = createApp({ ask: askDeps });
   const { server, baseUrl } = await startTestServer(app);
   try {
@@ -1153,5 +1158,48 @@ describe('ask: snapshot scope (v3.9.2)', () => {
       snapshotProjects({ KANBAN_ASK_SNAPSHOT_PROJECTS: ' a , b ,, a ' }),
       ['a', 'b'],
     );
+  });
+});
+
+describe('ask: recent code changes (v3.10.4)', () => {
+  const COMMITS = [
+    { sha: 'abc1234def', commit: { author: { date: '2026-10-26T10:00:00Z' }, message: 'feat(ask): commits in the prompt\\n\\nbody' } },
+    { sha: 'bca4321abc', commit: { author: { date: '2026-10-25T09:00:00Z' }, message: 'fix(engine): lease guard' } },
+  ];
+
+  it('the prompt carries the fetched commit history section', async () => {
+    let seen = null;
+    const fetchImpl = async (url, opts = {}) => {
+      if (String(url).includes('/commits')) {
+        return { ok: true, status: 200, json: async () => COMMITS };
+      }
+      seen = seen || { url, body: opts.body };
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+    };
+    resetRecentCommits();
+    await withApp({ env: baseEnv(), fetch: fetchImpl, store: fakeStore(), commitsFetch: fetchImpl }, async (baseUrl) => {
+      const { res } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 200);
+      const req = JSON.parse(seen.body);
+      const sys = (req.messages || []).find((m) => m.role === 'system');
+      assert.ok(sys, 'a system prompt was sent');
+      assert.match(sys.content, /RECENT CODE CHANGES/, 'the fetched commit section must be included');
+      assert.match(sys.content, /abc1234/, 'the commit sha must reach the prompt');
+    });
+    resetRecentCommits();
+  });
+
+  it('a failed commit fetch omits the section and never breaks the route', async () => {
+    const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) });
+    resetRecentCommits();
+    await withApp({
+      env: baseEnv(), fetch: fetchImpl, store: fakeStore(),
+      commitsFetch: async () => { throw new Error('unreachable'); },
+    }, async (baseUrl) => {
+      const { res, body } = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(res.status, 200, 'a commits-fetch failure must never break the ask route');
+      assert.equal(body.answer, 'ok');
+    });
+    resetRecentCommits();
   });
 });

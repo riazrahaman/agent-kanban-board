@@ -16,6 +16,22 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.4] — 2026-10-26
+
+### Added
+- **Commit-level history in the assistant's context ("RECENT CODE CHANGES").**
+  The deployed container has no `.git`, so the assistant could not answer
+  questions about recent changes at commit granularity. The new
+  `gatherRecentCommits()` fetches the PUBLIC repo's commit list (12 commits:
+  sha + date + subject) before each answer — via the optional
+  `KANBAN_REPORT_GITHUB_TOKEN` env (only to lift the anonymous 60 req/h ceiling;
+  no new secret) — cached in-process for 15 minutes and fail-silent (the section
+  is omitted when GitHub is unreachable; the route stays 200).
+- The section has its own prioritized budget slot right after the guardrail, so
+  it can never be trimmed away by the (bigger, ranked) source excerpts.
+- Verified end to end: the prompt carries the section + shas at ~5.9k of the
+  6k-token budget; a broken commits fetch never breaks a question.
+
 ## [3.10.3] — 2026-10-26
 
 ### Fixed

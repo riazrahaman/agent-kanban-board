@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
-import { buildSystemPrompt, gatherSnapshot, gatherSourceContext } from '../askKnowledge.js';
+import { buildSystemPrompt, gatherSnapshot, gatherSourceContext, gatherRecentCommits } from '../askKnowledge.js';
 import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
 
@@ -522,6 +522,9 @@ export function createAskRouter(deps = {}) {
     //    read-only snapshot.
     const maxPromptTokens = intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, 6000);
     const retrieved = gatherSourceContext(question.trim());
+    // v3.10.4: commit-level history (public GitHub API, cached) so questions
+    // about "what changed recently in the code" are answered from fact.
+    const recentCommits = await gatherRecentCommits({ fetchImpl: deps.commitsFetch });
     const snapshot = gatherSnapshot(store, { projects: snapshotProjects(env) });
     const fallback = !snapshot || snapshot.available === false;
     if (fallback) {
@@ -530,6 +533,7 @@ export function createAskRouter(deps = {}) {
     const systemPrompt = buildSystemPrompt({
       snapshot,
       retrieved,
+      recentCommits,
       maxTokens: maxPromptTokens,
     });
     const model = modelName(env);

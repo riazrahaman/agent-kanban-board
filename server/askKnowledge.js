@@ -327,6 +327,60 @@ export function gatherSourceContext(question, { maxFiles = 3, maxCharsPerFile = 
   return { files: parts.length ? picked.map((f) => f.path) : [], text: parts.join('\n\n') };
 }
 
+/**
+ * RECENT CODE CHANGES (v3.10.4) — a commit-level history the deployed assistant
+ * otherwise cannot see (the container has no `.git`).
+ * Reads the PUBLIC repo's commit list via the GitHub API; reuses the optional
+ * board's bug-report GitHub token when present (only to raise the rate-limit
+ * ceiling — the repo is public, the token is never needed for anything else);
+ * cached in-process for 15 min; fail-silent — an empty string means "section
+ * omitted", never an error on the ask route.
+ */
+const COMMITS_CACHE = { at: 0, text: '' };
+const COMMITS_TTL_MS = 15 * 60 * 1000;
+
+export async function gatherRecentCommits({
+  fetchImpl = globalThis.fetch,
+  repoUrl = 'https://api.github.com/repos/riazrahaman/agent-kanban-board',
+  maxCommits = 12,
+} = {}) {
+  const nowMs = Date.now();
+  if (COMMITS_CACHE.text && nowMs - COMMITS_CACHE.at < COMMITS_TTL_MS) {
+    return COMMITS_CACHE.text;
+  }
+  try {
+    const headers = { 'User-Agent': 'agent-kanban-ask', Accept: 'application/vnd.github+json' };
+    const ghToken = process.env.KANBAN_REPORT_GITHUB_TOKEN;
+    if (ghToken) headers.Authorization = `Bearer ${ghToken}`;
+    const res = await fetchImpl(`${repoUrl}/commits?per_page=${maxCommits}`, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return COMMITS_CACHE.text;
+    const commits = await res.json();
+    if (!Array.isArray(commits)) return COMMITS_CACHE.text;
+    const lines = commits.slice(0, maxCommits).map((c) => {
+      const sha = String(c.sha || '').slice(0, 7);
+      const date = String(c.commit?.author?.date || '').slice(0, 10);
+      const msg = String(c.commit?.message || '').split('\n')[0].slice(0, 140);
+      return `- ${sha} ${date} ${msg}`;
+    });
+    if (!lines.length) return COMMITS_CACHE.text;
+    const text = `RECENT CODE CHANGES (public repo history via the GitHub API):\n${lines.join('\n')}`;
+    COMMITS_CACHE.at = nowMs;
+    COMMITS_CACHE.text = text;
+    return text;
+  } catch {
+    return COMMITS_CACHE.text;
+  }
+}
+
+/** Test seam: clear the commit-history cache. */
+export function resetRecentCommits() {
+  COMMITS_CACHE.at = 0;
+  COMMITS_CACHE.text = '';
+}
+
 /** Coarse prompt-token estimate (chars / 4). Exact counting is not required here. */
 export function estimateTokens(text) {
   if (typeof text !== 'string' || text.length === 0) return 0;
@@ -535,13 +589,18 @@ the file map.`;
  * @param {object} [opts.retrieved] - from gatherSourceContext(); verbatim source excerpts.
  * @param {number} [opts.maxTokens] - soft budget; long sections are trimmed to fit.
  */
-export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}) {
+export function buildSystemPrompt({ snapshot, retrieved, recentCommits = '', maxTokens = 6000 } = {}) {
   const header = `You are the "Ask the Board" assistant for the Agent Kanban Board (v${APP_VERSION}).`;
   const snapshotRaw = formatSnapshot(snapshot);
   const fileMapRaw = `SOURCE-CODE FILE MAP (public repo: ${ASK_REPO_URL})\n${buildFileMapText()}`;
   const retrievedRaw = retrieved && retrieved.text
     ? `RELEVANT SOURCE-CODE EXCERPTS (verbatim from the repository)\n${retrieved.text}`
     : 'RELEVANT SOURCE-CODE EXCERPTS: none selected for this question — answer from the protocol summary and file map, and say so if you are unsure.';
+  // v3.10.4: commit-level history, so "what changed recently in the code" is
+  // answerable from fact instead of inference. Empty when GitHub is unreachable.
+  const commitsRaw = recentCommits && typeof recentCommits === 'string'
+    ? recentCommits
+    : '';
 
   // Deep-review: enforce the budget on EVERY section instead of treating only
   // the protocol pack as trimmable — a board with dozens of projects otherwise
@@ -563,10 +622,13 @@ export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}
     return trimmed;
   };
 
+  // v3.10.4: commit-level recency is its own prioritized slot (right after the
+  // guardrail), never trimmed away by the source excerpts that follow.
+  const commitsText = commitsRaw ? cut(commitsRaw, 0.25, 'commit history') : '';
   const retrievedText = cut(retrievedRaw, 0.6, 'source excerpts');
   const snapshotText = cut(snapshotRaw, 0.6, 'board snapshot');
   const protocol = cut(PROTOCOL_KNOWLEDGE, 1, 'protocol summary');
   const fileMapText = cut(fileMapRaw, 1, 'file map');
 
-  return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, retrievedText, snapshotText].join('\n\n');
+  return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, retrievedText, commitsText, snapshotText].join('\n\n');
 }
