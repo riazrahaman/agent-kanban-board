@@ -1,7 +1,7 @@
 # Agent Kanban Board — Presenter's Runbook
 
 **Audience:** whoever is demoing this board live.
-**System:** Agent Kanban Board v3.10.1
+**System:** Agent Kanban Board v3.10.2
 **Status:** living document — see [§11 Keeping this file alive](#11-keeping-this-file-alive). It is version-pinned by `server/test/kanban.version.test.js`, so a release that forgets it fails CI.
 
 This is one ordered path from a clean machine to a live reclaim alert. It does not

@@ -16,6 +16,16 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.2] — 2026-10-26
+
+### Changed
+- **Ask-the-Board routes history questions to the release notes.** The guardrail
+  now distinguishes work (board cards) from code history (releases): a question
+  about what changed / what shipped / past releases is answered from the
+  release-history excerpts (CHANGELOG) rather than from the board's activity
+  list. Verified live: the release excerpt reaches the model, and the answer
+  quotes the shipped changes verbatim.
+
 ## [3.10.1] — 2026-10-26
 
 ### Changed
