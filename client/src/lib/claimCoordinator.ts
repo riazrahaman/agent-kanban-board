@@ -197,6 +197,10 @@ export function observedLeaseWindowMs(
   let maxRemaining = previous ?? 0
   for (const task of tasks) {
     if (task.assigned_agent !== agentId) continue
+    // Deep-review: a card with its own claim_lease_ms follows ITS OWN window
+    // — never fold it into the shared estimate, or a 2h custom lease poisons
+    // the observed window and the other (default-TTL) leases never renew.
+    if (task.claim_lease_ms) continue
     const remaining = leaseRemainingMs(task, nowMs)
     if (remaining !== null && remaining > maxRemaining) maxRemaining = remaining
   }

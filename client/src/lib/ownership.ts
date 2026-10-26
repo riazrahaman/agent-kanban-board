@@ -153,11 +153,13 @@ export function severityPresentation(
 ): { tone: 'hollow' | 'green' | 'amber' | 'red'; tooltip: string } | null {
   if (summary.severity === 'none') {
     if (String(status).toUpperCase() !== 'DONE') return null
-    return {
-      tone: 'hollow',
-      tooltip:
-        'No stage history — this card was filed directly as DONE, so separation of duties cannot be evaluated.',
-    }
+    // Deep-review: a card with ZERO recorded stages was filed directly to DONE;
+    // a card with exactly ONE stage-owner was worked once but never reviewed by
+    // anyone else. Those are different stories — do not claim "no history" for both.
+    const tooltip = summary.stages === 0
+      ? 'No stage history — this card was filed directly as DONE, so separation of duties cannot be evaluated.'
+      : 'Only one lifecycle stage was witnessed — no second pair of hands, so separation of duties cannot be evaluated.'
+    return { tone: 'hollow', tooltip }
   }
   return { tone: summary.severity, tooltip: ownershipTooltip(summary) }
 }

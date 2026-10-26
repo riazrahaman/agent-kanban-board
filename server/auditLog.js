@@ -8,7 +8,7 @@
  * back. The data dir is resolved the SAME way the store resolves it so the
  * audit file always lives beside the live data.
  */
-import { appendFile, mkdir, readFile, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,30 @@ export function auditFilePath() {
  * `entry.task?.id`; never stores the whole task payload. Best-effort: a disk
  * failure is logged and swallowed — it must never break a mutation.
  */
+const AUDIT_MAX_BYTES = 4 * 1024 * 1024;
+const AUDIT_ROTATED_KEEP = 3;
+
+/**
+ * Deep-review: audit.jsonl previously grew forever (and every GET /api/audit
+ * read the whole file). Rotate on write: audit.jsonl → audit.jsonl.1 → .2 →
+ * .3, the oldest dropped. Best-effort — a rotation failure must never break a
+ * mutation, exactly like the append itself.
+ */
+async function rotateAuditLogIfNeeded(filePath) {
+  let size = 0;
+  try {
+    size = (await stat(filePath)).size;
+  } catch {
+    return; // file does not exist yet
+  }
+  if (size < AUDIT_MAX_BYTES) return;
+  for (let i = AUDIT_ROTATED_KEEP; i >= 1; i -= 1) {
+    const from = i === 1 ? filePath : `${filePath}.${i - 1}`;
+    const to = `${filePath}.${i}`;
+    try { await rename(from, to); } catch { /* missing is fine */ }
+  }
+}
+
 export async function appendAudit(entry) {
   if (!auditLogEnabled()) return;
   try {
@@ -65,6 +89,7 @@ export async function appendAudit(entry) {
       actor: entry.actor ?? null,
       reason: entry.reason ?? null,
     });
+    await rotateAuditLogIfNeeded(auditLogPath());
     await appendFile(auditLogPath(), line + '\n', 'utf8');
   } catch (err) {
     console.error('[kanban audit] append failed:', err.message);

@@ -16,6 +16,42 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.0] — 2026-10-26
+
+**Deep-review hardening release.** A five-reviewer audit on kimi-k3 (server core, auth & security, subsystems + AI, client, and feature research) verified the good discipline and surfaced one data-loss P0 plus three P1 clusters. Everything that follows was **verified live against scratch instances** and is pinned by `server/test/kanban.deepeview.test.js` (11 new cases; 706 server + 303 client tests).
+
+### Fixed (P0 — data loss)
+- **`restoreFromTrash` no longer silently drops the restored card.** On the JSON backend it persisted the partition *without* the restored row (every other call site uses the merging `projectBucket`, this one didn't), so the card existed only in memory until the next restart.
+
+### Fixed (P1 — isolation)
+- **Per-token read isolation now applies to every endpoint, not just list routes.** `GET /api/tasks/:id`, `/:id/logs`, `/:id/issues`, `GET /api/metrics`, `GET /api/milestones`, `GET /api/audit` and the SSE diff/snapshot streams now clamp against the caller's authorized projects (`req.caller.authorizedProjects`); a scoped token reading another project's card gets **404** (no existence oracle). Reads remain open for anonymous/admin/global/unscoped credentials.
+- **`POST /api/tasks/next-claim`** can no longer rob another project's queue: a scoped credential must name its project (mirroring the I-3 heartbeat rule); unscoped (global/admin) credentials keep the historical whole-board sweep.
+- **Stream-ticket minting is bound to the credential's project scope** — a ticket for project B minted with an A-only credential is 403; sessions are bound to their session project.
+- **`/claim` and `/heartbeat` ignore `body.agent_id` for non-privileged callers** — a bearer renews and claims only as the identity its credential proves (single-task `not_lease_holder` is enforced again).
+
+### Fixed (P1 — reaper & leases)
+- The archive sweep no longer **reclaims `READY_TO_SHIP` cards** mid-release (the stage-owner accounting set had fed the reaper).
+- A `READY` card left with an owner and a lapsed lease **is** reclaimed (the sweep only considered active statuses, so those cards were permanently unclaimable).
+- `/assign` now refreshes `last_progress_at` (a re-assigned stalled card was re-reclaimed instantly).
+- **`READY_TO_SHIP`-stage test owners** are recorded (v3.9.4 carried the engine change; the stageowners test now expects it).
+- A targeted `heartbeat` no longer bumps the CAS `version` (the sibling bulk renewal obeyed I-1; the per-card route didn't). Claims/renewals no longer invalidate another writer's `expected_version` PATCH on the held card.
+- DONE card is **never archived while a live dependency still references it** (an archived blocker made its dependents' gate dangle forever).
+
+### Fixed (P2 — durability, ops, Ask, client streams)
+- **JSON delete/purge/archive write the safety sink before the partition** (a crash between them lost rows previously; Git did it right).
+- `GitYamlStorage`: boot order sorted by `created_at`; `deleted_at`/`deleted_by`/`restored_at` survive serialization.
+- **Audit**: `audit.jsonl` rotates at 4 MiB (keep 3); `updateSettings` now emits a `settings_updated` audit entry.
+- **Client SSE**: re-mints a fresh single-use ticket on every reconnect with backoff (a blip on a read-gated deployment no longer silently kills the stream), reconnects re-prime via `?prime=1` (initial state and diffs share one ordered channel), the `deleted` kind is subscribed, task identity is `project/id` composite end-to-end (wrong-project opens/writes fixed), and a non-lost-lease heartbeat error no longer aborts the whole tick. The lease-window estimate no longer folds a custom `claim_lease_ms` into the shared TTL.
+- **deployDrift**: transitions are evaluated against the last decision state, so a GitHub outage can no longer duplicate a drift alert or swallow its recovery.
+- **Ask-the-Board**: the prompt budget is enforced on every section (snapshot → protocol → excerpts → file map, in that priority), env-derived auth headers are validated for non-Latin-1 characters at boot, and the Ollama provider retries 5xx and cold-start timeouts within its attempt budget.
+- **Webhooks**: deliveries are serialized per URL and non-2xx answers now log (a dead endpoint produced zero signal before).
+- **Bug reports**: honoured `Retry-After` delays are clamped to 10 s.
+- `/api/tasks/:id/logs` caps `limit` at 200 and `include_spilled=1` now honours offset/limit instead of ignoring them.
+- `updateSettings`/`maybeUnlockDependents` no longer fire empty-broadcast notifies; `getProjectSummaries` returns a defensive copy; a lazy archive sweep runs only when something has mutated (forced calls and boot always sweep).
+- The notifier's default event set now includes **`progress_stalled`** (the loudest "wedged worker" signal was silently swallowed).
+- `isValidProjectId` rejects plain-object reserved keys (`constructor`, `__proto__`, …) — a delete against such a project crashed mid-mutation.
+
+Trust metrics: **706 server + 303 client**.
 ## [3.9.6] — 2026-10-24
 
 ### Added

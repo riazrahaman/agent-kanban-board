@@ -190,7 +190,21 @@ export function createApp(opts = {}) {
     openSseStreams.add(res);
 
     const rawProject = typeof req.query.project === 'string' ? req.query.project.trim() : '';
-    const project = rawProject || null;
+    let project = rawProject || null;
+    // Deep-review (auth P2): a scoped credential must not stream projects it
+    // cannot see. The middleware has attached authorizedProjects to req.caller;
+    // null means the caller is unscoped (anonymous/admin/global) and the stream
+    // stays open as before.
+    const allowed = req.caller?.authorizedProjects;
+    if (allowed instanceof Set) {
+      if (project && !allowed.has(project)) {
+        return res.status(403).json({ error: `Forbidden: token is not authorized for project '${project}'` });
+      }
+      if (!project && allowed.size === 1) {
+        project = [...allowed][0];
+      }
+    }
+    const passesScope = (taskProject) => !(allowed instanceof Set) || allowed.has(taskProject);
     // PERF-01: diff is the default. Only an explicit ?mode=snapshot selects the
     // legacy whole-board snapshot path. ?mode=diff is accepted as a no-op alias.
     const isDiffMode = req.query.mode !== 'snapshot';
@@ -223,17 +237,18 @@ export function createApp(opts = {}) {
       // PERF-01b: emit a priming `tasks` snapshot ONLY when ?prime=1 is passed.
       // The client relies on its own GET /api/tasks fetch for initial state.
       if (wantPrime) {
-        send('tasks', getTasks(project ?? undefined));
+        send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
       }
       unsubscribe = onDiff((evt) => {
         if (project && evt.project !== project) return;
+        if (!passesScope(evt.project)) return;
         send(`task.${evt.kind}`, evt);
       });
     } else {
-      send('tasks', getTasks(project ?? undefined));
+      send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
       if (!closed) {
         unsubscribe = onChange((tasks) => {
-          send('tasks', project ? tasks.filter((t) => t.project === project) : tasks);
+          send('tasks', tasks.filter((t) => (project ? t.project === project : true) && passesScope(t.project)));
         });
       }
     }

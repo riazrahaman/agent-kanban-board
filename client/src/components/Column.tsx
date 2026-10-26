@@ -8,7 +8,7 @@ type Props = {
   title: string
   stepNumber?: string
   tasks: Task[]
-  onOpen: (id: string) => void
+  onOpen: (project: string, id: string) => void
   /** Show each card's owning project (unscoped board only). */
   showProject?: boolean
   /** v2.5.0: resolved top-accent class override (per-project column colors). */
@@ -116,7 +116,7 @@ function Column({ status, title, stepNumber, tasks, onOpen, showProject = false,
       >
         {shown.map((task) => (
           <TaskCard
-            key={task.id}
+            key={`${task.project}/${task.id}`}
             task={task}
             onOpen={onOpen}
             showProject={showProject}

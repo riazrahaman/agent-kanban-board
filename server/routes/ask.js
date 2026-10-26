@@ -294,6 +294,18 @@ export function createAskRouter(deps = {}) {
 
   const provider = resolveProvider(env);
 
+  // Deep-review extension of the em-dash lesson: the static X-Title constant
+  // was fixed, but env-derived HEADER values are still pasted by operators.
+  // Node throws 'Cannot convert argument to a ByteString' on any value beyond
+  // ISO-8859-1 before a byte leaves the process — flag it here with the exact
+  // variable name instead of surfacing as an unexplained gateway_error.
+  for (const key of ['KANBAN_ASK_OPENROUTER_API_KEY', 'KANBAN_ASK_OLLAMA_AUTH_HEADER', 'KANBAN_ASK_PASSWORD']) {
+    const v = env[key];
+    if (typeof v === 'string' && v !== '' && !/^[\x00-\xFF]*$/.test(v)) {
+      logger.warn(`[kanban ask] ${key} contains non-Latin-1 characters — outbound auth headers will throw; paste the plain ASCII value.`);
+    }
+  }
+
   // Boot-time nudge, matching routes/bugReports.js. A placeholder key is the
   // single most likely cause of a feature that is "on" but answers nothing,
   // and before v3.6.1 it produced no output anywhere at all.
@@ -578,6 +590,7 @@ export function createAskRouter(deps = {}) {
     let lastErr = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      lastErr = null;
       try {
         upstream = await fetchImpl(targetUrl, {
           method: 'POST',
@@ -585,8 +598,6 @@ export function createAskRouter(deps = {}) {
           body: JSON.stringify(reqBody),
           signal: AbortSignal.timeout(timeoutMs),
         });
-        lastErr = null;
-        break;
       } catch (err) {
         lastErr = err;
         const aborted =
@@ -594,14 +605,32 @@ export function createAskRouter(deps = {}) {
         // The upstream BODY is still never logged — only the shape of the
         // failure, which is what an operator needs and a visitor cannot abuse.
         if (aborted) {
+          // Cold-start: a local Ollama is slow to load the model, so a bare
+          // timeout on attempt 1-of-3 is exactly the transient it should retry
+          // (deep-review). Only give up when attempts are exhausted.
+          if (attempt < maxAttempts) {
+            if (retryDelayMs > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+            continue;
+          }
           logFailure('timeout', `timed out after ${now() - startedAt}ms (KANBAN_ASK_TIMEOUT_MS=${timeoutMs})`);
           return res.status(503).json({ error: 'timeout' });
         }
         if (attempt < maxAttempts) {
           if (retryDelayMs > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
-          continue;
         }
+        // Final attempt: fall out with lastErr set so the network-log branch
+        // below reports the errno (do NOT clear it here).
+        continue;
       }
+      // Deep-review: an HTTP 5xx (model loading / Ollama capacity) is also the
+      // transient a local provider should retry — previously only thrown
+      // transport errors did.
+      if (upstream && !upstream.ok && upstream.status >= 500 && attempt < maxAttempts) {
+        upstream = null;
+        if (retryDelayMs > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+        continue;
+      }
+      break;
     }
 
     if (lastErr) {

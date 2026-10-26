@@ -213,6 +213,16 @@ function isProbePath(req) {
  *   - null if unauthenticated or invalid token
  */
 export function getAuthorizedProjects(req) {
+  // Deep-review: must be computed at most ONCE per request — the stream-ticket
+  // path CONSUMES a single-use ticket on its first verification, so a second
+  // call (e.g. middleware-stash + authorizeRead) would discard it.
+  if (req._authorizedProjects !== undefined) return req._authorizedProjects;
+  const computed = computeAuthorizedProjects(req);
+  req._authorizedProjects = computed;
+  return computed;
+}
+
+function computeAuthorizedProjects(req) {
   const ticket = typeof req.query?.ticket === 'string' ? req.query.ticket : null;
   if (ticket) {
     const scope = verifyStreamTicket(ticket);
@@ -362,6 +372,11 @@ export function createAuthMiddleware() {
 
     const isMutation = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method);
     if (!isMutation) {
+      // Deep-review (auth P2): attach the caller's AUTHORIZED PROJECTS to every
+      // read, not only when read-auth is on — item reads, metrics, milestones,
+      // audit and SSE clamp against it. getAuthorizedProjects returns null for
+      // anonymous/admin/global/unscoped credentials (reads stay open).
+      req.caller.authorizedProjects = getAuthorizedProjects(req);
       if (!readAuthEnabled() || isProbePath(req)) return next();
       if (!authorizeRead(req)) {
         logAuthFailure(req, 401, 'read-auth-required');

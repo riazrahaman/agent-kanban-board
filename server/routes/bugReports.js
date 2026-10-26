@@ -502,7 +502,10 @@ export function createBugReportsRouter(deps = {}) {
   function retryAfterMs(res) {
     const header = res.headers?.get?.('retry-after');
     const secs = header ? Number(header) : NaN;
-    return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : null;
+    // Deep-review: an upstream (or middlebox) `Retry-After: 3600` must never
+    // park our request handler for an hour — clamp honoured delays.
+    const MAX_HONOURED_MS = 10_000;
+    return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, MAX_HONOURED_MS) : null;
   }
 
   async function sleep(ms) {

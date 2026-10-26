@@ -51,9 +51,24 @@ router.use(projectScopeGuard());
 
 // --- Collection ---------------------------------------------------------
 
+/**
+ * Deep-review (auth P1/P2): read authorization used to be a boolean — a valid
+ * credential was enough. With per-token isolation, the caller's AUTHORIZED
+ * PROJECTS (attached by the middleware as req.caller.authorizedProjects) must
+ * gate every read, not just list endpoints. It returns true when reads are open
+ * (anonymous/admin/global/unscoped credentials ⇒ null) or the task's project is
+ * inside the caller's allowed set.
+ */
+function readScopeAllows(req, taskProject) {
+  const allowed = req.caller?.authorizedProjects;
+  return !(allowed instanceof Set) || allowed.has(taskProject);
+}
+
+// --- Collection ---------------------------------------------------------
+
 router.get('/', asyncHandler(async (req, res) => {
   // §2.8 lazy sweep before every list read.
-  await store.runArchiveSweep();
+  await store.runArchiveSweep({ lazy: true });
   const project = resolveProjectFromReq(req);
   const authorized = getAuthorizedProjects(req);
 
@@ -84,13 +99,13 @@ router.post('/', asyncHandler(async (req, res) => {
 //     as a static segment, not an :id match) ----------------------------
 
 router.get('/archive', asyncHandler(async (req, res) => {
-  await store.runArchiveSweep();
+  await store.runArchiveSweep({ lazy: true });
   const project = resolveProjectFromReq(req);
   res.json(store.getArchivedTasks(project));
 }));
 
 router.post('/archive/sweep', asyncHandler(async (req, res) => {
-  const moved = await store.runArchiveSweep();
+  const moved = await store.runArchiveSweep({ force: true });
   res.json({ moved, projects: store.getProjectSummaries() });
 }));
 
@@ -117,7 +132,7 @@ router.post('/purge', asyncHandler(async (req, res) => {
 //     treats `trash` as a static segment, not an :id match) ----------------
 
 router.get('/trash', asyncHandler(async (req, res) => {
-  await store.runArchiveSweep();
+  await store.runArchiveSweep({ lazy: true });
   res.json(store.getTrashedTasks(resolveProjectFromReq(req)));
 }));
 
@@ -168,6 +183,16 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'agent_id is required' });
     }
 
+  // Deep-review (auth P1): an unscoped sweep must not hand out another
+  // project's card to a caller whose credential is itself project-scoped —
+  // mirroring the I-3 fix in /api/agents/:id/heartbeat. Unscoped credentials
+  // (legacy global/admin) keep their historical whole-board reach.
+  const nextClaimProject = resolveProjectFromReq(req);
+  const allowedScopes = getAuthorizedProjects(req);
+  if (allowedScopes instanceof Set && !nextClaimProject) {
+    return res.status(400).json({ error: 'project scope (?project=) is required for next-claim' });
+  }
+
   // §2.7: the role is taken from the authenticated caller only, never the query
   // string, so an authenticated `builder` cannot elevate to `reviewer` via
   // `?role=reviewer`. It is still validated against VALID_ROLES (403 on bad).
@@ -183,7 +208,7 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
    }
 
    // §2.7: project scoping is a no-op today (accepted, ignored — §2.1 lands it).
-    const project = resolveProjectFromReq(req);
+    const project = nextClaimProject;
     const result = await store.nextClaim({
       agentId,
       role: rawRole ? String(rawRole).toLowerCase() : undefined,
@@ -213,7 +238,9 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
 
 router.get('/:id', asyncHandler(async (req, res) => {
   const task = store.getTask(req.params.id, resolveProjectFromReq(req));
-  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task || !readScopeAllows(req, task.project)) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
   res.json(task);
 }));
 
@@ -275,7 +302,13 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.post('/:id/claim', asyncHandler(async (req, res) => {
-  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  // Deep-review (auth P1): a non-privileged bearer claims only as THEMSELVES —
+  // otherwise any project token can adopt another agent's identity (their lease
+  // never lapses and every write is misattributed). The body agent_id stays
+  // meaningful for privileged callers only.
+  const agentId = store.callerIsPrivileged(req.caller)
+    ? (req.body?.agent_id || req.caller?.agent_id)
+    : req.caller?.agent_id;
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
       }
@@ -361,7 +394,11 @@ router.post('/:id/assign', asyncHandler(async (req, res) => {
  * a 404. Runs in the mutation lock. No log entry by default (no spam).
  */
 router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
-  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  // Deep-review (auth P1): same holder-binding as claim — not_lease_holder is
+  // only meaningful when the bearer cannot assert somebody else's identity.
+  const agentId = store.callerIsPrivileged(req.caller)
+    ? (req.body?.agent_id || req.caller?.agent_id)
+    : req.caller?.agent_id;
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
       }
@@ -396,9 +433,13 @@ router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
 // Returns { inline:[...], spilled_count, entries:[...] }.
 // Inline logs are newest-first; spilled entries are oldest-first (append order).
 router.get('/:id/logs', asyncHandler(async (req, res) => {
+  const task = store.getTask(req.params.id, resolveProjectFromReq(req));
+  if (!task || !readScopeAllows(req, task.project)) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
   const project = resolveProjectFromReq(req);
   const offset = Math.max(0, Number(req.query.offset) || 0);
-  const limit = Math.max(0, Number(req.query.limit) || 50);
+  const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 50));
   const includeSpilled = req.query.include_spilled === '1';
   const result = await store.getTaskLogs(req.params.id, project, {
     offset,
@@ -442,7 +483,9 @@ router.post('/:id/logs', asyncHandler(async (req, res) => {
 
 router.get('/:id/issues', (req, res) => {
   const task = store.getTask(req.params.id, resolveProjectFromReq(req));
-  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task || !readScopeAllows(req, task.project)) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
   res.json({ issues: task.issues || [] });
 });
 

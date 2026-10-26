@@ -36,8 +36,21 @@ const PROJECT_ID_RE = /^[A-Za-z0-9_-]+$/;
 const TASK_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 export function isValidProjectId(id) {
-  return typeof id === 'string' && PROJECT_ID_RE.test(id);
+  return typeof id === 'string' && PROJECT_ID_RE.test(id) && !RESERVED_PROJECT_IDS.has(id);
 }
+
+/**
+ * Plain-object reserved keys must never be projects (deep-review): archive and
+ * trash partitions are keyed by project id on plain objects, where
+ * `constructor` / `__proto__` / etc. resolve to Object.prototype members — a
+ * delete against such a project threw mid-mutation and desynced disk from
+ * memory.
+ */
+const RESERVED_PROJECT_IDS = new Set([
+  'constructor', '__proto__', 'hasOwnProperty', 'isPrototypeOf',
+  'propertyIsEnumerable', 'toString', 'valueOf', 'toLocaleString',
+  '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
+]);
 
 export function isValidTaskId(id) {
   return typeof id === 'string' && TASK_ID_RE.test(id);

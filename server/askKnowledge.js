@@ -526,21 +526,34 @@ the file map.`;
  */
 export function buildSystemPrompt({ snapshot, retrieved, maxTokens = 6000 } = {}) {
   const header = `You are the "Ask the Board" assistant for the Agent Kanban Board (v${APP_VERSION}).`;
-  const snapshotText = formatSnapshot(snapshot);
-  const fileMapText = `SOURCE-CODE FILE MAP (public repo: ${ASK_REPO_URL})\n${buildFileMapText()}`;
-  const retrievedText = retrieved && retrieved.text
+  const snapshotRaw = formatSnapshot(snapshot);
+  const fileMapRaw = `SOURCE-CODE FILE MAP (public repo: ${ASK_REPO_URL})\n${buildFileMapText()}`;
+  const retrievedRaw = retrieved && retrieved.text
     ? `RELEVANT SOURCE-CODE EXCERPTS (verbatim from the repository)\n${retrieved.text}`
     : 'RELEVANT SOURCE-CODE EXCERPTS: none selected for this question — answer from the protocol summary and file map, and say so if you are unsure.';
 
-  // Assemble longest-first, trimming the protocol pack if we blow the budget.
-  const fixed = [header, GUARDRAIL_INSTRUCTION, snapshotText, fileMapText, retrievedText].join('\n\n');
-  const fixedTokens = estimateTokens(fixed);
-  let protocol = PROTOCOL_KNOWLEDGE;
-  const budgetForProtocol = Math.max(200, maxTokens - fixedTokens);
-  if (estimateTokens(protocol) > budgetForProtocol) {
-    const maxChars = budgetForProtocol * CHARS_PER_TOKEN;
-    protocol = `${protocol.slice(0, maxChars)}\n[protocol summary trimmed to fit the prompt budget]`;
-  }
+  // Deep-review: enforce the budget on EVERY section instead of treating only
+  // the protocol pack as trimmable — a board with dozens of projects otherwise
+  // blows straight past the model's context (or cost) on exactly the
+  // "explain every project" question this feature is for.
+  // Priority order: live snapshot → protocol rules → code excerpts → file map.
+  let remaining = maxTokens - estimateTokens(`${header}\n\n${GUARDRAIL_INSTRUCTION}`);
+  const cut = (text, fraction, note) => {
+    if (remaining <= 0) return `[${note} omitted — prompt budget exhausted]`;
+    const capChars = Math.floor(remaining * CHARS_PER_TOKEN * Math.max(0, Math.min(1, fraction)));
+    if (text.length <= capChars) {
+      remaining -= estimateTokens(text);
+      return text;
+    }
+    const trimmed = `${text.slice(0, capChars)}\n[${note} trimmed to fit the prompt budget]`;
+    remaining -= estimateTokens(trimmed);
+    return trimmed;
+  };
+
+  const snapshotText = cut(snapshotRaw, 0.45, 'board snapshot');
+  const protocol = cut(PROTOCOL_KNOWLEDGE, 0.8, 'protocol summary');
+  const retrievedText = cut(retrievedRaw, 1, 'source excerpts');
+  const fileMapText = cut(fileMapRaw, 1, 'file map');
 
   return [header, GUARDRAIL_INSTRUCTION, protocol, fileMapText, retrievedText, snapshotText].join('\n\n');
 }

@@ -91,26 +91,49 @@ function scrub(str, cfg) {
   return out;
 }
 
-/** One POST per URL. Never throws; returns the per-URL status (or null). */
-async function deliver(event, cfg, fetchImpl) {
+/** Deep-review: subscribers get one at a time (not a parallel burst), and a
+ * non-2xx is surfaced — a dead endpoint previously produced zero signal. */
+const deliveryQueue = new Map(); // url -> Promise chain
+const lastWarnAt = new Map();    // url:status -> last console warn timestamp
+
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return 'unknown-host'; }
+}
+
+async function deliverOne(url, event, cfg, fetchImpl) {
   const body = JSON.stringify(buildPayload(event));
   const timestamp = String(Date.now());
   const signature = signBody(cfg.secret, timestamp, body);
-  for (const url of cfg.urls) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-      const headers = {
-        'Content-Type': 'application/json',
-        [WEBHOOK_EVENT_HEADER]: String(event.kind),
-        [WEBHOOK_TIMESTAMP_HEADER]: timestamp,
-      };
-      if (signature) headers[WEBHOOK_SIGNATURE_HEADER] = signature;
-      await fetchImpl(url, { method: 'POST', headers, body, signal: controller.signal });
-      clearTimeout(timer);
-    } catch (err) {
-      console.warn('[kanban webhook] delivery failed:', scrub(err && err.message ? err.message : err, cfg));
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+    const headers = {
+      'Content-Type': 'application/json',
+      [WEBHOOK_EVENT_HEADER]: String(event.kind),
+      [WEBHOOK_TIMESTAMP_HEADER]: timestamp,
+    };
+    if (signature) headers[WEBHOOK_SIGNATURE_HEADER] = signature;
+    const res = await fetchImpl(url, { method: 'POST', headers, body, signal: controller.signal });
+    clearTimeout(timer);
+    if (res && !res.ok) {
+      const key = `${hostOf(url)}:${res.status}`;
+      const now = Date.now();
+      if ((lastWarnAt.get(key) || 0) + 60000 < now) {
+        lastWarnAt.set(key, now);
+        console.warn(`[kanban webhook] ${event.kind}: ${hostOf(url)} answered ${res.status}`);
+      }
     }
+  } catch (err) {
+    console.warn('[kanban webhook] delivery failed:', scrub(err && err.message ? err.message : err, cfg));
+  }
+}
+
+/** One POST per URL, serialized per URL. Never throws. */
+function deliver(event, cfg, fetchImpl) {
+  for (const url of cfg.urls) {
+    const prev = deliveryQueue.get(url) || Promise.resolve();
+    const next = prev.then(() => deliverOne(url, event, cfg, fetchImpl), () => deliverOne(url, event, cfg, fetchImpl));
+    deliveryQueue.set(url, next.catch(() => {}));
   }
 }
 

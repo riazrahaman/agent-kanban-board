@@ -105,9 +105,12 @@ export function useClaimCoordinator({
               if (isLostLeaseError(msg)) {
                 continue
                      }
+              // Deep-review: a non-lost-lease failure (404 on a card deleted
+              // server-side) must not abort the WHOLE tick — the remaining
+              // leases still need their renewals.
               if (stop) return
               setResult((r) => ({ ...r, lastHeartbeatCount: beat, lastError: msg }))
-              return
+              continue
                  }
                }
 

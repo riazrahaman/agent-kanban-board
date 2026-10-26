@@ -326,6 +326,14 @@ export class GitYamlStorage {
           console.warn(`[kanban GitYamlStorage] error reading ${file}: ${err.message}`);
         }
       }
+      // Deep-review: readdir order is filesystem order, which degrades the
+      // array-index FIFO tiebreak in nextClaim on every restart. Sort by
+      // created_at so boot order matches creation order.
+      tasks.sort((a, b) => {
+        const ta = Date.parse(a.created_at || '') || 0;
+        const tb = Date.parse(b.created_at || '') || 0;
+        return ta - tb || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      });
       return tasks;
     } catch (err) {
       // BUG-01 (v2.5.2): a readdir/environmental failure is not "no data" —
@@ -427,6 +435,12 @@ export class GitYamlStorage {
       reclaim_count: task.reclaim_count ?? 0,
        };
     if (task.archived_at) cardData.archived_at = task.archived_at;
+    // Deep-review: keep soft-delete/restore provenance (was silently dropped,
+    // which made git trash retention anchor on `updated` instead of
+    // `deleted_at` and lost audit trail).
+    if (task.deleted_at) cardData.deleted_at = task.deleted_at;
+    if (task.deleted_by) cardData.deleted_by = task.deleted_by;
+    if (task.restored_at) cardData.restored_at = task.restored_at;
     return cardData;
   }
 
