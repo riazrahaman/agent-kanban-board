@@ -16,6 +16,29 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.10.5] — 2026-11-01
+
+### Added
+- **Dual-provider architecture visualization in About Chapter 12 ("Ask the Board").**
+  Added an interactive, accessible system diagram (Figure 02) illustrating the
+  two inference facilities:
+  1. **OpenRouter Cloud Route (Managed API)**: Direct cloud egress from Railway
+     to `openrouter.ai` with Bearer API key for managed frontier models (`openai/gpt-oss-20b`,
+     Claude, Llama, DeepSeek) with zero local infrastructure needed.
+  2. **Local Ollama Route (Hybrid Cloudflare Tunnel)**: Railway egress proxying
+     through Cloudflare's Anycast edge (`ollama.riazrahaman.com`) and an outbound
+     QUIC tunnel to `cloudflared` (launchd KeepAlive), Token Gateway (`:11435`),
+     and Ollama engine (`:11434`, `qwen3.6:latest`), featuring unmetered reasoning
+     chains (omitted `max_tokens`).
+- Interactive controls allow toggling between *Both Providers*, *OpenRouter (Cloud)*,
+  and *Ollama (Tunnel)* with dynamic narrative readouts and animated SVG packet tracks.
+- Preserved historical contrast detailing why the previous Tailscale Funnel DERP
+  relay was retired (502 ECONNRESET TLS handshake drops).
+
+### Changed
+- Refactored `docs/figures/tunnel-fix/` Option 1 to use full container measure
+  (`1040px`), eliminating corner collisions and text wrapping on mobile and desktop.
+
 ## [3.10.4] — 2026-10-26
 
 ### Added

@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About Page Preview · Chapter 12: Ask the Board (Dual-Provider Architecture)</title>
+  <style>
+    :root {
+      --bg: #f6f2e8;
+      --surface: #fdfbf5;
+      --line: #e6dfd0;
+      --ink: #211f1a;
+      --muted: #726c5f;
+      --muted-bg: #ece6d8;
+      --pass: #1a7f37;
+      --pass-bg: #e6f4ea;
+      --fail: #cf222e;
+      --fail-bg: #ffebe9;
+      --live: #d97706;
+      --sky: #0284c7;
+      --sky-bg: #e0f2fe;
+      --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+    }
+    html.dark {
+      --bg: #121315;
+      --surface: #181a1d;
+      --line: #2b2e35;
+      --ink: #e5e7eb;
+      --muted: #8b949e;
+      --muted-bg: #212429;
+      --pass: #3fb950;
+      --pass-bg: rgba(46, 160, 67, 0.15);
+      --fail: #f85149;
+      --fail-bg: rgba(248, 81, 73, 0.15);
+      --live: #f59e0b;
+      --sky: #38bdf8;
+      --sky-bg: rgba(56, 189, 248, 0.15);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.6;
+      padding: 32px 20px 80px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .preview-bar {
+      max-width: 980px;
+      margin: 0 auto 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .preview-title {
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .preview-badge {
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--muted-bg);
+      color: var(--ink);
+      font-weight: 600;
+    }
+    .theme-toggle-btn {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .about-container {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    /* Chapter Header */
+    .chapter-header {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .chapter-num {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .chapter-title {
+      font-size: 32px;
+      font-family: var(--serif);
+      font-weight: normal;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .chapter-eli5 {
+      margin-top: 10px;
+      font-size: 17px;
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    .chapter-details {
+      margin-top: 12px;
+      font-size: 14.5px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    /* Console pointer note */
+    .console-note {
+      margin: 20px 0;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 16px;
+      font-size: 15px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .console-link {
+      color: var(--live);
+      text-decoration: underline;
+      font-weight: 500;
+    }
+
+    /* Figure 02 Component */
+    .fig-card {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 0;
+      margin-top: 24px;
+    }
+    .fig-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--muted-bg);
+      opacity: 0.85;
+      border-bottom: 1px solid var(--line);
+    }
+    .fig-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .fig-controls {
+      display: flex;
+      gap: 4px;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .fig-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--muted);
+      padding: 3px 10px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .fig-btn:hover { color: var(--ink); }
+    .fig-btn.active {
+      background: var(--surface);
+      border-color: var(--line);
+      color: var(--ink);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    .fig-grid {
+      display: grid;
+      grid-template-columns: 240px 1fr 280px;
+      gap: 16px;
+      padding: 20px;
+      align-items: stretch;
+    }
+    @media (max-width: 900px) {
+      .fig-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .fig-zone {
+      border: 1px solid var(--line);
+      background: var(--muted-bg);
+      opacity: 0.95;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .zone-tag {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .node-box {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 10px 12px;
+    }
+    .node-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .node-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .node-badge {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      background: var(--muted-bg);
+      color: var(--muted);
+    }
+    .node-desc {
+      font-size: 11.5px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    code {
+      font-family: var(--mono);
+      color: var(--ink);
+      font-size: 0.92em;
+    }
+
+    .payload-box {
+      margin-top: auto;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
+    .payload-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+
+    .lanes-col {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      justify-content: center;
+    }
+    .lane-card {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 14px;
+      transition: all 0.2s;
+    }
+    .lane-openrouter { border-left: 4px solid var(--sky); }
+    .lane-cf { border-left: 4px solid var(--pass); }
+    .lane-ts { border-left: 4px solid var(--fail); }
+    .lane-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .lane-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+    }
+    .pill-sky {
+      background: var(--sky-bg);
+      color: var(--sky);
+      border: 1px solid var(--sky);
+    }
+    .pill-pass {
+      background: var(--pass-bg);
+      color: var(--pass);
+      border: 1px solid var(--pass);
+    }
+    .pill-fail {
+      background: var(--fail-bg);
+      color: var(--fail);
+      border: 1px solid var(--fail);
+    }
+    .lane-desc {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      line-height: 1.45;
+    }
+    .track-svg {
+      width: 100%;
+      height: 28px;
+      display: block;
+      margin: 6px 0;
+    }
+    .lane-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      justify-content: space-between;
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--muted);
+    }
+
+    .fig-footer {
+      border-top: 1px solid var(--line);
+      background: var(--muted-bg);
+      opacity: 0.9;
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+
+<div class="preview-bar">
+  <div class="preview-title">
+    <span class="preview-badge">Live Integration Preview</span>
+    <span>About.tsx · Chapter 12 ("Ask the Board" Dual-Provider Architecture)</span>
+  </div>
+  <button class="theme-toggle-btn" onclick="toggleTheme()">Toggle Dark / Light</button>
+</div>
+
+<div class="about-container">
+  <header class="chapter-header">
+    <div class="chapter-num">Chapter 12</div>
+    <h1 class="chapter-title"><span>💬</span> Ask the Board</h1>
+    <p class="chapter-eli5">
+      A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, so it can explain the code itself as well as the protocol, alongside a live read-only snapshot.
+    </p>
+    <p class="chapter-details">
+      <code>server/routes/ask.js</code> supports both OpenRouter and local Ollama (e.g. <code>qwen3.6:latest</code> via Cloudflare tunnels), omitting <code>max_tokens</code> on local reasoning models to prevent truncated thought chains.
+    </p>
+  </header>
+
+  <!-- Console Note -->
+  <p class="console-note">
+    The console is at the top of this page — it is the first thing in the guide rather than the last.
+    <a href="#top" class="console-link">Go and ask it something →</a>
+  </p>
+
+  <!-- Figure 02 · Integrated Dual-Provider Component -->
+  <div class="fig-card">
+    <div class="fig-header">
+      <span class="fig-title">Figure 02 · Ask the Board: Dual-Provider Architecture (OpenRouter + Local Ollama)</span>
+      <div class="fig-controls">
+        <button class="fig-btn active" id="btn-both" onclick="setMode('both')">Both Providers</button>
+        <button class="fig-btn" id="btn-openrouter" onclick="setMode('openrouter')">OpenRouter (Cloud)</button>
+        <button class="fig-btn" id="btn-ollama" onclick="setMode('ollama')">Ollama (Tunnel)</button>
+      </div>
+    </div>
+
+    <div class="fig-grid">
+      <!-- Zone 1: Cloud Source -->
+      <div class="fig-zone">
+        <div class="zone-tag">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+          Cloud Source (Railway)
+        </div>
+        <div class="node-box">
+          <div class="node-head">
+            <span class="node-name">Railway App</span>
+            <span class="node-badge">Docker</span>
+          </div>
+          <p class="node-desc">Production deployment of <code>agent-kanban-board</code>. Houses in-process board snapshot.</p>
+        </div>
+
+        <div class="node-box">
+          <div class="node-head">
+            <span class="node-name">Provider Dispatcher</span>
+            <span class="node-badge">routes/ask.js</span>
+          </div>
+          <p class="node-desc">Evaluates <code>KANBAN_ASK_PROVIDER</code>: dispatches to OpenRouter cloud API or Ollama tunnel.</p>
+        </div>
+
+        <div class="payload-box">
+          <div class="payload-title">Incoming Request</div>
+          <div><code>POST /api/ask</code></div>
+          <div style="color:var(--muted);">x-ask-pass: &lt;secret&gt;</div>
+          <div style="color:var(--live); font-weight:600;">{ question, snapshot }</div>
+        </div>
+      </div>
+
+      <!-- Zone 2: Network Lanes -->
+      <div class="lanes-col">
+        <!-- OpenRouter Lane -->
+        <div class="lane-card lane-openrouter" id="lane-openrouter">
+          <div class="lane-head">
+            <div class="lane-title">
+              <span style="color:var(--sky);">☁</span>
+              <span>OpenRouter Cloud Route (Managed API)</span>
+            </div>
+            <span class="pill pill-sky">openrouter.ai</span>
+          </div>
+          <p class="lane-desc">
+            Direct outbound HTTPS egress with <code>Bearer $OPENROUTER_API_KEY</code>. Zero local Mac or tunnel setup required.
+          </p>
+          <svg class="track-svg" viewBox="0 0 340 28">
+            <line x1="8" y1="14" x2="332" y2="14" stroke="var(--sky)" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.6"/>
+            <circle cx="12" cy="14" r="4.5" fill="var(--sky)">
+              <animate attributeName="cx" values="12;328" dur="2.2s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <div class="lane-foot">
+            <span>Direct Cloud Egress</span>
+            <span>Global Multi-Provider Routing</span>
+            <span>Pay-per-Token</span>
+          </div>
+        </div>
+
+        <!-- Ollama Lane -->
+        <div class="lane-card lane-cf" id="lane-cf">
+          <div class="lane-head">
+            <div class="lane-title">
+              <span style="color:var(--pass);">✔</span>
+              <span>Local Ollama Route (Cloudflare Tunnel)</span>
+            </div>
+            <span class="pill pill-pass">HTTP 200 OK</span>
+          </div>
+          <p class="lane-desc">
+            Proxied DNS (<b style="color:#f6821c;">Orange Cloud</b>) Anycast Edge → Outbound QUIC/TLS 1.3 Tunnel to Mac
+          </p>
+          <svg class="track-svg" viewBox="0 0 340 28">
+            <line x1="8" y1="14" x2="332" y2="14" stroke="var(--pass)" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.6"/>
+            <circle cx="12" cy="14" r="4.5" fill="var(--pass)">
+              <animate attributeName="cx" values="12;328" dur="2.4s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <div class="lane-foot">
+            <span>Anycast Edge DNS</span>
+            <span>Zero Open Inbound Ports</span>
+            <span>Unmetered Reasoning</span>
+          </div>
+        </div>
+
+        <!-- Tailscale Lane (Retired) -->
+        <div class="lane-card lane-ts" id="lane-ts" style="display:none;">
+          <div class="lane-head">
+            <div class="lane-title">
+              <span style="color:var(--fail);">✖</span>
+              <span>Old Tailscale Funnel Route (Retired)</span>
+            </div>
+            <span class="pill pill-fail">502 ECONNRESET</span>
+          </div>
+          <p class="lane-desc">
+            Public Funnel Relay (<b style="color:var(--fail);">DERP Server</b>) terminates TLS → drops handshake in transit
+          </p>
+          <svg class="track-svg" viewBox="0 0 340 28">
+            <line x1="8" y1="14" x2="190" y2="14" stroke="var(--fail)" stroke-width="2.5" stroke-dasharray="4 4" opacity="0.7"/>
+            <line x1="192" y1="9" x2="204" y2="19" stroke="var(--fail)" stroke-width="2.5"/>
+            <line x1="204" y1="9" x2="192" y2="19" stroke="var(--fail)" stroke-width="2.5"/>
+            <line x1="210" y1="14" x2="332" y2="14" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 4" opacity="0.3"/>
+            <circle cx="12" cy="14" r="4.5" fill="var(--fail)">
+              <animate attributeName="cx" values="12;198" dur="1.8s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="1;1;0" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <div class="lane-foot">
+            <span>MagicDNS</span>
+            <span style="color:var(--fail);">DERP Handshake Reset</span>
+            <span>Connection Severed</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Zone 3: Inference Engines -->
+      <div class="fig-zone">
+        <div class="zone-tag">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+          Inference Providers &amp; Environments
+        </div>
+
+        <!-- OpenRouter Cloud Service -->
+        <div class="node-box" id="dest-openrouter" style="border-left: 3px solid var(--sky);">
+          <div class="node-head">
+            <span class="node-name">OpenRouter Cloud</span>
+            <span class="node-badge" style="color:var(--sky); font-weight:600;">Hosted API</span>
+          </div>
+          <p class="node-desc">Serves <code>openai/gpt-oss-20b</code>, Claude, Llama 3, and DeepSeek.</p>
+          <span style="font-family:var(--mono); font-size:9.5px; color:var(--muted); display:block; margin-top:4px;">Managed scaling · max_tokens cap enforced</span>
+        </div>
+
+        <!-- Local Mac Services -->
+        <div id="dest-ollama" style="display:flex; flex-direction:column; gap:8px;">
+          <div class="node-box" style="border-left: 3px solid var(--pass);">
+            <div class="node-head">
+              <span class="node-name">cloudflared + Gateway</span>
+              <span class="node-badge" style="color:#38bdf8; font-weight:600;">:11435</span>
+            </div>
+            <p class="node-desc">Daemon with launchd KeepAlive. Verifies Bearer token; drops probes with 401.</p>
+          </div>
+          <div class="node-box" style="border-left: 3px solid var(--pass);">
+            <div class="node-head">
+              <span class="node-name">Local Ollama Engine</span>
+              <span class="node-badge" style="color:var(--pass); font-weight:600;">:11434</span>
+            </div>
+            <p class="node-desc">Executes local reasoning models (e.g. <code>qwen3.6:latest</code>).</p>
+            <span style="font-family:var(--mono); font-size:9.5px; color:var(--pass); font-weight:600; display:block; margin-top:4px;">Zero token fee · max_tokens omitted for CoT</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fig-footer">
+      <span id="fig-readout">Ask-the-Board supports both: direct cloud inference via OpenRouter API or self-hosted local models via Cloudflare Tunnel.</span>
+      <span>Dual-Provider Architecture</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleTheme() {
+    document.documentElement.classList.toggle('dark');
+  }
+
+  function setMode(mode) {
+    document.getElementById('btn-both').classList.toggle('active', mode === 'both');
+    document.getElementById('btn-openrouter').classList.toggle('active', mode === 'openrouter');
+    document.getElementById('btn-ollama').classList.toggle('active', mode === 'ollama');
+
+    const laneOr = document.getElementById('lane-openrouter');
+    const laneCf = document.getElementById('lane-cf');
+    const laneTs = document.getElementById('lane-ts');
+    const destOr = document.getElementById('dest-openrouter');
+    const destOl = document.getElementById('dest-ollama');
+    const readout = document.getElementById('fig-readout');
+
+    if (mode === 'both') {
+      laneOr.style.display = 'block';
+      laneCf.style.display = 'block';
+      laneTs.style.display = 'none';
+      destOr.style.display = 'block';
+      destOl.style.display = 'flex';
+      readout.textContent = 'Ask-the-Board supports both: direct cloud inference via OpenRouter API or self-hosted local models via Cloudflare Tunnel.';
+    } else if (mode === 'openrouter') {
+      laneOr.style.display = 'block';
+      laneCf.style.display = 'none';
+      laneTs.style.display = 'none';
+      destOr.style.display = 'block';
+      destOl.style.display = 'none';
+      readout.textContent = 'OpenRouter: Direct cloud-to-cloud HTTPS with Bearer API key. Zero local infrastructure or open ports required.';
+    } else {
+      laneOr.style.display = 'none';
+      laneCf.style.display = 'block';
+      laneTs.style.display = 'block';
+      destOr.style.display = 'none';
+      destOl.style.display = 'flex';
+      readout.textContent = 'Local Ollama: Apple Silicon inference via Cloudflare Tunnel to gateway :11435 and ollama :11434 with unmetered thought chains.';
+    }
+  }
+</script>
+
+</body>
+</html>
