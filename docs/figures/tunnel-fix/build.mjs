@@ -1,9 +1,12 @@
 import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import * as k from "/Users/riazrahaman/.claude/skills/anatomy/kit/iso-kit.mjs";
-import { frameAlong, lathe, sphereOf } from "/Users/riazrahaman/.claude/skills/anatomy/kit/lathe.mjs";
-import { kitScript } from "/Users/riazrahaman/.claude/skills/anatomy/scripts/inline-kit.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const ANATOMY_DIR = join(homedir(), ".claude/skills/anatomy");
+const k = await import(pathToFileURL(join(ANATOMY_DIR, "kit/iso-kit.mjs")).href);
+const { frameAlong, lathe, sphereOf } = await import(pathToFileURL(join(ANATOMY_DIR, "kit/lathe.mjs")).href);
+const { kitScript } = await import(pathToFileURL(join(ANATOMY_DIR, "scripts/inline-kit.mjs")).href);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const theme = process.argv.includes("--light") ? "light" : "dark";

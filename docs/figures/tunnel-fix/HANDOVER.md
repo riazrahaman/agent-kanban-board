@@ -1,8 +1,7 @@
 # HANDOVER — "The tunnel fix" figure
 
 Read NOTES.md first (design contract), then this file. Work happens ONLY in this
-directory (`docs/figures/tunnel-fix/`). The repo is
-`/Users/riazrahaman/Documents/agend-grid/agent-kanban-board`.
+directory (`docs/figures/tunnel-fix/`). The repo root is `.`.
 
 ## Mission
 Improve the anatomy-style interactive illustration that explains the Cloudflare
@@ -34,11 +33,11 @@ better. Concretely:
 
 ## Build + verify loop (exact commands)
 ```bash
-cd /Users/riazrahaman/Documents/agend-grid/agent-kanban-board/docs/figures/tunnel-fix
+cd docs/figures/tunnel-fix
 node build.mjs && node build.mjs --light
-node /Users/riazrahaman/.claude/skills/anatomy/scripts/lines.mjs tunnel-fix.html        # want: line ends: 0
-node /Users/riazrahaman/.claude/skills/anatomy/scripts/lines.mjs tunnel-fix-light.html  # want: line ends: 0
-node /Users/riazrahaman/.claude/skills/anatomy/scripts/capture.mjs tunnel-fix.html --out shots/<name>.png --scale 2 --wait 4500   # want: console: clean
+node ~/.claude/skills/anatomy/scripts/lines.mjs tunnel-fix.html        # want: line ends: 0
+node ~/.claude/skills/anatomy/scripts/lines.mjs tunnel-fix-light.html  # want: line ends: 0
+node ~/.claude/skills/anatomy/scripts/capture.mjs tunnel-fix.html --out shots/<name>.png --scale 2 --wait 4500   # want: console: clean
 ```
 - Phone check: `capture.mjs ... --width 390 --height 844`
 - Reduced-motion stills (deterministic): `--reduced`, add `--key Space` for the
@@ -54,7 +53,7 @@ http://127.0.0.1:8931/tunnel-fix-light.html (light). If you need your own
 server, use a different port.
 
 ## Anatomy kit essentials
-- The skill lives at `/Users/riazrahaman/.claude/skills/anatomy/`
+- The skill lives at `~/.claude/skills/anatomy/`
   (`kit/iso-kit.mjs`, `kit/lathe.mjs`, `scripts/inline-kit.mjs` → `kitScript()`).
 - `build.mjs` imports them by absolute path; the inline kit exposes the helpers
   as bare globals at runtime (`iso`, `pathOf`, `lineSvg`, `ring`, …).
