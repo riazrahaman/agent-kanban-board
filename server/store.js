@@ -3305,7 +3305,7 @@ async function trashPersistRemove(project, removedTask) {
  * Persists FIRST (KB-05): the live partition gains the restored card and the
  * trash sink loses it, both before memory mutates.
  */
-export async function restoreFromTrash(id, { caller = {}, project } = {}) {
+export async function restoreFromTrash(id, { caller = {}, project, expected_version: expectedVersion } = {}) {
   return withMutationLock(async () => {
     const authorizedProject =
       project === undefined || project === null || project === ''
@@ -3314,9 +3314,22 @@ export async function restoreFromTrash(id, { caller = {}, project } = {}) {
     const trashed = trashFind(authorizedProject, id);
     if (!trashed) return { error: 'Task not found in trash', status: 404 };
 
+    // v3.12.1 (Board Health Check): restore is a destructive-op sibling of
+    // hardDeleteFromTrash — it requires the same privileged credential. 404 is
+    // reported first, mirroring deleteTask's ordering.
+    if (!destructivePrivilege(caller)) {
+      return { error: 'Forbidden: admin role required to restore tasks', status: 403 };
+    }
+
     if (index.has(compositeKey(authorizedProject, id))) {
       return { error: 'A live task with this id already exists', status: 409 };
     }
+
+    // v3.12.1 (Board Health Check): honor the CAS guard the route already
+    // forwards. The trash row carries its pre-delete version; nextVersionFor
+    // below bumps it, so the expectation is checked against trashed.version.
+    const conflict = versionConflict(trashed, expectedVersion);
+    if (conflict) return conflict;
 
     const restored = structuredClone(trashed);
     restored.status = STATUSES.READY;

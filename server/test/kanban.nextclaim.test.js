@@ -43,11 +43,12 @@ async function jsonRequest(baseUrl, route, options = {}) {
 
 /**
  * POST /api/tasks/next-claim with auth + a role. `role`/`project` become query
- * hints; `agentId` is the claiming agent (the caller). Returns the parsed result.
+ * hints; the claiming agent is bound to the credential via the X-Agent-Id
+ * header (v3.12.1: ?agent_id= no longer participates as identity). Returns the
+ * parsed result.
  */
 async function claimNext(baseUrl, agentId, { role = 'builder', project } = {}) {
   const qs = new URLSearchParams();
-  qs.set('agent_id', agentId);
   qs.set('role', role);
   if (project !== undefined) qs.set('project', project);
   return jsonRequest(baseUrl, `/api/tasks/next-claim?${qs.toString()}`, {

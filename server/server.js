@@ -181,14 +181,10 @@ export function createApp(opts = {}) {
    * BOTH modes carry `event: settings` on connect and on change (PERF-01c).
    */
   app.get('/api/events', (req, res) => {
-    // SEC-05: cap concurrent SSE streams BEFORE setting headers.
-    const cap = maxSseStreams();
-    if (cap >= 0 && activeSseStreams >= cap) {
-      return res.status(503).json({ error: 'Too many concurrent event streams' });
-    }
-    activeSseStreams += 1;
-    openSseStreams.add(res);
-
+    // v3.12.1 (SEC-05): resolve the caller's project scope BEFORE touching the
+    // stream counters — a 403 must return without consuming a slot. The old
+    // order incremented first, and the 403 early-return below never decremented,
+    // leaking a slot permanently.
     const rawProject = typeof req.query.project === 'string' ? req.query.project.trim() : '';
     let project = rawProject || null;
     // Deep-review (auth P2): a scoped credential must not stream projects it
@@ -205,6 +201,32 @@ export function createApp(opts = {}) {
       }
     }
     const passesScope = (taskProject) => !(allowed instanceof Set) || allowed.has(taskProject);
+
+    // SEC-05: cap concurrent SSE streams BEFORE setting headers.
+    const cap = maxSseStreams();
+    if (cap >= 0 && activeSseStreams >= cap) {
+      return res.status(503).json({ error: 'Too many concurrent event streams' });
+    }
+    activeSseStreams += 1;
+    openSseStreams.add(res);
+
+    // v3.12.1 (SEC-05): register the close cleanup immediately after counting,
+    // so ANY connection that made it past the increment always decrements —
+    // including one that later fails during header setup or stream
+    // initialization. `unsubscribe` is wired up during stream setup below; the
+    // default no-op keeps the early close safe.
+    let closed = false;
+    let unsubscribe = () => {};
+    req.on('close', () => {
+      closed = true;
+      unsubscribe();
+      // `delete` reports whether it was still registered, so a stream that
+      // drainSseStreams() already ended is not counted down twice.
+      if (openSseStreams.delete(res)) {
+        activeSseStreams = Math.max(0, activeSseStreams - 1);
+      }
+    });
+
     // PERF-01: diff is the default. Only an explicit ?mode=snapshot selects the
     // legacy whole-board snapshot path. ?mode=diff is accepted as a no-op alias.
     const isDiffMode = req.query.mode !== 'snapshot';
@@ -216,9 +238,6 @@ export function createApp(opts = {}) {
       Connection: 'keep-alive',
       });
      res.flushHeaders();
-
-    let closed = false;
-    let unsubscribe = () => {};
 
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
@@ -267,16 +286,6 @@ export function createApp(opts = {}) {
       const prevUnsub = unsubscribe;
       unsubscribe = () => { unsubSettings(); prevUnsub(); };
     }
-
-      req.on('close', () => {
-        closed = true;
-        unsubscribe();
-        // `delete` reports whether it was still registered, so a stream that
-        // drainSseStreams() already ended is not counted down twice.
-        if (openSseStreams.delete(res)) {
-          activeSseStreams = Math.max(0, activeSseStreams - 1);
-        }
-      });
     });
 
   const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client/dist');

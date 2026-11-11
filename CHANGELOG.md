@@ -16,6 +16,29 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.1] — 2026-11-11
+
+### Security
+
+- Progress-log, comment and next-claim routes no longer trust a client-supplied
+  `agent_id`: a non-privileged bearer now logs, comments and claims only as the
+  identity on their own credential, and `?agent_id=` on next-claim no longer
+  participates as identity at all (the query string is scope/params only).
+- `restoreFromTrash` is now admin-only like its `hardDeleteFromTrash` sibling —
+  a non-privileged caller gets a 403 — and it honors the `expected_version`
+  guard the route already forwards, returning a 409 "Version mismatch" with
+  expected/provided details on a stale expectation.
+- The SSE permission check now runs before the concurrent-stream cap, so a 403
+  rejection no longer permanently leaks one of the capped stream slots; the
+  close cleanup is registered immediately after a stream is counted, so any
+  connection that makes it past the cap always decrements.
+
+Tests: agent-identity spoof regressions in the deep-review suite, restore
+privilege/CAS cases in the trash suite, and a slot-leak case in the SEC-05
+stream-cap suite.
+
+_Credit: Board Health Check review._
+
 ## [3.12.0] — 2026-11-11
 
 ### Added

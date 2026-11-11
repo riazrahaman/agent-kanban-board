@@ -170,15 +170,19 @@ router.delete('/trash/:id', asyncHandler(async (req, res) => {
  * READY cards are claimable; the claim lifts READY -> IN_PROGRESS, or PLANNING
  * for a planner).
  * The caller's role is taken from the authenticated identity only (never the
- * query string). Query: ?project= (accepted, no-op today), ?agent_id= (falls
- * back to the caller's agent_id). Returns 200 + the claimed task, or 204 when
- * nothing is claimable.
+ * query string). Query: ?project= (accepted, no-op today), ?lease_ms=. The
+ * claiming identity is credential-bound (v3.12.1): ?agent_id= no longer
+ * participates. Returns 200 + the claimed task, or 204 when nothing is
+ * claimable.
  */
 router.post('/next-claim', asyncHandler(async (req, res) => {
-  const agentId =
-    req.query?.agent_id ||
-    req.body?.agent_id ||
-    req.caller?.agent_id;
+  // Deep-review (auth P1, v3.12.1): a non-privileged bearer claims only as
+  // THEMSELVES — mirroring the claim route. The query string is scope/params
+  // only and is NEVER identity: `?agent_id=` no longer participates at all.
+  // The role stays credential-derived (req.caller?.role) as before.
+  const agentId = store.callerIsPrivileged(req.caller)
+    ? (req.body?.agent_id || req.caller?.agent_id)
+    : req.caller?.agent_id;
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
     }
@@ -457,7 +461,13 @@ router.get('/:id/logs', asyncHandler(async (req, res) => {
 }));
 
 router.post('/:id/logs', asyncHandler(async (req, res) => {
-  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  // Deep-review (auth P1, v3.12.1): a non-privileged bearer logs only as
+  // THEMSELVES — same identity binding as claim/heartbeat, so a project token
+  // cannot misattribute progress to another agent. The body agent_id stays
+  // meaningful for privileged callers only.
+  const agentId = store.callerIsPrivileged(req.caller)
+    ? (req.body?.agent_id || req.caller?.agent_id)
+    : req.caller?.agent_id;
   const message = req.body?.message;
   if (!agentId || !message) {
     return res.status(400).json({ error: 'agent_id and message are required' });
@@ -516,7 +526,11 @@ router.post('/:id/issues', asyncHandler(async (req, res) => {
 // v2.5.0: append a comment to a task's discussion thread. Mirrors /:id/logs —
 // agent_id + message required, §2.6 CAS guard, 409 details passthrough.
 router.post('/:id/comments', asyncHandler(async (req, res) => {
-  const agentId = req.body?.agent_id || req.caller?.agent_id;
+  // Deep-review (auth P1, v3.12.1): same identity binding as /:id/logs — a
+  // non-privileged bearer comments only as the identity on their credential.
+  const agentId = store.callerIsPrivileged(req.caller)
+    ? (req.body?.agent_id || req.caller?.agent_id)
+    : req.caller?.agent_id;
   const message = req.body?.message;
   if (!agentId || !message || typeof message !== 'string') {
     return res.status(400).json({ error: 'agent_id and message are required' });
