@@ -1,10 +1,8 @@
-import { readFile, writeFile, rename, mkdir, readdir, copyFile, rm } from 'node:fs/promises';
-import { existsSync, readdirSync } from 'node:fs';
+// C1 (v3.12.5): the fs/git/yaml plumbing that needed these imports moved to
+// ./store/{core,backups}.js with the code that used it.
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import yaml from 'yaml';
 import { escapeHtml } from './utils/sanitize.js';
 import {
   STATUSES,
@@ -31,9 +29,6 @@ import {
   backfillLeaseFields,
 } from './task-identity.js';
 import { JsonStorage, GitYamlStorage } from './storage.js';
-
-const execFileAsync = promisify(execFile);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ENH-11 (v2.10.0): the loop state machine (statuses + transition graph + role
 // matrix) lives in ./state-machine.js. Re-exported here so every existing
@@ -68,407 +63,171 @@ export {
 // ENH-11 (v2.10.0): the pluggable storage backends live in ./storage.js.
 export { JsonStorage, GitYamlStorage };
 
-// ============================================================================
-// Injectable clock (§2.4) — all lease math goes through nowFn() so tests can
-// force expiry deterministically. Pass undefined to restore the wall clock.
-// ============================================================================
-let nowFn = () => Date.now();
-
-export function setNowFn(fn) {
-  nowFn = typeof fn === 'function' ? fn : () => Date.now();
-}
-
-// ============================================================================
-// Lease / reaper / auto-promote config (§2.4 / §2.5) — read at call time so a
-// test suite can override per-suite via env. (Minor deviation from the plan's
-// "cache at load": call-time reads are correct for env-toggle tests.)
-// ============================================================================
-function getClaimTtlMs() {
-  const raw = process.env.KANBAN_CLAIM_TTL_MS;
-  // Default raised 300000 -> 600000 (v2.3.11): headless builders only POST /logs
-  // (which extends the lease since v2.3.4) and the browser heartbeats every 5s,
-  // but measured log gaps on the production board showed median 46s / p95 315s,
-  // so a 5-minute TTL reaped live work 6% of the time; 10 minutes cuts that to
-  // ~2.6% without meaningfully delaying recovery of genuinely dead agents.
-  if (raw === undefined || raw === '') return 600000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 600000;
-}
-
-export function getMinLeaseMs() {
-  const raw = process.env.KANBAN_MIN_LEASE_MS;
-  if (raw === undefined || raw === '') return 60000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 60000;
-}
-
-export function getMaxLeaseMs() {
-  const raw = process.env.KANBAN_MAX_LEASE_MS;
-  if (raw === undefined || raw === '') return 7200000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 7200000;
-}
-
-export function getProgressStallMs() {
-  const raw = process.env.KANBAN_PROGRESS_STALL_MS;
-  if (raw === undefined || raw === '') return 1800000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 1800000;
-}
-
-export function leaseWindowFor(task) {
-  return task.claim_lease_ms ?? getClaimTtlMs();
-}
-
-function resolveLeaseMs(requested) {
-  if (requested === undefined || requested === null || requested === '') {
-    // No explicit request (including an empty `?lease_ms=`): the lease keeps
-    // the global default, and we do NOT pin it — the caller stores `null` so a
-    // later config change still applies.
-    return { ok: true, ms: getClaimTtlMs(), explicit: false };
-  }
-  // v2.12.1 (I-8): accept only an actual number or a numeric string. Before
-  // this guard, `Number(requested)` coerced `true` -> 1 and `[5]` -> 5, so a
-  // malformed request silently got clamped up to the SHORTEST possible lease
-  // (KANBAN_MIN_LEASE_MS) instead of being rejected — the exact failure mode
-  // this feature exists to prevent.
-  const isNumericType = typeof requested === 'number';
-  const isNumericString = typeof requested === 'string' && /^\d+(\.\d+)?$/.test(requested.trim());
-  if (!isNumericType && !isNumericString) {
-    return { ok: false, status: 400, error: 'lease_ms must be a positive number of milliseconds' };
-  }
-  const n = Number(requested);
-  if (!Number.isFinite(n) || n <= 0) {
-    return { ok: false, status: 400, error: 'lease_ms must be a positive number of milliseconds' };
-  }
-  const min = getMinLeaseMs();
-  const max = getMaxLeaseMs();
-  return { ok: true, ms: Math.min(Math.max(n, min), max), explicit: true };
-}
-
-// E-2: cap how many active leases one agent may hold at once. 0/unset =
-// unlimited (unchanged default behavior). Privileged roles are exempt (they
-// administer the board, e.g. an orchestrator batch-assigning via /assign).
-function getMaxClaimsPerAgent() {
-  const raw = process.env.KANBAN_MAX_CLAIMS_PER_AGENT;
-  if (raw === undefined || raw === '') return 0;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : 0;
-}
-
-function countActiveClaims(agentId) {
-  let count = 0;
-  for (const t of tasks) {
-    if (t.assigned_agent !== agentId) continue;
-    if (ACTIVE_STATUS_SET.has(t.status)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-/**
- * §2.4b Fix 3 (v2.12.0). When a task holder writes to any one card, renew the
- * leases on every OTHER card they also hold, in the same lock — otherwise an
- * orchestrator busy on one card silently loses its siblings to the reaper even
- * though it was demonstrably active. Default ON; set KANBAN_HOLDER_WRITE_RENEWS_ALL=0
- * (or false) to disable.
- */
-function holderWriteRenewsAll() {
-  const raw = process.env.KANBAN_HOLDER_WRITE_RENEWS_ALL;
-  if (raw === undefined || raw === '') return true;
-  return raw !== '0' && raw.toLowerCase() !== 'false';
-}
-
-function getReapIntervalMs() {
-  const raw = process.env.KANBAN_REAP_INTERVAL_MS;
-  if (raw === undefined || raw === '') return 30000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 30000;
-}
-
-/**
- * §2.4 orphan grace — how long an ownerless ACTIVE task may sit untouched before
- * the reaper treats it as structurally stuck.
- *
- * An active task with no owner/lease is normally created by a status-only PATCH
- * (the documented orchestrator flow: `PATCH {status:'IN_PROGRESS', role:'admin'}`).
- * That is a *legitimate* intermediate state — per-stage ownership deliberately
- * keeps `assigned_agent` as the lease holder rather than reassigning it — so
- * reaping it on the very next sweep destroys a card that was just written to.
- * The grace window is anchored on `updated`, so any later write (a log, a
- * transition) resets it. Defaults to a FIXED 5-minute window, deliberately
- * DECOUPLED from the claim TTL (v2.3.11): deriving it from `getClaimTtlMs()`
- * meant raising the TTL (300s -> 600s) silently doubled how long an ownerless
- * active card could sit unowned before being normalized. The two knobs answer
- * different questions — "how long may a lease run idle" vs "how long may a
- * nobody-owned card sit untouched" — so they no longer share a default.
- * `0` disables the grace (reap orphans immediately).
- */
-function getOrphanGraceMs() {
-  const raw = process.env.KANBAN_ORPHAN_GRACE_MS;
-  if (raw === undefined || raw === '') return 300000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 300000;
-}
-
-export function isReaperEnabled() {
-  const raw = process.env.KANBAN_REAP_ENABLED;
-  if (raw === undefined || raw === '') return true;
-  return raw !== 'false' && raw !== '0';
-}
-
-function isAutoPromoteEnabled() {
-  const raw = process.env.KANBAN_AUTO_PROMOTE;
-  if (raw === undefined || raw === '') return true;
-  return raw !== 'false' && raw !== '0';
-}
-
-function isoFromMs(ms) {
-  return new Date(ms).toISOString();
-}
-
-// ENH-11 (v2.10.0): Atomic File Operations + Project/Workspace namespacing
-// moved to ./task-identity.js and re-exported at the top of this file.
-
-function compositeKey(project, id) {
-  return `${project}/${id}`;
-}
-
-// ============================================================================
-// Store State & API
-// ============================================================================
-
-let storage = null;
-let storeLoaded = false;    // true once loadStore() has completed (§health read-only)
-let tasks = [];             // every live task across all projects
-let archive = {};           // project -> Task[] (archived, not in `tasks`)
-let listeners = [];
-const index = new Map();    // `${project}/${id}` -> Task   (O(1) composite lookup)
-const storageCache = new Map(); // project -> per-project storage instance
-let mutationQueue = Promise.resolve();
-
-// v2.5.0: per-project display settings (column colors). Maps project -> raw
-// saved settings object; resolution (board default -> project override) happens
-// at read time in getSettings().
-let projectSettings = new Map();
-let settingsListeners = [];
-
-// v2.5.6 (ENH-03): trash sink. project -> Task[] (soft-deleted, not live).
-let trash = {};
-// KANBAN_TRASH_DAYS: how long a soft-deleted task survives before the sweep
-// hard-deletes it. Default 30; 0 disables retention (trash keeps everything
-// until hard-purged); a negative value also disables the sweep.
-function getTrashDays() {
-  const raw = process.env.KANBAN_TRASH_DAYS;
-  if (raw === undefined || raw === null || raw === '') return 30;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 30;
-}
-
-export function withMutationLock(operation) {
-  const run = mutationQueue.then(() => operation(), () => operation());
-  mutationQueue = run.catch(() => undefined);
-  return run;
-}
 
 // ---------------------------------------------------------------------------
-// Incremental aggregate cache (Pipeline C)
-// ---------------------------------------------------------------------------
+// C1 (v3.12.5): store.js is the FACADE over ./store/*.
 //
-// getProjectSummaries() and getMetrics() are hot observability endpoints that
-// used to scan every live task AND every archive entry on each call. That cost
-// grows without bound as archive history accumulates. Instead we cache the
-// task-derived aggregates and rebuild them lazily only after a committed
-// mutation (create/patch/claim/reclaim/archive/unlock), so a clean read is
-// O(projects) instead of O(live + archive). The two time/event-dependent bits
-// — `active_agents` (lease expiry vs now) and `claim_contention` (since-boot
-// map) — are still resolved at read time, matching the original semantics.
+// State (live tasks, composite index, archive, trash, settings, mutation queue,
+// aggregate-invalidation flag, mutation serial) has exactly one home in
+// ./store/core.js. The extracted subsystems — listeners, aggregates, leases,
+// archive, trash, backups — import that module directly instead of importing
+// store.js, so there is no cycle. Everything they expose is re-exported below
+// with its original identity, so the routes and the 54 test files that import
+// from '../store.js' are unaffected (kanban.modulesplit.test.js pins the
+// identities, including store.writeAtomic === task-identity.writeAtomic).
 //
-// `aggregatesDirty` is set by the same serialized mutation paths that touch
-// state (updateInMemoryTask / removeFromMemory / rebuildIndex), so the cache
-// never observes a torn state. Cold start is handled by rebuildIndex marking
-// the cache dirty on load.
-let aggregatesDirty = true;
-let cachedSummaries = null;   // sorted array result of getProjectSummaries()
-let cachedMetricBases = null; // Map<project, baseMetric> (counts + sorted cycles)
-let cachedAggregateCycleTime = null; // summarizeDurations(all cycle samples)
-
-function invalidateAggregates() {
-  aggregatesDirty = true;
-}
-
+// What deliberately STAYS here: the create/patch/claim state-machine walk and
+// the dependency gate. They share the legal-transition + role rules with each
+// other, and moving them would have meant re-exporting half the mutation path
+// back into the module that owns it — more coupling, not less.
 // ---------------------------------------------------------------------------
-// Storage factory (per-project, cached)
-// ---------------------------------------------------------------------------
+import {
+  tasks,
+  archive,
+  trash,
+  storeLoaded,
+  index,
+  projectSettings,
+  withMutationLock,
+  getStorage,
+  setStorage,
+  listJsonProjects,
+  listGitProjects,
+  rebuildIndex,
+  updateInMemoryTask,
+  setTaskInMemory,
+  removeFromMemory,
+  getProjectBucket,
+  projectBucket,
+  projectBucketFor,
+  compositeKey,
+  resetArchive,
+  resetTrash,
+  resetProjectSettings,
+  markStoreLoaded,
+  getTasks,
+  getTask,
+  getTaskCount,
+  getArchivedTasks,
+  nextVersionFor,
+  versionConflict,
+} from './store/core.js';
+import {
+  onDiff,
+  onAudit,
+  emitAudit,
+  notify,
+  listenerCounts,
+  onChange,
+  onSettings,
+  settingsListenerCount,
+  emitSettings,
+} from './store/listeners.js';
+import {
+  getProjectSummaries,
+  getMetrics,
+  resetClaimContention,
+  recordClaimContention,
+} from './store/aggregates.js';
+import {
+  nowFn,
+  setNowFn,
+  isoFromMs,
+  getMinLeaseMs,
+  getMaxLeaseMs,
+  getProgressStallMs,
+  leaseWindowFor,
+  resolveLeaseMs,
+  getMaxClaimsPerAgent,
+  countActiveClaims,
+  holderWriteRenewsAll,
+  isReaperEnabled,
+  isAutoPromoteEnabled,
+  reclaimTask,
+  reapExpiredClaims,
+  startReaper,
+  stopReaper,
+  isReaperRunning,
+} from './store/leases.js';
+import { runArchiveSweep } from './store/archive.js';
+import {
+  getTrashedTasks,
+  restoreFromTrash,
+  hardDeleteFromTrash,
+  runTrashSweep,
+  runTrashSweepInner,
+} from './store/trash.js';
+import {
+  startBackup,
+  stopBackup,
+  isBackupRunning,
+  runBackupNow,
+  backupStatus,
+} from './store/backups.js';
+import { createLogger } from './logger.js';
 
-// ENH-11 (v2.10.0): gitRoot() / jsonDataDir() moved to ./task-identity.js
-// (re-exported at the top of this file).
+// One structured logger for the facade's own diagnostics (load warnings, hook
+// failures, spill errors). Extracted modules own their own scoped logger.
+const log = createLogger(null);
 
-export function getStorage(project) {
-  const p = project === undefined ? defaultProjectName() : normalizeProject(project);
-  if (storageCache.has(p)) return storageCache.get(p);
-
-  const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
-  let inst;
-  if (backend === 'git') {
-    const root = gitRoot();
-    const autoCommit = process.env.KANBAN_GIT_COMMIT !== 'false';
-    if (p === defaultProjectName()) {
-      // Default project reuses the flat legacy root.
-      inst = new GitYamlStorage(root, { autoCommit, rootPath: root, project: p });
-    } else {
-      inst = new GitYamlStorage(path.join(root, p), { autoCommit, rootPath: root, project: p });
-    }
-  } else {
-    if (p === defaultProjectName()) {
-      // Default project reuses KANBAN_DATA_FILE / server/tasks.json unchanged.
-      const live = process.env.KANBAN_DATA_FILE || path.join(__dirname, 'tasks.json');
-      inst = new JsonStorage(live, { project: p, isDefault: true });
-    } else {
-      const live = path.join(jsonDataDir(), 'tasks', `${p}.json`);
-      inst = new JsonStorage(live, { project: p, isDefault: false });
-    }
-  }
-
-  storageCache.set(p, inst);
-  return inst;
-}
-
-export function setStorage(newStorage, project) {
-  if (newStorage === null || newStorage === undefined) {
-    storage = null;
-    storageCache.clear();
-    return;
-  }
-  if (project === undefined) {
-    // Bind to the default project (preserves the existing test contract where
-    // every project is the implicit single project).
-    storage = newStorage;
-    storageCache.set(defaultProjectName(), newStorage);
-  } else {
-    const p = normalizeProject(project);
-    storageCache.set(p, newStorage);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Enumeration helpers
-// ---------------------------------------------------------------------------
-
-async function listJsonProjects() {
-  const dir = path.join(jsonDataDir(), 'tasks');
-  let entries;
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((f) => f.endsWith('.json') && isValidProjectId(f.slice(0, -5)))
-    .map((f) => f.slice(0, -5));
-}
-
-export async function listGitProjects(root) {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const projects = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    // BUG-06 (v2.7.0): a blanket `entry.name === 'archive'` skip made a real
-    // git project literally named `archive` invisible after restart. The
-    // archive SINK dir (`<root>/archive/`) holds only per-project SUBDIRECTORIES
-    // and no direct `.yml`, so the `files.some(yml)` check below already
-    // excludes it. Only dotfiles are skipped here.
-    if (entry.name.startsWith('.')) continue;
-    let files;
-    try {
-      files = await readdir(path.join(root, entry.name));
-    } catch {
-      continue;
-    }
-    if (files.some((f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.'))) {
-      projects.push(entry.name);
-    }
-  }
-  return projects;
-}
-
-// ---------------------------------------------------------------------------
-// Index maintenance
-// ---------------------------------------------------------------------------
-
-function rebuildIndex(loaded) {
-  index.clear();
-  tasks = loaded.slice();
-  for (const t of tasks) {
-    index.set(compositeKey(t.project, t.id), t);
-  }
-  invalidateAggregates();
-}
-
-function updateInMemoryTask(updatedTask) {
-  const key = compositeKey(updatedTask.project, updatedTask.id);
-  index.set(key, updatedTask);
-  const idx = tasks.findIndex((t) => t.id === updatedTask.id && t.project === updatedTask.project);
-  if (idx >= 0) {
-    tasks[idx] = updatedTask;
-   } else {
-    tasks.push(updatedTask);
-   }
-  invalidateAggregates();
-}
-
-/**
- * Test-only helper: install/replace a task's in-memory copy in place (no
- * persistence, no version bump, no notify). Used by tests to seed synthetic
- * states that are otherwise unreachable through the claim path (e.g. a held but
- * dependency-unmet task, which no legal claim can produce).
- */
-export function setTaskInMemory(task) {
-  updateInMemoryTask(task);
-}
-
-function removeFromMemory(project, id) {
-  index.delete(compositeKey(project, id));
-  const idx = tasks.findIndex((t) => t.id === id && t.project === project);
-  if (idx >= 0) tasks.splice(idx, 1);
-  invalidateAggregates();
-}
-
-/**
- * Builds the live bucket for a project with `candidate` applied (replacing or
- * appending). Used for the partition-scoped save so only that project's file
- * (JSON) / card (Git) is rewritten.
- */
-export function getProjectBucket(project) {
-  return tasks.filter((t) => t.project === project);
-}
-
-function projectBucket(project, candidate) {
-  const out = tasks.filter((t) => t.project === project);
-  const idx = out.findIndex((t) => t.id === candidate.id);
-  if (idx >= 0) out[idx] = candidate;
-  else out.push(candidate);
-  return out;
-}
-
-/**
- * B1 (v3.12.3) — like `projectBucket`, but applies a BATCH of already-mutated
- * candidates to the project's live bucket. Used by `renewAllLeasesInner` so a
- * whole sibling-renewal sweep persists in ONE save per project with every
- * renewal applied.
- */
-function projectBucketFor(project, candidates) {
-  const byId = new Map(candidates.map((c) => [c.id, c]));
-  return tasks
-    .filter((t) => t.project === project)
-    .map((t) => byId.get(t.id) ?? t);
-}
+// Every symbol below was exported by the pre-split store.js; keep the surface
+// byte-for-byte. Re-export (not re-wrap) preserves function identity.
+export {
+  withMutationLock,
+  getStorage,
+  setStorage,
+  listGitProjects,
+  setTaskInMemory,
+  getProjectBucket,
+  getTasks,
+  getTask,
+  getTaskCount,
+  getArchivedTasks,
+  nextVersionFor,
+} from './store/core.js';
+export {
+  onDiff,
+  onAudit,
+  emitAudit,
+  notify,
+  listenerCounts,
+  onChange,
+  onSettings,
+  settingsListenerCount,
+  emitSettings,
+} from './store/listeners.js';
+export {
+  getProjectSummaries,
+  getMetrics,
+  resetClaimContention,
+} from './store/aggregates.js';
+export {
+  setNowFn,
+  getMinLeaseMs,
+  getMaxLeaseMs,
+  getProgressStallMs,
+  leaseWindowFor,
+  isReaperEnabled,
+  reclaimTask,
+  reapExpiredClaims,
+  startReaper,
+  stopReaper,
+  isReaperRunning,
+} from './store/leases.js';
+export { runArchiveSweep } from './store/archive.js';
+export {
+  getTrashedTasks,
+  restoreFromTrash,
+  hardDeleteFromTrash,
+  runTrashSweep,
+} from './store/trash.js';
+export {
+  startBackup,
+  stopBackup,
+  isBackupRunning,
+  runBackupNow,
+  backupStatus,
+} from './store/backups.js';
 
 // ---------------------------------------------------------------------------
 // Lookup
@@ -540,7 +299,7 @@ export async function loadStore() {
   rebuildIndex(loaded);
 
   // Load per-project archives.
-  archive = {};
+  resetArchive();
   for (const p of projectSet) {
     try {
       const a = await getStorage(p).loadArchive();
@@ -549,25 +308,25 @@ export async function loadStore() {
         archive[p] = a;
       }
     } catch (err) {
-      console.warn(`[kanban] archive load error for ${p}: ${err.message}`);
+      log.warn('archive load error', { project: p, error: err.message });
     }
   }
 
   // v2.5.0: load per-project display settings (column colors) alongside the
   // archives. A project with no saved settings simply has no override entry.
-  projectSettings = new Map();
+  resetProjectSettings();
   for (const p of projectSet) {
     try {
       const s = await getStorage(p).loadSettings();
       if (s && typeof s === 'object' && Object.keys(s).length) projectSettings.set(p, s);
     } catch (err) {
-      console.warn(`[kanban] settings load error for ${p}: ${err.message}`);
+      log.warn('settings load error', { project: p, error: err.message });
     }
   }
 
   // v2.5.6: load the trash sink alongside archives so a restart never loses
   // soft-deleted rows (the whole point of the sink).
-  trash = {};
+  resetTrash();
   for (const p of projectSet) {
     try {
       const tl = await getStorage(p).loadTrash();
@@ -576,14 +335,14 @@ export async function loadStore() {
         trash[p] = tl;
       }
     } catch (err) {
-      console.warn(`[kanban] trash load error for ${p}: ${err.message}`);
+      log.warn('trash load error', { project: p, error: err.message });
     }
   }
 
   // Boot sweep is always forced — the process-level mutation serial must never
   // skip the one sweep that reconciles on-disk age with the live index.
   await runArchiveSweep();
-  storeLoaded = true;
+  markStoreLoaded();
   notify();
 }
 
@@ -594,181 +353,6 @@ export async function loadStore() {
 export function isStoreLoaded() {
   return storeLoaded;
 }
-
-// §2.2 diff-event layer: on each notify(), compute created/updated/removed vs the
-// previous snapshot, then dispatch {kind, task, prev?, project} events to
-// diffListeners. Backward-compat: full-snapshot `onChange` listeners still see
-// every mutation, unmodified.
-let diffListeners = [];
-let prevTaskMap = new Map(); // `${project}/${id}` -> Task (previous snapshot)
-let diffListenersInitialized = false;
-
-/**
- * §2.2 — register a diff listener. Receives `{ kind, task, prev?, project }` on
- * every mutation where something changed. `kind` is one of
- * 'created' | 'updated' | 'removed' | 'archived'. Returns unsubscribe.
- */
-export function onDiff(listener) {
-  diffListeners.push(listener);
-  return () => {
-    diffListeners = diffListeners.filter((l) => l !== listener);
-   };
-}
-
-/**
- * §2.9 — structured audit-log entry for every committed mutation. Shape:
- *   { ts, kind, project, task, prev?, actor, reason? }
- * `kind` mirrors the diff layer. `actor` is the mutating agent (system for
- * reaper/unlock/archive). `reason` carries a short human-readable cause (e.g.
- * 'lease_expired', 'unblocked', 'archived'...). This is the substrate for
- * §2.9 metrics + audit; today it's just a console line.
- */
-let auditListeners = [];
-export function onAudit(fn) {
-  if (typeof fn !== 'function') throw new Error('onAudit listener must be a function');
-  auditListeners.push(fn);
-  return () => {
-    auditListeners = auditListeners.filter((f) => f !== fn);
-   };
-}
-
-export function emitAudit(entry) {
-  for (const fn of [...auditListeners]) {
-    try {
-      fn(entry);
-    } catch (err) {
-      console.error('[kanban audit] listener error:', err);
-    }
-  }
-  // Default: console line. Best-effort, must not throw.
-  try {
-    console.log(
-      `[kanban audit] ${entry.ts} ${entry.kind} ${entry.project}/${entry.task ? entry.task.id : 'n/a'} ` +
-        `actor=${entry.actor || 'anon'}${entry.reason ? ' reason=' + entry.reason : ''}`
-     );
-  } catch {/* ignore */}
-}
-
-// Dispatch structured diff events computed from the previous vs current task
-// map. `opts.semantic` is a Map of `${project}/${id}` -> { kind, reason, actor }
-// used to override the inferred kind for a specific mutated task (e.g. a claim
-// surfaces as 'claimed' not 'updated'). One event per changed task, never two.
-function dispatchDiffEvents({ actor = 'user', reason = null, semantic = null } = {}) {
-  if (!diffListenersInitialized) {
-    prevTaskMap = new Map(tasks.map((t) => [
-      compositeKey(t.project, t.id), t,
-      ]));
-    diffListenersInitialized = true;
-    return;
-    }
-  const now = new Map(tasks.map((t) => [
-    compositeKey(t.project, t.id), t,
-    ]));
-  const tsMs = Date.now();
-
-  const fire = (key, kind, task, prev, evActor, evReason) => {
-    const event = {
-      kind, task, prev: prev || null, project: task?.project,
-      actor: evActor || actor, reason: evReason ?? reason, ts: tsMs,
-      };
-    for (const l of [...diffListeners]) {
-      try { l(event); } catch (err) {
-        console.error('[kanban diff] listener error:', err);
-        }
-      }
-    emitAudit({
-      ts: new Date(tsMs).toISOString(), kind,
-      project: task?.project, task, prev: prev || null,
-      actor: evActor || actor, reason: evReason ?? reason,
-      });
-   };
-
-    // Removed: present previously, gone now. The archive sweep drops rows from
-    // the live set, so an archived task lands here — a semantic override is the
-    // only way it can surface as 'archived' rather than a bare 'removed'.
-   for (const [key, prevTask] of prevTaskMap) {
-    if (!now.has(key)) {
-      const sev = semantic && semantic.get(key);
-      if (sev) {
-        fire(key, sev.kind, sev.task || prevTask, prevTask, sev.actor, sev.reason);
-        continue;
-        }
-      fire(key, 'removed', prevTask, prevTask, actor, reason);
-      }
-    }
-    // Created + updated: present now.
-   for (const [key, task] of now) {
-    const prevTask = prevTaskMap.get(key) || null;
-     // A supplied semantic override wins for this exact task.
-    const sev = semantic && semantic.get(key);
-    if (sev) {
-      fire(key, sev.kind, task, prevTask, sev.actor, sev.reason);
-      continue;
-     }
-    // Unchanged rows must stay silent: without this, every mutation fanned out
-    // one 'updated' per task in the store. Mutation paths are copy-on-write
-    // (setTaskInMemory swaps the object), so identity is the change signal —
-    // and a semantic override above already fired unconditionally, so the
-    // claim/renew/unblock/reclaim paths never depend on this check.
-    if (prevTask === task) continue;
-    // 'archived' is never inferred here: archiving removes the row from the
-    // live set, so it is emitted from the removed branch via a semantic
-    // override. Inferring it from a DONE->DONE transition mislabelled every
-    // ordinary edit of a done task.
-    const kind = prevTask ? 'updated' : 'created';
-    fire(key, kind, task, prevTask, actor, reason);
-   }
-  prevTaskMap = now;
-}
-
-/**
- * §2.2/§2.9 — notify snapshot listeners (unchanged shape, backward-compat) and
- * layer the structured diff + audit. Optional semantic metadata:
- *   actor  — who caused this mutation ('builder-x', 'system', ...)
- *   reason — short human cause ('lease_expired', 'unblocked', 'archived')
- *   semantic — Map`${project}/${id}` -> { kind, actor, reason } to override the
- *              inferred kind for a specific mutated task (claim -> 'claimed',
- *              reclaim -> 'reclaimed', unlock -> 'unblocked').
- */
-let mutationSerial = 0;
-let lastSweepSerial = -1; // first sweep always runs (boot + seed); then only when serial advanced.
-
-export function notify(opts = {}) {
-  // Deep-review: counts every committed mutation batch, so the archive sweep
-  // can skip itself only when NOTHING has changed since its last pass.
-  mutationSerial += 1;
-  const snapshot = tasks;
-   for (const listener of listeners) {
-    try {
-      listener(snapshot);
-      } catch (err) {
-       console.error('[kanban] listener error:', err);
-       }
-     }
-   dispatchDiffEvents(opts);
-}
-
-/**
- * Live listener counts. Exists so a leak is testable: the SSE handler
- * subscribes per connection and unsubscribes on `req.on('close')`, and the
- * §2.10 project switcher re-subscribes on every project change — so
- * open/close has to balance or a long session accumulates dead sockets.
- */
-export function listenerCounts() {
-  return {
-    snapshot: listeners.length,
-    diff: diffListeners.length,
-    audit: auditListeners.length,
-  };
-}
-
-export function onChange(listener) {
-  listeners.push(listener);
-  return () => {
-    listeners = listeners.filter((l) => l !== listener);
-   };
-}
-
 // ---------------------------------------------------------------------------
 // v2.5.0 — Per-project display settings (column colors)
 // ---------------------------------------------------------------------------
@@ -808,27 +392,6 @@ export const STOCK_COLUMN_COLORS = Object.freeze({
   BUILDING: 'live',
   IN_TEST: 'test',
 });
-
-export function onSettings(listener) {
-  settingsListeners.push(listener);
-  return () => {
-    settingsListeners = settingsListeners.filter((l) => l !== listener);
-  };
-}
-
-export function settingsListenerCount() {
-  return settingsListeners.length;
-}
-
-function emitSettings(project, settings) {
-  for (const listener of [...settingsListeners]) {
-    try {
-      listener({ project, settings });
-    } catch (err) {
-      console.error('[kanban] settings listener error:', err);
-    }
-  }
-}
 
 /**
  * Resolved column colors for a project: stock -> board default (the `default`
@@ -907,377 +470,6 @@ export async function updateSettings(project, patch, { caller = {} } = {}) {
   });
 }
 
-/**
- * Orders records most-recently-touched first.
- *
- * The board renders a lane top-to-bottom in the order the API returns, so the
- * list must be recency-ordered or "what just moved" is buried wherever the
- * record happened to sit in the array. `updated` is stamped on create and on
- * every mutation, so it is the right key. Falls back to created_at, then to
- * insertion into the returned copy for records that carry neither (legacy
- * data), so the comparison is total and stable.
- *
- * Sorts a COPY: `tasks` is the live in-memory array the store mutates.
- */
-function byRecency(a, b) {
-  const ka = Date.parse(a.updated ?? a.created_at ?? '');
-  const kb = Date.parse(b.updated ?? b.created_at ?? '');
-  const va = Number.isNaN(ka) ? -Infinity : ka;
-  const vb = Number.isNaN(kb) ? -Infinity : kb;
-  if (vb !== va) return vb - va;
-  return 0;
-}
-
-export function getTasks(project) {
-  // No filter -> all live projects (preserves current single-project behavior).
-  if (project === undefined || project === null || project === '') return [...tasks].sort(byRecency);
-  if (!isValidProjectId(project)) return [];
-  return tasks.filter((t) => t.project === project).sort(byRecency);
-}
-
-export function getTask(id, project) {
-  const { project: resolved, shortId } = resolveProjectScope(id, project);
-  return index.get(compositeKey(resolved, shortId)) ?? null;
-}
-
-/**
- * B3 (v3.12.2): O(1) live-task count. The health probe only needs `.length`,
- * but the only accessor it had was getTasks() with no project — which sorts a
- * full COPY of the live set (O(n log n)) on every probe. Preferred over a
- * Pipeline-C cached count for determinism: `tasks` is the single live array.
- */
-export function getTaskCount() {
-  return tasks.length;
-}
-
-export function getArchivedTasks(project) {
-  if (project === undefined || project === null || project === '') {
-    let out = [];
-    for (const list of Object.values(archive)) out = out.concat(list);
-    return out;
-  }
-  return archive[project] || [];
-}
-
-function rebuildSummaries() {
-  const map = new Map();
-  const ensure = (p) => {
-    let s = map.get(p);
-    if (!s) {
-      s = { project: p, task_count: 0, done_count: 0, live_count: 0, archived_count: 0, updated: null };
-      map.set(p, s);
-    }
-    return s;
-  };
-  const touch = (s, iso) => {
-    if (iso && (!s.updated || iso > s.updated)) s.updated = iso;
-  };
-  for (const t of tasks) {
-    const s = ensure(t.project);
-    s.live_count += 1;
-    s.task_count += 1;
-    if (t.status === STATUSES.DONE) s.done_count += 1;
-    touch(s, t.updated);
-  }
-  for (const [p, list] of Object.entries(archive)) {
-    const s = ensure(p);
-    s.archived_count += list.length;
-    s.task_count += list.length;
-    for (const t of list) touch(s, t.archived_at || t.updated);
-  }
-  cachedSummaries = [...map.values()].sort((a, b) => a.project.localeCompare(b.project));
-}
-
-// Builds the task-derived, durable portion of §2.9 metrics (everything except
-// `active_agents` — lease expiry is measured against wall-clock `now` — and
-// `claim_contention` — a since-boot counter). Cycle samples are sorted once here
-// so `cycle_time` is O(1) at read time instead of re-sorting the completed set.
-function rebuildMetricBases() {
-  const byProject = new Map();
-  const ensure = (p) => {
-    if (!byProject.has(p)) {
-      byProject.set(p, {
-        project: p,
-        task_count: 0,
-        live_count: 0,
-        archived_count: 0,
-        done_count: 0,
-        completed_count: 0,
-        by_status: Object.fromEntries(VALID_STATUS_LIST.map((s) => [s, 0])),
-        reclaim_count: 0,
-        reclaimed_task_count: 0,
-        cycles: [],
-      });
-    }
-    return byProject.get(p);
-  };
-  const ingest = (task, archived) => {
-    const m = ensure(task.project);
-    m.task_count += 1;
-    if (archived) m.archived_count += 1;
-    else m.live_count += 1;
-
-    if (Object.prototype.hasOwnProperty.call(m.by_status, task.status)) {
-      m.by_status[task.status] += 1;
-    }
-    if (task.status === STATUSES.DONE) {
-      m.completed_count += 1;
-      if (!archived) m.done_count += 1;
-    }
-
-    const reclaims = Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0;
-    m.reclaim_count += reclaims;
-    if (reclaims > 0) m.reclaimed_task_count += 1;
-
-    if (task.completed_at && task.created_at) {
-      const start = Date.parse(task.created_at);
-      const end = Date.parse(task.completed_at);
-      if (!Number.isNaN(start) && !Number.isNaN(end) && end >= start) {
-        m.cycles.push(end - start);
-      }
-    }
-  };
-
-  for (const t of tasks) ingest(t, false);
-  for (const [p, list] of Object.entries(archive)) {
-    for (const t of list) ingest({ ...t, project: t.project || p }, true);
-  }
-
-  // Pre-sorted union of every project's cycle samples, for the unscoped
-  // aggregate. (The scoped aggregate's cycle time equals that project's own.)
-  const allCycles = [];
-  for (const m of byProject.values()) {
-    for (const d of m.cycles) allCycles.push(d);
-    m.cycles.sort((a, b) => a - b);
-    m.cycle_time = summarizeDurations(m.cycles);
-    delete m.cycles;
-  }
-  allCycles.sort((a, b) => a - b);
-  cachedMetricBases = byProject;
-  cachedAggregateCycleTime = summarizeDurations(allCycles);
-}
-
-// Empty (no tasks) per-project metric base, for a valid-but-unknown scope.
-function emptyBase(project) {
-  return {
-    project,
-    task_count: 0,
-    live_count: 0,
-    archived_count: 0,
-    done_count: 0,
-    completed_count: 0,
-    by_status: Object.fromEntries(VALID_STATUS_LIST.map((s) => [s, 0])),
-    cycle_time: summarizeDurations([]),
-    reclaim_count: 0,
-    reclaimed_task_count: 0,
-  };
-}
-
-// Recomputes the aggregate caches from authoritative live + archive state. Only
-// runs after a committed mutation (or load) flips `aggregatesDirty`.
-function rebuildAggregates() {
-  if (!aggregatesDirty) return;
-  rebuildSummaries();
-  rebuildMetricBases();
-  aggregatesDirty = false;
-}
-
-export function getProjectSummaries() {
-  rebuildAggregates();
-  // Deep-review: return a copy — a caller (or a route handler mutating entries)
-  // must never be able to edit the shared aggregate cache in place.
-  return cachedSummaries.map((s) => ({ ...s }));
-}
-
-// ---------------------------------------------------------------------------
-// §2.9 — cross-project observability
-// ---------------------------------------------------------------------------
-
-/**
- * Claim-contention counters, per project. This is the one metric with no
- * durable source: a rejected claim is not a committed mutation, so it leaves no
- * trace on any task and emits no audit entry. It is therefore reported as an
- * explicitly since-boot figure (`claim_contention.since`) rather than being
- * presented alongside the durable counts as if it survived a restart.
- */
-let contentionCounts = new Map();
-let contentionSince = new Date().toISOString();
-
-function recordClaimContention(project) {
-  const key = project || defaultProjectName();
-  contentionCounts.set(key, (contentionCounts.get(key) || 0) + 1);
-}
-
-export function resetClaimContention() {
-  contentionCounts = new Map();
-  contentionSince = new Date().toISOString();
-}
-
-function percentile(sorted, p) {
-  if (sorted.length === 0) return null;
-  const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
-  return sorted[Math.max(0, idx)];
-}
-
-function summarizeDurations(values) {
-  if (values.length === 0) {
-    return { count: 0, mean_ms: null, median_ms: null, p90_ms: null, min_ms: null, max_ms: null };
-  }
-  const sorted = [...values].sort((a, b) => a - b);
-  const total = sorted.reduce((acc, v) => acc + v, 0);
-  return {
-    count: sorted.length,
-    mean_ms: Math.round(total / sorted.length),
-    median_ms: percentile(sorted, 50),
-    p90_ms: percentile(sorted, 90),
-    min_ms: sorted[0],
-    max_ms: sorted[sorted.length - 1],
-  };
-}
-
-/**
- * §2.9 metrics for one project, or every project plus an aggregate.
- *
- * Everything except claim contention is computed from persisted task fields
- * (`created_at` / `completed_at` / `reclaim_count` / `assigned_agent`) rather
- * than from accumulated in-process counters, so the numbers survive a restart
- * and can never drift from the tasks they describe.
- *
- * Archived tasks are included. They are exactly the completed work, so
- * excluding them would make cycle time silently improve as history is swept.
- */
-export function getMetrics(project) {
-  const scope =
-    project === undefined || project === null || project === '' ? null : project;
-  if (scope !== null && !isValidProjectId(scope)) return null;
-
-  rebuildAggregates();
-
-  const nowMs = Date.now();
-
-  // Only `active_agents` depends on wall-clock lease expiry, so it must be
-  // recomputed per read. Everything else (counts, by_status, reclaims, sorted
-  // cycle samples) is served from the cached metric bases rebuilt only on a
-  // committed mutation. `active_agents` scans only live tasks, never archive,
-  // so it stays O(live) even as archive history grows unbounded.
-  const liveAgents = new Map(); // project -> Set<agent>
-  for (const t of tasks) {
-    if (scope !== null && t.project !== scope) continue;
-    if (!t.assigned_agent) continue;
-    const expiry = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
-    if (!Number.isNaN(expiry) && expiry > nowMs) {
-      if (!liveAgents.has(t.project)) liveAgents.set(t.project, new Set());
-      liveAgents.get(t.project).add(t.assigned_agent);
-    }
-  }
-
-  // Build the per-project result list from cached bases (or an empty base for a
-  // valid-but-unknown scope), overlaying the live `active_agents`.
-  const bases = [];
-  if (scope !== null) {
-    const cached = cachedMetricBases.get(scope);
-    bases.push(cached ? { ...cached } : emptyBase(scope));
-  } else {
-    for (const m of cachedMetricBases.values()) bases.push({ ...m });
-  }
-
-  const projects = bases
-    .map((m) => {
-      const agents = [...(liveAgents.get(m.project) || [])].sort();
-      return {
-        project: m.project,
-        task_count: m.task_count,
-        live_count: m.live_count,
-        archived_count: m.archived_count,
-        done_count: m.done_count,
-        completed_count: m.completed_count,
-        by_status: { ...m.by_status },
-        cycle_time: m.cycle_time,
-        reclaim_count: m.reclaim_count,
-        reclaimed_task_count: m.reclaimed_task_count,
-        active_agents: agents,
-        active_agent_count: agents.length,
-        claim_contention: {
-          conflicts: contentionCounts.get(m.project) || 0,
-          since: contentionSince,
-        },
-      };
-    })
-    .sort((a, b) => a.project.localeCompare(b.project));
-
-  // Aggregate over the scope. The unscoped aggregate's cycle time uses the
-  // pre-sorted union of all cycle samples. For a scoped read the aggregate is
-  // over exactly one project, so its cycle time equals that project's own
-  // (already-computed, already-sorted) cycle time.
-  const allAgents = new Set();
-  for (const a of liveAgents.values()) for (const x of a) allAgents.add(x);
-
-  const sum = (key) => projects.reduce((acc, m) => acc + m[key], 0);
-  const aggregate = {
-    project: null,
-    project_count: projects.length,
-    task_count: sum('task_count'),
-    live_count: sum('live_count'),
-    archived_count: sum('archived_count'),
-    done_count: sum('done_count'),
-    completed_count: sum('completed_count'),
-    by_status: Object.fromEntries(
-      VALID_STATUS_LIST.map((s) => [s, projects.reduce((acc, m) => acc + m.by_status[s], 0)]),
-      ),
-    cycle_time: scope !== null ? projects[0].cycle_time : cachedAggregateCycleTime,
-    reclaim_count: sum('reclaim_count'),
-    reclaimed_task_count: sum('reclaimed_task_count'),
-    active_agents: [...allAgents].sort(),
-    active_agent_count: allAgents.size,
-    claim_contention: {
-      conflicts: projects.reduce((acc, m) => acc + m.claim_contention.conflicts, 0),
-      since: contentionSince,
-    },
-  };
-
-  return { generated_at: new Date().toISOString(), scope, projects, aggregate };
-}
-
-// ---------------------------------------------------------------------------
-// Optimistic concurrency (§2.6)
-// ---------------------------------------------------------------------------
-
-/**
- * Centralizes the version bump so every committed mutation advances the
- * task's monotonically-increasing `version` by exactly one. A task missing a
- * (or carrying a non-integer) version is treated as version 1, which keeps the
- * CAS total on legacy records that have not yet been backfilled.
- */
-export function nextVersionFor(task) {
-  const current = task && Number.isInteger(task.version) ? task.version : 1;
-  return current + 1;
-}
-
-/**
- * Evaluates an optional expected-version guard supplied via a body
- * `expected_version` field or an `If-Match` header (Etag-style bare int).
- * Returns a 409 version-conflict payload when the supplied version differs
- * from the task's current version, or `null` when no guard was supplied so
- * callers that omit a version keep working unchanged.
- *
- * The conflict error reads "Version mismatch" so it is distinguishable from
- * the claim-contention 409 ("… already claimed by …"): a version conflict is a
- * *stale read* while a contention conflict is *lost a race the caller knew
- * about*. Both carry a details object with the current vs. supplied version.
- */
-function versionConflict(task, rawExpected) {
-  if (rawExpected === undefined || rawExpected === null || rawExpected === '') return null;
-  const current = Number.isInteger(task.version) ? task.version : 1;
-  const provided = Number(rawExpected);
-  if (Number.isNaN(provided) || provided !== current) {
-    return {
-      error: 'Version mismatch',
-      status: 409,
-      details: { expected: current, provided: Number.isNaN(provided) ? rawExpected : provided },
-    };
-  }
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Creations & mutations (project-scoped)
@@ -1682,7 +874,7 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       try {
         await maybeUnlockDependentsInner(candidate.id, Date.now());
        } catch (err) {
-        console.error('[kanban] auto-promote unlock failed:', err && err.message);
+        log.error('auto-promote unlock failed', { error: err && err.message });
       }
     }
     if (enteredDone) runCompletionHooks(candidate.id);
@@ -1702,6 +894,8 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 import {
   PRIVILEGED_ROLE_SET,
   isPrivilegedRole,
+  callerIsPrivileged,
+  destructivePrivilege,
   validatePriority,
   MAX_TITLE_LEN,
   MAX_DESCRIPTION_LEN,
@@ -1713,6 +907,7 @@ import {
 export {
   PRIVILEGED_ROLE_SET,
   isPrivilegedRole,
+  callerIsPrivileged,
   validatePriority,
   MAX_TITLE_LEN,
   MAX_DESCRIPTION_LEN,
@@ -1981,10 +1176,10 @@ function runCompletionHooks(id) {
     try {
       const r = h(id);
       if (r && typeof r.catch === 'function') {
-        r.catch((err) => console.error('[kanban] completion hook rejected:', err && err.message));
+        r.catch((err) => log.error('completion hook rejected', { error: err && err.message }));
       }
     } catch (err) {
-      console.error('[kanban] completion hook error:', err && err.message);
+      log.error('completion hook error', { error: err && err.message });
     }
   }
 }
@@ -2192,10 +1387,10 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
       }
     } catch (err) {
       // I-6: never let a sibling's save failure fail the caller's real write.
-      console.error(
-        `[kanban] sibling lease renewal failed for project ${p}:`,
-        err && err.message,
-      );
+      log.error('sibling lease renewal failed', {
+        project: p,
+        error: err && err.message,
+      });
     }
   }
   return renewed;
@@ -2345,185 +1540,6 @@ export function getMilestones(project) {
     .sort((a, b) => a.milestone.localeCompare(b.milestone));
 }
 
-       // ---------------------------------------------------------------------------
-       // §2.4 stale-task reaper
-       // ---------------------------------------------------------------------------
-
-       /**
-       * reclaimTask inner — a DOCUMENTED SYSTEM OVERRIDE (like the §2.5 unlock). It
-       * forces an active claim (PLANNING / IN_PROGRESS / IN_REVIEW / VALIDATION) back
-       * to READY, which is NOT a legal agent transition per canTransition (only
-       * PLANNING has a → READY edge). The reaper is ownerless and exempt from the agent state
-       * machine; this is the single sanctioned place that exemption exists. Clears
-       * owner + lease, bumps reclaim_count, and logs the reclaim. Persist-first →
-       * in-memory → notify (KB-05 fail-closed): a storage failure leaves the active
-       * claim untouched.
-       *
-       * UNLOCKED: the caller must already hold the mutation lock. This is required
-       * because reapExpiredClaims (a single locked sweep) calls it per-task; a
-       * promise-queue lock cannot safely re-enter itself, so the reclaim body is
-       * kept out of withMutationLock and the public reclaimTask wrapper supplies the
-       * one lock.
-       */
-  async function reclaimTaskInner(task, { reason = 'lease_expired', nowMs } = {}) {
-    const activeStatus = ACTIVE_STATUS_SET.has(task.status);
-    if (!task.assigned_agent && !activeStatus) {
-      // Not currently held and not active — nothing to reclaim. Idempotent.
-      return { task, status: 200, reclaimed: false };
-    }
-    const fromAgent = task.assigned_agent;
-    const candidate = structuredClone(task);
-    candidate.status = STATUSES.READY;
-    candidate.assigned_agent = null;
-    candidate.claim_expires_at = null;
-    candidate.claim_lease_ms = null;
-    candidate.reclaim_count = (Number.isInteger(task.reclaim_count) ? task.reclaim_count : 0) + 1;
-    candidate.updated = isoFromMs(nowMs);
-    candidate.version = nextVersionFor(task);
-    if (!Array.isArray(candidate.agent_logs)) candidate.agent_logs = [];
-    candidate.agent_logs.push({
-      timestamp: candidate.updated,
-      message: !fromAgent
-        ? 'Task had no owner — reclaimed to READY by system normalizer.'
-        : (reason === 'progress_stalled'
-          ? 'PROGRESS STALLED — task reclaimed to READY by system reaper.'
-          : (reason === 'lease_expired'
-            ? 'LEASE EXPIRED — task reclaimed to READY by system reaper.'
-            : `Task reclaimed to READY by system (${reason}).`)),
-      agent_id: 'system',
-      reason: !fromAgent ? reason : (reason || 'lease_expired'),
-      reclaimed_from: fromAgent,
-    });
-
-    // KB-05: persist first, then mutate memory, then notify.
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-    updateInMemoryTask(candidate);
-    // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
-    notify({
-      actor: 'system',
-      reason: reason,
-      semantic: new Map([[
-        compositeKey(candidate.project, candidate.id),
-        { kind: 'reclaimed', actor: 'system', reason, prevTask: task },
-      ]]),
-    });
-    return { task: candidate, status: 200, reclaimed: true, reclaimed_from: fromAgent };
-  }
-
-  /**
-   * reclaimTask(id, { reason, now }) — public, lock-wrapped reclaim. Delegates
-   * to the unlocked inner so a caller that is already inside the lock
-   * (reapExpiredClaims) does not deadlock on the promise-queue lock.
-   */
-  export async function reclaimTask(id, { reason = 'lease_expired', now, project } = {}) {
-    return withMutationLock(async () => {
-      const task = getTask(id, project);
-      if (!task) return { error: 'Task not found', status: 404 };
-      const nowMs = typeof now === 'number' ? now : nowFn();
-      return reclaimTaskInner(task, { reason, nowMs });
-    });
-  }
-
-  /**
-   * reapExpiredClaims — sweep active claims whose lease has expired and reclaim
-   * them. Runs in the mutation lock so it is serialized with every other writer
-   * (a heartbeat that lands first commits before the sweep sees a fresh expiry).
-   * `now` is injectable so tests can force expiry. Returns the reclaimed ids.
-   * Calls the UNLOCKED reclaimTaskInner directly (it already holds the lock).
-   */
-  export async function reapExpiredClaims({ now } = {}) {
-    return withMutationLock(async () => {
-      const nowMs = typeof now === 'number' ? now : nowFn();
-      const stallMs = getProgressStallMs();
-      const candidateReasons = new Map();
-      const candidates = tasks.filter((t) => {
-        const active = ACTIVE_STATUS_SET.has(t.status);
-        if (!active) {
-          // READY is not an active status, so the sweep below never sees it —
-          // but a card can be READY WITH an owner: a planner claims READY→PLANNING
-          // (owner + lease set), then a role-gated PATCH drops it back to READY,
-          // a transition that deliberately keeps the lease. Once that lease
-          // lapses the card is permanently unclaimable (contention 409, and
-          // nextClaim skips owned cards). Reclaim it the moment its lease dies.
-          if (
-            t.status === STATUSES.READY &&
-            t.assigned_agent !== null &&
-            t.claim_expires_at != null
-          ) {
-            const rdyExpires = Date.parse(t.claim_expires_at);
-            if (!Number.isNaN(rdyExpires) && rdyExpires <= nowMs) {
-              candidateReasons.set(t, 'lease_expired');
-              return true;
-            }
-          }
-          return false;
-        }
-        // Deep-review P1: a card in READY_TO_SHIP is DONE with its working
-        // stages — the tester's job is finished; nothing legitimately advances
-        // last_progress_at, so the stall sweep would reclaim approved work to
-        // READY mid-release. Never reclaim a card awaiting release.
-        if (t.status === STATUSES.READY_TO_SHIP) return false;
-        if (t.assigned_agent === null || t.claim_expires_at === null || t.claim_expires_at === undefined) {
-          // Orphan: active with no owner/lease. Normally this is a status-only
-          // PATCH that has not yet been claimed — a legitimate intermediate state,
-          // not a stuck card. Only reclaim once it has been untouched for the
-          // grace window, so a freshly-written card survives the next sweep.
-          const graceMs = getOrphanGraceMs();
-          if (graceMs <= 0) {
-            candidateReasons.set(t, 'orphan_normalized');
-            return true;
-          }
-          const touchedMs = Date.parse(t.updated);
-          if (Number.isNaN(touchedMs)) {
-            candidateReasons.set(t, 'orphan_normalized');
-            return true;
-          }
-          if (nowMs - touchedMs >= graceMs) {
-            candidateReasons.set(t, 'orphan_normalized');
-            return true;
-          }
-          return false;
-        }
-
-        if (stallMs > 0 && t.last_progress_at) {
-          const lastProgMs = Date.parse(t.last_progress_at);
-          if (!Number.isNaN(lastProgMs) && nowMs - lastProgMs >= stallMs) {
-            candidateReasons.set(t, 'progress_stalled');
-            return true;
-          }
-        }
-
-        const expiresMs = Date.parse(t.claim_expires_at);
-        if (Number.isNaN(expiresMs)) return false;
-        if (expiresMs <= nowMs) {
-          candidateReasons.set(t, 'lease_expired');
-          return true;
-        }
-        return false;
-      });
-      let reclaimed = 0;
-      const ids = [];
-      for (const t of candidates) {
-        // getTask MUST be given the candidate's own project: task ids are unique
-        // only within a project, so the 1-arg form resolves against `default` and
-        // either returns null (throwing, aborting the whole sweep) or — when the
-        // same short id exists in `default` — reclaims the wrong task.
-        const task = getTask(t.id, t.project);
-        const reason = candidateReasons.get(t) || (
-          (task.assigned_agent === null || task.claim_expires_at == null)
-            ? 'orphan_normalized'
-            : 'lease_expired'
-        );
-        const r = await reclaimTaskInner(task, { reason, nowMs });
-        if (r && r.reclaimed) {
-          reclaimed += 1;
-          ids.push(compositeKey(t.project, t.id));
-        }
-      }
-      if (reclaimed > 0) notify();
-      return { reclaimed: ids, now: nowMs };
-    });
-  }
 
   /**
    * §2.7 nextClaim — atomically select the highest-priority, unclaimed,
@@ -2652,7 +1668,7 @@ async function readSpill(project, taskId) {
     const raw = await readFile(fp, 'utf-8');
     return raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
   } catch (err) {
-    console.warn(`[kanban spill] read error for ${project}/${taskId}: ${err.message}`);
+    log.warn('spill read error', { project, task_id: taskId, error: err.message });
     return [];
   }
 }
@@ -2897,196 +1913,10 @@ export async function addComment(id, agentId, message, project, { expected_versi
   });
 }
 
-// ---------------------------------------------------------------------------
-// Archiving & Storage Hygiene (§2.8)
-// ---------------------------------------------------------------------------
-
-function getArchiveAfterDays() {
-  const raw = process.env.KANBAN_ARCHIVE_AFTER_DAYS;
-  if (raw === undefined || raw === '') return 30;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0; // negative disables the sweep
-  return n;
-}
-
-function isEligibleForArchive(task, days, nowMs) {
-  if (task.status !== STATUSES.DONE) return false;
-  if (task.archived_at) return false;
-  const anchor = task.completed_at || task.created_at || task.updated;
-  if (!anchor) return false;
-  const ageMs = nowMs - Date.parse(anchor);
-  if (Number.isNaN(ageMs)) return false;
-  return ageMs >= days * 86400000;
-}
-
-/**
- * Moves DONE tasks older than KANBAN_ARCHIVE_AFTER_DAYS (keyed off completed_at,
- * then created_at, then updated) into their project's archive. Idempotent and
- * safe to run on every boot and lazily before reads. 0 disables the sweep.
- */
-// B2 (v3.12.2): the lazy no-op check runs BEFORE withMutationLock. It used to
-// sit inside the lock, so every list read queued behind in-flight mutations
-// even when the sweep was about to skip itself. `mutationSerial` is only ever
-// written under the lock, so a serial bumped between this check and lock
-// acquisition simply means the sweep runs again on a later read — the same
-// eventual invariant, with no torn state and no correctness change.
-export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
-  if (lazy && mutationSerial === lastSweepSerial) return 0;
-  return withMutationLock(async () => {
-    // v2.5.6: the trash-retention sweep rides the same cadence (any read path
-    // that sweeps the archive also ages out the trash sink). Called via the
-    // UNLOCKED inner — runArchiveSweep already holds the lock; awaiting the
-    // locked wrapper here would deadlock the non-reentrant promise chain.
-    // Deep-review: retention only changes on committed mutations, so a sequence
-    // of reads with no writes between them needs no resweep. Forced calls
-    // (POST /tasks/archive/sweep) and the boot sweep always run.
-    lastSweepSerial = mutationSerial;
-    // A4 (v3.12.2): optional { projects } narrows BOTH sweeps to the caller's
-    // authorized set (a project-scoped credential must not sweep other
-    // projects' sinks). Unscoped callers pass null and sweep everything.
-    await runTrashSweepInner(projects);
-    const days = getArchiveAfterDays();
-    if (days === 0) return 0;
-
-    const nowMs = Date.now();
-    const nowIso = new Date(nowMs).toISOString();
-
-    // A4 (v3.12.2): when the caller supplied a project set (a scoped sweep),
-    // only those projects are eligible for the move.
-    const projectFilter = projects === undefined || projects === null ? null : new Set(projects);
-
-    // Deep-review P1: a DONE card that still blocks a live dependency must NOT
-    // be archived. dependencyGate resolves deps in the LIVE index only, so an
-    // archived blocker becomes permanently dangling and its dependents can
-    // never again be claimed or even PATCH-ed (their gate 409s forever).
-    const blockedByLive = new Set();
-    for (const t of tasks) {
-      if (t.status === STATUSES.DONE) continue;
-      for (const dep of t.depends_on || []) blockedByLive.add(dep);
-    }
-
-    // Group live tasks by project; also track projects that already hold
-    // archived rows (so their archive sink gets a consistent write even when
-    // they have no live partition of their own, e.g. the default boot case).
-    const byProject = new Map();
-    for (const t of tasks) {
-      if (!byProject.has(t.project)) byProject.set(t.project, []);
-      byProject.get(t.project).push(t);
-     }
-
-    let moved = 0;
-    const touchedProjects = new Set();
-    const archivedSemantic = new Map();
-
-    const runFor = async (project, liveList) => {
-      const eligible = (liveList || []).filter((t) => !blockedByLive.has(t.id) && isEligibleForArchive(t, days, nowMs));
-      const storage = getStorage(project);
-      const isGit = storage instanceof GitYamlStorage;
-
-      // No eligible tasks -> nothing to move, and (per the KB-05 fail-closed
-      // invariant) no reason to touch any archive sink file on this pass.
-      if (eligible.length === 0) return;
-
-      // (a) Build the new archive entries + the surviving live partition WITHOUT
-      // touching memory, so a persistence failure below leaves memory unchanged
-      // (symmetric with the single-task path at store.js:399-400, KB-05).
-      const newArchived = eligible.map((t) => {
-        const archived = structuredClone(t);
-        archived.archived_at = nowIso;
-        return archived;
-      });
-      const eligibleIds = new Set(eligible.map((t) => t.id));
-
-      // (b) Persist FIRST: the live partition minus the moved rows, and the
-      // merged archive sink. Only when persistence fully succeeds do we mutate
-      // memory, so a throw fails closed and the task survives in the live set.
-      if (isGit) {
-        // saveArchiveTask git-rms the live card and writes + commits the
-        // archive card; the archive sink has no separate file for git.
-        for (const archived of newArchived) {
-          await storage.saveArchiveTask(archived);
-        }
-      } else {
-        // Deep-review: write the SAFETY SINK first, then the partition — a
-        // crash between the two must leave the moved cards parked in the
-        // archive, never lost in both (Git's saveArchiveTask already removes
-        // the live card last). Sink rewrite is gated on a real move (FIX 3).
-        const survivors = (liveList || []).filter((t) => !eligibleIds.has(t.id));
-        const merged = [...(archive[project] || []), ...newArchived];
-        await storage.saveArchive(merged);
-        await storage.save(survivors);
-      }
-
-      // (c) Only after every persistence call succeeded: drop the moved rows
-      // from the in-memory live set/index and append them to the live archive.
-      for (const t of eligible) {
-        removeFromMemory(project, t.id);
-      }
-      const list = archive[project] || (archive[project] = []);
-      for (const archived of newArchived) {
-        list.push(archived);
-      }
-      for (const archived of newArchived) {
-        archivedSemantic.set(compositeKey(project, archived.id), {
-          kind: 'archived', actor: 'system', reason: 'archived', task: archived,
-          });
-        }
-      moved += eligible.length;
-      touchedProjects.add(project);
-      };
-
-    // Run for every project that currently has live tasks.
-    for (const [project, liveList] of byProject) {
-      if (projectFilter && !projectFilter.has(project)) continue;
-      await runFor(project, liveList);
-     }
-
-    // A project whose only record is an archive list is re-processed here, but
-    // the early return in runFor makes it a no-op unless it actually has
-    // eligible rows to move (so no archive sink churn when nothing moved).
-    for (const project of Object.keys(archive)) {
-      if (projectFilter && !projectFilter.has(project)) continue;
-      if (!byProject.has(project)) {
-        await runFor(project, []);
-      }
-    }
-
-    if (moved > 0) {
-      notify({ actor: 'system', reason: 'archived', semantic: archivedSemantic });
-      }
-    return moved;
-   });
-}
 
 // ---------------------------------------------------------------------------
 // Admin delete & bulk purge (§admin-purge)
 // ---------------------------------------------------------------------------
-
-/**
- * SEC-02 (v2.5.2): destructive operations are gated on a privilege flag the
- * auth middleware DERIVES from the credential, never on the caller-asserted
- * `X-Agent-Role` header alone. When the middleware stamped a flag, it wins;
- * direct store callers (unit tests, legacy middleware) fall back to the role
- * check so single-token deployments keep their historical semantics.
- */
-function destructivePrivilege(caller) {
-  return callerIsPrivileged(caller);
-}
-
-/**
- * v2.12.1 (I-4): shared credential-derived privilege check, extracted from
- * `destructivePrivilege` so the bulk-heartbeat route (and any other caller)
- * can use the SAME rule instead of trusting the self-asserted `X-Agent-Role`
- * header directly. A per-project token cannot send itself `X-Agent-Role:
- * admin` and pass this check — the auth middleware sets `caller.privileged`
- * from the credential itself (see middleware/auth.js), and that flag wins
- * whenever it is present.
- */
-export function callerIsPrivileged(caller) {
-  return caller.privileged === undefined || caller.privileged === null
-    ? isPrivilegedRole(caller.role)
-    : caller.privileged === true;
-}
 
 /**
  * Admin-only delete of a single task. Persists FIRST (fail-closed, KB-05):
@@ -3324,393 +2154,6 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
   });
 }
 
-// ---------------------------------------------------------------------------
-// v2.5.6 (ENH-03): soft-delete trash sink. deleteTask/purgeTasks route into
-// `trash` (a per-project sink beside the archive) instead of destroying data;
-// restore returns a card to READY; a sweep hard-deletes rows older than
-// KANBAN_TRASH_DAYS (default 30). `purgeTasks({hard:true})` bypasses the sink
-// for true permanent deletion.
-// ---------------------------------------------------------------------------
-
-function trashList(project) {
-  if (project === undefined || project === null || project === '') {
-    let out = [];
-    for (const list of Object.values(trash)) out = out.concat(list);
-    return out.sort((a, b) => String(b.deleted_at || '').localeCompare(String(a.deleted_at || '')));
-  }
-  if (!isValidProjectId(project)) return [];
-  return [...(trash[project] || [])];
-}
-
-function trashFind(project, id) {
-  const list = trash[project] || [];
-  return list.find((t) => t.id === id) || null;
-}
-
-async function trashPersistRemove(project, removedTask) {
-  const storage = getStorage(project);
-  const remaining = (trash[project] || []).filter((t) => t.id !== removedTask.id);
-  if (storage instanceof GitYamlStorage) {
-    await storage.trashRemove(removedTask);
-  } else {
-    await storage.saveTrash(remaining);
-  }
-  if (remaining.length === 0) delete trash[project];
-  else trash[project] = remaining;
-}
-
-/**
- * Admin-only restore of a soft-deleted task back to the live board (READY).
- * Persists FIRST (KB-05): the live partition gains the restored card and the
- * trash sink loses it, both before memory mutates.
- */
-export async function restoreFromTrash(id, { caller = {}, project, expected_version: expectedVersion } = {}) {
-  return withMutationLock(async () => {
-    const authorizedProject =
-      project === undefined || project === null || project === ''
-        ? defaultProjectName()
-        : project;
-    const trashed = trashFind(authorizedProject, id);
-    if (!trashed) return { error: 'Task not found in trash', status: 404 };
-
-    // v3.12.1 (Board Health Check): restore is a destructive-op sibling of
-    // hardDeleteFromTrash — it requires the same privileged credential. 404 is
-    // reported first, mirroring deleteTask's ordering.
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to restore tasks', status: 403 };
-    }
-
-    if (index.has(compositeKey(authorizedProject, id))) {
-      return { error: 'A live task with this id already exists', status: 409 };
-    }
-
-    // v3.12.1 (Board Health Check): honor the CAS guard the route already
-    // forwards. The trash row carries its pre-delete version; nextVersionFor
-    // below bumps it, so the expectation is checked against trashed.version.
-    const conflict = versionConflict(trashed, expectedVersion);
-    if (conflict) return conflict;
-
-    const restored = structuredClone(trashed);
-    restored.status = STATUSES.READY;
-    restored.assigned_agent = null;
-    restored.claim_expires_at = null;
-    restored.claim_lease_ms = null;
-    restored.stage_owners = {};
-    restored.deleted_at = undefined;
-    restored.deleted_by = undefined;
-    restored.restored_at = new Date().toISOString();
-    restored.updated = restored.restored_at;
-    restored.version = nextVersionFor(trashed);
-    restored.agent_logs = [
-      ...(Array.isArray(restored.agent_logs) ? restored.agent_logs : []),
-      {
-        timestamp: restored.restored_at,
-        message: escapeHtml('Task restored from trash by board admin.'),
-        agent_id: escapeHtml(caller.agent_id || 'admin'),
-      },
-    ];
-
-    // Persist FIRST: live partition + trash sink, then memory.
-    const storage = getStorage(authorizedProject);
-    if (storage instanceof GitYamlStorage) {
-      await storage.saveTask(restored);
-      await storage.trashRemove(trashed);
-    } else {
-      // BUGFIX (deep-review P0): persist the partition WITH the restored card.
-      // The previous call persisted `getProjectBucket(authorizedProject)` — the
-      // live bucket WITHOUT `restored` — so the card existed only in memory and
-      // any restart silently lost it while the trash copy was already gone.
-      await storage.saveTask(restored, projectBucket(authorizedProject, restored));
-      await trashPersistRemove(authorizedProject, trashed);
-    }
-
-    updateInMemoryTask(restored);
-    notify({
-      actor: caller.agent_id || 'admin',
-      reason: 'restored',
-      semantic: new Map([[
-        compositeKey(authorizedProject, id),
-        { kind: 'created', actor: caller.agent_id || 'admin', reason: 'restored', prevTask: null, task: restored },
-      ]]),
-    });
-    return { task: restored, status: 200 };
-  });
-}
-
-/**
- * Admin-only hard delete of a soft-deleted task (permanent). Requires a
- * privileged credential, mirroring the other destructive ops.
- */
-export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
-  return withMutationLock(async () => {
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
-    }
-    const authorizedProject =
-      project === undefined || project === null || project === ''
-        ? defaultProjectName()
-        : project;
-    const trashed = trashFind(authorizedProject, id);
-    if (!trashed) return { error: 'Task not found in trash', status: 404 };
-    await trashPersistRemove(authorizedProject, trashed);
-    notify({
-      actor: caller.agent_id || 'admin',
-      reason: 'purged_from_trash',
-      semantic: new Map([[
-        compositeKey(authorizedProject, id),
-        { kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'purged_from_trash', task: trashed },
-      ]]),
-    });
-    return { task: trashed, status: 200 };
-  });
-}
-
-/**
- * Trash retention sweep: hard-deletes sink rows older than
- * KANBAN_TRASH_DAYS (default 30). Runs inside the existing archive sweep
- * cadence (GET /archive, GET /tasks, GET /metrics all sweep first).
- *
- * A4 (v3.12.2): an optional `projects` iterable (array/Set, or null) narrows
- * the sink loop to those projects — a scoped archive sweep must not hard-delete
- * rows from projects its credential cannot see. Null keeps the historical
- * all-projects behaviour.
- *
- * Lock discipline (mirrors reclaimTaskInner/public reclaimTask): the inner
- * function does the work WITHOUT acquiring the mutation lock, so
- * runArchiveSweep — which already holds the lock — can call it directly.
- * The exported wrapper acquires the lock for standalone callers.
- */
-async function runTrashSweepInner(projects = null) {
-  const days = getTrashDays();
-  if (days <= 0) return { purged: [], now: Date.now() };
-  const nowMs = Date.now();
-  const purged = [];
-  const projectFilter = projects === undefined || projects === null ? null : new Set(projects);
-  for (const [project, list] of Object.entries(trash)) {
-    if (projectFilter && !projectFilter.has(project)) continue;
-    const expired = list.filter((t) => {
-      const anchor = t.deleted_at || t.updated || t.created_at;
-      if (!anchor) return false;
-      const age = nowMs - Date.parse(anchor);
-      return !Number.isNaN(age) && age >= days * 86400000;
-    });
-    for (const t of expired) {
-      await trashPersistRemove(project, t);
-      purged.push(compositeKey(project, t.id));
-    }
-  }
-  return { purged, now: nowMs };
-}
-
-export async function runTrashSweep() {
-  return withMutationLock(() => runTrashSweepInner());
-}
-
-export function getTrashedTasks(project) {
-  return trashList(project);
-}
 
 // Re-export for convenience / tests
 export { defaultProjectName as getDefaultProject };
-
-// ---------------------------------------------------------------------------
-// §2.4 reaper timer — started ONLY in startServer (never in createApp, so the
-// HTTP-contract tests never spawn a timer). The timer is unref()'d so an idle
-// process can still exit, and startReaper/stopReaper let a caller control it.
-// ---------------------------------------------------------------------------
-let reapTimer = null;
-
-export function startReaper() {
-  if (reapTimer) return reapTimer;
-  reapTimer = setInterval(() => {
-     // Fire-and-forget; the lock serializes it with the other writers. Swallow
-     // so a sweep throw can never kill the interval or the process.
-    reapExpiredClaims().catch((err) => {
-      console.error('[kanban reaper] sweep failed:', err && err.message);
-     });
-   }, getReapIntervalMs());
-      // An unref'd timer must not keep a (possibly test-driven) process alive.
-    reapTimer.unref();
-    console.log(`[kanban reaper] started (interval=${getReapIntervalMs()}ms)`);
-    return reapTimer;
-   }
-
-export function stopReaper() {
-  if (reapTimer) {
-    clearInterval(reapTimer);
-    reapTimer = null;
-    return true;
-   }
-  return false;
-}
-
-export function isReaperRunning() {
-  return reapTimer !== null;
-}
-
-// ---------------------------------------------------------------------------
-// §2.7 periodic backup — opt-in snapshot of the live JSON data file(s) into a
-// sibling `backups/` directory, rotated to a bounded count. OFF unless
-// KANBAN_BACKUP_ENABLED is set. Read-only: never takes the mutation lock.
-// ---------------------------------------------------------------------------
-function getBackupIntervalMs() {
-  const raw = process.env.KANBAN_BACKUP_INTERVAL_MS;
-  if (raw === undefined || raw === '') return 600000;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 600000;
-}
-
-function getBackupKeep() {
-  const raw = process.env.KANBAN_BACKUP_KEEP;
-  if (raw === undefined || raw === '') return 10;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 10;
-}
-
-function isBackupEnabled() {
-  const raw = process.env.KANBAN_BACKUP_ENABLED;
-  if (raw === undefined || raw === '') return false;
-  return raw !== 'false' && raw !== '0';
-}
-
-function sanitizeTimestamp(iso) {
-  return iso.replace(/[:.]/g, '-');
-}
-
-function backupSourceDir() {
-  if (process.env.KANBAN_DATA_DIR) return process.env.KANBAN_DATA_DIR;
-  const defaultLive = process.env.KANBAN_DATA_FILE || path.join(__dirname, 'tasks.json');
-  return path.dirname(defaultLive);
-}
-
-function defaultBackupRoot() {
-  return path.join(backupSourceDir(), 'backups');
-}
-
-async function runBackup() {
-  const root = defaultBackupRoot();
-  const stamp = sanitizeTimestamp(new Date().toISOString());
-  const destDir = path.join(root, stamp);
-  await mkdir(destDir, { recursive: true });
-
-  const dataDir = process.env.KANBAN_DATA_DIR;
-  if (dataDir && existsSync(dataDir)) {
-    await copyDirTree(dataDir, destDir);
-  } else {
-    const defaultLive = process.env.KANBAN_DATA_FILE || path.join(__dirname, 'tasks.json');
-    if (existsSync(defaultLive)) {
-      await copyFile(defaultLive, path.join(destDir, path.basename(defaultLive)));
-    }
-    const jsonDir = jsonDataDir();
-    const tasksDir = path.join(jsonDir, 'tasks');
-    const archiveDir = path.join(jsonDir, 'archive');
-    if (existsSync(tasksDir)) await copyDirTree(tasksDir, path.join(destDir, 'tasks'));
-    if (existsSync(archiveDir)) await copyDirTree(archiveDir, path.join(destDir, 'archive'));
-  }
-
-  await rotateBackups(root);
-}
-
-async function copyDirTree(src, dest) {
-  const entries = await readdir(src, { withFileTypes: true });
-  await mkdir(dest, { recursive: true });
-  for (const entry of entries) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === 'backups') continue;
-      await copyDirTree(s, d);
-    } else {
-      await copyFile(s, d);
-    }
-  }
-}
-
-async function rotateBackups(root) {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  const stamps = entries
-    .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(e.name))
-    .map((e) => e.name)
-    .sort()
-    .reverse();
-  const keep = getBackupKeep();
-  for (const stale of stamps.slice(keep)) {
-    await rm(path.join(root, stale), { recursive: true, force: true });
-  }
-}
-
-let backupTimer = null;
-
-export function startBackup() {
-  if (backupTimer) return backupTimer;
-  if (!isBackupEnabled()) return null;
-  backupTimer = setInterval(() => {
-    runBackup().catch((err) => {
-      console.error('[kanban backup] run failed:', err && err.message);
-    });
-  }, getBackupIntervalMs());
-  backupTimer.unref();
-  console.log(`[kanban backup] started (interval=${getBackupIntervalMs()}ms, keep=${getBackupKeep()})`);
-  return backupTimer;
-}
-
-export function stopBackup() {
-  if (backupTimer) {
-    clearInterval(backupTimer);
-    backupTimer = null;
-    return true;
-  }
-  return false;
-}
-
-export function isBackupRunning() {
-  return backupTimer !== null;
-}
-
-export async function runBackupNow() {
-  await runBackup();
-}
-
-/**
- * Backup observability for /api/health (ENH-02, v2.5.5). Reports the current
- * config, whether the timer is running, and the freshest snapshot on disk so
- * operators can verify snapshots are actually happening without shelling into
- * the container. Read-only; never touches the mutation lock.
- */
-export function backupStatus() {
-  const enabled = isBackupEnabled();
-  const root = defaultBackupRoot();
-  let lastBackupAt = null;
-  let backupCount = 0;
-  try {
-    const entries = readdirSync(root, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(e.name))
-      .map((e) => e.name)
-      .sort();
-    backupCount = entries.length;
-    if (entries.length > 0) {
-      // Stamp format is an ISO timestamp with : and . replaced by -, so the
-      // freshest snapshot sorts last lexicographically.
-      const stamp = entries[entries.length - 1];
-      const iso = stamp.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/, 'T$1:$2:$3.$4Z');
-      const parsed = Date.parse(iso);
-      lastBackupAt = Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
-    }
-  } catch {
-    // No backups directory yet: count stays 0, last stays null.
-  }
-  return {
-    enabled,
-    running: isBackupRunning(),
-    interval_ms: getBackupIntervalMs(),
-    keep: getBackupKeep(),
-    backup_root: root,
-    backup_count: backupCount,
-    last_backup_at: lastBackupAt,
-  };
-}

@@ -29,11 +29,8 @@
  * takes an explicit clock — the tests drive it without network or timers.
  */
 
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-// Same single source of truth as routes/health.js: server/package.json.
-const { version: APP_VERSION } = require('./package.json');
+// C4 (v3.12.5): the deployed version comes from the one shared helper.
+import { APP_VERSION } from './version.js';
 
 export const DEFAULT_API_URL =
   'https://api.github.com/repos/riazrahaman/agent-kanban-board/releases/latest';

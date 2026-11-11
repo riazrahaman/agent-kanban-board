@@ -21,7 +21,6 @@
  * card and is never given a token.
  */
 
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +35,8 @@ import { ACTIVE_STATUSES } from './state-machine.js';
 // model otherwise cannot see (it is a disk file, not an HTTP route it may call).
 import { readAudit } from './auditLog.js';
 
-const require = createRequire(import.meta.url);
-const { version: APP_VERSION } = require('./package.json');
+// C4 (v3.12.5): the deployed version comes from the one shared helper.
+import { APP_VERSION } from './version.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceCache = new Map();
@@ -153,7 +152,15 @@ KEY ENDPOINTS
  */
 export const FILE_MAP = [
   { path: 'server/state-machine.js', note: 'Lifecycle states, legal transitions, role gates (pure, no I/O).' },
-  { path: 'server/store.js', note: 'The engine: claims, leases, reaper, concurrency lock, all mutations.' },
+  { path: 'server/store.js', note: 'The engine facade: create/patch/claim state-machine walk, dependency gate; re-exports the ./store/* modules.' },
+  { path: 'server/store/core.js', note: 'Store state: live tasks, composite index, archive/trash/settings sinks, concurrency lock (withMutationLock), storage factory, accessors.' },
+  { path: 'server/store/listeners.js', note: 'Snapshot/diff/audit/settings listener buses behind notify() and SSE.' },
+  { path: 'server/store/leases.js', note: 'Lease windows, claim caps, reclaim path and the background reaper.' },
+  { path: 'server/store/aggregates.js', note: 'Cross-project summaries + metrics caches and claim-contention counters.' },
+  { path: 'server/store/archive.js', note: 'Archive sweep (aged DONE cards into the project archive).' },
+  { path: 'server/store/trash.js', note: 'Soft-delete trash sink: restore, hard delete, retention sweep.' },
+  { path: 'server/store/backups.js', note: 'Opt-in periodic data-file backups and rotation.' },
+  { path: 'server/version.js', note: 'Single source of truth for the running release (reads server/package.json).' },
   { path: 'server/task-identity.js', note: 'Task/project ids, atomic writes, branch/milestone normalisation.' },
   { path: 'server/task-fields.js', note: 'Field validation: priority, depends_on, metadata, privileged roles.' },
   { path: 'server/storage.js', note: 'Pluggable persistence: JsonStorage and GitYamlStorage.' },

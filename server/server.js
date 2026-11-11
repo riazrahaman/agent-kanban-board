@@ -25,6 +25,9 @@ import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js
 import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
+import { createLogger, logError, logWarn } from './logger.js';
+
+const log = createLogger('server');
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -361,7 +364,7 @@ export function createApp(opts = {}) {
     if (err && typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
       return res.status(err.status).json({ error: err.code || err.type || 'client_error' });
     }
-    console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
+    logError('error', `${req.method} ${req.originalUrl}`, { error: err.message });
     res.status(500).json({ error: 'Internal Server Error' });
   });
 
@@ -394,7 +397,7 @@ export async function startServer(
       parsed
     );
   } catch (err) {
-    console.warn(`[kanban auth] credential-map check skipped: ${err.message}`);
+    logWarn('auth', 'credential-map check skipped', { error: err.message });
   }
 
   const rl = rateLimitConfig();
@@ -407,16 +410,18 @@ export async function startServer(
   // In a hosted environment (PORT set) with no auth mechanism configured, warn
   // once at startup that mutations are fail-closed until a token is set.
   if (process.env.PORT && !process.env.KANBAN_AUTH_TOKEN && !process.env.KANBAN_AUTH_SECRET) {
-    console.warn(
-      '[kanban auth] no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
-      'mutations are fail-closed (503) until a token is set'
+    logWarn(
+      'auth',
+      'no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
+        'mutations are fail-closed (503) until a token is set',
     );
   }
 
   const app = createApp();
   if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {
-    console.warn(
-      '[kanban warning] KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).'
+    logWarn(
+      'warning',
+      'KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).',
     );
   }
   return new Promise((resolve, reject) => {
@@ -450,8 +455,9 @@ export async function startServer(
       if (!notifier) {
         const ncfg = notifierConfig();
         if (process.env.KANBAN_TELEGRAM_BOT_TOKEN || process.env.KANBAN_TELEGRAM_CHAT_ID) {
-          console.warn(
-            '[kanban warning] Telegram notifications are partially configured: set BOTH KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to enable them.'
+          logWarn(
+            'warning',
+            'Telegram notifications are partially configured: set BOTH KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to enable them.',
           );
         }
       }
@@ -464,7 +470,7 @@ export async function startServer(
     // IMPL-01 (v2.7.0): handle a bind failure (EADDRINUSE, EADDRNOTAVAIL, …)
     // so an unhandled 'error' event does not crash the process/restart-loop.
     server.on('error', (err) => {
-      console.error('[kanban server] listen error:', err);
+      logError('server', 'listen error', { error: err });
       reject(err);
     });
     });
@@ -525,7 +531,7 @@ export function registerShutdownHandlers(
     try {
       drained = drain() ?? 0;
     } catch (err) {
-      console.error('[kanban server] error draining event streams:', err);
+      logError('server', 'error draining event streams', { error: err });
     }
     if (drained > 0) {
       log(`[kanban server] ended ${drained} open event stream(s)`);
@@ -534,7 +540,7 @@ export function registerShutdownHandlers(
     const closeStarted = Date.now();
     server.close((err) => {
       if (err) {
-        console.error('[kanban server] error during close:', err);
+        logError('server', 'error during close', { error: err });
         exit(1);
         return;
       }
@@ -551,7 +557,7 @@ export function registerShutdownHandlers(
       try {
         server.closeIdleConnections();
       } catch (err) {
-        console.error('[kanban server] error closing idle connections:', err);
+        logError('server', 'error closing idle connections', { error: err });
       }
     }
 
@@ -563,14 +569,14 @@ export function registerShutdownHandlers(
         try {
           server.closeAllConnections();
         } catch (err) {
-          console.error('[kanban server] error closing connections:', err);
+          logError('server', 'error closing connections', { error: err });
         }
       }, 1000);
       if (typeof hard.unref === 'function') hard.unref();
     }
 
     const timer = setTimeout(() => {
-      console.warn('[kanban server] graceful shutdown timed out; exiting forcefully');
+      logWarn('server', 'graceful shutdown timed out; exiting forcefully');
       exit(0);
     }, timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();

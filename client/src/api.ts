@@ -419,57 +419,6 @@ async function mintStreamTicket(project?: string): Promise<string | null> {
   }
 }
 
-function streamUrl(path: string, project: string | undefined, ticket: string | null): string {
-  const params = new URLSearchParams()
-  if (project) params.set('project', project)
-  if (ticket) params.set('ticket', ticket)
-  const query = params.toString()
-  return `${API_BASE}${path}${query ? `?${query}` : ''}`
-}
-
-/**
- * Subscribes to the server's SSE task stream and invokes `onTasks` every time
- * the server broadcasts the full task array. Returns an unsubscribe function
- * that closes the underlying EventSource.
- */
-export function subscribeToEvents(
-  onTasks: (tasks: Task[]) => void,
-  { project }: { project?: string } = {},
-): () => void {
-  let source: EventSource | null = null
-  let cancelled = false
-
-  const open = (ticket: string | null) => {
-    if (cancelled) return
-    source = new EventSource(streamUrl('/events', project, ticket))
-    source.addEventListener('tasks', handler as EventListener)
-    source.onerror = () => {
-      // EventSource auto-reconnects; a ticket is single-use so a reconnect to a
-      // read-gated stream would 401. Log only — the operator can refresh.
-      console.error('SSE connection error')
-    }
-  }
-
-  const handler = (evt: MessageEvent<string>) => {
-    try {
-      const tasks = JSON.parse(evt.data) as Task[]
-      onTasks(tasks)
-    } catch (err) {
-      console.error('Failed to parse SSE tasks payload', err)
-    }
-  }
-
-  mintStreamTicket(project).then((ticket) => open(ticket))
-
-  return () => {
-    cancelled = true
-    if (source) {
-      source.removeEventListener('tasks', handler as EventListener)
-      source.close()
-    }
-  }
-}
-
 /** The per-task event kinds the server's diff stream can emit (§2.2). */
 export const DIFF_KINDS = [
   'created', 'deleted', 'updated', 'removed', 'archived',
@@ -477,45 +426,6 @@ export const DIFF_KINDS = [
 ] as const
 
 export type DiffKind = (typeof DIFF_KINDS)[number]
-
-/**
- * v2.5.0 — subscribe to the SSE `settings` event (resolved column colors).
- * Opens its own EventSource; returns an unsubscribe function.
- */
-export function subscribeToSettings(
-  onSettings: (settings: SettingsResponse) => void,
-  { project }: { project?: string } = {},
-): () => void {
-  let source: EventSource | null = null
-  let cancelled = false
-
-  const handler = (evt: MessageEvent<string>) => {
-    try {
-      onSettings(JSON.parse(evt.data) as SettingsResponse)
-    } catch (err) {
-      console.error('Failed to parse SSE settings payload', err)
-    }
-  }
-
-  const open = (ticket: string | null) => {
-    if (cancelled) return
-    source = new EventSource(streamUrl('/events', project, ticket))
-    source.addEventListener('settings', handler as EventListener)
-    source.onerror = () => {
-      // EventSource auto-reconnects; settings are display-only so stay quiet.
-    }
-  }
-
-  mintStreamTicket(project).then((ticket) => open(ticket))
-
-  return () => {
-    cancelled = true
-    if (source) {
-      source.removeEventListener('settings', handler as EventListener)
-      source.close()
-    }
-  }
-}
 
 export interface DiffEvent {
   kind: DiffKind

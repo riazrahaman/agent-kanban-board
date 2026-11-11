@@ -22,6 +22,9 @@
 
 import { createHmac } from 'node:crypto';
 import { onDiff } from './store.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('webhook');
 
 const SEND_TIMEOUT_MS = 5000;
 export const WEBHOOK_SIGNATURE_HEADER = 'x-kanban-signature';
@@ -94,7 +97,8 @@ function scrub(str, cfg) {
 /** Deep-review: subscribers get one at a time (not a parallel burst), and a
  * non-2xx is surfaced — a dead endpoint previously produced zero signal. */
 const deliveryQueue = new Map(); // url -> Promise chain
-const lastWarnAt = new Map();    // url:status -> last console warn timestamp
+// C6: the ad-hoc 60s per-endpoint warn map is now logger.warnOnce. Same rate
+// limit, one dedupe implementation for the whole server.
 
 function hostOf(url) {
   try { return new URL(url).host; } catch { return 'unknown-host'; }
@@ -116,15 +120,19 @@ async function deliverOne(url, event, cfg, fetchImpl) {
     const res = await fetchImpl(url, { method: 'POST', headers, body, signal: controller.signal });
     clearTimeout(timer);
     if (res && !res.ok) {
-      const key = `${hostOf(url)}:${res.status}`;
-      const now = Date.now();
-      if ((lastWarnAt.get(key) || 0) + 60000 < now) {
-        lastWarnAt.set(key, now);
-        console.warn(`[kanban webhook] ${event.kind}: ${hostOf(url)} answered ${res.status}`);
-      }
+      log.warnOnce(
+        `webhook:${hostOf(url)}:${res.status}`,
+        60000,
+        `${event.kind}: ${hostOf(url)} answered ${res.status}`,
+        { url: hostOf(url), status: res.status, event: event.kind },
+      );
     }
   } catch (err) {
-    console.warn('[kanban webhook] delivery failed:', scrub(err && err.message ? err.message : err, cfg));
+    log.warn('delivery failed', {
+      host: hostOf(url),
+      event: event.kind,
+      error: scrub(err && err.message ? err.message : err, cfg),
+    });
   }
 }
 

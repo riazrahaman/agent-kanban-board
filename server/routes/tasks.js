@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as store from '../store.js';
+import { logWarn } from '../logger.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard } from '../middleware/projectScope.js';
 
@@ -27,21 +28,42 @@ function resolveProjectFromReq(req) {
 
 /**
  * §2.6: resolve the expected-version guard for a mutation. A body
- * `expected_version` takes precedence; otherwise an `If-Match` header
- * (Etag-style bare int) is used. Returns `{ expected_version }` so the store
- * runs the CAS check; returns `null` when no guard was supplied.
+ * `expected_version` takes precedence; otherwise an `If-Match` header is used.
+ * Returns `{ expected_version }` so the store runs the CAS check; returns
+ * `null` when no guard was supplied.
+ *
+ * RFC 7232 §3.1: an `If-Match` value is a list of entity-tags — `"5"`,
+ * weak `W/"5"`, or `*` — and the board's validators are plain version
+ * integers. Passing the raw header to the store made `Number('"5"')` NaN, so
+ * a spec-conformant client (or a proxy echoing an ETag) got a permanent 409.
+ * Strip the weak prefix and the surrounding quotes; `*` means "any current
+ * representation", i.e. no version precondition. Only the version number is
+ * meaningful here — an ETag's payload is never interpreted.
  */
+function parseIfMatchVersion(header) {
+  if (header === undefined || header === null || header === '') return undefined;
+  // Express may surface the header as an array on repeated names; coerce.
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (typeof raw !== 'string') return raw;
+  // A conditional request against a single resource is answered by its first
+  // entity-tag; later list entries describe other representations we do not
+  // serve.
+  let value = raw.split(',')[0].trim();
+  if (value === '*') return undefined;
+  if (value.startsWith('W/')) value = value.slice(2).trim();
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === '' ? undefined : value;
+}
+
 function resolveExpectedVersion(req) {
   const fromBody = req.body?.expected_version;
   if (fromBody !== undefined && fromBody !== null && fromBody !== '') {
     return { expected_version: fromBody };
-   }
-  const header = req.headers['if-match'];
-  if (header !== undefined && header !== null && header !== '') {
-    // Express may surface the header as an array on repeated names; coerce.
-    const value = Array.isArray(header) ? header[0] : header;
-   return { expected_version: value };
-   }
+  }
+  const value = parseIfMatchVersion(req.headers['if-match']);
+  if (value !== undefined) return { expected_version: value };
   return null;
 }
 
@@ -89,7 +111,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const project = resolveProjectFromReq(req);
   const result = await store.createTask(body, project, { caller: req.caller || {} });
   if (result.error) {
-    console.warn(`[kanban rejection] POST /api/tasks: ${result.status} ${result.error}`);
+    logWarn('rejection', `POST /api/tasks: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error, ...(result.reason ? { reason: result.reason } : {}) });
    }
   res.status(201).json(result.task);
@@ -149,7 +171,7 @@ router.post('/purge', asyncHandler(async (req, res) => {
     hard: req.body?.hard === true,
   });
   if (result.error) {
-    console.warn(`[kanban rejection] POST /api/tasks/purge: ${result.status} ${result.error}`);
+    logWarn('rejection', `POST /api/tasks/purge: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(result.status).json({ deleted: result.deleted, count: result.count });
@@ -185,7 +207,7 @@ router.post('/trash/:id/restore', asyncHandler(async (req, res) => {
     ...(({ expected_version: v }) => (v !== undefined && v !== null && v !== '' ? { expected_version: v } : {}))(req.body ?? {}),
   });
   if (result.error) {
-    console.warn(`[kanban rejection] POST /api/tasks/trash/${req.params.id}/restore: ${result.status} ${result.error}`);
+    logWarn('rejection', `POST /api/tasks/trash/${req.params.id}/restore: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);
@@ -197,7 +219,7 @@ router.delete('/trash/:id', asyncHandler(async (req, res) => {
     project: resolveProjectFromReq(req),
   });
   if (result.error) {
-    console.warn(`[kanban rejection] DELETE /api/tasks/trash/${req.params.id}: ${result.status} ${result.error}`);
+    logWarn('rejection', `DELETE /api/tasks/trash/${req.params.id}: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);
@@ -246,7 +268,7 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
   if (rawRole !== undefined && rawRole !== null && rawRole !== '') {
     const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
     if (!role || !VALID_ROLES.has(role)) {
-      console.warn(`[kanban next-claim] 403 invalid role: ${rawRole}`);
+      logWarn('next-claim', `403 invalid role: ${rawRole}`);
       return res.status(403).json({
         error: `A valid agent role is required for next-claim (got '${rawRole}')`,
        });
@@ -266,9 +288,7 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
         return res.status(204).end();
     }
      if (result.error) {
-      console.warn(
-        `[kanban next-claim] ${result.status} ${result.error} ${result.reason || ''}`
-        );
+      logWarn('next-claim', `${result.status} ${result.error} ${result.reason || ''}`);
       return res.status(result.status).json({
         error: result.error,
         ...(result.reason ? { reason: result.reason } : {}),
@@ -296,7 +316,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
     project: resolveProjectFromReq(req),
   });
   if (result.error) {
-    console.warn(`[kanban rejection] DELETE /api/tasks/${req.params.id}: ${result.status} ${result.error}`);
+    logWarn('rejection', `DELETE /api/tasks/${req.params.id}: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);
@@ -314,10 +334,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
         // §2.6: a version-conflict 409 carries the current vs. supplied version
         // so the client can re-fetch and re-apply; surface its details verbatim.
     if (result.status === 409 && result.details) {
-     console.warn(
-      `[kanban version-conflict] PATCH /api/tasks/${req.params.id}: 409 ` +
-       `expected=${result.details.expected} provided=${result.details.provided}`
-       );
+     logWarn('version-conflict', `PATCH /api/tasks/${req.params.id}: 409 ` +
+       `expected=${result.details.expected} provided=${result.details.provided}`);
       return res.status(409).json({
         error: result.error,
         details: result.details,
@@ -325,9 +343,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
         status: 409,
        });
        }
-    console.warn(
-        `[kanban rejection] PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`
-       );
+    logWarn('rejection', `PATCH /api/tasks/${req.params.id}: ${result.status} ${result.error}`);
         // §2.5: a dependency-conflict 409 carries a `reason` +
         // `unresolved_dependencies` so callers can branch on "blocked on deps"
         // (mirrors the claim route's shape; a contention/version 409 carries no
@@ -392,9 +408,7 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
          status: 409,
           });
     }
-    console.warn(
-          `[kanban rejection] POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`
-           );
+    logWarn('rejection', `POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
       }
   res.status(200).json(result.task);
@@ -423,9 +437,7 @@ router.post('/:id/assign', asyncHandler(async (req, res) => {
         status: 409,
       });
     }
-    console.warn(
-      `[kanban rejection] POST /api/tasks/${req.params.id}/assign: ${result.status} ${result.error}`
-    );
+    logWarn('rejection', `POST /api/tasks/${req.params.id}/assign: ${result.status} ${result.error}`);
     return res.status(result.status).json({ error: result.error });
   }
   res.status(200).json(result.task);
@@ -458,17 +470,13 @@ router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
      if (result.error) {
         // Distinguish the lease 409s with a reason tag.
       if (result.status === 409) {
-        console.warn(
-          `[kanban heartbeat] 409 ${result.reason || ''} on ${req.params.id}`
-          );
+        logWarn('heartbeat', `409 ${result.reason || ''} on ${req.params.id}`);
         return res.status(409).json({
           error: result.error,
           ...(result.reason ? { reason: result.reason } : {}),
          });
        }
-      console.warn(
-        `[kanban rejection] POST /api/tasks/${req.params.id}/heartbeat: ${result.status} ${result.error}`
-        );
+      logWarn('rejection', `POST /api/tasks/${req.params.id}/heartbeat: ${result.status} ${result.error}`);
       return res.status(result.status).json({ error: result.error });
       }
      return res.status(200).json(result.task);

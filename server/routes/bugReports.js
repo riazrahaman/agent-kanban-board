@@ -1,6 +1,5 @@
 import express from 'express';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { APP_VERSION } from '../version.js';
 
 /**
  * In-app "Report a bug" → GitHub issue (v2.16.0, opt-public-bug-reports).
@@ -113,19 +112,11 @@ export function buildIssueBody({ boardVersion, userAgent, viewport }) {
 }
 
 function boardVersion() {
-  // Prefer server/package.json (works both from repo root and from server/
-  // as cwd); fall back to a bare 'unknown' rather than throwing.
-  for (const p of [
-    path.resolve(process.cwd(), 'server', 'package.json'),
-    path.resolve(process.cwd(), 'package.json'),
-  ]) {
-    try {
-      return JSON.parse(readFileSync(p, 'utf8')).version;
-    } catch {
-      // try the next candidate
-    }
-  }
-  return 'unknown';
+  // C4 (v3.12.5): same helper as /api/health, resolved relative to the module
+  // instead of `process.cwd()` — so the issue body can never report a
+  // different version than the health endpoint when the server is started
+  // from a different directory. Falls back to 'unknown' internally.
+  return APP_VERSION;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
