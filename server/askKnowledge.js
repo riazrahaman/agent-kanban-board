@@ -1129,6 +1129,11 @@ export function formatBoardFacts(facts) {
 // what has been done in each project", and three titles per project was too
 // thin to answer it — the model filled the gap with generic prose instead.
 // The prompt budget is 6000 tokens and the fixed blocks leave room for this.
+// OWNER DECISION 2026-11-11 (A11, card study-a11-a7): the whole-board default
+// is deliberate, not over-scoping. The Ask assistant serves the OWNER and its
+// password is an owner credential, so the owner is entitled to the whole board.
+// Do not re-open this; KANBAN_ASK_SNAPSHOT_PROJECTS is the supported narrowing.
+// Recorded in AGENTS.md under "Owner decisions (do not re-litigate)".
 export function gatherSnapshot(store, { maxRecentTasksPerProject = 8, maxTitleChars = 80, projects = null } = {}) {
   if (!store || typeof store.getTasks !== 'function') return { available: false };
   try {

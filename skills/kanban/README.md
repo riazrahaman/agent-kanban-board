@@ -191,7 +191,7 @@ KANBAN_TELEGRAM_CHAT_ID=...
 
 Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOARD_URL`. The notifier only listens; it never changes the board. Treat an alert as a prompt to inspect and re-claim.
 
-**Deploy drift (v3.9.5+):** `GET /api/health` reports `deploy_drift` (`in_sync` | `drift` | `unknown`) — the running version versus the newest GitHub release; `drift` means the deploy was skipped (red CI), not that the board is broken, so keep using it and let the operator redeploy, and `unknown` means the check could not reach GitHub, not an outage.
+**Deploy drift (v3.9.5+, semver since v3.12.7):** `GET /api/health` reports `deploy_drift: {status, reason, running, latest_tag, source, checked_at, drift_since}` - the running build compared with the newest published version using **semver**, one-directionally. `status: "drift"` means the live build is **BEHIND** (`running < latest`), and only after the grace window (`KANBAN_DEPLOY_DRIFT_GRACE_MS`, default 45 min). Treat drift as the deploy **SKIPPED, not failed**: a hosted service that requires green CI skips a push-triggered deployment when CI is red, and the previous build keeps serving a healthy board, so keep using it and let the operator redeploy. `status: "in_sync"` covers `match`, `behind_within_grace` **and `running_ahead`** - a build ahead of the newest release is NOT drift. `source` is `"release"` or `"tags"`, naming which GitHub feed produced `latest_tag` (the tag list is the fallback when the release feed is missing, stale or unparsable). `status: "unknown"` means the check could not run - not a board outage and not a deploy verdict; `checked_at: null` means no check has ever run.
 
 ## Public endpoints (Bug Reports and Ask-the-Board)
 
