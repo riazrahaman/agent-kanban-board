@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, getProjectSummaries, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
@@ -20,6 +21,8 @@ import { configureCors } from './middleware/cors.js';
 import { createAuthMiddleware, parseProjectTokens } from './middleware/auth.js';
 import { reportCredentialCoverage } from './utils/credentialMap.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
+import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
+import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
 
@@ -132,6 +135,34 @@ export function resolveTrustProxy(raw = process.env.KANBAN_TRUST_PROXY) {
 
 export function createApp(opts = {}) {
   const app = express();
+  // A6 (v3.12.4): security headers FIRST, so every response — API JSON, the
+  // SPA shell, static assets, SSE, and the error handler's output — carries
+  // them. Constant strings only, so this cannot interfere with streaming.
+  app.use(createSecurityHeadersMiddleware());
+  // B6 (v3.12.4): gzip/brotli everything except the SSE stream. Compression
+  // buffers writes until it has a full chunk, which would hold event-stream
+  // frames back indefinitely; `/api/events` is therefore filtered out and
+  // keeps the uncompressed, incrementally-flushed path it had before.
+  // `threshold: 0` is deliberate: the board's API payloads are commonly below
+  // the 1KB default (health, config, single-task GETs), and those are exactly
+  // the responses agents poll.
+  app.use(
+    compression({
+      threshold: 0,
+      filter: (req, res) => {
+        // Express 5's default routing is BOTH non-strict (`/api/events/`) and
+        // case-INsensitive (`/API/EVENTS`), and both variants reach this same
+        // SSE handler. So compare the normalised path (trailing slashes
+        // stripped) AND lowercased — otherwise a variant would be compressed,
+        // its frames parked in the compression buffer forever, and the stream
+        // would open without ever flushing (a silent hang). Regression-pinned
+        // in kanban.headers.test.js across all four spellings.
+        const p = (req.path || '').replace(/\/+$/, '').toLowerCase() || '/';
+        if (p === '/api/events') return false;
+        return compression.filter(req, res);
+      },
+    })
+  );
   app.use(configureCors());
   app.use(express.json());
   app.set('trust proxy', resolveTrustProxy());
@@ -288,11 +319,21 @@ export function createApp(opts = {}) {
     }
     });
 
-  const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client/dist');
-  app.use(express.static(clientDist));
+  // `opts.clientDist` lets tests point the static/SPA layer at a temp
+  // directory (CI runs the server suite before the client build, so there is
+  // no real dist to serve). Production passes nothing.
+  const clientDist = opts.clientDist
+    ? path.resolve(opts.clientDist)
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client/dist');
+  // B6 (v3.12.4): content-hashed /assets/* are immutable; index.html and the
+  // SPA fallback are no-cache so a client always revalidates the shell that
+  // points into the hashed bundle. See utils/staticCache.js.
+  app.use(express.static(clientDist, { setHeaders: setStaticHeaders }));
+  const indexHtmlPath = path.join(clientDist, 'index.html');
   app.get('{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
-    res.sendFile(path.join(clientDist, 'index.html'));
+    res.setHeader('Cache-Control', staticCacheControl(indexHtmlPath));
+    res.sendFile(indexHtmlPath);
   });
 
   // Global error handler: omit internal stack traces (A05).

@@ -16,6 +16,72 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.4] — 2026-11-11
+
+### Security
+
+- **A6 — the server sent no security headers at all.** Every response (API JSON,
+  the SPA shell, hashed assets, the `/api/events` stream and error pages) now
+  carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, a
+  minimal `Permissions-Policy`, and a strict `Content-Security-Policy`
+  (`server/middleware/securityHeaders.js`, mounted first in `createApp`).
+  The CSP is derived from the client's real asset graph rather than a template:
+  `'self'` everywhere, plus Google Fonts (`style-src`/`font-src`), Turnstile
+  (`script-src`/`frame-src`/`connect-src`, for the bug-report sheet) and the
+  public visit counter (`connect-src`). `script-src` does **not** contain
+  `'unsafe-inline'`: the single inline script — the pre-paint theme bootstrap in
+  `client/index.html` — is admitted by its SHA-256 hash, and a test re-hashes the
+  file so the policy cannot silently drift. `object-src`, `base-uri`,
+  `form-action` and `frame-ancestors` are `'none'`/`'self'`.
+
+### Performance
+
+- **B6 — no compression and no cache policy on the built SPA.** Responses are
+  now gzipped (`compression`, threshold 0 so the small JSON payloads agents poll
+  benefit too), with `/api/events` explicitly excluded from the filter — an SSE
+  stream must stay uncompressed so frames flush one event at a time. Static
+  serving of `client/dist` gained a `Cache-Control` policy expressed as the pure
+  helper `staticCacheControl()`: content-hashed `/assets/*` are
+  `public, max-age=31536000, immutable`, `index.html` and the SPA fallback are
+  `no-cache` (so a client always revalidates the shell that points into the
+  hashed bundle), and unhashed files such as `/media/*` and `/favicon.svg` get an
+  hour. SPA fallback routing is unchanged; `createApp({ clientDist })` now lets
+  tests serve a temp directory because CI runs the server suite before the
+  client build.
+
+### Fixed
+
+- **Round-2/round-3 review hardening.** The SSE compression exclusion compared
+  the raw request path, so Express 5's routing variants slipped past it and were
+  gzipped: headers flushed, then every frame sat in the compression buffer — a
+  silent hung stream. Express routes the same handler for trailing-slash
+  (`/api/events/`) and any casing (`/API/EVENTS`), because its default routing is
+  both non-strict and case-insensitive. The filter now normalises trailing
+  slashes and lowercases the path, and a regression test loops all four
+  spellings (`/api/events`, `/api/events/`, `/API/EVENTS`, `/API/EVENTS/`),
+  asserting both no `Content-Encoding` and a first frame on the wire for each.
+  `staticCacheControl()` now decides `.html`
+  before the `assets` segment test, so an ANCESTOR directory named `assets`
+  (e.g. `/opt/assets/kanban/client/dist/index.html`) can never mark the shell
+  immutable. The CSP no longer admits `data:` in `img-src`/`font-src`: nothing
+  in the client or the built bundle uses one (the single `data:` URI is a JSON
+  download link, which no fetch directive governs), and the header tests now
+  reject a scheme-wide `https:` (or any bare scheme) or `*` source and pin the
+  exact token sets for `script-src`/`connect-src`, so an injected origin fails
+  too. The inline-theme hash guard also re-hashes `client/dist/index.html` when the
+  client has been built, so a stale build is caught rather than silently losing
+  theme bootstrapping in the browser.
+
+Tests: a new `kanban.headers.test.js` pins the headers on API and SPA responses,
+the exact CSP (including the live hash of the inline theme script and each remote
+origin the client loads), gzip on `/api/health`, the uncompressed SSE path (all
+four slash/case spellings), and the cache policy at both the helper and HTTP
+levels (784 total, up from 769).
+
+_Credit: Board Health Check code review — security finding A6 and performance
+finding B6 — release v3.12.4._
+
 ## [3.12.3] — 2026-11-11
 
 ### Performance
