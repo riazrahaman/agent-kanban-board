@@ -6,7 +6,7 @@ import {
   consumeSessionChallenge,
   sessionNonceMode,
 } from '../sessionChallenge.js';
-import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch } from '../middleware/auth.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
 import { authFailuresExceeded, recordAuthFailure } from '../middleware/rateLimit.js';
@@ -326,11 +326,29 @@ router.post('/session', (req, res) => {
   }
 
   const serverNonce = crypto.randomBytes(16).toString('hex');
+
+  // A7 (v3.12.8): if the handshake caller ALSO presented a credential that
+  // binds an agent identity, the minted session carries it. Identity is derived
+  // from that resolved credential — never from `body.agent_id`, which is
+  // caller-declared and would reintroduce the spoofing path inside the token.
+  const handshakeCredential = resolveCredential(req);
+  let boundAgentId = null;
+  if (handshakeCredential?.kind === 'session') {
+    boundAgentId = handshakeCredential.session.agent_id || null;
+  } else if (handshakeCredential?.kind === 'project') {
+    boundAgentId = handshakeCredential.credential.agent_id || null;
+  }
+  const declaredAgentId = typeof body.agent_id === 'string' ? body.agent_id.trim() : null;
+  if (boundAgentId && declaredAgentId && declaredAgentId !== boundAgentId) {
+    emitIdentityBindingMismatch(req, declaredAgentId, boundAgentId, project, 'body');
+  }
+
   const { token, expiresAt } = createSessionToken({
     clientNonce,
     serverNonce,
     role,
     project,
+    agentId: boundAgentId,
   });
 
   return res.status(200).json({
@@ -339,6 +357,7 @@ router.post('/session', (req, res) => {
     expires_at: expiresAt,
     role,
     project,
+    ...(boundAgentId ? { agent_id: boundAgentId } : {}),
   });
 });
 

@@ -33,33 +33,66 @@ export const VALID_ROLES = new Set([
 /**
  * Parses `KANBAN_PROJECT_TOKENS`, a JSON object mapping project id -> credential.
  *
- * Accepted value shapes (v3.8.0 role binding):
+ * Accepted value shapes (v3.8.0 role binding; v3.12.8 identity binding):
  *   "tok-a"                                      → legacy unbound credential
  *   {"token":"tok-a"}                            → unbound credential
  *   {"token":"tok-b","role":"builder"}           → ROLE-BOUND credential: the
  *                                                  role is conferred by the
  *                                                  credential itself, never by
  *                                                  the caller-declared header.
+ *   {"token":"tok-e","agent_id":"agent-7"}       → IDENTITY-BOUND credential:
+ *                                                  the agent id is conferred by
+ *                                                  the credential, never by
+ *                                                  X-Agent-Id / body agent_id.
+ *   {"token":"tok-f","role":"tester",
+ *    "agent_id":"agent-9"}                       → both bindings at once
  *   {"credentials":[{"token":"tok-c","role":"reviewer"},
- *                   {"token":"tok-d","role":"tester"}]}
+ *                   {"token":"tok-d","role":"tester","agent_id":"agent-2"}]}
  *                                                → several credentials per project
+ *
+ * `agent_id`, when present, is a non-empty string (trimmed) of at most 64
+ * characters drawn from `[A-Za-z0-9._@:/-]` — the same printable-ASCII shape the
+ * X-Agent-Id header has always carried, with the separators agent ids use in
+ * practice (`build.agent@lane:3`, `agent/7`). Anything else is a configuration
+ * failure, never a silently ignored field.
  *
  * A token may authorize several projects by appearing under each. Roles that
  * confer privilege (runner/system/human/admin) must never be bound to a shared
  * map credential — privileged access belongs to KANBAN_ADMIN_TOKEN or a
  * server-issued session, the same rule §2.3b (SEC-02) set for destructive ops.
  * A token bound to DIFFERENT roles under different projects is ambiguous at
- * resolution time (roles resolve per referenced project) and is rejected; a
- * token bound in one project and unbound in another is fine and resolves by
- * first referenced project.
+ * resolution time (roles resolve per referenced project) and is rejected; the
+ * same rule applies to `agent_id` — one token bound to two different agent ids
+ * across projects would change identity with scope, so it is rejected. A token
+ * bound in one project and unbound in another is fine and resolves by first
+ * referenced project.
  *
  * Malformed JSON (or any invalid entry — empty token, unknown role, privileged
- * role, empty credentials array, a value carrying both `token` and
- * `credentials`, or one token bound to conflicting roles across projects) is a
- * configuration failure and returns a sentinel rather than silently falling back to the global token — quietly
+ * role, invalid agent_id, empty credentials array, a value carrying both
+ * `token` and `credentials`, or one token bound to conflicting roles/agent ids
+ * across projects) is a configuration failure and returns a sentinel rather
+ * than silently falling back to the global token — quietly
  * degrading to "one token opens every project" is precisely the isolation
  * failure this exists to stop.
  */
+export const AGENT_ID_MAX_LENGTH = 64;
+/** Identity charset: ASCII letters/digits plus `. _ @ : / -`. */
+export const AGENT_ID_PATTERN = /^[A-Za-z0-9._@:/-]+$/;
+
+/**
+ * Validates a credential-bound agent id. Returns the trimmed value, or null
+ * when the value is absent/invalid. Callers distinguish "absent" (undefined or
+ * null) from "invalid" themselves — this helper only answers "is this a usable
+ * identity".
+ */
+export function normalizeAgentId(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.length > AGENT_ID_MAX_LENGTH) return null;
+  if (!AGENT_ID_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
 function parseProjectTokensUncached(raw) {
   if (raw === undefined || raw === null || String(raw).trim() === '') return null;
   let parsed;
@@ -71,15 +104,27 @@ function parseProjectTokensUncached(raw) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { malformed: true };
   }
-  const normalizeCredential = (token, role) => {
+  const normalizeCredential = (token, role, agentId) => {
     if (typeof token !== 'string' || token === '') return null;
-    if (role === undefined || role === null) return { token, role: null };
-    if (typeof role !== 'string') return null;
-    const normalized = role.toLowerCase();
-    // Only functional roles may be bound to a credential. Privileged roles in
-    // the map would let a leaked shared token become a superuser credential.
-    if (!VALID_ROLES.has(normalized) || isPrivilegedRole(normalized)) return null;
-    return { token, role: normalized };
+    let normalizedRole = null;
+    if (role !== undefined && role !== null) {
+      if (typeof role !== 'string') return null;
+      normalizedRole = role.toLowerCase();
+      // Only functional roles may be bound to a credential. Privileged roles in
+      // the map would let a leaked shared token become a superuser credential.
+      if (!VALID_ROLES.has(normalizedRole) || isPrivilegedRole(normalizedRole)) return null;
+    }
+    // A7 (v3.12.8): optional credential-bound agent identity. Reject an
+    // invalid value outright — a typo silently ignored here would leave the
+    // deployment believing identity is bound when it is not.
+    let boundAgentId = null;
+    if (agentId !== undefined && agentId !== null) {
+      boundAgentId = normalizeAgentId(agentId);
+      if (!boundAgentId) return null;
+    }
+    const cred = { token, role: normalizedRole };
+    if (boundAgentId) cred.agent_id = boundAgentId;
+    return cred;
   };
   const map = new Map();
   for (const [project, value] of Object.entries(parsed)) {
@@ -95,7 +140,7 @@ function parseProjectTokensUncached(raw) {
         return { malformed: true };
       }
       if (typeof value.token === 'string') {
-        const cred = normalizeCredential(value.token, value.role);
+        const cred = normalizeCredential(value.token, value.role, value.agent_id);
         if (!cred) return { malformed: true };
         creds = [cred];
       } else if (Array.isArray(value.credentials)) {
@@ -103,7 +148,7 @@ function parseProjectTokensUncached(raw) {
         creds = [];
         for (const entry of value.credentials) {
           const cred = entry && typeof entry === 'object' && !Array.isArray(entry)
-            ? normalizeCredential(entry.token, entry.role)
+            ? normalizeCredential(entry.token, entry.role, entry.agent_id)
             : null;
           if (!cred) return { malformed: true };
           creds.push(cred);
@@ -140,6 +185,22 @@ function parseProjectTokensUncached(raw) {
   }
   for (const roles of boundRolesByToken.values()) {
     if (roles.size > 1) return { malformed: true };
+  }
+  // A7 (v3.12.8) — same rule for identity: one token bound to DIFFERENT agent
+  // ids under different projects would let its identity depend on which
+  // project the request names. Absent/unbound entries are skipped, exactly like
+  // the role check above (bound-vs-unbound mixing stays legal).
+  const boundAgentsByToken = new Map();
+  for (const creds of map.values()) {
+    for (const cred of creds) {
+      if (!cred.agent_id) continue;
+      const agents = boundAgentsByToken.get(cred.token) || new Set();
+      agents.add(cred.agent_id);
+      boundAgentsByToken.set(cred.token, agents);
+    }
+  }
+  for (const agents of boundAgentsByToken.values()) {
+    if (agents.size > 1) return { malformed: true };
   }
   return { map };
 }
@@ -316,6 +377,28 @@ export function hasReadCredential(req) {
   return authorizeRead(req);
 }
 
+/** Upper bound on a caller-declared value echoed into a log/audit line. */
+export const DECLARED_LABEL_MAX_LENGTH = 64;
+
+/**
+ * Renders a caller-declared value (agent id, role) for interpolation into a
+ * console line and an audit `reason`. Control characters are removed first —
+ * a newline or CR in `X-Agent-Id` / a body `agent_id` would otherwise let the
+ * caller forge an extra log line (e.g. a fake `[kanban audit]` entry) — then the
+ * value is capped at 64 characters, and backslashes/quotes are escaped so the
+ * surrounding quoting cannot be broken. Never returns an empty string.
+ */
+export function sanitizeDeclaredLabel(value) {
+  const raw = typeof value === 'string' ? value : '';
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, DECLARED_LABEL_MAX_LENGTH)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+  return cleaned === '' ? 'none' : cleaned;
+}
+
 /**
  * v3.8.0 — a caller-declared `X-Agent-Role` header disagreed with the role the
  * presented credential carries. The request is served with the CREDENTIAL's
@@ -326,10 +409,11 @@ export function hasReadCredential(req) {
  */
 export function emitRoleBindingMismatch(req, declared, bound, scope) {
   const agentId = req.caller?.agent_id || 'anonymous';
+  const declaredLabel = sanitizeDeclaredLabel(declared);
   console.warn(
     `[kanban auth] role_binding_mismatch on ${req.method} ${req.originalUrl} ` +
     `(project: ${scope || defaultProjectName()}, agent: ${agentId}) ` +
-    `declared: '${declared || 'none'}' — serving with credential-bound role '${bound}'`
+    `declared: '${declaredLabel}' — serving with credential-bound role '${bound}'`
   );
   emitAudit({
     ts: new Date().toISOString(),
@@ -337,7 +421,7 @@ export function emitRoleBindingMismatch(req, declared, bound, scope) {
     project: scope || defaultProjectName(),
     task: null,
     actor: agentId,
-    reason: `declared '${declared || 'none'}' conflicts with credential-bound role '${bound}'`,
+    reason: `declared '${declaredLabel}' conflicts with credential-bound role '${bound}'`,
   });
 }
 
@@ -369,6 +453,143 @@ export function emitRoleCrossing(req, roles, scope) {
   });
 }
 
+/**
+ * A7 (v3.12.8) — a caller-declared `X-Agent-Id` (or, for privileged callers, a
+ * body `agent_id`) disagreed with the agent identity the presented credential
+ * carries. Mirrors `role_binding_mismatch`: the request is SERVED with the
+ * credential-bound identity (the declaration can never win), and the
+ * disagreement becomes observable — one redacted console line plus an
+ * `identity_binding_mismatch` audit entry. Never an auth failure, so it never
+ * touches the failed-auth rate limiter. Never echoes a token value.
+ */
+export function emitIdentityBindingMismatch(req, declared, bound, scope, channel = 'header') {
+  const scopeName = scope || defaultProjectName();
+  // A caller can put ANYTHING in the declared channel (the header for an
+  // unprivileged caller, header or body for a privileged one). Sanitize before
+  // interpolation so a newline cannot forge a second log line and a >64-char
+  // value cannot flood the audit reason. The bound id is credential-validated
+  // but is rendered through the same helper for one consistent shape.
+  const declaredLabel = sanitizeDeclaredLabel(declared);
+  const boundLabel = sanitizeDeclaredLabel(bound);
+  console.warn(
+    `[kanban auth] identity_binding_mismatch on ${req.method} ${req.originalUrl} ` +
+    `(project: ${scopeName}, agent: ${boundLabel}) ` +
+    `declared ${channel}: '${declaredLabel}' — serving with credential-bound agent_id '${boundLabel}'`
+  );
+  emitAudit({
+    ts: new Date().toISOString(),
+    kind: 'identity_binding_mismatch',
+    project: scopeName,
+    task: null,
+    actor: bound,
+    reason: `declared ${channel} '${declaredLabel}' conflicts with credential-bound agent_id '${boundLabel}'`,
+  });
+}
+
+/** The caller-declared X-Agent-Id header, trimmed, or null. Never the body. */
+function declaredHeaderIdentity(req) {
+  const value = req.headers?.['x-agent-id'];
+  const first = Array.isArray(value) ? value[0] : value;
+  if (typeof first !== 'string') return null;
+  const trimmed = first.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/** A body-declared `agent_id`, trimmed, or null. Advisory only (see A7). */
+function declaredBodyIdentity(req) {
+  const value = req.body?.agent_id;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Resolves `req.caller.agent_id` / `req.caller.agentSource` from the credential
+ * that proved the request and the identity the caller declared.
+ *
+ * A7 (v3.12.8) precedence:
+ *   1. credential-bound agent_id (project credential or session) ALWAYS wins;
+ *      a conflicting header/body declaration is audited, never honored.
+ *   2. an UNBOUND credential keeps the documented legacy header semantics, but
+ *      for a NON-privileged caller the body `agent_id` is no longer identity —
+ *      that fallback was the spoofing path. Only X-Agent-Id is accepted.
+ *   3. privileged callers (admin token / privileged session / legacy global
+ *      token with a privileged header role) may still assert via header or body.
+ *
+ * `audit` is false on reads: binding is silent there so a misconfigured reader
+ * cannot flood the audit log on every poll.
+ */
+function bindCallerIdentity(req, {
+  boundAgentId = null,
+  privileged = false,
+  source = 'header',
+  scope = null,
+  audit = true,
+} = {}) {
+  const headerId = declaredHeaderIdentity(req);
+  const bodyId = declaredBodyIdentity(req);
+
+  if (boundAgentId) {
+    if (audit && headerId && headerId !== boundAgentId) {
+      emitIdentityBindingMismatch(req, headerId, boundAgentId, scope, 'header');
+    }
+    if (audit && bodyId && bodyId !== boundAgentId) {
+      emitIdentityBindingMismatch(req, bodyId, boundAgentId, scope, 'body');
+    }
+    req.caller.agent_id = boundAgentId;
+    req.caller.agentSource = source; // 'credential' | 'session'
+    return boundAgentId;
+  }
+
+  if (privileged) {
+    req.caller.agent_id = headerId ?? bodyId ?? null;
+    req.caller.agentSource = source; // 'admin_token' | 'session' | 'header'
+    return req.caller.agent_id;
+  }
+
+  // A7: the body is never identity for a non-privileged caller.
+  req.caller.agent_id = headerId;
+  req.caller.agentSource = headerId ? 'header' : null;
+  return req.caller.agent_id;
+}
+
+/**
+ * Read-path credential resolution, used only to bind identity. Mirrors the
+ * middleware's precedence (admin, session, per-project, global). Returns null
+ * when no token is presented (anonymous reads have no identity to bind).
+ */
+function resolveReadCredential(req) {
+  const providedToken = extractToken(req);
+  if (!providedToken) return null;
+
+  const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+  if (adminToken && tokensMatch(providedToken, adminToken)) {
+    return { boundAgentId: null, privileged: true, source: 'admin_token' };
+  }
+  const session = verifySessionToken(providedToken);
+  if (session) {
+    return {
+      boundAgentId: session.agent_id || null,
+      privileged: isPrivilegedRole(session.role),
+      source: 'session',
+    };
+  }
+  const projectTokens = parseProjectTokens();
+  if (projectTokens?.map) {
+    for (const creds of projectTokens.map.values()) {
+      const match = creds.find((cred) => tokensMatch(providedToken, cred.token));
+      if (match) {
+        return {
+          boundAgentId: match.agent_id || null,
+          privileged: false,
+          source: 'credential',
+        };
+      }
+    }
+  }
+  return { boundAgentId: null, privileged: false, source: 'header' };
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a
@@ -383,13 +604,15 @@ export function createAuthMiddleware() {
       });
     }
 
-    // Extract caller identity. The role here is the CALLER-DECLARED assertion
-    // only (header). It is advisory: a credential-bound role always overrides
-    // it, and a body-supplied role is rejected downstream (v3.8.0 Phase 2).
-    const agentId = req.headers['x-agent-id'] || req.body?.agent_id || null;
+    // Extract the CALLER-DECLARED assertions only. They are advisory: a
+    // credential-bound role/identity always overrides them, and a body role is
+    // rejected downstream (v3.8.0 Phase 2). The provisional agent_id is
+    // header-only so an anonymous/legacy failure log can never echo a body-
+    // supplied spoof as if it were identity.
+    const declaredAgentId = declaredHeaderIdentity(req);
     const rawRole = req.headers['x-agent-role'] || null;
     const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
-    req.caller = { agent_id: agentId, role };
+    req.caller = { agent_id: declaredAgentId, role };
 
     const isMutation = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method);
     if (!isMutation) {
@@ -398,6 +621,10 @@ export function createAuthMiddleware() {
       // audit and SSE clamp against it. getAuthorizedProjects returns null for
       // anonymous/admin/global/unscoped credentials (reads stay open).
       req.caller.authorizedProjects = getAuthorizedProjects(req);
+      // A7: identify the reader from the credential too (silently — a read has
+      // no attribution consequence, and auditing every poll would flood).
+      const readCred = resolveReadCredential(req);
+      if (readCred) bindCallerIdentity(req, { ...readCred, audit: false });
       if (!readAuthEnabled() || isProbePath(req)) return next();
       if (!authorizeRead(req)) {
         logAuthFailure(req, 401, 'read-auth-required');
@@ -458,7 +685,8 @@ export function createAuthMiddleware() {
     if (session) {
       req.caller.role = session.role;
       req.caller.roleSource = 'session';
-      req.caller.privileged = isPrivilegedRole(session.role);
+      const sessionPrivileged = isPrivilegedRole(session.role);
+      req.caller.privileged = sessionPrivileged;
       const referenced = referencedProjects(req);
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
       for (const scope of scopes) {
@@ -470,6 +698,14 @@ export function createAuthMiddleware() {
           });
         }
       }
+      // A7: a session minted from an identity-bound credential carries that
+      // identity; it outranks anything the caller declares now.
+      bindCallerIdentity(req, {
+        boundAgentId: session.agent_id || null,
+        privileged: sessionPrivileged,
+        source: 'session',
+        scope: scopes[0],
+      });
       return next();
     }
 
@@ -508,6 +744,19 @@ export function createAuthMiddleware() {
         // A per-project token is by-convention a worker credential: functional
         // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
         req.caller.privileged = false;
+        // A7 (v3.12.8): bind identity BEFORE the role-mismatch emission. Both
+        // audits interpolate req.caller.agent_id as their actor, and identity
+        // binding is what settles it — running it afterwards left the
+        // role_binding_mismatch entry attributed to whatever the caller had
+        // declared instead of the credential-bound id that actually served the
+        // request. Identity binding is independent of role binding: a
+        // credential may bind a role, an agent id, both, or neither.
+        bindCallerIdentity(req, {
+          boundAgentId: binding.agent_id || null,
+          privileged: false,
+          source: 'credential',
+          scope: bindingScope,
+        });
         if (binding.role) {
           // v3.8.0: the role comes from the credential. A conflicting header is
           // ignored and audited — it can neither escalate nor downgrade.
@@ -519,7 +768,10 @@ export function createAuthMiddleware() {
           // ADR-006: note the bound role this agent presented. When the same
           // agent presents a DIFFERENT bound role on this project, the signal
           // fires — a review prompt, never a rejection. Disabled by default.
-          const crossing = noteRolePresentation(bindingScope, agentId, binding.role);
+          // A7: prefer the credential-bound identity; the declared header is the
+          // fallback for identity-unbound (legacy) credentials.
+          const crossingAgentId = binding.agent_id || declaredAgentId;
+          const crossing = noteRolePresentation(bindingScope, crossingAgentId, binding.role);
           if (crossing?.crossing) {
             emitRoleCrossing(req, crossing.roles, bindingScope);
           }
@@ -536,25 +788,43 @@ export function createAuthMiddleware() {
         }
         req.caller.role = 'admin';
         req.caller.roleSource = 'admin_token';
+        // A7: privileged — may assert identity via header or body.
+        const adminAgentId = bindCallerIdentity(req, {
+          boundAgentId: null,
+          privileged: true,
+          source: 'admin_token',
+          scope: scopes[0],
+        });
         // Admin token spans every project — intended superuser behaviour, but
         // kept observable. Emit a distinct audit entry so admin usage is
         // distinguishable from ordinary per-project writes in the audit log.
         const scopesStr = scopes.length > 0 ? scopes.join(',') : defaultProjectName();
         console.warn(
           `[kanban auth] ADMIN write on ${req.method} ${req.originalUrl} ` +
-          `(project: ${scopesStr}, agent: ${agentId || 'anonymous'}) role: admin`
+          `(project: ${scopesStr}, agent: ${adminAgentId || 'anonymous'}) role: admin`
         );
         emitAudit({
           ts: new Date().toISOString(),
           kind: 'admin_write',
           project: scopes.length > 0 ? scopes[0] : defaultProjectName(),
           task: null,
-          actor: agentId || 'admin',
+          actor: adminAgentId || 'admin',
           reason: 'admin_token',
         });
       }
     } else if (!tokensMatch(providedToken, requiredToken)) {
       return unauthorized();
+    } else {
+      // Legacy single-token (KANBAN_AUTH_TOKEN) deployment: no credential map,
+      // so identity stays caller-asserted. A privileged header role keeps the
+      // historical body fallback; everyone else is header-only (A7).
+      const referenced = referencedProjects(req);
+      bindCallerIdentity(req, {
+        boundAgentId: null,
+        privileged: isPrivilegedRole(req.caller.role),
+        source: 'header',
+        scope: referenced[0],
+      });
     }
 
     // Validate the RESOLVED role (credential-bound or header-declared), not the

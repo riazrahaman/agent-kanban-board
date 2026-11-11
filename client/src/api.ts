@@ -39,6 +39,12 @@ interface MutationOptions {
   project?: string
   /** §2.6: body-supplied expected version, equivalent to `version`/`If-Match`. */
   expected_version?: number
+  /**
+   * A7 (v3.12.8): the caller's OWN agent identity, sent as `X-Agent-Id`. This is
+   * the channel the server trusts for a non-privileged credential; the body
+   * `agent_id` is kept only for compatibility with pre-v3.12.8 servers.
+   */
+  agentId?: string
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -74,7 +80,7 @@ function mutationHeaders(opts: MutationOptions = {}): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const v = opts.version ?? opts.expected_version
   if (v !== undefined) headers['If-Match'] = String(v)
-  return { ...headers, ...authHeaders(readStoredToken()) }
+  return { ...headers, ...authHeaders(readStoredToken(), undefined, opts.agentId) }
 }
 
 /**
@@ -142,7 +148,7 @@ export async function claimTask(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/claim`, project), {
     method: 'POST',
-    headers: mutationHeaders(opts),
+    headers: mutationHeaders({ ...opts, agentId }),
     body: JSON.stringify({ agent_id: agentId, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
   })
   return handleVersionedResponse<Task>(res)
@@ -151,6 +157,10 @@ export async function claimTask(
 /**
  * v2.11.0 (opt-operator-assignment) — a privileged caller assigns a task to a
  * named agent (or releases it with `agentId: null`). Mirrors claimTask.
+ *
+ * A7 (v3.12.8): `agentId` here is the assignment TARGET, not the caller, so no
+ * `X-Agent-Id` is sent — declaring the target as ourselves would misattribute
+ * the operator and trip an identity_binding_mismatch against a bound credential.
  */
 export async function assignTask(
   id: string,
@@ -175,7 +185,7 @@ export async function appendLog(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/logs`, project), {
     method: 'POST',
-    headers: mutationHeaders(opts),
+    headers: mutationHeaders({ ...opts, agentId }),
     body: JSON.stringify({ agent_id: agentId, message, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
    })
   return handleVersionedResponse<Task>(res)
@@ -193,7 +203,7 @@ export async function addComment(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/comments`, project), {
     method: 'POST',
-    headers: mutationHeaders(opts),
+    headers: mutationHeaders({ ...opts, agentId }),
     body: JSON.stringify({ agent_id: agentId, message, ...(opts.expected_version !== undefined ? { expected_version: opts.expected_version } : {}) }),
    })
   return handleVersionedResponse<Task>(res)
@@ -213,7 +223,7 @@ export async function heartbeatTask(
   const project = opts.project
   const res = await fetch(withProject(`${API_BASE}/tasks/${id}/heartbeat`, project), {
     method: 'POST',
-    headers: mutationHeaders(opts),
+    headers: mutationHeaders({ ...opts, agentId }),
     body: JSON.stringify({ agent_id: agentId }),
    })
   if (!res.ok) {
@@ -241,15 +251,17 @@ export async function nextClaim(
   agentId: string,
   opts: { role?: string; project?: string } = {},
 ): Promise<Task | null> {
-  // agent_id and role travel in the body, not the query: the route falls back to
-  // req.body / req.caller for both, and putting identifiers in a URL only serves
-  // to copy them into every access log.
+  // A7 (v3.12.8): identity travels BOTH ways — `X-Agent-Id` is the header the
+  // server trusts for a non-privileged credential, and the body `agent_id` stays
+  // for pre-v3.12.8 servers. Neither goes in the query: the server never reads
+  // `?agent_id=` (it stopped doing so in v3.12.1), and putting identifiers in a
+  // URL only serves to copy them into every access log.
   const params = new URLSearchParams()
   if (opts.project) params.set('project', opts.project)
   const query = params.toString()
   const res = await fetch(`${API_BASE}/tasks/next-claim${query ? `?${query}` : ''}`, {
     method: 'POST',
-    headers: mutationHeaders(),
+    headers: mutationHeaders({ agentId }),
     body: JSON.stringify({ agent_id: agentId, ...(opts.role ? { role: opts.role } : {}) }),
     })
    if (res.status === 204) {

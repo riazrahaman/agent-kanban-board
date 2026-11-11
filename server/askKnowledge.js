@@ -1086,6 +1086,31 @@ export function formatBoardFacts(facts) {
   return [open, ...lines, close].join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// A11 DECISION RECORD — owner decision of 2026-11-11 (card study-a11-a7).
+//
+// The Ask snapshot is deliberately WHOLE-BOARD. This is not an oversight and
+// must not be re-filed as a privacy defect without a new, explicit owner
+// decision.
+//
+// rationale:
+//   * The Ask password (KANBAN_ASK_PASSWORD) is an OWNER credential, shipped in
+//     v3.9.2 — the same person who runs the deployment and can already read
+//     every project's board, backup and data file. The snapshot discloses to
+//     the owner nothing the owner cannot already see.
+//   * `KANBAN_ASK_SNAPSHOT_PROJECTS` is the opt-in narrowing control for
+//     deployments that SHARE the Ask password with people who are not owners
+//     (a team demo, a shared read-only assistant). When set, the allow-list is
+//     enforced fail-closed in the narrow direction (an allow-list matching no
+//     project yields an empty board, never a silent widening).
+//   * Issue #114 was closed as documentation in v3.9.2 for exactly this reason:
+//     the behaviour is a deliberate credential-boundary decision, not a leak.
+//
+// A reviewer who believes whole-board disclosure is wrong is welcome to raise
+// it — but that is an OWNER decision about the trust model of the Ask password,
+// not a bug fix, and it needs a dated decision record of its own.
+// ---------------------------------------------------------------------------
+
 /**
  * Assembles a compact, read-only snapshot of the live board via in-process
  * store accessors. Never throws; on failure returns `{ available: false }`.

@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.12.7
+version: 3.12.8
 ---
 
 # Kanban Orchestrator Protocol
@@ -21,20 +21,24 @@ Check for these fields in the following order:
 1. `.opencode/config.json` (Expected: `kanban_url`, `kanban_token`, `project_name`, `admin_token`)
 2. Environment Variables: `KANBAN_URL`, `KANBAN_TOKEN`, `KANBAN_PROJECT`, `KANBAN_ADMIN_TOKEN`
 
+### Credential-Bound Identity (MANDATORY as of skill v3.12.8)
+
+> v3.12.8 (A7) closes the **identity** half of the same gap v3.8.0 closed for roles. A credential may bind `agent_id`; the server then derives the acting agent from the credential, and a conflicting `X-Agent-Id` header (or body `agent_id`) is ignored and audited (`identity_binding_mismatch`). On an unbound credential the header remains the identity source, but a **body `agent_id` alone is no longer identity for a non-privileged caller** — send `X-Agent-Id`. The admin token and an UNBOUND privileged session may still assert via header or body (`agentSource: admin_token | session`); a session minted from an identity-bound credential keeps it, even when privileged. `agent_id` must be 1-64 chars from `[A-Za-z0-9._@:/-]`; one token bound to different agent ids across projects is rejected, because identity must not change with scope. Sessions minted from a bound credential carry the bound identity too.
+
 ### Credential-Bound Roles (MANDATORY as of skill v3.8.0)
 
 > Every agent role (planner, builder, reviewer, tester/validator, releaser) requires its own token bound to that role in `KANBAN_PROJECT_TOKENS`. Roles are forced by the credential; a self-declared `X-Agent-Role` header that conflicts with the credential's bound role is ignored — the request is served with the credential's role — and the mismatch is audited (`role_binding_mismatch`). Orchestrators use an explicit `admin` (or `runner`) credential.
 
-Role-keyed `KANBAN_PROJECT_TOKENS` schema (the legacy plain-string value shape is still accepted and stays unbound):
+Role- and identity-keyed `KANBAN_PROJECT_TOKENS` schema (the legacy plain-string value shape is still accepted and stays unbound):
 
 ```json
 {
   "<project_name>": {
     "credentials": [
       { "token": "tok-planner", "role": "planner" },
-      { "token": "tok-build",   "role": "builder" },
-      { "token": "tok-review", "role": "reviewer" },
-      { "token": "tok-test",   "role": "tester" },
+      { "token": "tok-build",   "role": "builder", "agent_id": "agent-7" },
+      { "token": "tok-review",  "role": "reviewer" },
+      { "token": "tok-test",    "role": "tester" },
       { "token": "tok-release", "role": "releaser" }
     ]
   }
@@ -42,7 +46,8 @@ Role-keyed `KANBAN_PROJECT_TOKENS` schema (the legacy plain-string value shape i
 ```
 
 - `{ "token": "<tok>", "role": "<role>" }` — **role-bound credential**: the server derives the caller's role from the credential on every request. A conflicting header role is ignored and audited as `role_binding_mismatch`.
-- `{ "token": "<tok>" }` or legacy `"tok"` string — **unbound credential**: header-declared roles still apply (backward compatible; migration is opt-in per deployment). Legacy tokens keep current behavior, but per-role credential creation is the mandated configuration from v3.8.0 onward.
+- `{ "token": "<tok>", "agent_id": "<agent>" }` — **identity-bound credential** (v3.12.8): the server derives the acting agent id from the credential. A conflicting `X-Agent-Id`/body `agent_id` is ignored and audited as `identity_binding_mismatch`. Combine with `role` to bind both.
+- `{ "token": "<tok>" }` or legacy `"tok"` string — **unbound credential**: header-declared role/identity still apply (backward compatible; migration is opt-in per deployment). The identity channel is `X-Agent-Id`; a body `agent_id` alone is not identity for a non-privileged caller.
 - Privileged roles (`admin`, `runner`, `system`, `human`) are never bound to board credentials; the orchestrator's admin authority comes from the explicit `admin_token` / `KANBAN_ADMIN_TOKEN` credential (or a server-issued session).
 
 ### Automatic Local Deployment
@@ -193,6 +198,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 
 - **Identity & Roles**: Orchestrator = `admin`. Workers = `planner`, `builder`, `reviewer`, `tester`/`validator`, `releaser`.
 - **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is ignored — the request is served with the credential's role — and the mismatch is audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
+- **Credential-Bound Identity (MANDATORY, v3.12.8+ / A7)**: bind `agent_id` on the same credential so the acting agent is server-derived. A conflicting `X-Agent-Id` header or body `agent_id` is ignored and audited as `identity_binding_mismatch`. On an unbound credential, send `X-Agent-Id`: a body `agent_id` alone is not identity for a non-privileged caller, so claim/log/comment writes without the header are rejected with `400`. The admin token and an UNBOUND privileged session may assert via header or body; a session minted from an identity-bound credential keeps that identity even when its role is privileged. Sessions minted from a bound credential carry the bound identity.
 - **One agent per role (MANDATORY, v3.9.0+):** dispatch each stage to a distinct `x-agent-id` **and** its own role-bound credential — never swap one agent's credential across stages to cover a card yourself. The board's opt-in `role_crossing` audit signal (`KANBAN_ROLE_CROSSING_AUDIT`, off by default) reports one agent id presenting several bound roles; it never rejects, but the correct posture is to never trigger it.
 - **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`. Header `x-agent-role` alone no longer grants a role on a role-bound credential (v3.8.0+) — the role comes from the credential; the header remains the role source only for legacy unbound tokens.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.

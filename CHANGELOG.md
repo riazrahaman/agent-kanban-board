@@ -16,6 +16,104 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.8] - 2026-11-12
+
+Agent identity becomes credential-bound (A7). Roles were already derived from
+the credential since v3.8.0; the agent id was not — a caller could declare
+`X-Agent-Id` (or, worse, a body `agent_id` that the middleware folded into
+`req.caller`), so any valid project token could claim to be any agent and every
+write was attributed to whoever it said it was. This release closes that path
+for non-privileged callers while keeping the documented legacy header channel.
+
+### Security
+
+- **Credentials may bind `agent_id`.** `KANBAN_PROJECT_TOKENS` entries accept
+  `{"token":"tok","agent_id":"agent-7"}` alongside the existing role binding
+  (`{"token":"tok","role":"builder"}`); both may be present. The value must be a
+  non-empty string after trimming, at most 64 characters, from
+  `[A-Za-z0-9._@:/-]`. An invalid value is a malformed map (fail-closed `503`),
+  never a silently ignored field.
+- **Cross-project identity ambiguity is rejected.** One token bound to two
+  different `agent_id` values under different projects would change identity
+  with scope; it is rejected exactly like the existing cross-project role
+  conflict. The same agent id across projects, and bound-vs-unbound mixing,
+  remain legal.
+- **Bound identity wins; declarations are audited.** The resolved
+  credential identity outranks `X-Agent-Id` and body `agent_id`; a conflict is
+  served with the bound identity and recorded as one redacted console line plus
+  an `identity_binding_mismatch` audit entry (mirroring
+  `role_binding_mismatch`). It is never an auth failure and never trips the
+  failed-auth rate limiter. `req.caller.agentSource` records `credential`,
+  `session`, `admin_token` or `header`.
+- **The body-only identity path is closed for non-privileged callers.** A
+  legacy unbound credential keeps `X-Agent-Id` semantics, but `req.body.agent_id`
+  is no longer folded into `req.caller.agent_id` — claim/log/comment writes that
+  send only a body value now return `400 agent_id is required`. The admin token,
+  an UNBOUND privileged session, and the legacy global token with a privileged
+  header role may still assert via header or body. A credential or session that
+  BINDS an identity is authoritative for every caller, privileged sessions
+  included: a body/header value can no longer re-attribute a bound session's
+  claim/heartbeat/log/comment/next-claim (all five routes resolve identity
+  through one helper).
+- **Sessions carry the bound identity.** `POST /api/auth/session` mints
+  `{cn,sn,jti,exp,role,project,agent_id?}` from the resolved handshake
+  credential (both the legacy proof and challenge flows), never from
+  `body.agent_id`. `verifySessionToken` returns `agent_id` when present; tokens
+  without it still verify.
+- **Declared identity cannot forge a log line.** Values echoed from
+  `X-Agent-Id`/body `agent_id` into the mismatch console line and audit reason
+  have control characters stripped and are capped at 64 characters, so a
+  declared newline cannot fake a second audit entry.
+- **Identity binding runs before the role-mismatch audit.** A
+  `role_binding_mismatch` entry is now attributed to the credential-bound agent
+  id that actually served the request, not to the caller's declaration.
+
+### Fixed
+
+- **Browser client sends `X-Agent-Id`.** `client/src/lib/authToken.ts` now emits
+  the header (control characters stripped) and `client/src/api.ts` passes the
+  same `agentId` on claim/heartbeat/log/comment/next-claim, keeping the body
+  field for pre-v3.12.8 servers. Without it the round-1 server change 400'd every
+  identity-bearing UI mutation. Assignment is excluded on purpose: its
+  `agent_id` is the assignment TARGET, not the caller.
+- **Credential-map coverage counts identity-only credentials as bound**, so
+  `/api/health` and the boot report no longer call a fully identity-bound map
+  "unbound".
+
+### Changed
+
+- **A11 decision record.** `server/askKnowledge.js` now carries the dated owner
+  decision of 2026-11-11 (card `study-a11-a7`): the Ask snapshot is deliberately
+  whole-board because the Ask password is an owner credential (v3.9.2, #114
+  closed as documentation); `KANBAN_ASK_SNAPSHOT_PROJECTS` is the opt-in
+  narrowing for shared-password deployments. No behavior change. Reviewers must
+  not re-file this as a privacy defect without an explicit owner decision.
+- **Docs and operator surface.** README, `docs/CONFIGURATION.md`,
+  `.env.example`, the operator manual, `skills/kanban/SKILL.md` and the system
+  design record the new schema, the header-vs-body rule and the audit event.
+
+### Tests
+
+- `server/test/kanban.identitybound.test.js` (14 tests): bound-credential
+  attribution across claim/heartbeat/logs/comments/next-claim with spoofed
+  header and body identity; the built client's `X-Agent-Id` header shape working
+  end to end on all five paths with a non-privileged credential; a privileged
+  but identity-BOUND session unable to be re-attributed by body/header on any
+  path (admin token still asserts); legacy header identity; body-only rejection;
+  both session mint flows and backward-compatible verification; parser
+  validation and cross-project conflicts.
+- New `server/test/kanban.identitysource.test.js` (9 tests): the
+  `agentSource` values (`credential` / `session` / `admin_token` / `header` /
+  none), the privileged-session path, the role-mismatch actor ordering, and the
+  forged-log-line sanitizer.
+- `server/test/kanban.credentialmap.test.js` covers identity-only credentials as
+  bound in both `/api/health` counts and the boot report.
+- New `client/src/lib/apiAgentHeaders.test.mjs` (6 tests) asserts the header on
+  claim/heartbeat/log/comment/next-claim (and its deliberate absence on assign).
+- Existing role-bound suite claims now send `X-Agent-Id` for identity-unbound
+  credentials, because a body `agent_id` alone is no longer identity (A7).
+- Server suite: 859 tests. Client suite: 315 tests.
+
 ## [3.12.7] - 2026-11-11
 
 A correctness fix for the deploy-drift monitor: it compared versions with string
