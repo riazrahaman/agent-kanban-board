@@ -150,7 +150,13 @@ export function createApp(opts = {}) {
     compression({
       threshold: 0,
       filter: (req, res) => {
-        if (req.path === '/api/events') return false;
+        // Express 5's non-strict routing serves `GET /api/events/` from the
+        // same handler as `/api/events`. Compare the NORMALISED path (trailing
+        // slashes stripped) or the slash variant would be compressed and its
+        // frames held in the compression buffer forever — a silently hung
+        // stream. Regression-pinned in kanban.headers.test.js.
+        const p = (req.path || '').replace(/\/+$/, '') || '/';
+        if (p === '/api/events') return false;
         return compression.filter(req, res);
       },
     })

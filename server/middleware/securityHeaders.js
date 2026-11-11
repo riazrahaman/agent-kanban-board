@@ -55,8 +55,12 @@ export const CONTENT_SECURITY_POLICY = [
   `script-src 'self' ${INLINE_THEME_SCRIPT_SHA256} https://challenges.cloudflare.com`,
   // 'unsafe-inline' is for React style attributes only — see the header comment.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' data:",
-  "font-src 'self' data: https://fonts.gstatic.com",
+  // No `data:` here: the About tour plates and media are same-origin paths, and
+  // nothing in the client (or the built bundle) embeds a data: image or font.
+  // The one `data:` URI in the client is a JSON download link (`App.tsx`),
+  // which no CSP fetch directive governs.
+  "img-src 'self'",
+  "font-src 'self' https://fonts.gstatic.com",
   "connect-src 'self' https://abacus-production-cbb0.up.railway.app https://challenges.cloudflare.com",
   "frame-src https://challenges.cloudflare.com",
   "object-src 'none'",

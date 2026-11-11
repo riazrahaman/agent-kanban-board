@@ -41,6 +41,34 @@ function cspDirectives(policy) {
   return out;
 }
 
+/**
+ * Reads an SSE body until the first complete frame (`\n\n`) arrives, or rejects
+ * after `ms`. Every wait is wrapped in `Promise.race` against a timer that the
+ * `finally` clears, and a losing `read()` is settled by the caller's abort, so
+ * the test cannot leave a timer or a socket behind.
+ */
+async function readFirstSseFrame(reader, ms = 1500) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + ms;
+  while (!buffer.includes('\n\n')) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`no SSE frame within ${ms}ms`);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no SSE frame within ${ms}ms`)), remaining);
+    });
+    try {
+      const { value, done } = await Promise.race([reader.read(), timeout]);
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return buffer;
+}
+
 describe('A6 — security headers (v3.12.4)', () => {
   let tmpDir;
   let distDir;
@@ -117,6 +145,15 @@ describe('A6 — security headers (v3.12.4)', () => {
     assert.equal(d['frame-ancestors'], "'none'");
     assert.equal(d['default-src'], "'self'");
     assert.ok(!CONTENT_SECURITY_POLICY.includes('*'), 'the policy must never contain a wildcard');
+    // No scheme-wide escape hatch: an `https:` source would allow every remote
+    // origin, which is exactly what pinning the two real origins avoids.
+    for (const directive of ['script-src', 'connect-src']) {
+      assert.ok(
+        !/(^|\s)https:(\s|$)/.test(d[directive]),
+        `${directive} must not allow every https origin`
+      );
+      assert.ok(!d[directive].includes('*'), `${directive} must not contain a wildcard source`);
+    }
   });
 
   it("4. allows the inline theme bootstrap by hash — not 'unsafe-inline'", async () => {
@@ -134,6 +171,32 @@ describe('A6 — security headers (v3.12.4)', () => {
     assert.ok(scriptSrc.includes(hash));
     assert.ok(!scriptSrc.includes("'unsafe-inline'"), 'script-src must not be loosened to unsafe-inline');
     assert.ok(!scriptSrc.includes("'unsafe-eval'"));
+
+    // The BUILT shell, when it exists, must still carry the byte-identical
+    // inline bootstrap: Vite copies inline <head> scripts through, but a build
+    // plugin or a manual edit could reformat it and silently break the theme
+    // bootstrap (CSP drops the script, the page still renders). CI runs the
+    // server suite before the client build, so skip when dist is absent.
+    let builtHtml = null;
+    try {
+      builtHtml = await readFile(path.join(repoRoot, 'client', 'dist', 'index.html'), 'utf8');
+    } catch {
+      builtHtml = null;
+    }
+    if (builtHtml !== null) {
+      const builtScripts = [
+        ...builtHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g),
+      ].map((m) => m[1]);
+      assert.equal(builtScripts.length, 1, 'the built shell should have exactly one inline script');
+      const builtHash = `'sha256-${createHash('sha256')
+        .update(builtScripts[0], 'utf8')
+        .digest('base64')}'`;
+      assert.equal(
+        builtHash,
+        INLINE_THEME_SCRIPT_SHA256,
+        'client/dist/index.html drifted from client/index.html: rebuild the client'
+      );
+    }
   });
 
   it('5. allows exactly the remote origins the client actually loads', async () => {
@@ -149,6 +212,14 @@ describe('A6 — security headers (v3.12.4)', () => {
     assert.match(d['connect-src'], /https:\/\/abacus-production-cbb0\.up\.railway\.app/);
     // Same-origin API + SSE.
     assert.match(d['connect-src'], /'self'/);
+    // `data:` is only admitted where something actually needs it — and nothing
+    // does: images (About tour plates) and media are same-origin paths, and the
+    // fonts come from Google. The client's one data: URI is a JSON download
+    // link, which no CSP fetch directive governs.
+    assert.equal(d['img-src'], "'self'");
+    assert.equal(d['font-src'], "'self' https://fonts.gstatic.com");
+    assert.ok(!/(^|\s)data:(\s|$)/.test(d['img-src']), 'img-src must not allow data:');
+    assert.ok(!/(^|\s)data:(\s|$)/.test(d['font-src']), 'font-src must not allow data:');
   });
 
   it('6. still sets the headers on a 404', async () => {
@@ -232,6 +303,40 @@ describe('B6 — compression (v3.12.4)', () => {
       await res.body?.cancel().catch(() => {});
     }
   });
+
+  it('10. never compresses the trailing-slash SSE variant (non-strict routing)', async () => {
+    // Express 5's non-strict routing serves `GET /api/events/` from the SAME
+    // handler as `/api/events`. If the compression filter only matched the
+    // canonical path, this variant would be gzipped and every frame would sit
+    // in the compression buffer — the stream would open, never flush, and look
+    // healthy to the browser. Assert BOTH halves: no encoding, and bytes.
+    const controller = new AbortController();
+    let res;
+    let reader;
+    try {
+      res = await fetch(`${baseUrl}/api/events/?prime=1`, {
+        headers: { 'accept-encoding': 'gzip' },
+        signal: controller.signal,
+      });
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') || '', /text\/event-stream/);
+      assert.equal(
+        res.headers.get('content-encoding'),
+        null,
+        'the trailing-slash SSE variant must stay uncompressed'
+      );
+      reader = res.body.getReader();
+      // `?prime=1` makes the diff stream write one `tasks` snapshot on connect
+      // (a `settings` frame follows), so a frame proves the write reached the
+      // wire instead of being parked inside the compression middleware.
+      const frame = await readFirstSseFrame(reader);
+      assert.match(frame, /^event: (tasks|settings)\ndata: /, `unexpected first frame: ${frame}`);
+    } finally {
+      controller.abort();
+      await reader?.cancel().catch(() => {});
+      await res?.body?.cancel().catch(() => {});
+    }
+  });
 });
 
 describe('B6 — static cache policy (v3.12.4)', () => {
@@ -267,7 +372,7 @@ describe('B6 — static cache policy (v3.12.4)', () => {
     store.setStorage(null);
   });
 
-  it('10. treats content-hashed /assets/* as immutable', () => {
+  it('11. treats content-hashed /assets/* as immutable', () => {
     assert.equal(
       staticCacheControl('/srv/app/client/dist/assets/index-CoxX6heE.js'),
       IMMUTABLE_CACHE_CONTROL
@@ -280,29 +385,36 @@ describe('B6 — static cache policy (v3.12.4)', () => {
     );
   });
 
-  it('11. never lets the HTML shell (or the SPA fallback) be cached', () => {
+  it('12. never lets the HTML shell (or the SPA fallback) be cached', () => {
     assert.equal(staticCacheControl('/srv/app/client/dist/index.html'), HTML_CACHE_CONTROL);
     assert.equal(HTML_CACHE_CONTROL, 'no-cache');
     // The SPA fallback sends exactly this file, so it inherits `no-cache`
     // however the path is assembled.
     assert.equal(staticCacheControl(path.join('/srv/app/client/dist', 'index.html')), 'no-cache');
+    // An ANCESTOR directory named `assets` must not mark the shell immutable —
+    // `.html` is decided before the `assets` segment test.
+    assert.equal(staticCacheControl('/opt/assets/kanban/client/dist/index.html'), HTML_CACHE_CONTROL);
+    assert.equal(
+      staticCacheControl(path.join('/opt/assets/kanban/client/dist', 'index.html')),
+      'no-cache'
+    );
   });
 
-  it('12. gives unhashed static files a short lifetime', () => {
+  it('13. gives unhashed static files a short lifetime', () => {
     assert.equal(staticCacheControl('/srv/app/client/dist/favicon.svg'), STATIC_CACHE_CONTROL);
     assert.equal(staticCacheControl('/srv/app/client/dist/media/kanban-video.mp4'), STATIC_CACHE_CONTROL);
     // A directory merely NAMED "assets-ish" must not be treated as build output.
     assert.equal(staticCacheControl('/srv/app/client/dist/myassets/x.js'), STATIC_CACHE_CONTROL);
   });
 
-  it('13. serves hashed assets over HTTP with the immutable header', async () => {
+  it('14. serves hashed assets over HTTP with the immutable header', async () => {
     const res = await fetch(`${baseUrl}/assets/index-CoxX6heE.js`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('cache-control'), IMMUTABLE_CACHE_CONTROL);
     assert.equal(await res.text(), 'console.log(1)');
   });
 
-  it('14. serves the shell and the SPA fallback with no-cache', async () => {
+  it('15. serves the shell and the SPA fallback with no-cache', async () => {
     for (const route of ['/', '/board/deep/link']) {
       const res = await fetch(`${baseUrl}${route}`);
       assert.equal(res.status, 200, `${route} should fall back to the shell`);

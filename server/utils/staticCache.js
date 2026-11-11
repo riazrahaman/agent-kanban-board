@@ -10,13 +10,14 @@
  * The policy has three cases, expressed as a pure function so it can be unit
  * tested without a built `client/dist`:
  *
- *   1. Content-hashed build output (`/assets/index-CoxX6heE.js`): Vite emits a
- *      new filename when the content changes, so a year + `immutable` is the
- *      correct, cheapest lifetime.
- *   2. HTML (`index.html`, including the SPA fallback): `no-cache` — it is the
+ *   1. HTML (`index.html`, including the SPA fallback): `no-cache` — it is the
  *      pointer into the hashed bundle, so it must be revalidated or a client
  *      can pin an old shell that references deleted asset URLs. (`no-cache`
- *      still permits a 304 when unchanged.)
+ *      still permits a 304 when unchanged.) This case is checked FIRST: an
+ *      ancestor directory named `assets` must never make the shell immutable.
+ *   2. Content-hashed build output (`/assets/index-CoxX6heE.js`): Vite emits a
+ *      new filename when the content changes, so a year + `immutable` is the
+ *      correct, cheapest lifetime.
  *   3. Unhashed static files (`/favicon.svg`, `/landing/*.png`, `/media/*.mp4`):
  *      a short public lifetime. They keep stable names, so caching them forever
  *      would make a replaced file invisible; an hour is a safe middle ground.
@@ -41,13 +42,16 @@ export function staticCacheControl(filePath) {
   const normalised = String(filePath ?? '').replace(/\\/g, '/').toLowerCase();
   const name = lastSegment(normalised);
 
+  // `index.html` and any other HTML entry: the revalidation point. Checked
+  // BEFORE the `assets` segment test so an ANCESTOR directory named `assets`
+  // (e.g. `/opt/assets/kanban/client/dist/index.html`) can never mark the shell
+  // immutable — the shell must always revalidate.
+  if (name.endsWith('.html')) return HTML_CACHE_CONTROL;
+
   // Vite's build output directory. Checking the SEGMENT (not a substring)
   // keeps a hypothetical `myassets/` directory from being treated as hashed.
   const segments = normalised.split('/');
   if (segments.includes('assets')) return IMMUTABLE_CACHE_CONTROL;
-
-  // `index.html` and any other HTML entry: the revalidation point.
-  if (name.endsWith('.html')) return HTML_CACHE_CONTROL;
 
   return STATIC_CACHE_CONTROL;
 }
