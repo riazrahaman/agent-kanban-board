@@ -595,11 +595,28 @@ function AskArchitectureFigure() {
             </p>
           </div>
 
+          <div className="border border-line bg-surface p-2.5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-semibold text-xs text-ink">Context Assembly</span>
+              <span className="font-mono text-[9px] px-1.5 py-0.5 bg-muted-bg text-muted">askKnowledge.js</span>
+            </div>
+            <div className="font-mono text-[10px] leading-relaxed text-muted">
+              <div>+ live snapshot · every project</div>
+              <div>+ named card: record &amp; log tail</div>
+              <div>+ milestones · archive · backup · audit</div>
+              <div>+ ranked source excerpts</div>
+            </div>
+            <p className="mt-1.5 text-[10.5px] leading-snug text-muted">
+              Credential-shaped values become <code className="font-mono text-ink">[redacted]</code> before egress.
+            </p>
+          </div>
+
           <div className="mt-auto border border-line bg-surface p-2.5 font-mono text-[10.5px] leading-relaxed">
             <div className="text-[9px] uppercase tracking-wider text-muted mb-1 font-semibold">Incoming Request</div>
             <div className="text-ink">POST /api/ask</div>
             <div className="text-muted">x-ask-pass: &lt;secret&gt;</div>
-            <div className="text-live font-semibold truncate">{'{ question, snapshot }'}</div>
+            <div className="text-live font-semibold truncate">{'{ question }'}</div>
+            <div className="text-muted text-[9.5px] mt-1">context is assembled server-side</div>
           </div>
         </div>
 
@@ -717,7 +734,7 @@ function AskArchitectureFigure() {
               <p className="text-[11px] text-muted mb-1">
                 Serves <code className="font-mono text-ink">openai/gpt-oss-20b</code>, Claude, Llama 3, and DeepSeek.
               </p>
-              <span className="font-mono text-[9.5px] text-muted">Managed scaling · max_tokens cap enforced</span>
+              <span className="font-mono text-[9.5px] text-muted">Managed scaling · max_tokens cap · 24k prompt budget</span>
             </div>
           )}
 
@@ -738,7 +755,7 @@ function AskArchitectureFigure() {
                 <p className="text-[11px] text-muted mb-1">
                   Executes local reasoning models (e.g. <code className="font-mono text-ink">qwen3.6:latest</code>).
                 </p>
-                <span className="font-mono text-[9.5px] text-pass font-semibold">Zero token fee · max_tokens omitted for CoT</span>
+                <span className="font-mono text-[9.5px] text-pass font-semibold">Zero token fee · no max_tokens · no prompt budget</span>
               </div>
             </>
           )}
@@ -749,7 +766,7 @@ function AskArchitectureFigure() {
         <span>
           {mode === 'both' && 'Ask-the-Board supports both: direct cloud inference via OpenRouter API or self-hosted local models via Cloudflare Tunnel.'}
           {mode === 'openrouter' && 'OpenRouter: Direct cloud-to-cloud HTTPS with Bearer API key. Zero local infrastructure or open ports required.'}
-          {mode === 'ollama' && 'Local Ollama: Apple Silicon inference via Cloudflare Tunnel to gateway :11435 and ollama :11434 with unmetered thought chains.'}
+          {mode === 'ollama' && 'Local Ollama: Apple Silicon inference via Cloudflare Tunnel to gateway :11435 and ollama :11434 with unmetered thought chains and no prompt-token budget.'}
         </span>
         <span className="text-[11px] text-muted">Dual-Provider Architecture</span>
       </div>

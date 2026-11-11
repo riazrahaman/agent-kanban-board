@@ -16,6 +16,18 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.11.2] — 2026-11-11
+
+### Fixed
+
+- About page, Figure 02: the Ask-the-Board diagram no longer claims the request
+  carries a snapshot (it never did — `POST /api/ask` takes `{ question }`).
+  It now names the context assembly step: live snapshot, the named card's record
+  and log tail, milestones/archive/backup/audit, ranked source excerpts, and
+  redaction before egress.
+- The provider panels state the real budgets: 24k prompt budget on a hosted
+  provider, none at all for a local Ollama.
+
 ## [3.11.1] — 2026-11-11
 
 ### Fixed
