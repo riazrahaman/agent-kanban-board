@@ -90,6 +90,39 @@ describe('§health GET /api/health', () => {
 
   // B3 (v3.12.2): the probe counts via the O(1) getTaskCount() instead of the
   // O(n log n) sorted getTasks() copy. The reported numbers must not change.
+  // D9 (v3.12.6): KANBAN_REAP_INTERVAL_MS <= 0 disables the reaper, so the
+  // probe must not keep reporting `ok` while nothing reclaims stale leases.
+  it('6. reports degraded when the reaper is disabled by a non-positive interval', async () => {
+    const prev = process.env.KANBAN_REAP_INTERVAL_MS;
+    process.env.KANBAN_REAP_INTERVAL_MS = '0';
+    try {
+      const { response, body } = await jsonRequest(baseUrl, '/api/health');
+      assert.equal(response.status, 200);
+      assert.equal(body.status, 'degraded');
+      assert.equal(body.reaper.enabled, false);
+      // The other fields are unchanged by the status decision.
+      assert.equal(body.store_loaded, true);
+      assert.equal(typeof body.tasks_total, 'number');
+      assert.equal(typeof body.version, 'string');
+    } finally {
+      if (prev === undefined) delete process.env.KANBAN_REAP_INTERVAL_MS;
+      else process.env.KANBAN_REAP_INTERVAL_MS = prev;
+    }
+  });
+
+  it('7. reports ok again once the reaper interval is positive', async () => {
+    const prev = process.env.KANBAN_REAP_INTERVAL_MS;
+    process.env.KANBAN_REAP_INTERVAL_MS = '30000';
+    try {
+      const { body } = await jsonRequest(baseUrl, '/api/health');
+      assert.equal(body.status, 'ok');
+      assert.equal(body.reaper.enabled, true);
+    } finally {
+      if (prev === undefined) delete process.env.KANBAN_REAP_INTERVAL_MS;
+      else process.env.KANBAN_REAP_INTERVAL_MS = prev;
+    }
+  });
+
   it('5. tasks_total matches store.getTaskCount() and tracks a new task', async () => {
     const before = await jsonRequest(baseUrl, '/api/health');
     assert.equal(before.body.tasks_total, store.getTaskCount());

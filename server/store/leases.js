@@ -171,8 +171,19 @@ function getOrphanGraceMs() {
 
 export function isReaperEnabled() {
   const raw = process.env.KANBAN_REAP_ENABLED;
-  if (raw === undefined || raw === '') return true;
-  return raw !== 'false' && raw !== '0';
+  if (raw !== undefined && raw !== '' && (raw === 'false' || raw === '0')) return false;
+  // D9 (v3.12.6): `KANBAN_REAP_INTERVAL_MS <= 0` is documented as "no sweep"
+  // (the deploy-drift monitor uses the same convention). The old interval
+  // reader silently substituted 30000 for a non-positive value, so a
+  // deliberately disabled reaper looked healthy in /api/health while the boot
+  // path still started the timer. Treat it as disabled so both the health probe
+  // and startServer agree, and no timer is scheduled.
+  const interval = process.env.KANBAN_REAP_INTERVAL_MS;
+  if (interval !== undefined && interval !== '') {
+    const n = Number(interval);
+    if (Number.isFinite(n) && n <= 0) return false;
+  }
+  return true;
 }
 
 export function isAutoPromoteEnabled() {

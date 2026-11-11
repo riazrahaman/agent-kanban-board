@@ -16,6 +16,73 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.6] - 2026-11-11
+
+Four quick wins for retry safety and operational honesty, all fail-open for the
+board: a timed-out create no longer turns a committed card into a 409, a
+webhook subscriber that blips is retried instead of silently losing the event,
+production refuses the localhost CORS default, and `/api/health` stops calling a
+board with no reaper `ok`.
+
+### Added
+
+- **D3 - `Idempotency-Key` on `POST /api/tasks`.** A retried create that timed
+  out after commit used to hit the composite-id uniqueness check and get a
+  permanent 409 for work that had actually succeeded. The route now accepts an
+  `Idempotency-Key` header (case-insensitive, as all HTTP headers are) and
+  returns the ORIGINAL 201 body plus `Idempotency-Replayed: true` on replay.
+  Keys are held in memory for `KANBAN_IDEMPOTENCY_TTL_MS` (default 10 min) in a
+  map capped at `KANBAN_IDEMPOTENCY_MAX_ENTRIES` (default 1000, oldest evicted).
+  The key is namespaced by project and caller identity - a SHA-256 fingerprint
+  of the credential plus agent id + role; the raw token is never stored - so two
+  callers cannot replay each other's response. Only successful creations are
+  recorded; a duplicate that arrives while the first is still committing gets
+  409 `{ error: 'idempotency_key_in_progress' }`, and a failed create releases
+  the key. No header is exactly the previous behaviour (the caller-supplied `id`
+  remains the natural, durable handle); the only validation is a 200-character
+  cap -> 400. Pinned by `kanban.idempotency.test.js` (replay, different key,
+  caller isolation, TTL expiry, concurrent duplicate, oversized key, no header).
+- **D6 - webhook retries, per-URL dead-letter ring and queue cap.** A non-2xx
+  or a thrown delivery used to drop the event with a log line. Each event is now
+  attempted up to `KANBAN_WEBHOOK_MAX_ATTEMPTS` times (default 3) with
+  exponential backoff (`KANBAN_WEBHOOK_BACKOFF_MS`, default 250 -> 250ms, 1s,
+  4s; a 429/503 `Retry-After` is honoured up to 30s). Only transient outcomes
+  retry - network throw/timeout, 408, 425, 429, 5xx; a 2xx/3xx or any other 4xx
+  is terminal after one attempt. Terminal failures land in a per-URL in-memory
+  dead-letter ring (`KANBAN_WEBHOOK_DEAD_LETTER_MAX`, default 50) holding
+  `{ at, event_kind, status?, error?, attempts }`. Each URL's queue is capped
+  (`KANBAN_WEBHOOK_MAX_QUEUE`, default 100); beyond it the OLDEST waiting event
+  is dropped with one warn line. Board writes still never await or observe a
+  delivery failure. Test seams: `resetWebhookState()`, `getWebhookStats()`,
+  `awaitWebhookIdle()`; pinned by `kanban.webhooks.test.js`.
+
+### Fixed
+
+- **D8 - production no longer boots with the permissive dev CORS default.**
+  `configureCors()` (`server/middleware/cors.js`) used `http://localhost:5173`
+  whenever `KANBAN_ALLOWED_ORIGIN` was unset, so a production deployment either
+  rejected its real browser origin or was "fixed" by widening the allowlist.
+  With `NODE_ENV=production` and no allowlist it now throws an actionable error
+  at `createApp()`/`startServer()` unless `KANBAN_ALLOW_DEV_CORS=1` explicitly
+  accepts the dev default. An explicit allowlist and non-production behaviour
+  are unchanged; an explicitly blank value is still rejected as before. Pinned
+  in `kanban.cors.test.js`.
+- **D9 - `/api/health` reports `degraded` when the reaper is disabled.**
+  `KANBAN_REAP_INTERVAL_MS <= 0` is documented as "no sweep", but the interval
+  reader substituted 30000 and `isReaperEnabled()` only looked at
+  `KANBAN_REAP_ENABLED`, so a deliberately disabled reaper kept reporting `ok`
+  while stale leases were never reclaimed. A non-positive interval now reads as
+  disabled for both the health probe and `startServer()` (no timer is
+  scheduled), and the existing `loaded && reaperEnabled` status path reports
+  `degraded` with every other field unchanged. Pinned in
+  `kanban.health.test.js`.
+
+`KANBAN_ALLOW_DEV_CORS`, `KANBAN_IDEMPOTENCY_TTL_MS`,
+`KANBAN_IDEMPOTENCY_MAX_ENTRIES`, `KANBAN_WEBHOOK_MAX_ATTEMPTS`,
+`KANBAN_WEBHOOK_BACKOFF_MS`, `KANBAN_WEBHOOK_MAX_QUEUE` and
+`KANBAN_WEBHOOK_DEAD_LETTER_MAX` are documented in `docs/CONFIGURATION.md` and
+`.env.example`. Suite: 819 server tests (was 799), 303 client tests.
+
 ## [3.12.5] — 2026-11-11
 
 Tidy-up release: six small hardening/maintenance items (C1, C4, C5, C6, C8 and a
