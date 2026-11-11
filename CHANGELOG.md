@@ -52,26 +52,31 @@ here **and** an annotated git tag. Do not let work accumulate under
 
 ### Fixed
 
-- **Round-2 review hardening.** The SSE compression exclusion compared the raw
-  request path, so Express 5's non-strict `GET /api/events/` slipped past it and
-  was gzipped: headers flushed, then every frame sat in the compression buffer —
-  a silent hung stream. The filter now normalises trailing slashes, and a
-  regression test asserts both no `Content-Encoding` and a first frame on the
-  wire for `/api/events/?prime=1`. `staticCacheControl()` now decides `.html`
+- **Round-2/round-3 review hardening.** The SSE compression exclusion compared
+  the raw request path, so Express 5's routing variants slipped past it and were
+  gzipped: headers flushed, then every frame sat in the compression buffer — a
+  silent hung stream. Express routes the same handler for trailing-slash
+  (`/api/events/`) and any casing (`/API/EVENTS`), because its default routing is
+  both non-strict and case-insensitive. The filter now normalises trailing
+  slashes and lowercases the path, and a regression test loops all four
+  spellings (`/api/events`, `/api/events/`, `/API/EVENTS`, `/API/EVENTS/`),
+  asserting both no `Content-Encoding` and a first frame on the wire for each.
+  `staticCacheControl()` now decides `.html`
   before the `assets` segment test, so an ANCESTOR directory named `assets`
   (e.g. `/opt/assets/kanban/client/dist/index.html`) can never mark the shell
   immutable. The CSP no longer admits `data:` in `img-src`/`font-src`: nothing
   in the client or the built bundle uses one (the single `data:` URI is a JSON
   download link, which no fetch directive governs), and the header tests now
-  reject a scheme-wide `https:` or `*` source in `script-src`/`connect-src`.
-  The inline-theme hash guard also re-hashes `client/dist/index.html` when the
+  reject a scheme-wide `https:` (or any bare scheme) or `*` source and pin the
+  exact token sets for `script-src`/`connect-src`, so an injected origin fails
+  too. The inline-theme hash guard also re-hashes `client/dist/index.html` when the
   client has been built, so a stale build is caught rather than silently losing
   theme bootstrapping in the browser.
 
 Tests: a new `kanban.headers.test.js` pins the headers on API and SPA responses,
 the exact CSP (including the live hash of the inline theme script and each remote
-origin the client loads), gzip on `/api/health`, the uncompressed SSE path (plus
-the trailing-slash variant), and the cache policy at both the helper and HTTP
+origin the client loads), gzip on `/api/health`, the uncompressed SSE path (all
+four slash/case spellings), and the cache policy at both the helper and HTTP
 levels (784 total, up from 769).
 
 _Credit: Board Health Check code review — security finding A6 and performance
