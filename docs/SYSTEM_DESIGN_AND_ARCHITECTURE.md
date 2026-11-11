@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.12.3        
+**System Version:** 3.12.4        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -422,6 +422,7 @@ flowchart TD
 | **Abuse / DoS by Request Flood** | A05 / A10 | Per-project fixed-window rate limiting on mutations (`KANBAN_RATE_LIMIT_PER_MIN`), with `X-RateLimit-*` budget headers on `429`. |
 | **Path Traversal Attacks** | A01: Broken Access Control | `isValidTaskId` validates task IDs strictly against `/^[A-Za-z0-9_-]+$/`. `GitYamlStorage` enforces directory prefix checks against resolved filenames. |
 | **Information Leakage** | A05: Security Misconfiguration | Global Express error handler catches all unhandled exceptions, logs internally, and returns generic `{ "error": "Internal Server Error" }` without leaking stack traces. |
+| **Missing Browser Security Policy** | A05: Security Misconfiguration | v3.12.4 (A6): every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, a minimal `Permissions-Policy`, and a strict `Content-Security-Policy` (`server/middleware/securityHeaders.js`, mounted first). The CSP allows only the origins the client genuinely loads (Google Fonts, Turnstile, the public visit counter) plus `'self'`; the one inline script is admitted by SHA-256 hash, never `'unsafe-inline'`. |
 | **Truncated Token Map Outage** | A07: Identification and Authentication Failures | §2.10 boot check (`reportCredentialCoverage`) detects when `KANBAN_PROJECT_TOKENS` drops existing store projects. Loud error in boot logs and non-fatal `credential_map` on `GET /api/health` prevent silent 403 outages. |
 
 ### 7.1 Credential-Map Coverage Check (§2.10)
