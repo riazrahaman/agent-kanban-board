@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.11.2
+**System:** Agent Kanban Board v3.12.0
 
 ---
 
@@ -143,12 +143,14 @@ When the lease reaper returns a task to `READY` (an idle lease expired, a held t
 | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between alerts; the send queue is serialized so a multi-task sweep cannot trip Telegram's rate limit. |
 | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL for the alert's deep link. |
 
-### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider · v3.11.0 card history)
+### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider · v3.11.0 card history · v3.12.0 source index)
 
 The About page opens with a password-gated, **read-only** assistant that answers
 questions about this board — its protocol, engine, client, deployment and
-configuration. The question is tokenised, the most relevant repository files are
-ranked, and a window around the match is folded into the system prompt
+configuration. The question is tokenised, a cached index of `server/`,
+`client/src/` and `scripts/` ranks every module — by exported symbol, route path
+or topic, not only a curated list — and a window around the match is folded into
+the system prompt
 (`server/askKnowledge.js`) alongside a live read-only board snapshot, board
 metadata (milestones, archive, backup, recent audit), and — when the question
 names a card — that card's full record, log history and comments. So it can

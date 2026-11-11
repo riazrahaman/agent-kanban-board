@@ -16,6 +16,38 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.0] — 2026-11-11
+
+### Added
+
+- Ask the Board retrieves source from a **dynamic index** of `server/`,
+  `client/src/` and `scripts/` instead of only the curated file map. The index
+  is cached for 60 s; every module is scored by exported symbol, route path,
+  path segment and content keyword density, so a module that was never in the
+  curated map (e.g. `server/deployDrift.js`) is reachable by name or by one of
+  its symbols.
+- Tests, fixtures and generated data (`*.test.js`, `*.spec.*`, `test/`,
+  `tests/`, `__tests__/`, `data/`, `spill/`, `dist/`, `node_modules/`) are
+  excluded from the index, so the assistant cannot quote a fixture as if it
+  were live code.
+- Off-topic questions still retrieve nothing: an entry needs a strong signal
+  (path segment, symbol, route or curated note) or at least two content hits.
+
+### Changed
+
+- The curated `FILE_MAP` is now a hint layer, not the retrieval boundary: its
+  notes score higher (so `server/store.js` outranks prose about the reaper) and
+  it still supplies head-anchoring for files such as `CHANGELOG.md`, but
+  ranking covers the whole indexed tree.
+- Documentation outside the indexed trees ranks at half weight, so questions
+  about behaviour prefer code over prose describing it.
+
+### Tests
+
+- Seven new retrieval tests (734 server tests total): unmapped module by
+  symbol, route module by path segment, changelog reachability, test/fixture
+  exclusion, index cache reset, excerpt content, and `maxFiles`.
+
 ## [3.11.2] — 2026-11-11
 
 ### Fixed

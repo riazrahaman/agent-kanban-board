@@ -93,7 +93,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '727',
+    value: '734',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -856,9 +856,9 @@ node scripts/gen-config-reference.mjs`,
     emoji: '💬',
     title: 'Ask the Board',
     eli5:
-      'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, reads card records and their log history in-process, and folds them into a live read-only snapshot — so it can explain the code, trace a single card\'s history, or report milestones, archive and backup state.',
+      'A password-locked assistant that answers questions about this board: it indexes the repository and retrieves excerpts, reads card records and their log history in-process, and folds them into a live read-only snapshot — so it can explain the code, trace a single card\'s history, or report milestones, archive and backup state.',
     underTheHood:
-      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never mutates the board: the evidence it sees is assembled in-process from the store — a board snapshot, the full record and log history of any card the question names (gatherTaskDetails), board metadata such as milestones, archive and backup state (gatherBoardFacts), and ranked source excerpts. Credential-shaped strings in card text are redacted to [redacted] before the model sees them (KANBAN_ASK_INCLUDE_LOGS=raw sends card text verbatim). The model never claims, moves or deletes a card, and never receives a board token. By default the snapshot covers EVERY project on the board: the ask password is an owner credential, not a per-project token. KANBAN_ASK_SNAPSHOT_PROJECTS narrows it to a comma-separated allow-list when a deployment shares the password.',
+      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never mutates the board: the evidence it sees is assembled in-process from the store — a board snapshot, the full record and log history of any card the question names (gatherTaskDetails), board metadata such as milestones, archive and backup state (gatherBoardFacts), and ranked source excerpts from a cached index of server/, client/src/ and scripts/ — any real module by symbol or topic, not only a curated file list. Credential-shaped strings in card text are redacted to [redacted] before the model sees them (KANBAN_ASK_INCLUDE_LOGS=raw sends card text verbatim). The model never claims, moves or deletes a card, and never receives a board token. By default the snapshot covers EVERY project on the board: the ask password is an owner credential, not a per-project token. KANBAN_ASK_SNAPSHOT_PROJECTS narrows it to a comma-separated allow-list when a deployment shares the password.',
     snippet: {
       label: 'the ask surface',
       code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "provider": "ollama", "model": "..." }

@@ -355,6 +355,7 @@ under `<data>/backups/<timestamp>/`. `scripts/restore-backup.mjs` restores one.
   set. `GET /api/ask/config` reports `{enabled,gated,model}`. `POST /api/ask`
   requires the `x-ask-pass` header and `{question}` (3–500 chars); it builds a
   system prompt from a curated protocol pack, **retrieved source excerpts**
+  from a cached symbol/topic index of `server/`, `client/src/` and `scripts/`
   (`rankSourceFiles` → `gatherSourceContext` → `readSourceExcerpt`), a live
   in-process snapshot (`gatherSnapshot`), board metadata (`gatherBoardFacts`),
   and the full record/logs/comments of any card the question names
