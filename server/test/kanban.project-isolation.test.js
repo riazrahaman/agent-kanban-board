@@ -199,4 +199,162 @@ describe('§2.11 per-token project name isolation', () => {
       assert.ok(projects.has('gamma'));
     });
   });
+
+  // A4 (v3.12.2): /api/tasks/archive, /api/tasks/trash and POST
+  // /api/tasks/archive/sweep used to ignore getAuthorizedProjects entirely — a
+  // project-scoped credential could read every project's archive and trash and
+  // sweep the whole board. These cases pin the clamp.
+  describe('archive / trash / sweep scoping (v3.12.2 A4)', () => {
+    const daysAgoIso = (d) => new Date(Date.now() - d * 86400000).toISOString();
+
+    async function driveToDone(id, project) {
+      const steps = [
+        { role: 'builder', status: 'IN_PROGRESS' },
+        { role: 'builder', status: 'IN_REVIEW' },
+        { role: 'reviewer', status: 'VALIDATION' },
+        { role: 'tester', status: 'READY_TO_SHIP' },
+        { role: 'releaser', status: 'DONE' },
+      ];
+      for (const { role, status } of steps) {
+        const r = await jsonRequest(baseUrl, `/api/tasks/${id}?project=${project}`, {
+          method: 'PATCH', headers: headers(project === 'alpha' ? ALPHA_TOKEN : BETA_TOKEN, role),
+          body: JSON.stringify({ status }),
+        });
+        assert.equal(r.response.status, 200, `${id}: step ${status} -> ${r.body?.error || 'ok'}`);
+      }
+    }
+
+    async function backdate(id, project, days = 40) {
+      const task = store.getTask(id, project);
+      assert.ok(task, `${project}/${id} exists`);
+      const past = daysAgoIso(days);
+      task.completed_at = past;
+      task.created_at = task.created_at || past;
+      await store.getStorage(project).saveTask(task, store.getProjectBucket(project));
+    }
+
+    before(async () => {
+      // Two old DONE cards (one per project) that the ADMIN sweep archives, so
+      // both sinks start populated.
+      for (const [project, token, id] of [['alpha', ALPHA_TOKEN, 'a-arch-1'], ['beta', BETA_TOKEN, 'b-arch-1']]) {
+        const created = await jsonRequest(baseUrl, `/api/tasks?project=${project}`, {
+          method: 'POST', headers: headers(token), body: JSON.stringify({ id, title: id, status: 'READY', round: 1 }),
+        });
+        assert.equal(created.response.status, 201);
+        await driveToDone(id, project);
+        await backdate(id, project);
+      }
+      const adminSweep = await jsonRequest(baseUrl, '/api/tasks/archive/sweep', {
+        method: 'POST', headers: headers(ADMIN_TOKEN),
+      });
+      assert.equal(adminSweep.response.status, 200);
+      assert.ok(adminSweep.body.moved >= 2, 'the admin sweep archived both');
+
+      // One soft-deleted card per project in the trash sink (deleteTask is
+      // admin-only, so the admin token parks them).
+      for (const [project, id] of [['alpha', 'a-del-1'], ['beta', 'b-del-1']]) {
+        const created = await jsonRequest(baseUrl, `/api/tasks?project=${project}`, {
+          method: 'POST', headers: headers(ADMIN_TOKEN), body: JSON.stringify({ id, title: id, status: 'READY', round: 1 }),
+        });
+        assert.equal(created.response.status, 201);
+        const del = await jsonRequest(baseUrl, `/api/tasks/${id}?project=${project}`, {
+          method: 'DELETE', headers: headers(ADMIN_TOKEN),
+        });
+        assert.equal(del.response.status, 200, `${id} soft-deleted to trash`);
+      }
+    });
+
+    it('12. alpha token /archive sees only alpha cards', async () => {
+      const { response, body } = await jsonRequest(baseUrl, '/api/tasks/archive', {
+        headers: headers(ALPHA_TOKEN),
+      });
+      assert.equal(response.status, 200);
+      assert.ok(Array.isArray(body));
+      const ids = body.map((t) => t.id);
+      assert.ok(ids.includes('a-arch-1'), 'own archived card visible');
+      assert.ok(!ids.includes('b-arch-1'), "another project's archived card hidden");
+      for (const t of body) assert.equal(t.project, 'alpha');
+    });
+
+    it('13. alpha token /archive?project=beta returns []', async () => {
+      const { response, body } = await jsonRequest(baseUrl, '/api/tasks/archive?project=beta', {
+        headers: headers(ALPHA_TOKEN),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(body, []);
+    });
+
+    it('14. alpha token /trash sees only alpha cards', async () => {
+      const { response, body } = await jsonRequest(baseUrl, '/api/tasks/trash', {
+        headers: headers(ALPHA_TOKEN),
+      });
+      assert.equal(response.status, 200);
+      const ids = body.map((t) => t.id);
+      assert.ok(ids.includes('a-del-1'), 'own trashed card visible');
+      assert.ok(!ids.includes('b-del-1'), "another project's trashed card hidden");
+    });
+
+    it('15. alpha token /trash?project=beta returns []', async () => {
+      const { response, body } = await jsonRequest(baseUrl, '/api/tasks/trash?project=beta', {
+        headers: headers(ALPHA_TOKEN),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(body, []);
+    });
+
+    it('16. unscoped admin token sees every project in /archive and /trash', async () => {
+      const arch = await jsonRequest(baseUrl, '/api/tasks/archive', { headers: headers(ADMIN_TOKEN) });
+      assert.equal(arch.response.status, 200);
+      const archIds = arch.body.map((t) => t.id);
+      assert.ok(archIds.includes('a-arch-1'));
+      assert.ok(archIds.includes('b-arch-1'));
+
+      const trash = await jsonRequest(baseUrl, '/api/tasks/trash', { headers: headers(ADMIN_TOKEN) });
+      assert.equal(trash.response.status, 200);
+      const trashIds = trash.body.map((t) => t.id);
+      assert.ok(trashIds.includes('a-del-1'));
+      assert.ok(trashIds.includes('b-del-1'));
+    });
+
+    it('17. a scoped sweep moves ONLY the authorized project and reports only it', async () => {
+      // One fresh eligible card per project, backdated right before the sweep —
+      // no GET runs in between, so no lazy sweep can pre-move either card.
+      for (const [project, token, id] of [['alpha', ALPHA_TOKEN, 'a-sweep'], ['beta', BETA_TOKEN, 'b-sweep']]) {
+        const created = await jsonRequest(baseUrl, `/api/tasks?project=${project}`, {
+          method: 'POST', headers: headers(token), body: JSON.stringify({ id, title: id, status: 'READY', round: 1 }),
+        });
+        assert.equal(created.response.status, 201);
+        await driveToDone(id, project);
+        await backdate(id, project);
+      }
+
+      // A scoped credential references one of its own projects (the mutation
+      // guard requires it — an unscoped mutation resolves to `default`); the
+      // sweep still covers the token's WHOLE authorized set, which for this
+      // single-project token is exactly alpha.
+      const r = await jsonRequest(baseUrl, '/api/tasks/archive/sweep?project=alpha', {
+        method: 'POST', headers: headers(ALPHA_TOKEN),
+      });
+      assert.equal(r.response.status, 200);
+      assert.equal(r.body.moved, 1, 'only the alpha card moved');
+      const reported = r.body.projects.map((p) => p.project);
+      assert.ok(reported.includes('alpha'), 'the authorized project is reported');
+      assert.ok(!reported.includes('beta'), "another project's summary is clamped out");
+
+      assert.ok(store.getArchivedTasks('alpha').some((t) => t.id === 'a-sweep'), 'alpha card archived');
+      assert.ok(store.getTask('b-sweep', 'beta'), "beta's eligible card was NOT touched by the scoped sweep");
+    });
+
+    it('18. the unscoped admin sweep still sees every project', async () => {
+      const r = await jsonRequest(baseUrl, '/api/tasks/archive/sweep', {
+        method: 'POST', headers: headers(ADMIN_TOKEN),
+      });
+      assert.equal(r.response.status, 200);
+      assert.ok(r.body.moved >= 1, "beta's card moved under the unscoped sweep");
+      const reported = new Set(r.body.projects.map((p) => p.project));
+      assert.ok(reported.has('alpha'));
+      assert.ok(reported.has('beta'));
+      assert.ok(store.getArchivedTasks('beta').some((t) => t.id === 'b-sweep'), 'beta card archived');
+    });
+  });
 });

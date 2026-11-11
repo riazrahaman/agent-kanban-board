@@ -87,4 +87,18 @@ describe('§health GET /api/health', () => {
     assert.equal(typeof body.tasks_total, 'number');
     assert.ok(body.reaper);
   });
+
+  // B3 (v3.12.2): the probe counts via the O(1) getTaskCount() instead of the
+  // O(n log n) sorted getTasks() copy. The reported numbers must not change.
+  it('5. tasks_total matches store.getTaskCount() and tracks a new task', async () => {
+    const before = await jsonRequest(baseUrl, '/api/health');
+    assert.equal(before.body.tasks_total, store.getTaskCount());
+    assert.equal(before.body.tasks_live, store.getTaskCount());
+
+    await store.createTask({ id: 'health-count-1', title: 'Count me', status: 'READY', project: 'healthcount', round: 1 });
+    const after = await jsonRequest(baseUrl, '/api/health');
+    assert.equal(after.body.tasks_total, before.body.tasks_total + 1, 'the new task is counted');
+    assert.equal(after.body.tasks_total, store.getTaskCount());
+    assert.equal(after.body.tasks_live, store.getTaskCount());
+  });
 });

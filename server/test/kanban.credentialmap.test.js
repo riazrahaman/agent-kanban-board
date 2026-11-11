@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
+import { parseProjectTokens } from '../middleware/auth.js';
 import { checkCredentialCoverage, reportCredentialCoverage } from '../utils/credentialMap.js';
 
 const STORE_PROJECTS = ['TG', 'SFG', 'aov', 'chess'];
@@ -249,5 +250,46 @@ describe('GET /api/health credential_map integration', () => {
       const body = await res.text();
       assert.equal(body.includes('tok-super-secret'), false);
     }
+  });
+});
+
+// B4 (v3.12.2): parseProjectTokens memoizes its parse keyed on the RAW env
+// string. These cases pin the contract: an unchanged string returns the SAME
+// result object (including the malformed sentinel — error semantics unchanged),
+// and a changed string re-parses, so env changes invalidate the cache without
+// any explicit reset. The HTTP test above ("exposes credential_map reflecting
+// configuration over HTTP") is the end-to-end proof that a changed env string
+// takes effect between requests.
+describe('parseProjectTokens memoization (v3.12.2 B4)', () => {
+  it('returns the SAME result object for an identical raw string', () => {
+    const raw = JSON.stringify({ alpha: 't-a', beta: 't-b' });
+    const first = parseProjectTokens(raw);
+    const second = parseProjectTokens(raw);
+    assert.equal(second, first, 'identical raw reuses the cached parse');
+    assert.equal(first.map.get('alpha')[0].token, 't-a');
+  });
+
+  it('memoizes the malformed sentinel with identical error semantics', () => {
+    const bad = '{not valid json';
+    const first = parseProjectTokens(bad);
+    assert.equal(first.malformed, true);
+    assert.equal(parseProjectTokens(bad), first, 'malformed sentinel is cached too');
+    assert.equal(parseProjectTokens(bad).map, undefined, 'sentinel keeps its shape');
+  });
+
+  it('re-parses when the raw string changes (a new project appears)', () => {
+    const first = parseProjectTokens(JSON.stringify({ alpha: 't-a' }));
+    assert.equal(first.map.size, 1);
+
+    const second = parseProjectTokens(JSON.stringify({ alpha: 't-a2', beta: 't-b' }));
+    assert.equal(second.map.get('alpha')[0].token, 't-a2', 'changed value picked up');
+    assert.ok(second.map.has('beta'), 'added project picked up');
+    assert.notEqual(second, first);
+  });
+
+  it('treats unset and previously-unset raw as the same cached null result', () => {
+    assert.equal(parseProjectTokens(undefined), null);
+    const again = parseProjectTokens(undefined);
+    assert.equal(again, null, 'unset env stays a null result');
   });
 });

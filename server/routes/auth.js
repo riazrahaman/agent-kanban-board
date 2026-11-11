@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { authSecret, createSessionToken, verifySessionToken, revokeSessionToken } from '../sessionAuth.js';
+import {
+  createSessionChallenge,
+  consumeSessionChallenge,
+  sessionNonceMode,
+} from '../sessionChallenge.js';
 import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
@@ -172,10 +177,59 @@ router.post('/stream-ticket', (req, res) => {
  * means a proof minted for (builder, alpha) cannot be replayed to obtain an
  * (admin, alpha) or (builder, beta) session token. Exported so tests can build
  * the expected proof without duplicating the format.
+ *
+ * A5 (v3.12.2): this remains the LEGACY proof format (grace mode). The
+ * challenge-bound format lives in `challengeProofInput` below — the signature
+ * of `proofInput` is unchanged so existing callers and tests keep working.
  */
 export function proofInput(clientNonce, role, project) {
   return `${clientNonce}:${role}:${project}`;
 }
+
+/**
+ * A5 (v3.12.2) — the REQUIRED-mode proof input: the server-issued challenge is
+ * bound first, `${challenge}:${clientNonce}:${role}:${project}`, so a captured
+ * proof is only valid while its challenge is still live, and is single-use
+ * (the challenge is consumed on first successful verification).
+ */
+export function challengeProofInput(serverNonce, clientNonce, role, project) {
+  return `${serverNonce}:${clientNonce}:${role}:${project}`;
+}
+
+/**
+ * POST /api/auth/challenge — A5 (v3.12.2), phase-0 of the handshake. The server
+ * issues a random, short-TTL, single-use challenge the caller must bind into
+ * its HMAC proof. In-memory only: a board restart forgets challenges, which is
+ * safe (clients re-fetch one). Unauthenticated by design — the proof-of-secret
+ * at /session is what authorizes minting; this endpoint only hands out nonce
+ * material and is rate-limited like the rest of the handshake.
+ */
+router.post('/challenge', (req, res) => {
+  const retryAfter = authFailuresExceeded(req);
+  if (retryAfter !== null) {
+    recordAuthFailure(req);
+    return res.status(429).json({
+      error: 'Too many failed authentication attempts',
+      retry_after_ms: retryAfter,
+    });
+  }
+
+  const secret = authSecret();
+  if (!secret) {
+    return res.status(503).json({
+      error: 'Session auth is not enabled (KANBAN_AUTH_SECRET is unset)',
+    });
+  }
+
+  const { challenge, expiresAt } = createSessionChallenge();
+  return res.status(200).json({
+    challenge,
+    expires_at: expiresAt,
+    // Surface the mode so a client can see whether the challenge is mandatory
+    // yet (grace release) without a separate config endpoint.
+    mode: sessionNonceMode(),
+  });
+});
 
 /**
  * POST /api/auth/session — phase-1 of the HMAC handshake. Gated by proof-of-
@@ -229,14 +283,46 @@ router.post('/session', (req, res) => {
       ? rawProject
       : defaultProjectName();
 
+  // A5 (v3.12.2): two-step handshake. When the caller presents a server_nonce
+  // (the challenge from POST /api/auth/challenge), the proof must be bound to
+  // it and the challenge is consumed single-use on success. In legacy grace
+  // mode a challenge-less proof is still accepted over the historical
+  // `clientNonce:role:project` input; in required mode it is rejected.
+  const nonceMode = sessionNonceMode();
+  const challenge =
+    typeof body.server_nonce === 'string' && body.server_nonce !== '' ? body.server_nonce : null;
+
+  if (nonceMode === 'required' && !challenge) {
+    recordAuthFailure(req);
+    return res.status(401).json({
+      error:
+        "Unauthorized: a fresh POST /api/auth/challenge nonce is required " +
+        "(KANBAN_SESSION_NONCE_MODE='required')",
+      nonce_mode: nonceMode,
+    });
+  }
+
   const expected = crypto
     .createHmac('sha256', secret)
-    .update(proofInput(clientNonce, role, project))
+    .update(challenge
+      ? challengeProofInput(challenge, clientNonce, role, project)
+      : proofInput(clientNonce, role, project))
     .digest('hex');
 
   if (!tokensMatch(expected, proof.toLowerCase())) {
     recordAuthFailure(req);
     return res.status(401).json({ error: 'Unauthorized: invalid proof' });
+  }
+
+  // Single-use: consume the challenge on the FIRST successful verification, so
+  // a replay of the same proof finds the challenge gone. Unknown/expired
+  // challenges are rejected — a captured proof is inert.
+  if (challenge && !consumeSessionChallenge(challenge)) {
+    recordAuthFailure(req);
+    return res.status(401).json({
+      error: 'Unauthorized: challenge expired or already used',
+      nonce_mode: nonceMode,
+    });
   }
 
   const serverNonce = crypto.randomBytes(16).toString('hex');
