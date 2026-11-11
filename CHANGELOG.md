@@ -16,6 +16,49 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.11.0] — 2026-11-11
+
+### Added
+- **Ask the Board answers questions about a specific card.** A new retrieval stage
+  (`resolveMentionedTasks` + `gatherTaskDetails` in `server/askKnowledge.js`)
+  matches a card named by id, exact title, or significant title words, then
+  renders its status, ownership, branch, milestone, dependencies, version,
+  reclaim counters, description, newest agent-log entries (merging the inline
+  array with the spilled JSONL sidecar) and comments into a `<task_details>`
+  prompt block. Up to three cards per question, 40 log entries per card,
+  newest first, with a `showing N of M` disclosure.
+- **Ask the Board sees board-wide metadata.** `gatherBoardFacts` adds project
+  summaries, milestones with progress, archive and trash counts, backup status,
+  and the most recent audit entries (when `KANBAN_AUDIT_LOG` is on) as a
+  `<board_facts>` block. `backup_root` is deliberately never included.
+- **Credential-shaped values in card text are redacted by default**
+  (`redactSecrets`): `sk-`/`pk-`/`rk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`,
+  Slack, AWS `AKIA`, JWTs, `Bearer` headers, PEM private keys,
+  `*TOKEN|SECRET|PASSWORD|APIKEY|ACCESS_KEY=value`, and URLs carrying
+  userinfo. New `KANBAN_ASK_INCLUDE_LOGS=raw` opts out.
+
+### Changed
+- **Prompt budget raised from 6000 to 24000 tokens** for hosted providers
+  (`DEFAULT_MAX_PROMPT_TOKENS`), because the prompt now carries card history and
+  board metadata. A **local Ollama is no longer budgeted at all**:
+  `KANBAN_ASK_MAX_PROMPT_TOKENS` is ignored when the host is loopback and the
+  model is not `:cloud`, so nothing is trimmed. Card details are the last block
+  to be trimmed, after commits and before the source excerpt.
+- The guardrail now ranks evidence explicitly — `<task_details>` for one card's
+  history, the live snapshot for board-wide counts, `<board_facts>` for
+  milestones/archive/backup/audit, then the protocol summary — and requires the
+  model to say it could not match a named card rather than substituting another.
+- About page, README and operator manual no longer claim the assistant "never
+  sees a token"; they describe the in-process card reads and the redaction
+  default instead.
+
+### Tests
+- 19 new Ask-the-Board tests: card resolution by id/title/words, redaction
+  units, spill merge and de-duplication, `<task_details>` and `<board_facts>`
+  formatting, no trimming at an infinite budget, the local-Ollama budget
+  bypass, and an end-to-end regression that a named card's log message reaches
+  the upstream system prompt.
+
 ## [3.10.5] — 2026-11-01
 
 ### Added

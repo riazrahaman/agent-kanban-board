@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
-import { buildSystemPrompt, gatherSnapshot, gatherSourceContext, gatherRecentCommits } from '../askKnowledge.js';
+import { buildSystemPrompt, gatherSnapshot, gatherTaskDetails, gatherBoardFacts, gatherSourceContext, gatherRecentCommits, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
 import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
 
@@ -45,9 +45,9 @@ function setupTailscaleDnsFallback() {
  *
  * UNAUTHENTICATED by the board's token model, but gated by a shared password
  * (`x-ask-pass`) and mounted in server.js BEFORE the auth middleware, exactly
- * like `/api/bug-reports` — see the mount-order comment there. It never reads
- * or writes the board: no token is accepted, and the only board data it sees
- * is the in-process snapshot assembled by `gatherSnapshot(store)`.
+ * like `/api/bug-reports` — see the mount-order comment there. It never writes
+ * the board and accepts no token: the only board data it sees is assembled
+ * in-process by `gatherSnapshot(store)` and `gatherTaskDetails(store, ...)`.
  *
  * Off (fail-closed). The password is ALWAYS required; the OpenRouter key is
  * required only for the `openrouter` provider (see resolveProvider below):
@@ -66,7 +66,12 @@ function setupTailscaleDnsFallback() {
  *   KANBAN_ASK_DAILY_CAP            default: 50 (global, per UTC day)
  *   KANBAN_ASK_PER_IP_PER_HOUR      default: 3
  *   KANBAN_ASK_TIMEOUT_MS           default: 45000
- *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 6000
+ *   KANBAN_ASK_MAX_PROMPT_TOKENS    default: 24000 — IGNORED for a local
+ *                                   Ollama (loopback / not :cloud): no prompt
+ *                                   budget is applied there at all (v3.11.0)
+ *   KANBAN_ASK_INCLUDE_LOGS         'redacted' (default) | 'raw'. Raw sends card
+ *                                   log/comment text verbatim — including anything
+ *                                   an agent pasted into a log entry.
  *   KANBAN_ASK_MAX_OUTPUT_TOKENS    default: 1500 — but on the ollama provider
  *                                   max_tokens is OMITTED entirely unless this
  *                                   is set, because the cap also bounds a
@@ -206,6 +211,7 @@ function readEnv() {
     KANBAN_ASK_TIMEOUT_MS: process.env.KANBAN_ASK_TIMEOUT_MS,
     KANBAN_ASK_MAX_PROMPT_TOKENS: process.env.KANBAN_ASK_MAX_PROMPT_TOKENS,
     KANBAN_ASK_MAX_OUTPUT_TOKENS: process.env.KANBAN_ASK_MAX_OUTPUT_TOKENS,
+    KANBAN_ASK_INCLUDE_LOGS: process.env.KANBAN_ASK_INCLUDE_LOGS,
     KANBAN_ASK_SNAPSHOT_PROJECTS: process.env.KANBAN_ASK_SNAPSHOT_PROJECTS,
     KANBAN_AUTH_RATE_LIMIT_PER_MIN: process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN,
   };
@@ -518,20 +524,37 @@ export function createAskRouter(deps = {}) {
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
 
-    // 4. Build the prompt from the protocol pack + retrieved source + a live
-    //    read-only snapshot.
-    const maxPromptTokens = intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, 6000);
+    // 4. Build the prompt from the protocol pack + retrieved source + the cards
+    //    the question names + a live read-only snapshot.
+    //    Local Ollama gets NO prompt budget: the owner runs the model, so
+    //    trimming detail to protect a hosted token bill makes no sense there.
+    const maxPromptTokens = isLocalOllama(env)
+      ? Number.POSITIVE_INFINITY
+      : intFrom(env.KANBAN_ASK_MAX_PROMPT_TOKENS, DEFAULT_MAX_PROMPT_TOKENS);
     const retrieved = gatherSourceContext(question.trim());
     // v3.10.4: commit-level history (public GitHub API, cached) so questions
     // about "what changed recently in the code" are answered from fact.
     const recentCommits = await gatherRecentCommits({ fetchImpl: deps.commitsFetch });
+    // v3.11.0: full record (fields, log tail, comments) of the cards the
+    // question names. Redacted unless the operator opts into raw text.
+    const includeRawLogs = String(env.KANBAN_ASK_INCLUDE_LOGS || '').trim().toLowerCase() === 'raw';
+    const taskDetails = await gatherTaskDetails(store, question.trim(), {
+      projects: snapshotProjects(env),
+      includeRaw: includeRawLogs,
+    });
     const snapshot = gatherSnapshot(store, { projects: snapshotProjects(env) });
     const fallback = !snapshot || snapshot.available === false;
+    // v3.11.0: milestones, archive/trash, backup health and the short audit
+    // trail — board data that is a disk file or an accessor, not a route the
+    // model could reach on its own.
+    const boardFacts = await gatherBoardFacts(store, { projects: snapshotProjects(env) });
     if (fallback) {
       console.warn('[kanban ask] live board snapshot unavailable; answering from the static knowledge pack');
     }
     const systemPrompt = buildSystemPrompt({
       snapshot,
+      taskDetails,
+      boardFacts,
       retrieved,
       recentCommits,
       maxTokens: maxPromptTokens,

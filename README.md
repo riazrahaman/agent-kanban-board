@@ -382,11 +382,18 @@ because it is the only part of the guide a reader can interrogate.
 How it answers: the question is tokenised, the most relevant few repository
 files are ranked and a window around the match is folded into the system prompt
 (`server/askKnowledge.js` — `rankSourceFiles` / `gatherSourceContext`),
-alongside a live read-only board snapshot. So it can explain the code itself,
-not only the documented protocol.
+alongside a live read-only board snapshot (`gatherSnapshot`), board metadata
+such as milestones, archive and backup state (`gatherBoardFacts`), and — when
+the question names a card by id or title — that card's full record, log history
+and comments (`gatherTaskDetails`). So it can explain the code itself, trace a
+single card's history, or report what the whole board is doing.
 
-What it cannot do: it never reads or writes a card, never accepts a board token,
-and never sees one. `server/routes/ask.js` is mounted ahead of the auth
+What it cannot do: it never mutates the board and never accepts a board token.
+It does read: card records are assembled in-process and rendered into the
+prompt, so the model *can* see card text. Credential-shaped strings (`sk-…`,
+`ghp_…`, `Bearer …`, `*TOKEN=…`, URLs with userinfo) are redacted to
+`[redacted]` first; `KANBAN_ASK_INCLUDE_LOGS=raw` sends card text verbatim.
+`server/routes/ask.js` is mounted ahead of the auth
 middleware (like bug reports) and carries its own gate and its own limits — a
 global per-day cap, a per-IP per-hour cap, and a separate wrong-password
 counter.
@@ -552,7 +559,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
 | `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
 | `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated, provider, model}`; `provider` added v3.7.0); the console only renders when enabled | Public |
-| `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never reads or writes a card | Shared password (not a board token) |
+| `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never mutates a card, reads the named card's record and logs in-process (redacted by default) | Shared password (not a board token) |
 
 ---
 
