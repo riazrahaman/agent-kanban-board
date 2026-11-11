@@ -215,7 +215,7 @@ Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOAR
 
 From `2.14.3` on, the skill version in `SKILL.md` matches the [SkillPort listing](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban). Earlier GitHub releases (`v1.0.0`–`v1.2.0`) map to SkillPort versions as recorded in [CHANGELOG.md](CHANGELOG.md).
 
-Skill versions are independent of agent-kanban-board versions. Board compatibility is listed in each changelog entry.
+The skill's frontmatter `version` tracks the board release it ships with (enforced by `server/test/kanban.version.test.js` since v3.9.5); the [SkillPort listing](https://skills.syed-hasan.com/skills/riazrahaman/agentkanban) is republished per release. Board compatibility is listed in each changelog entry.
 
 Release tags: [GitHub Releases](https://github.com/riazrahaman/kanban-orchestrator/releases).
 

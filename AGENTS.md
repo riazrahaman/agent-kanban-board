@@ -193,8 +193,8 @@ material as a 15-slide deck (`deck.json` + one HTML file per slide, presenter
 notes in each slide's `<aside>`; built from the Artifact Slides type). All three
 are **version-pinned by the same test** - the deck through the version its cover
 footer renders - so a release must bump them too, and a change to one belongs in
-the same commit as the others. The deck also carries its own update contract
-(section 11 of the runbook): a change to the lifecycle, a launch/install command,
+the same commit as the others. The runbook carries the update contract that
+applies to all three (section 11): a change to the lifecycle, a launch/install command,
 the skill's bootstrap, any `KANBAN_*` variable it uses, `.env.example`, an
 endpoint or header in one of its `curl` blocks, an error code, or the `docs/`
 inventory has to be reflected there in the same commit - people type its

@@ -36,7 +36,7 @@ driving the board over plain HTTP; humans watch.
 | `render.yaml` | Legacy/secondary Render blueprint (kept; not the active host). |
 | `CHANGELOG.md` | Per-release history; the version discipline is enforced by tests + CI. |
 | `README.md` | Primary operator/agent documentation, endpoint table, "Releasing". |
-| Other root files | `.env.example`, `Makefile` (`test`/`build`/`sec`), `package.json` (umbrella scripts only), `CLAUDE.md`, `ONBOARDING.md`, `DESIGN.md`, `LICENSE`. |
+| Other root files | `.env.example`, `Makefile` (`test`/`build`/`sec`), `package.json` (umbrella scripts only), `AGENTS.md` (canonical agent guide), `CLAUDE.md` (pointer to it), `ONBOARDING.md`, `DESIGN.md`, `LICENSE`. |
 
 ---
 
