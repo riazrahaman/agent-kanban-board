@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
-import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot, resetRecentCommits } from '../askKnowledge.js';
+import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot, resetRecentCommits, buildSystemPrompt, gatherTaskDetails, formatTaskDetails, resolveMentionedTasks, redactSecrets, gatherBoardFacts, formatBoardFacts, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
 import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama, snapshotProjects } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
@@ -703,6 +703,301 @@ describe('ask: snapshot project activity enrichment', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Card-level retrieval (v3.11.0)
+//
+// The regression this covers is the one a user actually hit: the deployed
+// assistant was asked "from the history of task pl-fu-flaky-load-tests get me
+// all the details logged in it" and answered that it had no access to card
+// logs. The logs were in the in-process store; gatherSnapshot simply never
+// projected them.
+// ---------------------------------------------------------------------------
+
+describe('ask: card-level retrieval', () => {
+  const CARD = {
+    id: 'pl-fu-flaky-load-tests',
+    project: 'kanbann',
+    title: 'Stabilise load-sensitive tests that time out at 5s',
+    description: 'Flaky &amp; timing-sensitive &lt;suite&gt;.',
+    status: 'READY',
+    priority: 'high',
+    branch: 'fix/flaky-load-tests',
+    milestone: 'v3.11',
+    round: 2,
+    issues: ['#88'],
+    depends_on: ['pl-fu-ci'],
+    version: 12,
+    assigned_agent: null,
+    reclaim_count: 1,
+    created_at: '2026-11-01T09:00:00Z',
+    updated: '2026-11-02T10:00:00Z',
+    stage_owners: { PLANNING: 'planner-1' },
+    agent_logs: [
+      { timestamp: '2026-11-01T09:00:00Z', agent_id: 'planner-1', message: 'Filed the card after a red CI run.' },
+      { timestamp: '2026-11-01T09:05:00Z', agent_id: 'builder-main', message: 'Reproduced: 5s timeout under load.' },
+      { timestamp: '2026-11-01T09:10:00Z', agent_id: 'builder-main', message: 'A key sk-or-v1-abcdefghijklmnop got pasted into a log line.' },
+    ],
+    comments: [{ timestamp: '2026-11-01T09:12:00Z', agent_id: 'human', message: 'Please keep the 5s budget.' }],
+  };
+
+  const QUESTION = 'from the history of task pl-fu-flaky-load-tests get me all the details logged in it';
+
+  it('resolves a card named by its id, and by its title words', () => {
+    const byId = resolveMentionedTasks(QUESTION, [CARD]);
+    assert.equal(byId.length, 1);
+    assert.equal(byId[0].task.id, 'pl-fu-flaky-load-tests');
+    assert.equal(byId[0].reason, 'id');
+
+    const byWords = resolveMentionedTasks('what happened with the stabilise load-sensitive tests?', [CARD]);
+    assert.equal(byWords.length, 1);
+    assert.equal(byWords[0].reason, 'title words');
+  });
+
+  it('does not match a card the question never names', () => {
+    assert.deepEqual(resolveMentionedTasks('how does the reaper reclaim a card?', [CARD]), []);
+  });
+
+  it('renders the full card record with newest log first and credentials redacted', async () => {
+    const details = await gatherTaskDetails(fakeStore([CARD]), QUESTION);
+    assert.equal(details.available, true);
+    assert.deepEqual(details.matched, ['pl-fu-flaky-load-tests']);
+    const card = details.cards[0];
+    assert.equal(card.match, 'id');
+    assert.equal(card.status, 'READY');
+    assert.equal(card.priority, 'high');
+    assert.equal(card.branch, 'fix/flaky-load-tests');
+    assert.deepEqual(card.issues, ['#88']);
+    assert.deepEqual(card.depends_on, ['pl-fu-ci']);
+    assert.equal(card.stage_owners.PLANNING, 'planner-1');
+    assert.equal(card.description, 'Flaky & timing-sensitive <suite>.', 'stored HTML entities are unfolded for the prompt');
+    assert.equal(card.logs_shown, 3);
+    assert.equal(card.logs_total, 3);
+    assert.equal(card.logs[0].timestamp, '2026-11-01T09:10:00Z', 'logs are newest-first');
+    assert.match(card.logs[0].message, /\[redacted-key\]/);
+    assert.ok(!card.logs[0].message.includes('sk-or-v1-abcdefghijklmnop'));
+    assert.equal(card.redactions, 1);
+    assert.equal(card.comments_total, 1);
+  });
+
+  it('sends raw card text only when includeRaw is set', async () => {
+    const details = await gatherTaskDetails(fakeStore([CARD]), QUESTION, { includeRaw: true });
+    assert.match(details.cards[0].logs[0].message, /sk-or-v1-abcdefghijklmnop/);
+    assert.equal(details.cards[0].redactions, 0);
+  });
+
+  it('merges the spilled log sidecar, de-duplicates, and reports the true total', async () => {
+    const task = {
+      ...CARD,
+      agent_logs: [{ timestamp: '2026-11-01T10:00:00Z', agent_id: 'builder-main', message: 'newest inline' }],
+    };
+    const store = {
+      ...fakeStore([task]),
+      getTaskLogs: async () => ({
+        status: 200,
+        spilled_count: 2,
+        entries: [
+          { timestamp: '2026-11-01T09:00:00Z', agent_id: 'planner-1', message: 'oldest spilled' },
+          { timestamp: '2026-11-01T09:30:00Z', agent_id: 'builder-main', message: 'middle spilled' },
+          { timestamp: '2026-11-01T10:00:00Z', agent_id: 'builder-main', message: 'newest inline' },
+        ],
+      }),
+    };
+    const details = await gatherTaskDetails(store, QUESTION);
+    const card = details.cards[0];
+    assert.equal(card.logs_total, 3);
+    assert.equal(card.spilled_count, 2);
+    assert.equal(card.logs_shown, 3, 'the duplicate inline entry is not shown twice');
+    assert.deepEqual(card.logs.map((l) => l.message), ['newest inline', 'middle spilled', 'oldest spilled']);
+  });
+
+  it('honours the project allow-list, and fails closed', async () => {
+    const details = await gatherTaskDetails(fakeStore([CARD]), QUESTION, { projects: ['some-other-project'] });
+    assert.equal(details.available, true);
+    assert.deepEqual(details.cards, []);
+    assert.deepEqual(details.matched, []);
+  });
+
+  it('formats a delimited block with facts, timestamps and the showing-N-of-M disclosure', async () => {
+    const text = formatTaskDetails(await gatherTaskDetails(fakeStore([CARD]), QUESTION));
+    assert.match(text, /^<task_details>/);
+    assert.match(text, /<\/task_details>$/);
+    assert.match(text, /\[READY\] pl-fu-flaky-load-tests — Stabilise load-sensitive tests/);
+    assert.match(text, /priority=high/);
+    assert.match(text, /issues=#88/);
+    assert.match(text, /stage_owners: PLANNING=planner-1/);
+    assert.match(text, /logs \(newest first, showing 3 of 3\):/);
+    assert.match(text, /2026-11-01T09:10:00Z builder-main: A key \[redacted-key\]/);
+    assert.match(text, /credential-shaped value\(s\) redacted/);
+  });
+
+  it('tells the model to admit it could not match a named card instead of inventing history', () => {
+    const text = formatTaskDetails({ available: true, cards: [], matched: [] });
+    assert.match(text, /did not name a card that exists on this board/);
+    assert.match(text, /do not invent its history/);
+    const unavailable = formatTaskDetails({ available: false, cards: [] });
+    assert.match(unavailable, /could not be read/);
+  });
+
+  it('puts the card history in the system prompt with enough budget', async () => {
+    const prompt = buildSystemPrompt({
+      snapshot: gatherSnapshot(fakeStore([CARD])),
+      taskDetails: await gatherTaskDetails(fakeStore([CARD]), QUESTION),
+      retrieved: null,
+      maxTokens: DEFAULT_MAX_PROMPT_TOKENS,
+    });
+    assert.match(prompt, /<task_details>/);
+    assert.match(prompt, /Reproduced: 5s timeout under load\./);
+    assert.ok(!/card details trimmed|card details omitted/.test(prompt));
+  });
+
+  it('never trims a card block when the budget is unlimited (local Ollama)', async () => {
+    const prompt = buildSystemPrompt({
+      snapshot: gatherSnapshot(fakeStore([CARD])),
+      taskDetails: await gatherTaskDetails(fakeStore([CARD]), QUESTION),
+      retrieved: null,
+      maxTokens: Number.POSITIVE_INFINITY,
+    });
+    assert.ok(!/trimmed to fit the prompt budget/.test(prompt));
+    assert.ok(!/omitted — prompt budget exhausted/.test(prompt));
+  });
+
+  it('defaults the prompt budget to a value that can hold card history', () => {
+    assert.ok(DEFAULT_MAX_PROMPT_TOKENS >= 24000, '6000 could not hold the protocol, the snapshot and a card history');
+  });
+
+  it('redacts credential-shaped values and leaves ordinary prose alone', () => {
+    assert.match(redactSecrets('ghp_abcdefghijklmnopqrstuvwxyz0123456789'), /\[redacted-token\]/);
+    assert.match(redactSecrets('token: sk-live-abcdefghijklmnop'), /token: \[redacted\]/);
+    assert.match(redactSecrets('Authorization: Bearer abcdefghijklmnopqrstu'), /Bearer \[redacted\]/);
+    assert.match(redactSecrets('postgres://user:hunter2secret@db.internal/app'), /postgres:\/\/user:\[redacted\]@/);
+    assert.equal(redactSecrets('The reaper resets the card to READY.'), 'The reaper resets the card to READY.');
+  });
+
+  it('end-to-end: a question naming a card puts its logged history in the upstream prompt', async () => {
+    const fetchImpl = makeFetch();
+    const store = {
+      ...fakeStore([CARD]),
+      getTaskLogs: async () => ({ status: 200, spilled_count: 0, entries: [] }),
+    };
+    await withApp({ env: baseEnv(), fetch: fetchImpl, store }, async (baseUrl) => {
+      const { res } = await jsonRequest(
+        baseUrl,
+        '/api/ask',
+        askRequest({ body: JSON.stringify({ question: QUESTION }) }),
+      );
+      assert.equal(res.status, 200);
+    });
+    const sent = JSON.parse(fetchImpl.calls[0].opts.body);
+    const systemPrompt = sent.messages[0].content;
+    assert.match(systemPrompt, /<task_details>/);
+    assert.match(systemPrompt, /pl-fu-flaky-load-tests/);
+    assert.match(systemPrompt, /Reproduced: 5s timeout under load\./, 'the logged history must reach the model');
+    assert.match(systemPrompt, /Filed the card after a red CI run\./);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Board-wide metadata (v3.11.0)
+//
+// Milestones, archive/trash counts, backup health and the audit trail were all
+// answerable only by an operator with shell access: the snapshot carries counts
+// and recent titles, nothing else.
+// ---------------------------------------------------------------------------
+
+describe('ask: board-wide metadata', () => {
+  function factsStore() {
+    return {
+      getTasks: () => [
+        { id: 'a', project: 'kanbann', status: 'DONE', milestone: 'v3.11' },
+        { id: 'b', project: 'kanbann', status: 'DONE', milestone: 'v3.11' },
+      ],
+      getProjectSummaries: () => [
+        { project: 'kanbann', task_count: 5, done_count: 3, live_count: 5, archived_count: 2, updated: '2026-11-10T00:00:00Z' },
+      ],
+      getMilestones: (project) => (project === 'kanbann'
+        ? [{ milestone: 'v3.11', project: 'kanbann', total: 4, done: 3, progress: 75, by_status: { DONE: 3, IN_PROGRESS: 1 } }]
+        : []),
+      getArchivedTasks: () => [{ project: 'kanbann' }, { project: 'kanbann' }],
+      getTrashedTasks: () => [{ project: 'kanbann' }],
+      // backup_root must never reach the model.
+      backupStatus: () => ({
+        enabled: true,
+        backup_count: 5,
+        last_backup_at: '2026-11-10T00:00:00Z',
+        backup_root: '/var/secret/backups',
+        interval_ms: 21600000,
+      }),
+    };
+  }
+
+  const AUDIT = [
+    { ts: '2026-11-10T12:00:00Z', project: 'kanbann', task_id: 'pl-fu-ci', kind: 'updated', actor: 'builder-main', reason: null },
+  ];
+
+  it('collects milestones, archive/trash, backup health and the audit window', async () => {
+    const facts = await gatherBoardFacts(factsStore(), { auditEntries: AUDIT });
+    assert.equal(facts.available, true);
+    assert.equal(facts.milestones.length, 1);
+    assert.equal(facts.milestones[0].progress, 75);
+    assert.deepEqual(facts.milestones[0].by_status, { DONE: 3, IN_PROGRESS: 1 });
+    assert.equal(facts.archived_total, 2);
+    assert.deepEqual(facts.archived_by_project, { kanbann: 2 });
+    assert.equal(facts.trashed_total, 1);
+    assert.equal(facts.backup.count, 5);
+    assert.equal(facts.backup.enabled, true);
+    assert.equal(facts.audit.length, 1);
+    assert.equal(facts.audit[0].task_id, 'pl-fu-ci');
+  });
+
+  it('formats a delimited block and never exposes a filesystem path', async () => {
+    const text = formatBoardFacts(await gatherBoardFacts(factsStore(), { auditEntries: AUDIT }));
+    assert.match(text, /^<board_facts>/);
+    assert.match(text, /<\/board_facts>$/);
+    assert.match(text, /archive: 2 archived card\(s\) \(kanbann=2\); trash: 1 card\(s\)\./);
+    assert.match(text, /backup: enabled, 5 snapshot\(s\), last 2026-11-10T00:00:00Z\./);
+    assert.match(text, /milestones \(1\):/);
+    assert.match(text, /- \[kanbann\] v3\.11: 3\/4 done \(75%\) — DONE=3 IN_PROGRESS=1/);
+    assert.match(text, /recent audit \(newest first, showing 1\):/);
+    assert.match(text, /pl-fu-ci updated by builder-main/);
+    assert.ok(!/var\/secret|backup_root/.test(text));
+  });
+
+  it('says the audit log is off instead of inventing past events', () => {
+    const text = formatBoardFacts({
+      available: true,
+      projects: [],
+      milestones: [],
+      milestones_total: 0,
+      archived_total: 0,
+      archived_by_project: {},
+      trashed_total: 0,
+      backup: null,
+      audit: [],
+    });
+    assert.match(text, /milestones: none recorded\./);
+    assert.match(text, /recent audit: not available \(KANBAN_AUDIT_LOG is off/);
+  });
+
+  it('honours the project allow-list', async () => {
+    const facts = await gatherBoardFacts(factsStore(), { projects: ['other'], auditEntries: AUDIT });
+    assert.equal(facts.available, true);
+    assert.equal(facts.milestones.length, 0);
+    assert.equal(facts.archived_total, 0);
+    assert.deepEqual(facts.audit, []);
+  });
+
+  it('puts the board metadata block in the system prompt', async () => {
+    const prompt = buildSystemPrompt({
+      snapshot: gatherSnapshot(fakeStore([])),
+      boardFacts: await gatherBoardFacts(factsStore(), { auditEntries: AUDIT }),
+      retrieved: null,
+      maxTokens: DEFAULT_MAX_PROMPT_TOKENS,
+    });
+    assert.match(prompt, /<board_facts>/);
+    assert.match(prompt, /v3\.11: 3\/4 done \(75%\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Answer quality (v3.6.4)
 //
 // The first real answer this feature ever produced was cut off mid-sentence and
@@ -829,6 +1124,37 @@ describe('ask: ollama provider', () => {
         assert.equal(sent.model, 'llama3.1:8b');
       },
     );
+  });
+
+  it('ignores KANBAN_ASK_MAX_PROMPT_TOKENS for a local model: the prompt is never trimmed', async () => {
+    const fetchImpl = makeOllamaFetch();
+    const tasks = [
+      {
+        id: 'local-card',
+        project: 'kanbann',
+        title: 'Local model card',
+        status: 'IN_PROGRESS',
+        agent_logs: [{ timestamp: '2026-11-01T09:00:00Z', agent_id: 'builder-main', message: 'A long local history line.' }],
+      },
+    ];
+    await withApp(
+      {
+        env: {
+          KANBAN_ASK_PROVIDER: 'ollama',
+          KANBAN_ASK_PASSWORD: FAKE_PASSWORD,
+          // Deliberately tiny: a local model must not be held to it at all.
+          KANBAN_ASK_MAX_PROMPT_TOKENS: '200',
+        },
+        fetch: fetchImpl,
+        store: { ...fakeStore(tasks), getTaskLogs: async () => ({ status: 200, spilled_count: 0, entries: [] }) },
+      },
+      async (baseUrl) => {
+        await jsonRequest(baseUrl, '/api/ask', askRequest({ body: JSON.stringify({ question: 'what happened on local-card?' }) }));
+      },
+    );
+    const systemPrompt = JSON.parse(fetchImpl.calls[0].opts.body).messages[0].content;
+    assert.ok(!/trimmed to fit the prompt budget|prompt budget exhausted/.test(systemPrompt));
+    assert.match(systemPrompt, /A long local history line\./);
   });
 
   it('supports Option 1 (Cloudflare tunnel auth header) with KANBAN_ASK_OLLAMA_AUTH_HEADER', async () => {

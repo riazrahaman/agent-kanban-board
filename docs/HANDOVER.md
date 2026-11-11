@@ -355,12 +355,15 @@ under `<data>/backups/<timestamp>/`. `scripts/restore-backup.mjs` restores one.
   set. `GET /api/ask/config` reports `{enabled,gated,model}`. `POST /api/ask`
   requires the `x-ask-pass` header and `{question}` (3–500 chars); it builds a
   system prompt from a curated protocol pack, **retrieved source excerpts**
-  (`rankSourceFiles` → `gatherSourceContext` → `readSourceExcerpt`) and a live
-  in-process snapshot (`gatherSnapshot`), then calls OpenRouter. Caps:
+  (`rankSourceFiles` → `gatherSourceContext` → `readSourceExcerpt`), a live
+  in-process snapshot (`gatherSnapshot`), board metadata (`gatherBoardFacts`),
+  and the full record/logs/comments of any card the question names
+  (`gatherTaskDetails`), then calls the configured provider. Caps:
   `KANBAN_ASK_DAILY_CAP`, `KANBAN_ASK_PER_IP_PER_HOUR`, plus a wrong-password
-  counter (`KANBAN_AUTH_RATE_LIMIT_PER_MIN`). It never reads/writes the board and
-  never sees a token; a failed live snapshot degrades to the static pack
-  (`fallback: true`).
+  counter (`KANBAN_AUTH_RATE_LIMIT_PER_MIN`). It never mutates the board and never
+  receives a board token; card text is redacted for credential-shaped strings
+  unless `KANBAN_ASK_INCLUDE_LOGS=raw`; a failed live snapshot degrades to the
+  static pack (`fallback: true`).
 
 ---
 

@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.10.5
+**System:** Agent Kanban Board v3.11.0
 
 ---
 
@@ -143,17 +143,23 @@ When the lease reaper returns a task to `READY` (an idle lease expired, a held t
 | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between alerts; the send queue is serialized so a multi-task sweep cannot trip Telegram's rate limit. |
 | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL for the alert's deep link. |
 
-### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider)
+### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider · v3.11.0 card history)
 
 The About page opens with a password-gated, **read-only** assistant that answers
 questions about this board — its protocol, engine, client, deployment and
 configuration. The question is tokenised, the most relevant repository files are
 ranked, and a window around the match is folded into the system prompt
-(`server/askKnowledge.js`) alongside a live read-only board snapshot, so it can
-explain the code and not only the documented protocol.
+(`server/askKnowledge.js`) alongside a live read-only board snapshot, board
+metadata (milestones, archive, backup, recent audit), and — when the question
+names a card — that card's full record, log history and comments. So it can
+explain the code, not only the documented protocol, and can trace a single
+card's history rather than only reporting board-wide figures.
 
-It never reads or writes a card, never accepts a board token, and never sees
-one. `server/routes/ask.js` is mounted ahead of the auth middleware (like bug
+It never mutates the board and never accepts a board token. It does read card
+records in-process: card text is redacted for credential-shaped strings
+(`sk-…`, `ghp_…`, `Bearer …`, `*TOKEN=…`, URLs with userinfo) before it reaches
+the model; `KANBAN_ASK_INCLUDE_LOGS=raw` disables that. `server/routes/ask.js`
+is mounted ahead of the auth middleware (like bug
 reports) and carries its own gate and its own limits. **Fail-closed on both
 secrets:** unset either the provider secret/host or `KANBAN_ASK_PASSWORD` and `GET /api/ask/config` reports `{"enabled":false}`,
 the console collapses to a one-line note, and `POST /api/ask` is unavailable.
@@ -173,8 +179,9 @@ Supported providers:
 | `KANBAN_ASK_DAILY_CAP` | `50` | Global answers per UTC day. |
 | `KANBAN_ASK_PER_IP_PER_HOUR` | `3` | Per-IP answers per hour. |
 | `KANBAN_ASK_TIMEOUT_MS` | `45000` | Upstream request timeout. |
-| `KANBAN_ASK_MAX_PROMPT_TOKENS` | `6000` | Prompt budget. Raised from 2000 in v3.5.0, since the prompt now carries retrieved source. |
+| `KANBAN_ASK_MAX_PROMPT_TOKENS` | `24000` | Prompt budget for a hosted provider. Ignored for a local Ollama (loopback host, model without a `:cloud` suffix): no budget is applied there. Raised from 6000 in v3.11.0 once card history and board metadata joined the prompt. |
 | `KANBAN_ASK_MAX_OUTPUT_TOKENS` | `1500` | Answer budget (raised to 1500 in v3.6.4). |
+| `KANBAN_ASK_INCLUDE_LOGS` | `redacted` | Card text sent to the model: `redacted` replaces credential-shaped values with `[redacted]`; `raw` sends it verbatim. |
 
 #### Connecting Railway-Hosted Kanban to Local Ollama
 

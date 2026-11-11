@@ -856,9 +856,9 @@ node scripts/gen-config-reference.mjs`,
     emoji: '💬',
     title: 'Ask the Board',
     eli5:
-      'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, so it can explain the code itself as well as the protocol, alongside a live read-only snapshot.',
+      'A password-locked assistant that answers questions about this board: it retrieves excerpts from the repository, reads card records and their log history in-process, and folds them into a live read-only snapshot — so it can explain the code, trace a single card\'s history, or report milestones, archive and backup state.',
     underTheHood:
-      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never reads or writes the board — the only board data it sees is an in-process snapshot — and the model never claims, moves or deletes a card, and never sees a token. By default the snapshot covers EVERY project on the board: the ask password is an owner credential, not a per-project token. KANBAN_ASK_SNAPSHOT_PROJECTS narrows it to a comma-separated allow-list when a deployment shares the password.',
+      'GET /api/ask/config reports whether the feature is on; POST /api/ask takes { question } behind an x-ask-pass password header. server/routes/ask.js is mounted before the auth middleware (like bug reports) but is gated by its own shared password and its own rate limits: a global per-day cap, a per-IP per-hour cap, and a separate wrong-password counter. It supports both OpenRouter and local Ollama (e.g. qwen3.6:latest via Cloudflare/Tailscale tunnels), omitting max_tokens on local reasoning models to prevent truncated thought chains. It never mutates the board: the evidence it sees is assembled in-process from the store — a board snapshot, the full record and log history of any card the question names (gatherTaskDetails), board metadata such as milestones, archive and backup state (gatherBoardFacts), and ranked source excerpts. Credential-shaped strings in card text are redacted to [redacted] before the model sees them (KANBAN_ASK_INCLUDE_LOGS=raw sends card text verbatim). The model never claims, moves or deletes a card, and never receives a board token. By default the snapshot covers EVERY project on the board: the ask password is an owner credential, not a per-project token. KANBAN_ASK_SNAPSHOT_PROJECTS narrows it to a comma-separated allow-list when a deployment shares the password.',
     snippet: {
       label: 'the ask surface',
       code: `GET  /api/ask/config   -> { "enabled": true, "gated": true, "provider": "ollama", "model": "..." }
@@ -925,8 +925,9 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_ASK_DAILY_CAP', purpose: 'Global Ask-the-Board answers cap per UTC day (default 50).' },
   { name: 'KANBAN_ASK_PER_IP_PER_HOUR', purpose: 'Per-IP Ask-the-Board answers cap per hour (default 3).' },
   { name: 'KANBAN_ASK_TIMEOUT_MS', purpose: 'Upstream request timeout for Ask-the-Board, in ms (default 45000).' },
-  { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for Ask-the-Board (default 6000).' },
+  { name: 'KANBAN_ASK_MAX_PROMPT_TOKENS', purpose: 'System-prompt token budget for a hosted provider (default 24000); a local Ollama gets no budget at all.' },
   { name: 'KANBAN_ASK_MAX_OUTPUT_TOKENS', purpose: 'Max completion tokens for one Ask-the-Board answer (default 1500).' },
+  { name: 'KANBAN_ASK_INCLUDE_LOGS', purpose: 'Card text sent to the model: "redacted" (default — credential-shaped values become [redacted]) or "raw".' },
   { name: 'KANBAN_DEPLOY_DRIFT_INTERVAL_MS', purpose: 'Deploy-drift check interval (default 1800000 = 30 min; <= 0 disables). KANBAN_DEPLOY_DRIFT_GRACE_MS (default 2700000 = 45 min) is how long a version mismatch must hold before it is called drift.' },
 ]
 
