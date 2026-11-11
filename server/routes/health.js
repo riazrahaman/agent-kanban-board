@@ -25,7 +25,9 @@ function asyncHandler(handler) {
  */
 router.get('/', asyncHandler(async (req, res) => {
   const loaded = store.isStoreLoaded();
-  const live = store.getTasks();
+  // B3 (v3.12.2): the probe only needs the count — getTasks() sorts a full
+  // copy of the live set for nothing. O(1) instead of O(n log n).
+  const liveCount = store.getTaskCount();
   const reaperEnabled = store.isReaperEnabled();
 
   // §2.10 / §2.11: surface credential-map coverage so a monitoring probe sees a
@@ -54,8 +56,8 @@ router.get('/', asyncHandler(async (req, res) => {
     status: loaded && reaperEnabled ? 'ok' : 'degraded',
     uptime_seconds: Math.round(process.uptime()),
     store_loaded: loaded,
-    tasks_total: live.length,
-    tasks_live: live.length,
+    tasks_total: liveCount,
+    tasks_live: liveCount,
     listeners: store.listenerCounts(),
     reaper: {
       enabled: reaperEnabled,

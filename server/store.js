@@ -927,6 +927,16 @@ export function getTask(id, project) {
   return index.get(compositeKey(resolved, shortId)) ?? null;
 }
 
+/**
+ * B3 (v3.12.2): O(1) live-task count. The health probe only needs `.length`,
+ * but the only accessor it had was getTasks() with no project — which sorts a
+ * full COPY of the live set (O(n log n)) on every probe. Preferred over a
+ * Pipeline-C cached count for determinism: `tasks` is the single live array.
+ */
+export function getTaskCount() {
+  return tasks.length;
+}
+
 export function getArchivedTasks(project) {
   if (project === undefined || project === null || project === '') {
     let out = [];
@@ -2880,7 +2890,14 @@ function isEligibleForArchive(task, days, nowMs) {
  * then created_at, then updated) into their project's archive. Idempotent and
  * safe to run on every boot and lazily before reads. 0 disables the sweep.
  */
-export async function runArchiveSweep({ lazy = false } = {}) {
+// B2 (v3.12.2): the lazy no-op check runs BEFORE withMutationLock. It used to
+// sit inside the lock, so every list read queued behind in-flight mutations
+// even when the sweep was about to skip itself. `mutationSerial` is only ever
+// written under the lock, so a serial bumped between this check and lock
+// acquisition simply means the sweep runs again on a later read — the same
+// eventual invariant, with no torn state and no correctness change.
+export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
+  if (lazy && mutationSerial === lastSweepSerial) return 0;
   return withMutationLock(async () => {
     // v2.5.6: the trash-retention sweep rides the same cadence (any read path
     // that sweeps the archive also ages out the trash sink). Called via the
@@ -2889,14 +2906,20 @@ export async function runArchiveSweep({ lazy = false } = {}) {
     // Deep-review: retention only changes on committed mutations, so a sequence
     // of reads with no writes between them needs no resweep. Forced calls
     // (POST /tasks/archive/sweep) and the boot sweep always run.
-    if (lazy && mutationSerial === lastSweepSerial) return 0;
     lastSweepSerial = mutationSerial;
-    await runTrashSweepInner();
+    // A4 (v3.12.2): optional { projects } narrows BOTH sweeps to the caller's
+    // authorized set (a project-scoped credential must not sweep other
+    // projects' sinks). Unscoped callers pass null and sweep everything.
+    await runTrashSweepInner(projects);
     const days = getArchiveAfterDays();
     if (days === 0) return 0;
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
+
+    // A4 (v3.12.2): when the caller supplied a project set (a scoped sweep),
+    // only those projects are eligible for the move.
+    const projectFilter = projects === undefined || projects === null ? null : new Set(projects);
 
     // Deep-review P1: a DONE card that still blocks a live dependency must NOT
     // be archived. dependencyGate resolves deps in the LIVE index only, so an
@@ -2980,6 +3003,7 @@ export async function runArchiveSweep({ lazy = false } = {}) {
 
     // Run for every project that currently has live tasks.
     for (const [project, liveList] of byProject) {
+      if (projectFilter && !projectFilter.has(project)) continue;
       await runFor(project, liveList);
      }
 
@@ -2987,6 +3011,7 @@ export async function runArchiveSweep({ lazy = false } = {}) {
     // the early return in runFor makes it a no-op unless it actually has
     // eligible rows to move (so no archive sink churn when nothing moved).
     for (const project of Object.keys(archive)) {
+      if (projectFilter && !projectFilter.has(project)) continue;
       if (!byProject.has(project)) {
         await runFor(project, []);
       }
@@ -3411,17 +3436,24 @@ export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
  * KANBAN_TRASH_DAYS (default 30). Runs inside the existing archive sweep
  * cadence (GET /archive, GET /tasks, GET /metrics all sweep first).
  *
+ * A4 (v3.12.2): an optional `projects` iterable (array/Set, or null) narrows
+ * the sink loop to those projects — a scoped archive sweep must not hard-delete
+ * rows from projects its credential cannot see. Null keeps the historical
+ * all-projects behaviour.
+ *
  * Lock discipline (mirrors reclaimTaskInner/public reclaimTask): the inner
  * function does the work WITHOUT acquiring the mutation lock, so
  * runArchiveSweep — which already holds the lock — can call it directly.
  * The exported wrapper acquires the lock for standalone callers.
  */
-async function runTrashSweepInner() {
+async function runTrashSweepInner(projects = null) {
   const days = getTrashDays();
   if (days <= 0) return { purged: [], now: Date.now() };
   const nowMs = Date.now();
   const purged = [];
+  const projectFilter = projects === undefined || projects === null ? null : new Set(projects);
   for (const [project, list] of Object.entries(trash)) {
+    if (projectFilter && !projectFilter.has(project)) continue;
     const expired = list.filter((t) => {
       const anchor = t.deleted_at || t.updated || t.created_at;
       if (!anchor) return false;

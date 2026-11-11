@@ -16,6 +16,46 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.2] — 2026-11-11
+
+### Security
+
+- The archive and trash sinks are now scoped like every other read: GET
+  `/api/tasks/archive` and GET `/api/tasks/trash` clamp a project-scoped
+  credential to its authorized projects (an unauthorized explicit `?project=`
+  returns `[]`, never a widening), and POST `/api/tasks/archive/sweep` accepts
+  an authorized-projects narrowing — a scoped sweep moves and reports only the
+  caller's own projects; unscoped (admin/global) callers sweep everything as
+  before.
+- Session-handshake proofs are no longer replayable: POST `/api/auth/challenge`
+  issues a server-side, short-TTL, single-use challenge (default 120s,
+  `KANBAN_SESSION_CHALLENGE_TTL_MS`), and a proof presented with
+  `server_nonce` is bound to it and consumed on first successful verification —
+  a replayed proof fails. Grace flag `KANBAN_SESSION_NONCE_MODE` defaults to
+  `legacy` this release so existing clients keep the challenge-less proof;
+  `required` rejects proofs without a live unconsumed challenge and becomes the
+  default next release.
+
+### Performance
+
+- The lazy archive sweep's no-op check runs before the mutation lock instead of
+  inside it, so list reads no longer queue behind in-flight mutations when the
+  sweep is about to skip itself (the serial race is safe: a missed serial just
+  means the sweep runs again on a later read).
+- `GET /api/health` reports task counts via a new O(1) `getTaskCount()` instead
+  of sorting a full copy of the live set per probe.
+- `parseProjectTokens` memoizes its JSON parse keyed on the raw
+  `KANBAN_PROJECT_TOKENS` string (malformed sentinel included), so per-request
+  re-parsing and re-validation of the credential map is gone; a changed env
+  string invalidates the cache automatically.
+
+Tests: archive/trash scoping + scoped-sweep regressions in the project-isolation
+suite, a new session-challenge suite (required and legacy modes, expiry, replay),
+a sweep lock-reorder case in the archive suite, a health-count case, and token-
+map memoization cases in the credential-map suite (764 total, up from 741).
+
+_Credit: Board Health Check review — release v3.12.2._
+
 ## [3.12.1] — 2026-11-11
 
 ### Security

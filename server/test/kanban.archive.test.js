@@ -274,6 +274,40 @@ describe('§2.8 archiving & storage hygiene', () => {
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
        });
 
+  it('20b. (v3.12.2 B2) forced and lazy sweeps keep their behaviour after the lock reorder', async () => {
+    await freshJsonStore('reorder');
+    process.env.KANBAN_ARCHIVE_AFTER_DAYS = '7';
+
+    // The boot sweep already recorded the serial; HTTP mutations below advance
+    // it, so a lazy sweep must still MOVE the eligible task (the no-op check
+    // may have moved before the lock, but it must not skip real work).
+    const created = await jsonRequest(baseUrl, '/api/tasks?project=box', {
+      method: 'POST', headers: headers(), body: taskBody('reorder-done', 'Reorder'),
+      });
+    assert.equal(created.response.status, 201);
+    await driveToDone(baseUrl, 'reorder-done', 'box');
+    await backdateTask('reorder-done', 31, 'box');
+
+    const lazyMoved = await store.runArchiveSweep({ lazy: true });
+    assert.equal(lazyMoved, 1, 'a lazy sweep still moves eligible work');
+
+    // With nothing changed since, the lazy sweep skips — now without queueing
+    // behind the mutation lock.
+    const skipped = await store.runArchiveSweep({ lazy: true });
+    assert.equal(skipped, 0, 'an unchanged serial is still skipped in lazy mode');
+    assert.equal(store.getArchivedTasks('box').filter((x) => x.id === 'reorder-done').length, 1);
+
+    // A forced sweep runs regardless of the serial.
+    const second = await jsonRequest(baseUrl, '/api/tasks?project=box', {
+      method: 'POST', headers: headers(), body: taskBody('reorder-done2', 'Reorder 2'),
+      });
+    assert.equal(second.response.status, 201);
+    await driveToDone(baseUrl, 'reorder-done2', 'box');
+    await backdateTask('reorder-done2', 31, 'box');
+    const forced = await store.runArchiveSweep({ force: true });
+    assert.equal(forced, 1, 'a forced sweep runs and moves the newly eligible task');
+   });
+
   it('20. concurrency: a concurrent reader never sees a half-moved task', async () => {
     await freshJsonStore('conc');
     process.env.KANBAN_ARCHIVE_AFTER_DAYS = '7';

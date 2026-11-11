@@ -101,12 +101,39 @@ router.post('/', asyncHandler(async (req, res) => {
 router.get('/archive', asyncHandler(async (req, res) => {
   await store.runArchiveSweep({ lazy: true });
   const project = resolveProjectFromReq(req);
+  const authorized = getAuthorizedProjects(req);
+
+  // A4 (v3.12.2): the archive sink is a read like the list endpoint above —
+  // a project-scoped credential is clamped to its authorized projects instead
+  // of silently seeing every project's archived cards. Same clamp semantics:
+  // an unauthorized explicit ?project= is an empty list, never a widening.
+  if (authorized instanceof Set) {
+    if (project) {
+      if (!authorized.has(project)) return res.json([]);
+      return res.json(store.getArchivedTasks(project));
+    }
+    let out = [];
+    for (const p of authorized) out = out.concat(store.getArchivedTasks(p));
+    return res.json(out);
+  }
+
   res.json(store.getArchivedTasks(project));
 }));
 
 router.post('/archive/sweep', asyncHandler(async (req, res) => {
-  const moved = await store.runArchiveSweep({ force: true });
-  res.json({ moved, projects: store.getProjectSummaries() });
+  // A4 (v3.12.2): a project-scoped credential may only sweep its OWN projects
+  // — the store narrows its per-project loop (archive move + trash retention)
+  // to the authorized set, and the response's project summaries are clamped
+  // the same way. Unscoped callers (admin/global/open reads) sweep everything,
+  // unchanged.
+  const authorized = getAuthorizedProjects(req);
+  const projects = authorized instanceof Set ? [...authorized] : null;
+  const moved = await store.runArchiveSweep({ force: true, projects });
+  const summaries = store.getProjectSummaries();
+  res.json({
+    moved,
+    projects: projects ? summaries.filter((s) => projects.includes(s.project)) : summaries,
+  });
 }));
 
 // --- §admin-purge bulk purge (MUST be declared before /:id so Express treats
@@ -133,7 +160,22 @@ router.post('/purge', asyncHandler(async (req, res) => {
 
 router.get('/trash', asyncHandler(async (req, res) => {
   await store.runArchiveSweep({ lazy: true });
-  res.json(store.getTrashedTasks(resolveProjectFromReq(req)));
+  const project = resolveProjectFromReq(req);
+  const authorized = getAuthorizedProjects(req);
+
+  // A4 (v3.12.2): same clamp as /archive — the trash sink must not leak
+  // other projects' soft-deleted cards to a scoped credential.
+  if (authorized instanceof Set) {
+    if (project) {
+      if (!authorized.has(project)) return res.json([]);
+      return res.json(store.getTrashedTasks(project));
+    }
+    let out = [];
+    for (const p of authorized) out = out.concat(store.getTrashedTasks(p));
+    return res.json(out);
+  }
+
+  res.json(store.getTrashedTasks(project));
 }));
 
 router.post('/trash/:id/restore', asyncHandler(async (req, res) => {

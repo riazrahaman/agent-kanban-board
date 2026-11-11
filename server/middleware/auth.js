@@ -60,7 +60,7 @@ export const VALID_ROLES = new Set([
  * degrading to "one token opens every project" is precisely the isolation
  * failure this exists to stop.
  */
-export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
+function parseProjectTokensUncached(raw) {
   if (raw === undefined || raw === null || String(raw).trim() === '') return null;
   let parsed;
   try {
@@ -142,6 +142,23 @@ export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
     if (roles.size > 1) return { malformed: true };
   }
   return { map };
+}
+
+// B4 (v3.12.2): parseProjectTokens used to JSON.parse and re-validate the raw
+// env string on EVERY call — per request on the hot paths (getAuthorizedProjects,
+// the mutation guard, /api/health, the handshake). The result is memoized
+// keyed on the RAW string, so a changed KANBAN_PROJECT_TOKENS (tests, config
+// reload) invalidates the cache automatically via string inequality. The
+// malformed sentinel is memoized too, preserving the exact error semantics.
+let cachedRaw;
+let cachedResult;
+
+export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
+  if (raw === cachedRaw) return cachedResult;
+  const result = parseProjectTokensUncached(raw);
+  cachedRaw = raw;
+  cachedResult = result;
+  return result;
 }
 
 function extractToken(req) {
