@@ -146,14 +146,36 @@ describe('A6 — security headers (v3.12.4)', () => {
     assert.equal(d['default-src'], "'self'");
     assert.ok(!CONTENT_SECURITY_POLICY.includes('*'), 'the policy must never contain a wildcard');
     // No scheme-wide escape hatch: an `https:` source would allow every remote
-    // origin, which is exactly what pinning the two real origins avoids.
-    for (const directive of ['script-src', 'connect-src']) {
-      assert.ok(
-        !/(^|\s)https:(\s|$)/.test(d[directive]),
-        `${directive} must not allow every https origin`
-      );
-      assert.ok(!d[directive].includes('*'), `${directive} must not contain a wildcard source`);
+    // origin, which is exactly what pinning the two real origins avoids. This
+    // covers EVERY directive and every scheme, not just `https:` on two of them.
+    // A bare scheme token (optionally with its trailing colon) is a whole-scheme
+    // wildcard, whether it was added deliberately or by a typo.
+    const bareScheme = /^(?:[a-z][a-z0-9+.-]*|\*):?$/i;
+    for (const [directive, value] of Object.entries(d)) {
+      for (const token of value.split(/\s+/).filter(Boolean)) {
+        assert.ok(
+          !bareScheme.test(token),
+          `${directive} must not admit the bare scheme wildcard "${token}"`
+        );
+      }
+      assert.ok(!value.includes('*'), `${directive} must not contain a wildcard source`);
     }
+    // Pin the EXACT source sets the client needs, so appending one more (evil)
+    // origin to a directive fails here even though it is a concrete URL.
+    assert.deepEqual(
+      d['script-src'].split(/\s+/).sort(),
+      ["'self'", INLINE_THEME_SCRIPT_SHA256, 'https://challenges.cloudflare.com'].sort(),
+      'script-src must carry exactly the shipped sources'
+    );
+    assert.deepEqual(
+      d['connect-src'].split(/\s+/).sort(),
+      [
+        "'self'",
+        'https://abacus-production-cbb0.up.railway.app',
+        'https://challenges.cloudflare.com',
+      ].sort(),
+      'connect-src must carry exactly the shipped sources'
+    );
   });
 
   it("4. allows the inline theme bootstrap by hash — not 'unsafe-inline'", async () => {
@@ -304,37 +326,46 @@ describe('B6 — compression (v3.12.4)', () => {
     }
   });
 
-  it('10. never compresses the trailing-slash SSE variant (non-strict routing)', async () => {
-    // Express 5's non-strict routing serves `GET /api/events/` from the SAME
-    // handler as `/api/events`. If the compression filter only matched the
-    // canonical path, this variant would be gzipped and every frame would sit
-    // in the compression buffer — the stream would open, never flush, and look
-    // healthy to the browser. Assert BOTH halves: no encoding, and bytes.
-    const controller = new AbortController();
-    let res;
-    let reader;
-    try {
-      res = await fetch(`${baseUrl}/api/events/?prime=1`, {
-        headers: { 'accept-encoding': 'gzip' },
-        signal: controller.signal,
-      });
-      assert.equal(res.status, 200);
-      assert.match(res.headers.get('content-type') || '', /text\/event-stream/);
-      assert.equal(
-        res.headers.get('content-encoding'),
-        null,
-        'the trailing-slash SSE variant must stay uncompressed'
-      );
-      reader = res.body.getReader();
-      // `?prime=1` makes the diff stream write one `tasks` snapshot on connect
-      // (a `settings` frame follows), so a frame proves the write reached the
-      // wire instead of being parked inside the compression middleware.
-      const frame = await readFirstSseFrame(reader);
-      assert.match(frame, /^event: (tasks|settings)\ndata: /, `unexpected first frame: ${frame}`);
-    } finally {
-      controller.abort();
-      await reader?.cancel().catch(() => {});
-      await res?.body?.cancel().catch(() => {});
+  it('10. never compresses or buffers ANY spelling of the SSE path', async () => {
+    // Express 5's default routing is BOTH non-strict (`/api/events/`) and
+    // case-INsensitive (`/API/EVENTS`), so all four spellings below reach the
+    // same SSE handler. If the compression filter compared the raw path, a
+    // variant would be gzipped and every frame would sit in the compression
+    // buffer — the stream would open, never flush, and look healthy to the
+    // browser. Assert BOTH halves for EACH spelling: no encoding, and a real
+    // frame on the wire within the timeout.
+    const variants = ['/api/events', '/api/events/', '/API/EVENTS', '/API/EVENTS/'];
+    for (const variant of variants) {
+      const controller = new AbortController();
+      let res;
+      let reader;
+      try {
+        res = await fetch(`${baseUrl}${variant}?prime=1`, {
+          headers: { 'accept-encoding': 'gzip' },
+          signal: controller.signal,
+        });
+        assert.equal(res.status, 200, `${variant} must reach the SSE handler`);
+        assert.match(res.headers.get('content-type') || '', /text\/event-stream/, variant);
+        assert.equal(
+          res.headers.get('content-encoding'),
+          null,
+          `${variant} must stay uncompressed so frames flush per event`
+        );
+        reader = res.body.getReader();
+        // `?prime=1` makes the diff stream write one `tasks` snapshot on connect
+        // (a `settings` frame follows), so a frame proves the write reached the
+        // wire instead of being parked inside the compression middleware.
+        const frame = await readFirstSseFrame(reader);
+        assert.match(
+          frame,
+          /^event: (tasks|settings)\ndata: /,
+          `${variant}: unexpected first frame: ${frame}`
+        );
+      } finally {
+        controller.abort();
+        await reader?.cancel().catch(() => {});
+        await res?.body?.cancel().catch(() => {});
+      }
     }
   });
 });

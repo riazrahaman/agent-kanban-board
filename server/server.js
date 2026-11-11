@@ -150,12 +150,14 @@ export function createApp(opts = {}) {
     compression({
       threshold: 0,
       filter: (req, res) => {
-        // Express 5's non-strict routing serves `GET /api/events/` from the
-        // same handler as `/api/events`. Compare the NORMALISED path (trailing
-        // slashes stripped) or the slash variant would be compressed and its
-        // frames held in the compression buffer forever — a silently hung
-        // stream. Regression-pinned in kanban.headers.test.js.
-        const p = (req.path || '').replace(/\/+$/, '') || '/';
+        // Express 5's default routing is BOTH non-strict (`/api/events/`) and
+        // case-INsensitive (`/API/EVENTS`), and both variants reach this same
+        // SSE handler. So compare the normalised path (trailing slashes
+        // stripped) AND lowercased — otherwise a variant would be compressed,
+        // its frames parked in the compression buffer forever, and the stream
+        // would open without ever flushing (a silent hang). Regression-pinned
+        // in kanban.headers.test.js across all four spellings.
+        const p = (req.path || '').replace(/\/+$/, '').toLowerCase() || '/';
         if (p === '/api/events') return false;
         return compression.filter(req, res);
       },
