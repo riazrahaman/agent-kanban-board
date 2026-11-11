@@ -605,6 +605,7 @@ function AskArchitectureFigure() {
               <div>+ named card: record &amp; log tail</div>
               <div>+ milestones · archive · backup · audit</div>
               <div>+ ranked source excerpts</div>
+              <div className="text-muted/80">indexed: server · client · scripts</div>
             </div>
             <p className="mt-1.5 text-[10.5px] leading-snug text-muted">
               Credential-shaped values become <code className="font-mono text-ink">[redacted]</code> before egress.

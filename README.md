@@ -379,8 +379,10 @@ questions about *this* board — its protocol, engine, client, deployment and
 configuration. It is the first thing on the page rather than a footnote,
 because it is the only part of the guide a reader can interrogate.
 
-How it answers: the question is tokenised, the most relevant few repository
-files are ranked and a window around the match is folded into the system prompt
+How it answers: the question is tokenised, a cached index of `server/`,
+`client/src/` and `scripts/` ranks every real module — by exported symbol, route
+path or topic, not only a curated list — and a window around the match is folded
+into the system prompt
 (`server/askKnowledge.js` — `rankSourceFiles` / `gatherSourceContext`),
 alongside a live read-only board snapshot (`gatherSnapshot`), board metadata
 such as milestones, archive and backup state (`gatherBoardFacts`), and — when

@@ -4,8 +4,10 @@
  * Builds the system prompt used by `POST /api/ask`. It has three parts:
  *   1. A curated, code-derived protocol summary (the 8-state lifecycle,
  *      claims/leases, the reaper, the two 409s, auth, storage, metrics).
- *   2. A source-code file map + the public repository URL, so questions about
- *      "where does X live / what does file Y do" can be answered.
+ *   2. A source-code index + the public repository URL, so questions about
+ *      "where does X live / what does file Y do" can be answered. A curated
+ *      map supplies notes and head-anchoring; a dynamic index of server/,
+ *      client/src/ and scripts/ makes every real file retrievable by name.
  *   3. A live, read-only snapshot of the deployed board (counts, projects,
  *      reaper + credential-map health) assembled IN-PROCESS — never over HTTP.
  *
@@ -144,7 +146,11 @@ KEY ENDPOINTS
 - GET /api/milestones, GET /api/settings (PUT privileged), GET /api/audit
 - Task paths take ?project=<id>; the project must be authorised by the calling token.`;
 
-/** Curated source-code map: the files a "where is this / what does this do" question hits. */
+/**
+ * Curated source hints. Ranking itself is dynamic (see the source index below);
+ * these entries add operator-written notes, pin newest-first files to their head
+ * (`head: true`), and keep docs outside the indexed trees reachable.
+ */
 export const FILE_MAP = [
   { path: 'server/state-machine.js', note: 'Lifecycle states, legal transitions, role gates (pure, no I/O).' },
   { path: 'server/store.js', note: 'The engine: claims, leases, reaper, concurrency lock, all mutations.' },
@@ -179,6 +185,205 @@ export const FILE_MAP = [
 /** Builds the file-map text block, keeping the prompt budget honest. */
 export function buildFileMapText(fileMap = FILE_MAP) {
   return fileMap.map((f) => `- ${f.path} — ${f.note}`).join('\n');
+}
+
+/* ------------------------------------------------------------------------- *
+ * DYNAMIC SOURCE INDEX (v3.12.0)
+ *
+ * Until v3.11.x source retrieval could only reach the ~25 files listed in
+ * FILE_MAP: a question about any other module (server/deployDrift.js,
+ * server/routes/settings.js, …) retrieved nothing unless a keyword happened to
+ * match a curated note. The index removes that ceiling without growing the
+ * prompt: it walks the source trees once, caches exported symbols, route paths
+ * and folded content per file, and lets rankSourceFiles score every real file.
+ *
+ * FILE_MAP stays as the curated layer: its notes are ranking hints, its
+ * `head: true` entries keep newest-first files pinned to their head, and docs
+ * outside the indexed trees (CHANGELOG, HANDOVER, …) remain reachable.
+ * ------------------------------------------------------------------------- */
+
+const SOURCE_ROOTS = ['server', 'client/src', 'scripts'];
+const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+// `data`/`spill` hold board state (large JSON), not source; `test`/`tests`/
+// `__tests__` are excluded so a question retrieves the implementation rather
+// than a fixture or a test that merely mentions the symbol.
+const SOURCE_SKIP_DIRS = new Set([
+  'node_modules', 'dist', 'build', 'coverage', '.git', 'data', 'spill',
+  'test', 'tests', '__tests__',
+]);
+const SOURCE_INDEX_TTL_MS = 60 * 1000;
+const SOURCE_INDEX_MAX_FILES = 600;
+const SOURCE_INDEX_MAX_TOTAL_CHARS = 12 * 1024 * 1024;
+const SOURCE_INDEX_MAX_FILE_CHARS = 500 * 1024;
+
+const FILE_MAP_BY_PATH = new Map(FILE_MAP.map((f) => [f.path, f]));
+
+/** Cached index; rebuilt lazily after SOURCE_INDEX_TTL_MS. */
+let sourceIndexCache = null;
+
+/** Test seam: drop the cache so the next lookup re-walks the trees. */
+export function resetSourceIndex() {
+  sourceIndexCache = null;
+}
+
+function collectSourcePaths() {
+  const out = [];
+  const walk = (relDir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(REPO_ROOT, relDir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const rel = `${relDir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.') || SOURCE_SKIP_DIRS.has(entry.name)) continue;
+        walk(rel);
+      } else if (entry.isFile()) {
+        if (!SOURCE_EXTENSIONS.has(path.extname(entry.name))) continue;
+        if (/\.(test|spec)\./.test(entry.name)) continue;
+        out.push(rel);
+      }
+    }
+  };
+  for (const root of SOURCE_ROOTS) walk(root);
+  return out;
+}
+
+const SYMBOL_DECL_RE = /(?:^|[\s;{}()])(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?|class|const|let|var|type|interface|enum)\s+([A-Za-z_$][\w$]*)/g;
+const SYMBOL_LIST_RE = /\bexport\s*\{([^}]+)\}/g;
+const ROUTE_RE = /\b(?:router|app)\.(?:get|post|patch|put|delete|all)\(\s*['"`]([^'"`]+)['"`]/g;
+
+/** Lowercased declaration names + re-exported names, so a question can name one. */
+function extractSymbols(text) {
+  const out = new Set();
+  let match;
+  SYMBOL_DECL_RE.lastIndex = 0;
+  while ((match = SYMBOL_DECL_RE.exec(text)) !== null) out.add(match[1].toLowerCase());
+  SYMBOL_LIST_RE.lastIndex = 0;
+  while ((match = SYMBOL_LIST_RE.exec(text)) !== null) {
+    for (const part of match[1].split(',')) {
+      const name = part.trim().split(/\s+as\s+/)[0].trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) out.add(name.toLowerCase());
+    }
+  }
+  return [...out];
+}
+
+/** Express route paths declared in a file. */
+function extractRoutes(text) {
+  const out = [];
+  let match;
+  ROUTE_RE.lastIndex = 0;
+  while ((match = ROUTE_RE.exec(text)) !== null) out.push(match[1]);
+  return out;
+}
+
+/** Bounded substring count: only the first `cap` hits matter for ranking. */
+function countOccurrences(haystack, needle, cap = 6) {
+  if (!needle) return 0;
+  let count = 0;
+  let from = 0;
+  while (count < cap) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) break;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
+
+function buildSourceIndex() {
+  const files = [];
+  let totalChars = 0;
+  for (const rel of collectSourcePaths()) {
+    if (files.length >= SOURCE_INDEX_MAX_FILES || totalChars >= SOURCE_INDEX_MAX_TOTAL_CHARS) break;
+    const text = readSourceFile(rel);
+    if (!text || text.length > SOURCE_INDEX_MAX_FILE_CHARS) continue;
+    totalChars += text.length;
+    const mapped = FILE_MAP_BY_PATH.get(rel);
+    files.push({
+      path: rel,
+      note: mapped ? mapped.note : '',
+      head: !!(mapped && mapped.head),
+      lower: foldSpelling(text),
+      symbols: extractSymbols(text),
+      routes: extractRoutes(text),
+    });
+  }
+  return { builtAt: Date.now(), files };
+}
+
+function getSourceIndex() {
+  if (!sourceIndexCache || Date.now() - sourceIndexCache.builtAt > SOURCE_INDEX_TTL_MS) {
+    sourceIndexCache = buildSourceIndex();
+  }
+  return sourceIndexCache;
+}
+
+/**
+ * Score one candidate. A file only qualifies on *strong* evidence — a path
+ * segment, a curated note, a matching symbol, a route path, or at least two
+ * distinct question tokens appearing repeatedly in its body. Content-only
+ * coincidences (one passing mention of an ordinary word) are ranked but never
+ * alone sufficient, which is what keeps "what is the weather tomorrow" empty.
+ */
+function scoreSourceEntry(entry, tokens, foldedTokens) {
+  const pathLower = entry.path.toLowerCase();
+  const segments = pathLower.split(/[\/.]/);
+  const noteLower = (entry.note || '').toLowerCase();
+  // This module embeds the guardrail/protocol prose, so scanning its own body
+  // (or its symbols) would self-match almost any question. It stays rankable
+  // through its path and curated note only.
+  const scanBody = entry.path !== SELF_PATH;
+  let score = 0;
+  let strong = false;
+  let contentHits = 0;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const folded = foldedTokens[i];
+    if (segments.includes(token)) {
+      score += 8;
+      strong = true;
+    } else if (token.length >= 4 && pathLower.includes(token)) {
+      score += 3;
+    }
+    if (noteLower.includes(token)) {
+      // A curated note is hand-written evidence, so it outweighs incidental
+      // body matches: for "the reaper", server/store.js must beat the About
+      // page's prose, which mentions the word more often.
+      score += 10;
+      strong = true;
+    }
+    if (!scanBody) continue;
+    if (entry.symbols.includes(token)) {
+      score += 30;
+      strong = true;
+    } else if (token.length >= 4 && entry.symbols.some((s) => s.includes(token))) {
+      score += 8;
+      strong = true;
+    }
+    if (token.length >= 4 && entry.routes.some((r) => r.includes(folded))) {
+      score += 6;
+      strong = true;
+    }
+    const hits = countOccurrences(entry.lower, folded, 6);
+    if (hits >= 2) {
+      score += Math.min(hits, 5) * 2;
+      contentHits += 1;
+    } else if (hits === 1) {
+      score += 1;
+    }
+  }
+
+  if (score <= 0) return null;
+  if (!strong && contentHits < 2) return null;
+  // Prose docs are useful context but should not outrank the implementation
+  // they describe; damp their score so code wins a tie on the same keywords.
+  if (!SOURCE_EXTENSIONS.has(path.extname(entry.path))) score = Math.round(score * 0.5);
+  return { path: entry.path, note: entry.note, head: entry.head, score };
 }
 
 /** Full text of a repo file (cached by abs path + mtime); null on error. */
@@ -243,35 +448,52 @@ function foldSpelling(text) {
 }
 
 /**
- * Scores FILE_MAP entries against a question using (a) path/note metadata and
- * (b) a cached content scan. Content hits are strong evidence, so a precise
- * symbol name (e.g. renewAllLeasesInner) finds its file even when the map note
- * never mentions it. Pure-ish (only reads the cached file text); never throws.
+ * Ranks source files against a question. Every file under the indexed roots is
+ * a candidate now (v3.12.0), so a precise symbol in an unmapped module —
+ * `evaluateDrift` in server/deployDrift.js — finds its file. Curated FILE_MAP
+ * entries outside the trees (docs, CHANGELOG) still compete through the same
+ * scorer. Never throws.
  */
 export function rankSourceFiles(question, { maxFiles = 3 } = {}) {
   const tokens = questionTokens(question);
   if (tokens.length === 0) return [];
-  const scored = FILE_MAP.map((f) => {
-    const hay = `${f.path} ${f.note}`.toLowerCase();
-    const segments = f.path.toLowerCase().split(/[\/.]/);
-    let score = 0;
-    for (const t of tokens) {
-      if (hay.includes(t)) score += 1;
-      if (segments.includes(t)) score += 2;
+  const foldedTokens = tokens.map(foldSpelling);
+  const scored = [];
+  const seen = new Set();
+
+  for (const entry of getSourceIndex().files) {
+    const hit = scoreSourceEntry(entry, tokens, foldedTokens);
+    if (hit) {
+      scored.push(hit);
+      seen.add(hit.path);
     }
-    // Skip the content scan for this module: it embeds the guardrail and
-    // protocol prose (e.g. "world facts", "unrelated"), which would otherwise
-    // self-match almost any question. It stays rankable via metadata only.
+  }
+
+  // Docs live outside the indexed trees; score them from the curated note and
+  // their cached text. A missing file is skipped rather than fatal.
+  for (const f of FILE_MAP) {
+    if (seen.has(f.path)) continue;
     const text = f.path === SELF_PATH ? null : readSourceFile(f.path);
-    if (text) {
-      const lc = foldSpelling(text);
-      for (const t of tokens) {
-        if (t.length >= 5 && lc.includes(foldSpelling(t))) score += 3;
-      }
+    if (!text && f.path !== SELF_PATH) continue;
+    const hit = scoreSourceEntry(
+      {
+        path: f.path,
+        note: f.note,
+        head: !!f.head,
+        lower: text ? foldSpelling(text) : '',
+        symbols: [],
+        routes: [],
+      },
+      tokens,
+      foldedTokens,
+    );
+    if (hit) {
+      scored.push(hit);
+      seen.add(hit.path);
     }
-    return { ...f, score };
-  }).filter((f) => f.score > 0);
-  scored.sort((a, b) => b.score - a.score);
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return scored.slice(0, maxFiles);
 }
 

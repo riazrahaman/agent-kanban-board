@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
-import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot, resetRecentCommits, buildSystemPrompt, gatherTaskDetails, formatTaskDetails, resolveMentionedTasks, redactSecrets, gatherBoardFacts, formatBoardFacts, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
+import { ASK_REPO_URL, GUARDRAIL_INSTRUCTION, readSourceExcerpt, readSourceFile, rankSourceFiles, gatherSourceContext, excerptWindow, gatherSnapshot, formatSnapshot, resetRecentCommits, resetSourceIndex, buildSystemPrompt, gatherTaskDetails, formatTaskDetails, resolveMentionedTasks, redactSecrets, gatherBoardFacts, formatBoardFacts, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
 import { hintForUpstreamStatus, looksLikeOpenRouterKey, isLocalOllama, snapshotProjects } from '../routes/ask.js';
 
 /** Collects log lines instead of printing them, so a test that simulates a
@@ -252,6 +252,48 @@ describe('ask: source-code retrieval', () => {
     const ctx = gatherSourceContext('what is the weather tomorrow');
     assert.equal(ctx.text, '');
     assert.deepEqual(rankSourceFiles('what is the weather tomorrow'), []);
+  });
+
+  it('finds a module the curated map never listed, by its symbol', () => {
+    const files = rankSourceFiles('what does evaluateDrift do').map((f) => f.path);
+    assert.ok(files.includes('server/deployDrift.js'), `expected server/deployDrift.js, got ${JSON.stringify(files)}`);
+  });
+
+  it('gatherSourceContext returns an excerpt for an unmapped module', () => {
+    const ctx = gatherSourceContext('what does evaluateDrift do');
+    assert.ok(ctx.files.includes('server/deployDrift.js'), `expected server/deployDrift.js, got ${JSON.stringify(ctx.files)}`);
+    assert.match(ctx.text, /evaluateDrift/);
+  });
+
+  it('finds a route module by a path segment', () => {
+    const files = rankSourceFiles('how does the settings route work', { maxFiles: 5 }).map((f) => f.path);
+    assert.ok(files.includes('server/routes/settings.js'), `expected server/routes/settings.js, got ${JSON.stringify(files)}`);
+  });
+
+  it('keeps curated docs outside the indexed trees reachable', () => {
+    const files = rankSourceFiles('what changed recently in the releases').map((f) => f.path);
+    assert.ok(files.includes('CHANGELOG.md'), `expected CHANGELOG.md, got ${JSON.stringify(files)}`);
+  });
+
+  it('never retrieves tests, fixtures or board data as source', () => {
+    const paths = rankSourceFiles('what does fakeStore do', { maxFiles: 600 }).map((f) => f.path);
+    assert.equal(paths.length, 0, `expected no match, got ${JSON.stringify(paths)}`);
+    for (const q of ['reaper', 'claim lease', 'mutation lock']) {
+      for (const p of rankSourceFiles(q, { maxFiles: 600 }).map((f) => f.path)) {
+        assert.doesNotMatch(p, /(\.test\.|\.spec\.|\/(test|tests|__tests__|data|spill)\/)/, `retrieved ${p} for "${q}"`);
+      }
+    }
+  });
+
+  it('rebuilds the index on reset and still answers', () => {
+    resetSourceIndex();
+    const files = rankSourceFiles('what does evaluateDrift do').map((f) => f.path);
+    assert.ok(files.includes('server/deployDrift.js'));
+    resetSourceIndex();
+  });
+
+  it('honours maxFiles', () => {
+    assert.equal(rankSourceFiles('how does the reaper reclaim a stalled card', { maxFiles: 1 }).length, 1);
   });
 
   it('excerptWindow falls back to the file head when the question has no keyword hits', () => {
