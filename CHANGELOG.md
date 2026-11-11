@@ -16,6 +16,33 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.12.3] — 2026-11-11
+
+### Performance
+
+- **B1 — write amplification on the sibling lease-renewal path.** When an agent
+  held N cards, every renewal pass (browser heartbeat, holder PATCH/log, bulk
+  `POST /api/agents/lease-renew`) persisted each sibling with its own
+  `saveTask` call — and on the JSON backend (journal OFF, the default) each of
+  those is a full-partition rewrite: N held cards meant N whole-partition
+  JSON stringify + write passes inside the mutation lock, every 5 seconds per
+  agent. All renewal candidates are now computed first, applied to memory, and
+  each affected project is persisted ONCE per pass via a new batched
+  `storage.saveTasks(changed, bucket)` on both backends: the JSON backend
+  writes the partition file once (journal mode still appends — N journal lines
+  in a single write with one compaction check), and the git backend keeps its
+  per-card writes (it loops `saveTask` over the changed cards only, since a
+  full-bucket `save()` would rewrite every card in the project). Renewed-keys
+  lists, event kinds, lease-window math and the per-project failure isolation
+  (I-6) are unchanged.
+
+Tests: a new writestorm suite pins one save per affected project per renewal
+pass (bulk multi-project sweep, holder-log path, journal mode, lapsed-lease and
+failure-isolation regressions), with final on-disk state verified (769 total,
+up from 764).
+
+_Credit: Board Health Check perf finding B1 — release v3.12.3._
+
 ## [3.12.2] — 2026-11-11
 
 ### Security

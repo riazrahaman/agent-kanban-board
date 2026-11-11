@@ -10,7 +10,7 @@
  *
  * store.js re-exports both so existing `../store.js` importers are unaffected.
  */
-import { readFile, writeFile, rename, mkdir, readdir, copyFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, readdir, copyFile, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -194,6 +194,45 @@ export class JsonStorage {
         } catch {
           // stat failure: fall through — the journal is advisory, not authoritative.
         }
+      }
+      return;
+    }
+    await this.save(allTasks);
+  }
+
+  /**
+   * B1 (v3.12.3) — batched persist for grouped sibling lease renewals.
+   *
+   * `changed` is the set of tasks mutated in this batch; `allTasks` is the full
+   * project bucket AFTER those mutations. The two backends persist at different
+   * granularity, so the arguments carry both shapes:
+   *   - JsonStorage persists the WHOLE partition file, so with the journal OFF
+   *     the batch collapses into ONE `save(allTasks)` write instead of N
+   *     whole-partition rewrites (one per sibling). With the journal ON the
+   *     batch appends N journal lines in a single write and runs ONE
+   *     compaction check for the whole batch — preserving the O(1)-per-task
+   *     journal behavior.
+   *   - GitYamlStorage persists ONE card file per task, so it loops `saveTask`
+   *     over `changed` only (rewriting every card in `allTasks` would be a
+   *     write regression for the git backend).
+   */
+  async saveTasks(changed, allTasks) {
+    if (this._journalEnabled()) {
+      await mkdir(path.dirname(this.journalFile), { recursive: true });
+      let payload = '';
+      for (const task of changed) {
+        payload += JSON.stringify({ op: 'upsert', id: task.id, task }) + '\n';
+      }
+      await writeFile(this.journalFile, payload, { encoding: 'utf-8', flag: 'a' });
+      // One compaction check for the whole batch (saveTask checks per append).
+      try {
+        const st = await stat(this.journalFile);
+        if (st.size >= this._journalCompactBytes()) {
+          await this._writeCanonical(allTasks);
+          await writeFile(this.journalFile, '', 'utf-8');
+        }
+      } catch {
+        // stat failure: fall through — the journal is advisory, not authoritative.
       }
       return;
     }
@@ -477,6 +516,17 @@ export class GitYamlStorage {
 
   async save(tasks) {
     for (const task of tasks) {
+      await this.saveTask(task);
+    }
+  }
+
+  // B1 (v3.12.3) — batched persist for grouped sibling lease renewals. The git
+  // backend is per-card, so this loops `saveTask` over the CHANGED tasks only
+  // (`allTasks` is ignored — rewriting every card in the bucket would be a
+  // write regression). Per-card isolation (I-6) is preserved: a failing card
+  // aborts the batch and the caller's try/catch handles it, same as `save`.
+  async saveTasks(changed, allTasks) {
+    for (const task of changed) {
       await this.saveTask(task);
     }
   }
