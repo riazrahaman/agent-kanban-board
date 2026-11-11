@@ -62,6 +62,26 @@ describe('credential map coverage', () => {
     assert.equal(r.status, 'malformed');
   });
 
+  it('A7: counts an identity-only credential as bound', () => {
+    // A credential that binds `agent_id` (with or without a role) no longer lets
+    // the caller self-declare who it is, so it must not be reported as unbound.
+    const parsed = parseProjectTokens(JSON.stringify({
+      alpha: { token: 'tok-identity-only', agent_id: 'agent-7' },
+      beta: {
+        credentials: [
+          { token: 'tok-role', role: 'builder' },
+          { token: 'tok-both', role: 'tester', agent_id: 'agent-8' },
+          { token: 'tok-unbound' },
+        ],
+      },
+    }));
+    const r = checkCredentialCoverage(['alpha', 'beta'], parsed);
+    assert.equal(r.status, 'ok');
+    assert.equal(r.credentials_total, 4);
+    assert.equal(r.credentials_bound, 3, 'role and/or agent_id both count');
+    assert.equal(r.credentials_unbound, 1);
+  });
+
   it('is not confused by an empty store', () => {
     const r = checkCredentialCoverage([], { TG: 't1' });
     assert.equal(r.status, 'overcovered');
@@ -113,6 +133,17 @@ describe('credential map boot reporting', () => {
     const all = [...log.warn.mock.calls, ...log.error.mock.calls, ...log.info.mock.calls]
       .map((c) => c.arguments.join(' ')).join('\n');
     assert.ok(!all.includes(secret), 'a token value leaked into the boot log');
+  });
+
+  it('does not claim every credential is unbound when only identities are bound', () => {
+    const log = fakeLog();
+    const parsed = parseProjectTokens(JSON.stringify({
+      alpha: { token: 'tok-identity-only', agent_id: 'agent-7' },
+    }));
+    const r = reportCredentialCoverage(['alpha'], parsed, null, log);
+    assert.equal(r.status, 'ok');
+    assert.equal(r.credentials_bound, 1);
+    assert.equal(log.warn.mock.callCount(), 0, 'identity-bound is bound — the all-unbound warning must not fire');
   });
 
   it('does not throw on a malformed map — a signal, never a crash', () => {

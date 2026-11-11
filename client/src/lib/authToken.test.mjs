@@ -62,3 +62,18 @@ test('the token is never embedded in a URL or query string', () => {
   assert.ok(serialized.includes('Bearer tok-secret'), 'sent as a header')
   assert.ok(!serialized.includes('?'), 'no query fragment is constructed here')
 })
+
+test('A7: an agent identity is sent as X-Agent-Id, trimmed, and never empty', () => {
+  assert.equal(auth.authHeaders('tok', 'builder', '  agent-7  ')['X-Agent-Id'], 'agent-7')
+  assert.equal(auth.authHeaders('tok', 'builder', '   ')['X-Agent-Id'], undefined)
+  assert.equal(auth.authHeaders('tok', 'builder', null)['X-Agent-Id'], undefined)
+  assert.equal(auth.authHeaders('tok')['X-Agent-Id'], undefined, 'omitted when no identity is supplied')
+})
+
+test('A7: control characters are stripped from the identity header value', () => {
+  // A newline in a header value makes fetch throw, and on the wire it is the
+  // shape used to forge a log line. Strip rather than send or crash.
+  const h = auth.authHeaders('tok', 'builder', 'agent\nX-Evil: 1\r')
+  assert.equal(h['X-Agent-Id'], 'agentX-Evil: 1')
+  assert.ok(!/[\r\n]/.test(h['X-Agent-Id']))
+})

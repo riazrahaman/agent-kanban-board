@@ -87,6 +87,31 @@ function resolveExpectedVersion(req) {
   return null;
 }
 
+/**
+ * A7 (v3.12.8) — the ONE place a mutation route resolves the agent identity it
+ * attributes a write to.
+ *
+ * The auth middleware has already resolved the authoritative identity into
+ * `req.caller.agent_id`, and recorded how it got there in
+ * `req.caller.agentSource`:
+ *   - 'credential' — KANBAN_PROJECT_TOKENS credential bound an agent_id, so the
+ *     bound id is authoritative; a body/header declaration is audited and
+ *     ignored, EVEN for a privileged caller.
+ *   - 'session'    — a session minted from a bound credential carries it; for an
+ *     UNBOUND session the middleware already folded the caller's declaration
+ *     (header, then body) into `agent_id`, so the same read is still right.
+ *   - 'admin_token' / 'header' — privileged assertion: the middleware folded
+ *     `X-Agent-Id` (and, when privileged, the body `agent_id`) into `agent_id`,
+ *     so the admin token can still assert an identity.
+ *
+ * Routes must never re-read `req.body.agent_id` themselves: doing so let a
+ * privileged identity-bound SESSION be attributed to a body-supplied id that the
+ * audit trail had already reported as refused (the round-2 B2 regression).
+ */
+function resolveMutationAgentId(req) {
+  return req.caller?.agent_id ?? null;
+}
+
 // A supplied-but-invalid project scope is a client error, never a widening.
 // Shared with the metrics router — see middleware/projectScope.js.
 router.use(projectScopeGuard());
@@ -355,9 +380,9 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
   // THEMSELVES — mirroring the claim route. The query string is scope/params
   // only and is NEVER identity: `?agent_id=` no longer participates at all.
   // The role stays credential-derived (req.caller?.role) as before.
-  const agentId = store.callerIsPrivileged(req.caller)
-    ? (req.body?.agent_id || req.caller?.agent_id)
-    : req.caller?.agent_id;
+  // A7 (v3.12.8): identity comes from the resolved credential/session binding
+  // only — see resolveMutationAgentId (a bound identity outranks the body).
+  const agentId = resolveMutationAgentId(req);
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
     }
@@ -477,11 +502,10 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 router.post('/:id/claim', asyncHandler(async (req, res) => {
   // Deep-review (auth P1): a non-privileged bearer claims only as THEMSELVES —
   // otherwise any project token can adopt another agent's identity (their lease
-  // never lapses and every write is misattributed). The body agent_id stays
-  // meaningful for privileged callers only.
-  const agentId = store.callerIsPrivileged(req.caller)
-    ? (req.body?.agent_id || req.caller?.agent_id)
-    : req.caller?.agent_id;
+  // never lapses and every write is misattributed). A7 (v3.12.8): a bound
+  // credential or session is authoritative for EVERY caller, privileged
+  // included — only an unbound privileged credential keeps the body assertion.
+  const agentId = resolveMutationAgentId(req);
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
       }
@@ -565,9 +589,9 @@ router.post('/:id/assign', asyncHandler(async (req, res) => {
 router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
   // Deep-review (auth P1): same holder-binding as claim — not_lease_holder is
   // only meaningful when the bearer cannot assert somebody else's identity.
-  const agentId = store.callerIsPrivileged(req.caller)
-    ? (req.body?.agent_id || req.caller?.agent_id)
-    : req.caller?.agent_id;
+  // A7 (v3.12.8): the credential/session binding is authoritative (see
+  // resolveMutationAgentId) — even a privileged bound session cannot spoof.
+  const agentId = resolveMutationAgentId(req);
   if (!agentId) {
     return res.status(400).json({ error: 'agent_id is required' });
       }
@@ -624,11 +648,9 @@ router.get('/:id/logs', asyncHandler(async (req, res) => {
 router.post('/:id/logs', asyncHandler(async (req, res) => {
   // Deep-review (auth P1, v3.12.1): a non-privileged bearer logs only as
   // THEMSELVES — same identity binding as claim/heartbeat, so a project token
-  // cannot misattribute progress to another agent. The body agent_id stays
-  // meaningful for privileged callers only.
-  const agentId = store.callerIsPrivileged(req.caller)
-    ? (req.body?.agent_id || req.caller?.agent_id)
-    : req.caller?.agent_id;
+  // cannot misattribute progress to another agent. A7 (v3.12.8): a bound
+  // credential/session identity is authoritative for privileged callers too.
+  const agentId = resolveMutationAgentId(req);
   const message = req.body?.message;
   if (!agentId || !message) {
     return res.status(400).json({ error: 'agent_id and message are required' });
@@ -689,9 +711,9 @@ router.post('/:id/issues', asyncHandler(async (req, res) => {
 router.post('/:id/comments', asyncHandler(async (req, res) => {
   // Deep-review (auth P1, v3.12.1): same identity binding as /:id/logs — a
   // non-privileged bearer comments only as the identity on their credential.
-  const agentId = store.callerIsPrivileged(req.caller)
-    ? (req.body?.agent_id || req.caller?.agent_id)
-    : req.caller?.agent_id;
+  // A7 (v3.12.8): a bound credential/session identity is authoritative for
+  // privileged callers too.
+  const agentId = resolveMutationAgentId(req);
   const message = req.body?.message;
   if (!agentId || !message || typeof message !== 'string') {
     return res.status(400).json({ error: 'agent_id and message are required' });

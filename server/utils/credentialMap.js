@@ -69,8 +69,11 @@ export function checkCredentialCoverage(storeProjects = [], tokenInput = null, p
   }
 
   // v3.8.0 role binding: count credentials (map values are arrays) and how many
-  // carry a bound role. These counts surface on /api/health so an operator can
-  // see at a glance whether roles are still self-declared.
+  // carry a server-side binding. A7 (v3.12.8) extends the definition of "bound":
+  // a credential that binds an `agent_id` (identity-only) IS bound — it no
+  // longer lets the caller self-declare who it is, even though its role is still
+  // asserted. Before this fix those credentials were counted as unbound and the
+  // boot warning below claimed the deployment was fully self-declared.
   let credentialsTotal = 0;
   let credentialsBound = 0;
   if (tokenInput?.map instanceof Map) {
@@ -79,7 +82,7 @@ export function checkCredentialCoverage(storeProjects = [], tokenInput = null, p
       for (const cred of creds) {
         if (!cred || typeof cred.token !== 'string') continue;
         credentialsTotal += 1;
-        if (cred.role) credentialsBound += 1;
+        if (cred.role || cred.agent_id) credentialsBound += 1;
       }
     }
   }
@@ -143,9 +146,9 @@ export function reportCredentialCoverage(storeProjects, tokenInput = null, parse
       (report.status === 'ok' || report.status === 'overcovered')) {
     logger.warn(
       '[kanban auth] credential map: all credentials are UNBOUND — agent roles ' +
-      'are self-declared. Bind roles to credentials ' +
-      '({"token":"...","role":"builder"} in KANBAN_PROJECT_TOKENS) so roles are ' +
-      'enforced server-side.'
+      'and identities are self-declared. Bind roles and/or agent ids to credentials ' +
+      '({"token":"...","role":"builder","agent_id":"..."} in KANBAN_PROJECT_TOKENS) ' +
+      'so identity is enforced server-side.'
     );
   }
   if (report.status === 'ok') {
@@ -182,9 +185,9 @@ export function reportCredentialCoverage(storeProjects, tokenInput = null, parse
   if (report.credentials_total > 0 && report.credentials_bound === 0) {
     logger.warn(
       '[kanban auth] credential map: all credentials are UNBOUND — agent roles ' +
-      'are self-declared. Bind roles to credentials ' +
-      '({"token":"...","role":"builder"} in KANBAN_PROJECT_TOKENS) so roles are ' +
-      'enforced server-side.'
+      'and identities are self-declared. Bind roles and/or agent ids to credentials ' +
+      '({"token":"...","role":"builder","agent_id":"..."} in KANBAN_PROJECT_TOKENS) ' +
+      'so identity is enforced server-side.'
     );
   }
   return report;

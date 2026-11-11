@@ -377,6 +377,28 @@ export function hasReadCredential(req) {
   return authorizeRead(req);
 }
 
+/** Upper bound on a caller-declared value echoed into a log/audit line. */
+export const DECLARED_LABEL_MAX_LENGTH = 64;
+
+/**
+ * Renders a caller-declared value (agent id, role) for interpolation into a
+ * console line and an audit `reason`. Control characters are removed first —
+ * a newline or CR in `X-Agent-Id` / a body `agent_id` would otherwise let the
+ * caller forge an extra log line (e.g. a fake `[kanban audit]` entry) — then the
+ * value is capped at 64 characters, and backslashes/quotes are escaped so the
+ * surrounding quoting cannot be broken. Never returns an empty string.
+ */
+export function sanitizeDeclaredLabel(value) {
+  const raw = typeof value === 'string' ? value : '';
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, DECLARED_LABEL_MAX_LENGTH)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+  return cleaned === '' ? 'none' : cleaned;
+}
+
 /**
  * v3.8.0 — a caller-declared `X-Agent-Role` header disagreed with the role the
  * presented credential carries. The request is served with the CREDENTIAL's
@@ -387,10 +409,11 @@ export function hasReadCredential(req) {
  */
 export function emitRoleBindingMismatch(req, declared, bound, scope) {
   const agentId = req.caller?.agent_id || 'anonymous';
+  const declaredLabel = sanitizeDeclaredLabel(declared);
   console.warn(
     `[kanban auth] role_binding_mismatch on ${req.method} ${req.originalUrl} ` +
     `(project: ${scope || defaultProjectName()}, agent: ${agentId}) ` +
-    `declared: '${declared || 'none'}' — serving with credential-bound role '${bound}'`
+    `declared: '${declaredLabel}' — serving with credential-bound role '${bound}'`
   );
   emitAudit({
     ts: new Date().toISOString(),
@@ -398,7 +421,7 @@ export function emitRoleBindingMismatch(req, declared, bound, scope) {
     project: scope || defaultProjectName(),
     task: null,
     actor: agentId,
-    reason: `declared '${declared || 'none'}' conflicts with credential-bound role '${bound}'`,
+    reason: `declared '${declaredLabel}' conflicts with credential-bound role '${bound}'`,
   });
 }
 
@@ -441,10 +464,17 @@ export function emitRoleCrossing(req, roles, scope) {
  */
 export function emitIdentityBindingMismatch(req, declared, bound, scope, channel = 'header') {
   const scopeName = scope || defaultProjectName();
+  // A caller can put ANYTHING in the declared channel (the header for an
+  // unprivileged caller, header or body for a privileged one). Sanitize before
+  // interpolation so a newline cannot forge a second log line and a >64-char
+  // value cannot flood the audit reason. The bound id is credential-validated
+  // but is rendered through the same helper for one consistent shape.
+  const declaredLabel = sanitizeDeclaredLabel(declared);
+  const boundLabel = sanitizeDeclaredLabel(bound);
   console.warn(
     `[kanban auth] identity_binding_mismatch on ${req.method} ${req.originalUrl} ` +
-    `(project: ${scopeName}, agent: ${bound}) ` +
-    `declared ${channel}: '${declared || 'none'}' — serving with credential-bound agent_id '${bound}'`
+    `(project: ${scopeName}, agent: ${boundLabel}) ` +
+    `declared ${channel}: '${declaredLabel}' — serving with credential-bound agent_id '${boundLabel}'`
   );
   emitAudit({
     ts: new Date().toISOString(),
@@ -452,7 +482,7 @@ export function emitIdentityBindingMismatch(req, declared, bound, scope, channel
     project: scopeName,
     task: null,
     actor: bound,
-    reason: `declared ${channel} '${declared || 'none'}' conflicts with credential-bound agent_id '${bound}'`,
+    reason: `declared ${channel} '${declaredLabel}' conflicts with credential-bound agent_id '${boundLabel}'`,
   });
 }
 
@@ -714,6 +744,19 @@ export function createAuthMiddleware() {
         // A per-project token is by-convention a worker credential: functional
         // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
         req.caller.privileged = false;
+        // A7 (v3.12.8): bind identity BEFORE the role-mismatch emission. Both
+        // audits interpolate req.caller.agent_id as their actor, and identity
+        // binding is what settles it — running it afterwards left the
+        // role_binding_mismatch entry attributed to whatever the caller had
+        // declared instead of the credential-bound id that actually served the
+        // request. Identity binding is independent of role binding: a
+        // credential may bind a role, an agent id, both, or neither.
+        bindCallerIdentity(req, {
+          boundAgentId: binding.agent_id || null,
+          privileged: false,
+          source: 'credential',
+          scope: bindingScope,
+        });
         if (binding.role) {
           // v3.8.0: the role comes from the credential. A conflicting header is
           // ignored and audited — it can neither escalate nor downgrade.
@@ -736,14 +779,6 @@ export function createAuthMiddleware() {
           // Legacy unbound credential keeps the historical header semantics.
           req.caller.roleSource = 'header';
         }
-        // A7: identity binding is independent of role binding — a credential may
-        // bind a role, an agent id, both, or neither.
-        bindCallerIdentity(req, {
-          boundAgentId: binding.agent_id || null,
-          privileged: false,
-          source: 'credential',
-          scope: bindingScope,
-        });
       } else {
         req.caller.privileged = true;
         // v3.8.0: the admin token DERIVES its role from the credential — 'admin'

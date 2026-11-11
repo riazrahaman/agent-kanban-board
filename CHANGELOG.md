@@ -48,13 +48,37 @@ for non-privileged callers while keeping the documented legacy header channel.
 - **The body-only identity path is closed for non-privileged callers.** A
   legacy unbound credential keeps `X-Agent-Id` semantics, but `req.body.agent_id`
   is no longer folded into `req.caller.agent_id` — claim/log/comment writes that
-  send only a body value now return `400 agent_id is required`. The admin token
-  and privileged sessions are exempt and may still assert via header or body.
+  send only a body value now return `400 agent_id is required`. The admin token,
+  an UNBOUND privileged session, and the legacy global token with a privileged
+  header role may still assert via header or body. A credential or session that
+  BINDS an identity is authoritative for every caller, privileged sessions
+  included: a body/header value can no longer re-attribute a bound session's
+  claim/heartbeat/log/comment/next-claim (all five routes resolve identity
+  through one helper).
 - **Sessions carry the bound identity.** `POST /api/auth/session` mints
   `{cn,sn,jti,exp,role,project,agent_id?}` from the resolved handshake
   credential (both the legacy proof and challenge flows), never from
   `body.agent_id`. `verifySessionToken` returns `agent_id` when present; tokens
   without it still verify.
+- **Declared identity cannot forge a log line.** Values echoed from
+  `X-Agent-Id`/body `agent_id` into the mismatch console line and audit reason
+  have control characters stripped and are capped at 64 characters, so a
+  declared newline cannot fake a second audit entry.
+- **Identity binding runs before the role-mismatch audit.** A
+  `role_binding_mismatch` entry is now attributed to the credential-bound agent
+  id that actually served the request, not to the caller's declaration.
+
+### Fixed
+
+- **Browser client sends `X-Agent-Id`.** `client/src/lib/authToken.ts` now emits
+  the header (control characters stripped) and `client/src/api.ts` passes the
+  same `agentId` on claim/heartbeat/log/comment/next-claim, keeping the body
+  field for pre-v3.12.8 servers. Without it the round-1 server change 400'd every
+  identity-bearing UI mutation. Assignment is excluded on purpose: its
+  `agent_id` is the assignment TARGET, not the caller.
+- **Credential-map coverage counts identity-only credentials as bound**, so
+  `/api/health` and the boot report no longer call a fully identity-bound map
+  "unbound".
 
 ### Changed
 
@@ -70,14 +94,25 @@ for non-privileged callers while keeping the documented legacy header channel.
 
 ### Tests
 
-- New `server/test/kanban.identitybound.test.js` (12 tests): bound-credential
+- `server/test/kanban.identitybound.test.js` (14 tests): bound-credential
   attribution across claim/heartbeat/logs/comments/next-claim with spoofed
-  header and body identity; legacy header identity; body-only rejection;
-  admin-token assertion; both session mint flows and backward-compatible
-  verification; parser validation and cross-project conflicts.
+  header and body identity; the built client's `X-Agent-Id` header shape working
+  end to end on all five paths with a non-privileged credential; a privileged
+  but identity-BOUND session unable to be re-attributed by body/header on any
+  path (admin token still asserts); legacy header identity; body-only rejection;
+  both session mint flows and backward-compatible verification; parser
+  validation and cross-project conflicts.
+- New `server/test/kanban.identitysource.test.js` (9 tests): the
+  `agentSource` values (`credential` / `session` / `admin_token` / `header` /
+  none), the privileged-session path, the role-mismatch actor ordering, and the
+  forged-log-line sanitizer.
+- `server/test/kanban.credentialmap.test.js` covers identity-only credentials as
+  bound in both `/api/health` counts and the boot report.
+- New `client/src/lib/apiAgentHeaders.test.mjs` (6 tests) asserts the header on
+  claim/heartbeat/log/comment/next-claim (and its deliberate absence on assign).
 - Existing role-bound suite claims now send `X-Agent-Id` for identity-unbound
   credentials, because a body `agent_id` alone is no longer identity (A7).
-- Server suite: 846 tests.
+- Server suite: 859 tests. Client suite: 311 tests.
 
 ## [3.12.7] - 2026-11-11
 

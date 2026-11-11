@@ -51,14 +51,28 @@ export function writeStoredToken(token: string): void {
  * An absent token yields no `Authorization` header at all rather than an empty
  * one: `Bearer ` would be sent, fail the server's comparison, and produce the
  * same 401 while looking in logs like a wrong token rather than a missing one.
+ *
+ * A7 (v3.12.8): `agentId` is the caller's OWN identity and is sent as
+ * `X-Agent-Id`. Since v3.12.8 the server derives a non-privileged caller's
+ * identity from that header only — a body `agent_id` is no longer identity for
+ * a project credential — so a browser that omitted the header would 400 every
+ * claim/heartbeat/log/comment/next-claim. Callers still put `agent_id` in the
+ * body too: it keeps working against a server older than v3.12.8.
+ *
+ * Control characters are stripped from the identity: an embedded newline would
+ * otherwise make `fetch` throw (the request would fail before it left the
+ * browser) and could reach the server's audit reason as a forged log line.
  */
 export function authHeaders(
   token: string | null | undefined,
   role: string = CLIENT_ROLE,
+  agentId?: string | null,
 ): Record<string, string> {
   const headers: Record<string, string> = {}
   const trimmed = typeof token === 'string' ? token.trim() : ''
   if (trimmed) headers.Authorization = `Bearer ${trimmed}`
   if (role) headers['X-Agent-Role'] = role
+  const agent = typeof agentId === 'string' ? agentId.replace(/[\u0000-\u001f\u007f]/g, '').trim() : ''
+  if (agent) headers['X-Agent-Id'] = agent
   return headers
 }

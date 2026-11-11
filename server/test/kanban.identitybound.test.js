@@ -335,6 +335,140 @@ describe('A7 — credential-bound agent identity (v3.12.8)', () => {
     assert.equal(minted.body.agent_id, undefined, 'no credential => no bound identity');
     assert.equal(verifySessionToken(minted.body.token).agent_id, null);
   });
+
+  it('I9. (B1) the browser header shape works end to end on all five identity paths', async () => {
+    // The browser client now sends X-Agent-Id from the same agentId value it
+    // puts in the body. A non-privileged project credential that binds NO
+    // identity is the deployment this must keep working: without the header the
+    // round-1 change 400s every one of these writes. `clientHeaders` is exactly
+    // what client/src/lib/authToken.ts::authHeaders produces for a stored token.
+    const UI_AGENT = 'human-ui-agent';
+    const clientHeaders = {
+      Authorization: `Bearer ${CREDENTIALS.legacyBuilder}`,
+      'Content-Type': 'application/json',
+      'X-Agent-Role': 'builder',
+      'X-Agent-Id': UI_AGENT,
+    };
+
+    await makeReadyTask('ib-client-claim');
+    const claimed = await jsonRequest(baseUrl, `/api/tasks/ib-client-claim/claim?project=${PROJECT}`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ agent_id: UI_AGENT }),
+    });
+    assert.equal(claimed.response.status, 200, claimed.body?.error || '');
+    assert.equal(claimed.body.assigned_agent, UI_AGENT);
+
+    const heartbeat = await jsonRequest(baseUrl, `/api/tasks/ib-client-claim/heartbeat?project=${PROJECT}`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ agent_id: UI_AGENT }),
+    });
+    assert.equal(heartbeat.response.status, 200, heartbeat.body?.error || '');
+
+    const logged = await jsonRequest(baseUrl, `/api/tasks/ib-client-claim/logs?project=${PROJECT}`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ agent_id: UI_AGENT, message: 'from the browser' }),
+    });
+    assert.equal(logged.response.status, 200, logged.body?.error || '');
+    assert.equal(logged.body.agent_logs.at(-1).agent_id, UI_AGENT);
+
+    const commented = await jsonRequest(baseUrl, `/api/tasks/ib-client-claim/comments?project=${PROJECT}`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ agent_id: UI_AGENT, message: 'from the browser' }),
+    });
+    assert.equal(commented.response.status, 200, commented.body?.error || '');
+    assert.equal(commented.body.comments.at(-1).agent_id, UI_AGENT);
+
+    await makeReadyTask('ib-client-next');
+    const next = await jsonRequest(baseUrl, `/api/tasks/next-claim?project=${PROJECT}`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ agent_id: UI_AGENT, role: 'builder' }),
+    });
+    assert.equal(next.response.status, 200, next.body?.error || '');
+    assert.equal(next.body.assigned_agent, UI_AGENT);
+  });
+
+  it('I10. (B2) a privileged BOUND session cannot be attributed by body/header on any path', async () => {
+    // The round-2 regression: the mint is privileged (role system) but carries
+    // the credential's bound identity, and the routes still preferred the body.
+    // Prove the session is privileged AND bound before using it.
+    const clientNonce = 'identity-privileged-nonce';
+    const proof = signed(SECRET, proofInput(clientNonce, 'system', PROJECT));
+    const minted = await jsonRequest(baseUrl, '/api/auth/session', {
+      method: 'POST',
+      headers: headers(CREDENTIALS.boundBuilder, null),
+      body: JSON.stringify({ client_nonce: clientNonce, proof, role: 'system', project: PROJECT }),
+    });
+    assert.equal(minted.response.status, 200, minted.body?.error || '');
+    const verified = verifySessionToken(minted.body.token);
+    assert.equal(verified.role, 'system');
+    assert.equal(verified.agent_id, BOUND_AGENT);
+
+    const spoofHeaders = headers(minted.body.token, 'system', 'victim-header2');
+    const spoofBody = (extra = {}) => JSON.stringify({ agent_id: 'victim-body2', ...extra });
+    const before = auditEntries.length;
+
+    await makeReadyTask('ib-priv-claim');
+    const claimed = await jsonRequest(baseUrl, `/api/tasks/ib-priv-claim/claim?project=${PROJECT}`, {
+      method: 'POST',
+      headers: spoofHeaders,
+      body: spoofBody(),
+    });
+    assert.equal(claimed.response.status, 200, claimed.body?.error || '');
+    assert.equal(claimed.body.assigned_agent, BOUND_AGENT, 'claim attributes to the bound session id');
+    assert.notEqual(claimed.body.assigned_agent, 'victim-body2');
+
+    const heartbeat = await jsonRequest(baseUrl, `/api/tasks/ib-priv-claim/heartbeat?project=${PROJECT}`, {
+      method: 'POST',
+      headers: spoofHeaders,
+      body: spoofBody(),
+    });
+    assert.equal(heartbeat.response.status, 200, heartbeat.body?.error || '');
+
+    const logged = await jsonRequest(baseUrl, `/api/tasks/ib-priv-claim/logs?project=${PROJECT}`, {
+      method: 'POST',
+      headers: spoofHeaders,
+      body: spoofBody({ message: 'privileged session log' }),
+    });
+    assert.equal(logged.response.status, 200, logged.body?.error || '');
+    assert.equal(logged.body.agent_logs.at(-1).agent_id, BOUND_AGENT);
+
+    const commented = await jsonRequest(baseUrl, `/api/tasks/ib-priv-claim/comments?project=${PROJECT}`, {
+      method: 'POST',
+      headers: spoofHeaders,
+      body: spoofBody({ message: 'privileged session comment' }),
+    });
+    assert.equal(commented.response.status, 200, commented.body?.error || '');
+    assert.equal(commented.body.comments.at(-1).agent_id, BOUND_AGENT);
+
+    await makeReadyTask('ib-priv-next');
+    const next = await jsonRequest(baseUrl, '/api/tasks/next-claim?project=' + PROJECT, {
+      method: 'POST',
+      headers: spoofHeaders,
+      body: spoofBody({ role: 'system' }),
+    });
+    assert.equal(next.response.status, 200, next.body?.error || '');
+    assert.equal(next.body.assigned_agent, BOUND_AGENT, 'next-claim attributes to the bound session id');
+
+    // The refusal is observable, and every entry names the id that actually served.
+    const mismatches = auditEntries.slice(before).filter((e) => e.kind === 'identity_binding_mismatch');
+    assert.ok(mismatches.length > 0, 'the privileged spoof attempts are audited');
+    assert.ok(mismatches.every((e) => e.actor === BOUND_AGENT));
+
+    // Contrast: the admin token is UNBOUND and privileged, so it may still assert.
+    await makeReadyTask('ib-priv-admin');
+    const adminClaim = await jsonRequest(baseUrl, `/api/tasks/ib-priv-admin/claim?project=${PROJECT}`, {
+      method: 'POST',
+      headers: headers(ADMIN_TOKEN, 'admin'),
+      body: JSON.stringify({ agent_id: 'admin-asserted' }),
+    });
+    assert.equal(adminClaim.response.status, 200, adminClaim.body?.error || '');
+    assert.equal(adminClaim.body.assigned_agent, 'admin-asserted');
+  });
 });
 
 describe('A7 — parseProjectTokens agent_id schema', () => {
