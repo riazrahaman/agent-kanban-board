@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.12.5
+**System:** Agent Kanban Board v3.12.6
 
 ---
 
@@ -114,20 +114,26 @@ The server and client are configured via environment variables.
 | `KANBAN_JOURNAL_COMPACT_BYTES` | `1048576` | Journal size (bytes) that triggers a compaction into the canonical partition file. |
 | `KANBAN_INLINE_LOG_CAP` | `50` | Newest `agent_logs` entries kept inline per task; older ones spill to a sidecar JSONL under `spill/<project>/`. `0` = unbounded. |
 | `KANBAN_INLINE_COMMENT_CAP` | `50` | Newest `comments` kept inline per task; older ones spill to the sidecar. `0` = unbounded. |
-| `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. |
+| `KANBAN_ALLOWED_ORIGIN` | `http://localhost:5173` | Comma-separated CORS origins. Wildcard `*` is prohibited. **Production must set this explicitly** (D8, v3.12.6): with `NODE_ENV=production` and no allowlist the server refuses to boot rather than fall back to the localhost dev origin. |
+| `KANBAN_ALLOW_DEV_CORS` | *(unset)* | D8 — set to `1` to deliberately accept the localhost development CORS default when `NODE_ENV=production`. Prefer an explicit `KANBAN_ALLOWED_ORIGIN`. |
+| `KANBAN_IDEMPOTENCY_TTL_MS` / `KANBAN_IDEMPOTENCY_MAX_ENTRIES` | `600000` / `1000` | D3 — how long a successful `POST /api/tasks` `Idempotency-Key` is retained for replay, and the entry cap (oldest evicted first). In-memory only; a restart forgets keys, and the caller-supplied `id` remains the durable natural handle. |
 | `KANBAN_CLAIM_TTL_MS` | `600000` | Default lease window (10 min) when a claim passes no `lease_ms`. Expired leases are auto-reclaimed. |
 | `KANBAN_MIN_LEASE_MS` | `60000` | Lower bound a requested `lease_ms` is clamped to (1 min). |
 | `KANBAN_MAX_LEASE_MS` | `7200000` | Upper bound a requested `lease_ms` is clamped to (2 h). |
 | `KANBAN_HOLDER_WRITE_RENEWS_ALL` | `1` | When on, a holder's log/PATCH/claim also re-arms all its other held leases. |
 | `KANBAN_ORPHAN_GRACE_MS` | `300000` | Grace before an ownerless ACTIVE task is normalized to READY. Decoupled from the claim TTL. Anchored on `updated`; any later write resets it. `0` reaps immediately. |
-| `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / *(default)* | Lease reaper switch and interval. |
+| `KANBAN_REAP_ENABLED` / `KANBAN_REAP_INTERVAL_MS` | `true` / `30000` | Lease reaper switch and interval. An interval `<= 0` disables the reaper (no timer is scheduled) and `GET /api/health` reports `status: "degraded"` instead of `ok`. |
 | `KANBAN_BACKUP_ENABLED` / `KANBAN_BACKUP_INTERVAL_MS` / `KANBAN_BACKUP_KEEP` | `off` (enabled by default in `render.yaml` since v2.5.5) | Periodic snapshot of task data into `backups/`, rotated to a bounded count. Status is surfaced in the `backup` block of `GET /api/health`; restore with `scripts/restore-backup.mjs` per `docs/RESTORE.md`. |
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
 | `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` / `KANBAN_DEPLOY_DRIFT_GRACE_MS` / `KANBAN_DEPLOY_DRIFT_API_URL` | `1800000` / `2700000` / GitHub releases URL | v3.9.5 — deploy-drift monitor: compares the running version with the newest release once after boot and then every 30 min, and reports `in_sync`/`drift`/`unknown` in the `deploy_drift` block of `GET /api/health`. A mismatch only becomes `drift` after the 45-min grace; an interval `<= 0` disables it. Public release feed — no GitHub token. |
 | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET + SSE). `EventSource` cannot set headers, so browsers mint a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open; `/api/health` and `/healthz` stay open for healthchecks. |
-| `KANBAN_WEBHOOK_URLS` | *(unset)* | v2.11.0 — comma-separated URLs that receive signed outbound JSON webhooks on every task diff event. Off when unset. |
+| `KANBAN_WEBHOOK_URLS` | *(unset)* | v2.11.0 — comma-separated URLs that receive signed outbound JSON webhooks on every task diff event. Off when unset. v3.12.6: delivery retries transient failures, dead-letters terminal ones, and never blocks a board write. |
 | `KANBAN_WEBHOOK_SECRET` | *(unset)* | v2.11.0 — optional HMAC-SHA256 key; when set each webhook carries `x-kanban-signature: sha256=<hex>` over `${timestamp}.${body}`. |
 | `KANBAN_WEBHOOK_EVENTS` | *(all)* | v2.11.0 — optional comma-separated diff-kind allow-list (`created`, `updated`, `removed`, `claimed`, `renewed`, `unblocked`, `reclaimed`, `archived`). |
+| `KANBAN_WEBHOOK_MAX_ATTEMPTS` | `3` | D6 — attempts per event. Only transient outcomes retry: network throw/timeout, 408, 425, 429, 5xx. A 2xx/3xx or other 4xx is terminal after one attempt. |
+| `KANBAN_WEBHOOK_BACKOFF_MS` | `250` | D6 — base retry backoff (`250` → 250 ms, 1 s, 4 s). A 429/503 `Retry-After` is honoured up to 30 s. `0` disables waiting but keeps the attempt count. |
+| `KANBAN_WEBHOOK_MAX_QUEUE` | `100` | D6 — per-URL queue cap. Beyond it the OLDEST waiting event is dropped with one log line, so the freshest board state still syncs. |
+| `KANBAN_WEBHOOK_DEAD_LETTER_MAX` | `50` | D6 — per-URL in-memory dead-letter ring for terminal failures (`{ at, event_kind, status?, error?, attempts }`). Nothing is persisted. |
 
 ### 3.1.1 Telegram Reclaim Notifications
 
@@ -505,6 +511,16 @@ Every mutating request must include:
 4. **Project:** every task path carries `?project=<name>` (only `POST /api/tasks` takes `project` in the body instead).
 5. **Version:** every `PATCH` carries the card's current `version` as `expected_version` (or `If-Match`); a stale write is rejected `409 Version mismatch`.
 3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
+
+**Idempotent creates (v3.12.6).** `POST /api/tasks` accepts an
+`Idempotency-Key` header, so a retry after a timeout returns the ORIGINAL `201`
+body (plus `Idempotency-Replayed: true`) instead of colliding on the card id.
+The key is scoped to the project and the resolved credential (the same token via
+`Authorization: Bearer` or `X-API-Token` is one caller), kept in memory for
+`KANBAN_IDEMPOTENCY_TTL_MS`, and records a hash of the payload: reusing a key
+with a different body is `409 idempotency_key_reuse`, while a duplicate arriving
+mid-commit is `409 idempotency_key_in_progress`. Omitting the header is exactly
+the old behaviour; the caller-supplied `id` remains the natural handle.
 
 > To connect a brand-new project, see [ONBOARDING.md](../../ONBOARDING.md).
 

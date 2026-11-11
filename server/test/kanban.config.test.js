@@ -52,7 +52,10 @@ describe('configuration reference (v2.9.0)', () => {
     assert.ok(existsSync(envExamplePath), '.env.example must be tracked');
     const env = readFileSync(envExamplePath, 'utf8');
     const kanbanVars = [...vars].filter((v) => v.startsWith('KANBAN_'));
-    const missing = kanbanVars.filter((v) => !new RegExp(`^${v}=`, 'm').test(env));
+    // A17 (v3.12.6): a variable may be deliberately COMMENTED OUT in the
+    // sample - `KANBAN_ALLOWED_ORIGIN` is, so a copied .env cannot silently
+    // defeat the production CORS guard. "Listed" includes that documented form.
+    const missing = kanbanVars.filter((v) => !new RegExp(`^(?:#\\s*)?${v}=`, 'm').test(env));
     assert.deepEqual(missing, [], `.env.example is missing: ${missing.join(', ')}`);
   });
 

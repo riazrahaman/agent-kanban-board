@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import * as store from '../store.js';
 import { logWarn } from '../logger.js';
+import {
+  IDEMPOTENCY_MAX_KEY_LENGTH,
+  beginIdempotentCreate,
+  callerNamespace,
+  completeIdempotentCreate,
+  failIdempotentCreate,
+  hashCreateBody,
+} from '../idempotency.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard } from '../middleware/projectScope.js';
 
@@ -117,16 +125,107 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(store.getTasks(project));
 }));
 
+/**
+ * D3 (v3.12.6): the project a create lands in, resolved the same order as
+ * `store.createTask` (body.project > body.workspace_id > query/header >
+ * board default). Used only to namespace the idempotency map, so two projects
+ * that share a key never replay each other's card.
+ */
+function resolveCreateProject(ctx, body) {
+  const raw = body.project ?? body.workspace_id ?? resolveProjectFromReq(ctx);
+  if (raw === undefined || raw === null || raw === '') return store.getDefaultProject();
+  return String(raw);
+}
+
+/**
+ * POST /api/tasks - create a card.
+ *
+ * RETRY SAFETY (D3, v3.12.6): the caller-supplied `id` is itself a NATURAL
+ * idempotency handle - a retry of a create that timed out after commit hits the
+ * composite-id uniqueness check and gets 409 `already exists`, which is a false
+ * failure for an operation that actually succeeded. For clients that want the
+ * original response instead, send an `Idempotency-Key` header (Express/node
+ * lowercases headers, so `Idempotency-Key` and `idempotency-key` are the same
+ * header):
+ *
+ *   - the key is scoped to this project AND to the resolved credential: a
+ *     SHA-256 fingerprint of the token the auth middleware accepted. The
+ *     canonical extractor is used, so `Authorization: Bearer <tok>` and
+ *     `x-api-token: <tok>` are the SAME caller; caller-declared agent/role
+ *     headers are ignored (spoofable, and they would only split one caller's
+ *     own retries). The raw token is never stored. The key is retained for
+ *     `KANBAN_IDEMPOTENCY_TTL_MS` (default 10 min), capped at
+ *     `KANBAN_IDEMPOTENCY_MAX_ENTRIES` (default 1000, oldest evicted first);
+ *   - a hash of the create payload is stored too. The same key + credential
+ *     with a DIFFERENT body is 409 `{ error: 'idempotency_key_reuse' }` - never
+ *     a silent replay of a card the caller did not ask for;
+ *   - only successful creations (201) are recorded. A replay with the same
+ *     key + body returns the ORIGINAL 201 body plus
+ *     `Idempotency-Replayed: true`;
+ *   - a duplicate arriving while the first request is still committing gets
+ *     409 `{ error: 'idempotency_key_in_progress' }` - it is neither replayed
+ *     (there is no body yet) nor allowed to double-create;
+ *   - no header (or an empty one) is exactly the historical behaviour, and the
+ *     only validation is a 200-character cap -> 400.
+ *
+ * Everything here is in-memory: a restart forgets the keys, which is why the
+ * composite `id` remains the durable natural handle.
+ */
 router.post('/', asyncHandler(async (req, res) => {
   const body = req.body ?? {};
    // §2.1: project may arrive as body.project, body.workspace_id, or ?project=.
   const project = resolveProjectFromReq(req);
-  const result = await store.createTask(body, project, { caller: req.caller || {} });
-  if (result.error) {
-    logWarn('rejection', `POST /api/tasks: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error, ...(result.reason ? { reason: result.reason } : {}) });
-   }
-  res.status(201).json(result.task);
+  const rawKey = req.headers['idempotency-key'];
+  const idempotencyKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+
+  const create = () => store.createTask(body, project, { caller: req.caller || {} });
+  const respondToResult = (result) => {
+    if (result.error) {
+      logWarn('rejection', `POST /api/tasks: ${result.status} ${result.error}`);
+      return res.status(result.status).json({ error: result.error, ...(result.reason ? { reason: result.reason } : {}) });
+    }
+    return res.status(201).json(result.task);
+  };
+
+  // Missing header -> unchanged behaviour (the `id` alone is the natural key).
+  if (idempotencyKey === undefined || idempotencyKey === null || idempotencyKey === '') {
+    return respondToResult(await create());
+  }
+
+  if (typeof idempotencyKey !== 'string' || idempotencyKey.length > IDEMPOTENCY_MAX_KEY_LENGTH) {
+    return res.status(400).json({
+      error: `Idempotency-Key must be at most ${IDEMPOTENCY_MAX_KEY_LENGTH} characters`,
+    });
+  }
+
+  const namespace = callerNamespace(req, resolveCreateProject(req, body));
+  const bodyHash = hashCreateBody(body);
+  const reservation = beginIdempotentCreate(namespace, idempotencyKey, { bodyHash });
+  if (reservation.state === 'replay') {
+    res.set('Idempotency-Replayed', 'true');
+    return res.status(201).json(reservation.body);
+  }
+  if (reservation.state === 'reuse') {
+    return res.status(409).json({ error: 'idempotency_key_reuse' });
+  }
+  if (reservation.state === 'in_progress') {
+    return res.status(409).json({ error: 'idempotency_key_in_progress' });
+  }
+
+  try {
+    const result = await create();
+    if (result.error) {
+      // Nothing successful to replay: release the key so a corrected retry can
+      // use it again.
+      failIdempotentCreate(namespace, idempotencyKey);
+      return respondToResult(result);
+    }
+    completeIdempotentCreate(namespace, idempotencyKey, result.task, { bodyHash });
+    return respondToResult(result);
+  } catch (err) {
+    failIdempotentCreate(namespace, idempotencyKey);
+    throw err;
+  }
 }));
 
 // --- §2.8 archive (MUST be declared before /:id so Express treats `archive`
