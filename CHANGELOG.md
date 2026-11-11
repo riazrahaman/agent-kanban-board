@@ -112,7 +112,7 @@ for non-privileged callers while keeping the documented legacy header channel.
   claim/heartbeat/log/comment/next-claim (and its deliberate absence on assign).
 - Existing role-bound suite claims now send `X-Agent-Id` for identity-unbound
   credentials, because a body `agent_id` alone is no longer identity (A7).
-- Server suite: 859 tests. Client suite: 311 tests.
+- Server suite: 859 tests. Client suite: 315 tests.
 
 ## [3.12.7] - 2026-11-11
 
