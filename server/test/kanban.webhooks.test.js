@@ -160,7 +160,11 @@ test('4. the per-URL queue cap drops the OLDEST queued event', async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const counter = { calls: 0 };
-  const fakeFetch = async () => {
+  const sentIds = [];
+  const fakeFetch = async (url, opts) => {
+    // Record the delivered payload id: this is what proves WHICH event the cap
+    // evicted, not merely that a counter moved.
+    sentIds.push(JSON.parse(opts.body).task_id);
     counter.calls += 1;
     if (counter.calls === 1) await gate;
     return fakeResponse(200);
@@ -168,21 +172,32 @@ test('4. the per-URL queue cap drops the OLDEST queued event', async () => {
   startWebhooks({ env: env({ KANBAN_WEBHOOK_MAX_QUEUE: '2' }), fetchImpl: fakeFetch });
 
   // First event is in flight and blocked: everything after it queues.
-  await createCard();
+  const firstId = await createCard();
   await waitForCalls(counter, 1);
-  await createCard();
-  await createCard();
-  await createCard();
+  const droppedId = await createCard();
+  const thirdId = await createCard();
+  const fourthId = await createCard();
 
-  const during = getWebhookStats()[URL];
-  assert.equal(during.queued, 2, 'queue is capped at 2 waiting events');
-  assert.equal(during.dropped, 1, 'the oldest waiting event was dropped once');
+  try {
+    const during = getWebhookStats()[URL];
+    assert.equal(during.queued, 2, 'queue is capped at 2 waiting events');
+    assert.equal(during.dropped, 1, 'the oldest waiting event was dropped once');
+  } finally {
+    // A8: never leave the blocked worker (and the process) hanging if an
+    // assertion above fails.
+    release();
+    await awaitWebhookIdle();
+  }
 
-  release();
-  await awaitWebhookIdle();
   const after = getWebhookStats()[URL];
   assert.equal(after.queued, 0);
   assert.equal(after.dropped, 1);
+  assert.deepEqual(
+    sentIds,
+    [firstId, thirdId, fourthId],
+    'the middle (oldest waiting) event is dropped; newest is delivered',
+  );
+  assert.ok(!sentIds.includes(droppedId), 'the dropped event is never delivered');
 });
 
 test('5. delivery never throws to the caller (network failure is dead-lettered)', async () => {

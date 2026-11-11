@@ -161,7 +161,11 @@ export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
   return result;
 }
 
-function extractToken(req) {
+// D3 (v3.12.6 round 2): the idempotency namespace must key on the SAME
+// credential the middleware accepted. Exporting the canonical extractor keeps
+// `Authorization: Bearer <tok>` and `x-api-token: <tok>` one caller instead of
+// two, and prevents every project-token caller collapsing into one bucket.
+export function extractToken(req) {
   const authHeader = req.headers['authorization'];
   const apiTokenHeader = req.headers['x-api-token'];
   if (authHeader && authHeader.startsWith('Bearer ')) return authHeader.slice(7).trim();

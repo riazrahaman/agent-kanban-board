@@ -141,7 +141,10 @@ function getReapIntervalMs() {
   const raw = process.env.KANBAN_REAP_INTERVAL_MS;
   if (raw === undefined || raw === '') return 30000;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 30000;
+  // A non-positive value is a deliberate "disabled", not a bad value to
+  // replace with the default: startReaper() and isReaperEnabled() both treat it
+  // that way (D9, v3.12.6).
+  return Number.isFinite(n) ? n : 30000;
 }
 
 /**
@@ -385,16 +388,24 @@ let reapTimer = null;
 
 export function startReaper() {
   if (reapTimer) return reapTimer;
+  const intervalMs = getReapIntervalMs();
+  // Defence in depth (A18): the boot path already gates on isReaperEnabled(),
+  // but a direct caller must not schedule an interval from a non-positive
+  // value (which setInterval would turn into a tight ~1ms loop).
+  if (!(intervalMs > 0)) {
+    log.info('disabled', { interval_ms: intervalMs });
+    return null;
+  }
   reapTimer = setInterval(() => {
      // Fire-and-forget; the lock serializes it with the other writers. Swallow
      // so a sweep throw can never kill the interval or the process.
     reapExpiredClaims().catch((err) => {
       log.error('sweep failed', { error: err && err.message });
      });
-   }, getReapIntervalMs());
+   }, intervalMs);
       // An unref'd timer must not keep a (possibly test-driven) process alive.
     reapTimer.unref();
-    log.info('started', { interval_ms: getReapIntervalMs() });
+    log.info('started', { interval_ms: intervalMs });
     return reapTimer;
    }
 

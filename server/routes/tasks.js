@@ -7,6 +7,7 @@ import {
   callerNamespace,
   completeIdempotentCreate,
   failIdempotentCreate,
+  hashCreateBody,
 } from '../idempotency.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard } from '../middleware/projectScope.js';
@@ -147,14 +148,20 @@ function resolveCreateProject(ctx, body) {
  * lowercases headers, so `Idempotency-Key` and `idempotency-key` are the same
  * header):
  *
- *   - the key is scoped to this project AND to the caller's identity (a
- *     SHA-256 fingerprint of the credential plus agent id + role), so two
- *     callers can never replay each other's response; the raw token is never
- *     stored. The key is retained for `KANBAN_IDEMPOTENCY_TTL_MS` (default
- *     10 min), capped at `KANBAN_IDEMPOTENCY_MAX_ENTRIES` (default 1000,
- *     oldest evicted first);
+ *   - the key is scoped to this project AND to the resolved credential: a
+ *     SHA-256 fingerprint of the token the auth middleware accepted. The
+ *     canonical extractor is used, so `Authorization: Bearer <tok>` and
+ *     `x-api-token: <tok>` are the SAME caller; caller-declared agent/role
+ *     headers are ignored (spoofable, and they would only split one caller's
+ *     own retries). The raw token is never stored. The key is retained for
+ *     `KANBAN_IDEMPOTENCY_TTL_MS` (default 10 min), capped at
+ *     `KANBAN_IDEMPOTENCY_MAX_ENTRIES` (default 1000, oldest evicted first);
+ *   - a hash of the create payload is stored too. The same key + credential
+ *     with a DIFFERENT body is 409 `{ error: 'idempotency_key_reuse' }` - never
+ *     a silent replay of a card the caller did not ask for;
  *   - only successful creations (201) are recorded. A replay with the same
- *     key returns the ORIGINAL 201 body plus `Idempotency-Replayed: true`;
+ *     key + body returns the ORIGINAL 201 body plus
+ *     `Idempotency-Replayed: true`;
  *   - a duplicate arriving while the first request is still committing gets
  *     409 `{ error: 'idempotency_key_in_progress' }` - it is neither replayed
  *     (there is no body yet) nor allowed to double-create;
@@ -192,10 +199,14 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   const namespace = callerNamespace(req, resolveCreateProject(req, body));
-  const reservation = beginIdempotentCreate(namespace, idempotencyKey);
+  const bodyHash = hashCreateBody(body);
+  const reservation = beginIdempotentCreate(namespace, idempotencyKey, { bodyHash });
   if (reservation.state === 'replay') {
     res.set('Idempotency-Replayed', 'true');
     return res.status(201).json(reservation.body);
+  }
+  if (reservation.state === 'reuse') {
+    return res.status(409).json({ error: 'idempotency_key_reuse' });
   }
   if (reservation.state === 'in_progress') {
     return res.status(409).json({ error: 'idempotency_key_in_progress' });
@@ -209,7 +220,7 @@ router.post('/', asyncHandler(async (req, res) => {
       failIdempotentCreate(namespace, idempotencyKey);
       return respondToResult(result);
     }
-    completeIdempotentCreate(namespace, idempotencyKey, result.task);
+    completeIdempotentCreate(namespace, idempotencyKey, result.task, { bodyHash });
     return respondToResult(result);
   } catch (err) {
     failIdempotentCreate(namespace, idempotencyKey);

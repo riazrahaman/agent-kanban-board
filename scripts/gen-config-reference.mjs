@@ -14,7 +14,6 @@ const DESCRIPTIONS = {
   'KANBAN_IDEMPOTENCY_TTL_MS': 'How long a POST /api/tasks Idempotency-Key is retained (default 600000)',
   'KANBAN_IDEMPOTENCY_MAX_ENTRIES': 'Max retained Idempotency-Key entries before the oldest is evicted (default 1000)',
   'KANBAN_ARCHIVE_AFTER_DAYS': 'Days a DONE task waits before the archive sweep moves it',
-  'KANBAN_ARCHIVING_DISABLED': 'Set truthy to disable the automatic archive sweep',
   'KANBAN_AUDIT_LOG': 'Set truthy to persist the audit stream as JSONL',
   'KANBAN_AUTH_LOG': 'Set truthy to log redacted auth failures',
   'KANBAN_AUTH_RATE_LIMIT_PER_MIN': 'Per-IP limit for failed auth/handshake attempts',

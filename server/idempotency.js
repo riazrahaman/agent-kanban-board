@@ -11,11 +11,20 @@
  * Deliberate constraints:
  *   - IN-MEMORY ONLY. This is a single-process board; the map is bounded by
  *     TTL (default 10 min) and entry count (default 1000, oldest evicted).
- *   - NAMESPACED per project + caller identity. Two callers using the same key
- *     must never replay each other's response, so the namespace folds in a
- *     SHA-256 fingerprint of the Authorization header (never the raw token)
- *     plus the caller's agent id and role. The fingerprint is truncated: it is
- *     an isolation key, not a credential.
+ *   - NAMESPACED per project + RESOLVED CREDENTIAL. Two callers using the same
+ *     key must never replay each other's response, so the namespace is
+ *     `project | sha256(extractToken(req))[0..16]`. `extractToken` is the
+ *     middleware's canonical extractor, so `Authorization: Bearer <tok>` and
+ *     `x-api-token: <tok>` are the same caller. Caller-declared `x-agent-id` /
+ *     `x-agent-role` are deliberately NOT part of the namespace: they are
+ *     spoofable and only ever split one caller's own retries into false 409s.
+ *     The raw token is never retained; the digest is an isolation key, not a
+ *     credential. If no credential is present (impossible on a mutation) each
+ *     call gets a unique non-matching bucket - never a shared "anonymous" one.
+ *   - BODY-BOUND. Each reservation records a hash of the create payload. The
+ *     same key + credential with a DIFFERENT body is a client error
+ *     (`idempotency_key_reuse`), never a silent replay of a card the caller
+ *     did not ask for.
  *   - ONLY successful creations are recorded. A failed create releases the
  *     in-flight reservation so a corrected retry can proceed.
  *   - A duplicate that arrives while the first is still committing is not a
@@ -24,7 +33,8 @@
  *     `idempotency_key_in_progress`.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { extractToken } from './middleware/auth.js';
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 1000;
@@ -52,17 +62,34 @@ export function idempotencyMaxEntries(env = process.env) {
 
 /**
  * Isolation namespace for one caller on one project:
- *   project | sha256(authorization)[0..16] | agent_id | role
- * The token itself is never retained; the digest only distinguishes callers.
+ *   project | sha256(extractToken(req))[0..16]
+ * The raw token is never retained and caller-declared agent/role headers are
+ * ignored (spoofable, and they would only split one caller's own retries).
+ * Mutations always present a credential; if one is somehow absent, a unique
+ * per-call bucket is used so no two callers can ever share a replay slot.
  */
 export function callerNamespace(req, project) {
-  const authorization = req?.headers?.authorization || '';
-  const fingerprint = authorization
-    ? createHash('sha256').update(String(authorization)).digest('hex').slice(0, 16)
-    : 'anonymous';
-  const agentId = req?.caller?.agent_id || req?.headers?.['x-agent-id'] || '';
-  const role = req?.caller?.role || req?.headers?.['x-agent-role'] || '';
-  return `${project || 'default'}|${fingerprint}|${agentId}|${role}`;
+  const token = extractToken(req);
+  const fingerprint = token
+    ? createHash('sha256').update(token).digest('hex').slice(0, 16)
+    : `no-credential-${randomUUID()}`;
+  return `${project || 'default'}|${fingerprint}`;
+}
+
+/** Deterministic JSON (sorted keys) so a retry with the same payload matches. */
+function stableStringify(value) {
+  if (value === null || value === undefined) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** Hash of the create payload, stored with the key to catch key reuse. */
+export function hashCreateBody(body) {
+  return createHash('sha256').update(stableStringify(body ?? {})).digest('hex');
 }
 
 function mapKey(namespace, key) {
@@ -87,12 +114,15 @@ function pruneExpired(now, ttl) {
 
 /**
  * Reserve a key before the create starts. Returns:
- *   { state: 'new' }         - the caller owns the reservation and must
- *                              complete or release it;
- *   { state: 'replay', body } - a previously successful creation;
+ *   { state: 'new' }          - the caller owns the reservation and must
+ *                               complete or release it;
+ *   { state: 'replay', body } - a previously successful creation with the
+ *                               SAME payload hash;
+ *   { state: 'reuse' }        - the key was already used with a DIFFERENT
+ *                               payload (409 idempotency_key_reuse);
  *   { state: 'in_progress' }  - an identical request is still committing.
  */
-export function beginIdempotentCreate(namespace, key, { env = process.env, now = Date.now() } = {}) {
+export function beginIdempotentCreate(namespace, key, { env = process.env, now = Date.now(), bodyHash } = {}) {
   const ttl = idempotencyTtlMs(env);
   const maxEntries = idempotencyMaxEntries(env);
   const composite = mapKey(namespace, key);
@@ -101,6 +131,8 @@ export function beginIdempotentCreate(namespace, key, { env = process.env, now =
   if (existing) {
     if (now - existing.at > ttl) {
       entries.delete(composite);
+    } else if (existing.bodyHash !== undefined && bodyHash !== undefined && existing.bodyHash !== bodyHash) {
+      return { state: 'reuse' };
     } else if (existing.state === 'in_flight') {
       return { state: 'in_progress' };
     } else {
@@ -117,13 +149,20 @@ export function beginIdempotentCreate(namespace, key, { env = process.env, now =
     entries.delete(oldest);
   }
 
-  entries.set(composite, { state: 'in_flight', at: now });
+  entries.set(composite, { state: 'in_flight', at: now, bodyHash });
   return { state: 'new' };
 }
 
 /** Record the original 201 body for replay. */
-export function completeIdempotentCreate(namespace, key, body, { now = Date.now() } = {}) {
-  entries.set(mapKey(namespace, key), { state: 'done', body: snapshot(body), at: now });
+export function completeIdempotentCreate(namespace, key, body, { now = Date.now(), bodyHash } = {}) {
+  const composite = mapKey(namespace, key);
+  const existing = entries.get(composite);
+  entries.set(composite, {
+    state: 'done',
+    body: snapshot(body),
+    at: now,
+    bodyHash: bodyHash !== undefined ? bodyHash : existing?.bodyHash,
+  });
 }
 
 /** Release a reservation after a failed create (nothing is recorded). */

@@ -43,6 +43,18 @@ function headers(agentId = 'idem-agent', extra = {}) {
   };
 }
 
+// Project-token callers use the documented `x-api-token` channel (not
+// Authorization), so a namespace keyed only on Authorization collapses them.
+function apiTokenHeaders(token, agentId = 'idem-agent', extra = {}) {
+  return {
+    'x-api-token': token,
+    'Content-Type': 'application/json',
+    'X-Agent-Role': 'builder',
+    'X-Agent-Id': agentId,
+    ...extra,
+  };
+}
+
 function taskBody(project, id, extra = {}) {
   return { id, project, title: `Task ${id}`, status: 'BACKLOG', round: 1, ...extra };
 }
@@ -152,35 +164,84 @@ test('2. a different key creates a second card', async () => {
   assert.equal(store.getTasks(project).length, 2);
 });
 
-test('3. a different caller with the same key does NOT replay', async () => {
+test('3. two x-api-token credentials with the same key do NOT replay', async () => {
   const project = 'idem-isolation';
-  const first = await jsonRequest('/api/tasks', {
-    method: 'POST',
-    headers: headers('caller-one', { 'Idempotency-Key': 'shared-key' }),
-    body: taskBody(project, 'idem-caller-one'),
+  process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({
+    [project]: {
+      credentials: [
+        { token: 'iso-token-a', role: 'builder' },
+        { token: 'iso-token-b', role: 'builder' },
+      ],
+    },
   });
-  assert.equal(first.response.status, 201);
+  try {
+    // Same project, same key, same X-Agent-Id: only the credential differs.
+    // It must isolate the namespace, or caller B replays A's card and B's card
+    // is never created (the 5f787d1 bug).
+    const first = await jsonRequest('/api/tasks', {
+      method: 'POST',
+      headers: apiTokenHeaders('iso-token-a', 'shared-agent', { 'Idempotency-Key': 'shared-key' }),
+      body: taskBody(project, 'idem-caller-one'),
+    });
+    assert.equal(first.response.status, 201);
 
-  // Same key, different identity: the key must be namespaced away, so this is a
-  // brand-new creation (not a replay of caller-one's body).
-  const second = await jsonRequest('/api/tasks', {
-    method: 'POST',
-    headers: headers('caller-two', { 'Idempotency-Key': 'shared-key' }),
-    body: taskBody(project, 'idem-caller-two'),
-  });
-  assert.equal(second.response.status, 201);
-  assert.equal(second.response.headers.get('idempotency-replayed'), null);
-  assert.equal(second.body.id, 'idem-caller-two');
-  assert.equal(store.getTasks(project).length, 2);
+    const second = await jsonRequest('/api/tasks', {
+      method: 'POST',
+      headers: apiTokenHeaders('iso-token-b', 'shared-agent', { 'Idempotency-Key': 'shared-key' }),
+      body: taskBody(project, 'idem-caller-two'),
+    });
+    assert.equal(second.response.status, 201);
+    assert.equal(second.response.headers.get('idempotency-replayed'), null);
+    assert.equal(second.body.id, 'idem-caller-two');
+    assert.equal(store.getTasks(project).length, 2);
 
-  // A true duplicate in the second caller's namespace is still caught.
-  const third = await jsonRequest('/api/tasks', {
-    method: 'POST',
-    headers: headers('caller-two', { 'Idempotency-Key': 'shared-key' }),
-    body: taskBody(project, 'idem-caller-two'),
+    // A true duplicate in the second caller's namespace is still caught.
+    const third = await jsonRequest('/api/tasks', {
+      method: 'POST',
+      headers: apiTokenHeaders('iso-token-b', 'shared-agent', { 'Idempotency-Key': 'shared-key' }),
+      body: taskBody(project, 'idem-caller-two'),
+    });
+    assert.equal(third.response.status, 201);
+    assert.equal(third.response.headers.get('idempotency-replayed'), 'true');
+    assert.equal(third.body.id, 'idem-caller-two');
+  } finally {
+    delete process.env.KANBAN_PROJECT_TOKENS;
+  }
+});
+
+test('3b. the same credential via Authorization or x-api-token replays', async () => {
+  const project = 'idem-channel';
+  process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({
+    [project]: { token: 'channel-token', role: 'builder' },
   });
-  assert.equal(third.response.status, 201);
-  assert.equal(third.response.headers.get('idempotency-replayed'), 'true');
+  try {
+    const body = taskBody(project, 'idem-channel');
+    const first = await jsonRequest('/api/tasks', {
+      method: 'POST',
+      headers: {
+        Authorization: ['B' + 'earer', 'channel-token'].join(' '),
+        'Content-Type': 'application/json',
+        'X-Agent-Id': 'channel-agent',
+        'Idempotency-Key': 'channel-key',
+      },
+      body,
+    });
+    assert.equal(first.response.status, 201);
+
+    // Same token, different channel: the resolved credential is the identity,
+    // so this must replay rather than 409 on the id collision.
+    const second = await jsonRequest('/api/tasks', {
+      method: 'POST',
+      headers: apiTokenHeaders('channel-token', 'channel-agent', { 'Idempotency-Key': 'channel-key' }),
+      body,
+    });
+    assert.equal(second.response.status, 201);
+    assert.equal(second.response.headers.get('idempotency-replayed'), 'true');
+    assert.equal(second.body.id, 'idem-channel');
+    assert.equal(store.getTasks(project).length, 1);
+  } finally {
+    delete process.env.KANBAN_PROJECT_TOKENS;
+  }
 });
 
 test('4. TTL expiry releases the key (retry hits the natural id collision)', async () => {
@@ -246,4 +307,46 @@ test('7. no header keeps the historical behaviour (retry collides on the id)', a
   assert.equal(second.response.status, 409);
   assert.match(second.body.error, /already exists/);
   assert.equal(second.response.headers.get('idempotency-replayed'), null);
+});
+
+test('8. the same key with a different body is 409 idempotency_key_reuse', async () => {
+  const project = 'idem-reuse';
+  const first = await jsonRequest('/api/tasks', {
+    method: 'POST',
+    headers: headers('idem-agent', { 'Idempotency-Key': 'reuse-key' }),
+    body: taskBody(project, 'idem-reuse-one', { title: 'first payload' }),
+  });
+  assert.equal(first.response.status, 201);
+
+  const second = await jsonRequest('/api/tasks', {
+    method: 'POST',
+    headers: headers('idem-agent', { 'Idempotency-Key': 'reuse-key' }),
+    body: taskBody(project, 'idem-reuse-two', { title: 'different payload' }),
+  });
+  assert.equal(second.response.status, 409);
+  assert.equal(second.body.error, 'idempotency_key_reuse');
+  assert.equal(second.response.headers.get('idempotency-replayed'), null);
+  assert.equal(store.getTasks(project).length, 1, 'the different body never creates a card');
+});
+
+test('9. a failed create releases the key for a corrected retry', async () => {
+  const project = 'idem-retry';
+  // Missing id/title -> 400. The in-flight reservation must be released (a
+  // no-op failIdempotentCreate leaves it in-flight and the retry gets 409).
+  const failed = await jsonRequest('/api/tasks', {
+    method: 'POST',
+    headers: headers('idem-agent', { 'Idempotency-Key': 'retry-key' }),
+    body: { project },
+  });
+  assert.equal(failed.response.status, 400);
+
+  const retried = await jsonRequest('/api/tasks', {
+    method: 'POST',
+    headers: headers('idem-agent', { 'Idempotency-Key': 'retry-key' }),
+    body: taskBody(project, 'idem-retried'),
+  });
+  assert.equal(retried.response.status, 201);
+  assert.equal(retried.response.headers.get('idempotency-replayed'), null);
+  assert.equal(retried.body.id, 'idem-retried');
+  assert.equal(store.getTasks(project).length, 1);
 });

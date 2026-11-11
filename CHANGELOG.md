@@ -33,15 +33,23 @@ board with no reaper `ok`.
   returns the ORIGINAL 201 body plus `Idempotency-Replayed: true` on replay.
   Keys are held in memory for `KANBAN_IDEMPOTENCY_TTL_MS` (default 10 min) in a
   map capped at `KANBAN_IDEMPOTENCY_MAX_ENTRIES` (default 1000, oldest evicted).
-  The key is namespaced by project and caller identity - a SHA-256 fingerprint
-  of the credential plus agent id + role; the raw token is never stored - so two
-  callers cannot replay each other's response. Only successful creations are
-  recorded; a duplicate that arrives while the first is still committing gets
-  409 `{ error: 'idempotency_key_in_progress' }`, and a failed create releases
-  the key. No header is exactly the previous behaviour (the caller-supplied `id`
-  remains the natural, durable handle); the only validation is a 200-character
-  cap -> 400. Pinned by `kanban.idempotency.test.js` (replay, different key,
-  caller isolation, TTL expiry, concurrent duplicate, oversized key, no header).
+  The key is namespaced by project and the RESOLVED credential: a SHA-256
+  fingerprint of the token the auth middleware accepted. It uses the canonical
+  `extractToken`, so the same token sent as `Authorization: Bearer` or
+  `x-api-token` is one caller, and distinct project credentials get distinct
+  namespaces; caller-declared agent/role headers are deliberately ignored (they
+  are spoofable and only split one caller's own retries). The raw token is never
+  stored. A hash of the create payload is stored with the key: the same key and
+  credential with a DIFFERENT body is 409 `{ error: 'idempotency_key_reuse' }`,
+  never a silent replay of a card the caller did not ask for. Only successful
+  creations are recorded; a duplicate that arrives while the first is still
+  committing gets 409 `{ error: 'idempotency_key_in_progress' }`, and a failed
+  create releases the key. No header is exactly the previous behaviour (the
+  caller-supplied `id` remains the natural, durable handle); the only validation
+  is a 200-character cap -> 400. Pinned by `kanban.idempotency.test.js` (replay,
+  different key, credential isolation, Bearer/x-api-token equivalence, body-hash
+  reuse, failed-create release, TTL expiry, concurrent duplicate, oversized key,
+  no header).
 - **D6 - webhook retries, per-URL dead-letter ring and queue cap.** A non-2xx
   or a thrown delivery used to drop the event with a log line. Each event is now
   attempted up to `KANBAN_WEBHOOK_MAX_ATTEMPTS` times (default 3) with
@@ -77,11 +85,22 @@ board with no reaper `ok`.
   `degraded` with every other field unchanged. Pinned in
   `kanban.health.test.js`.
 
+Review hardening in the same release: the webhook queue-cap test now proves the
+OLDEST event is dropped by asserting on delivered payload ids, the backoff sleep
+timers are `unref()`'d so a pending retry cannot hold the process open, and
+`startReaper()` independently refuses a non-positive interval (defence in depth
+on top of the boot gate). `.env.example` comments out the localhost CORS value so
+a copied sample cannot defeat the D8 guard, and the config generator no longer
+describes the dead `KANBAN_ARCHIVING_DISABLED` variable. The operator manual
+documents the idempotency/webhook switches, the `Idempotency-Key` contract and
+`KANBAN_REAP_INTERVAL_MS <= 0` meaning degraded/disabled; the file-by-file guide
+describes the retrying webhook queue and lists `server/idempotency.js`.
+
 `KANBAN_ALLOW_DEV_CORS`, `KANBAN_IDEMPOTENCY_TTL_MS`,
 `KANBAN_IDEMPOTENCY_MAX_ENTRIES`, `KANBAN_WEBHOOK_MAX_ATTEMPTS`,
 `KANBAN_WEBHOOK_BACKOFF_MS`, `KANBAN_WEBHOOK_MAX_QUEUE` and
 `KANBAN_WEBHOOK_DEAD_LETTER_MAX` are documented in `docs/CONFIGURATION.md` and
-`.env.example`. Suite: 819 server tests (was 799), 303 client tests.
+`.env.example`. Suite: 822 server tests (was 799), 303 client tests.
 
 ## [3.12.5] — 2026-11-11
 

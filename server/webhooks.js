@@ -276,7 +276,12 @@ function recordDeadLetter(url, event, cfg, entry) {
   });
 }
 
-const defaultSleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const defaultSleep = (ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  // A pending retry backoff must never be the reason the process stays alive
+  // (A9). An unref'd timer still fires while the loop is running.
+  timer.unref?.();
+});
 
 /** Attempt one event, retrying transient outcomes. Never throws. */
 async function deliverWithRetry(url, event, cfg, fetchImpl, sleep) {
