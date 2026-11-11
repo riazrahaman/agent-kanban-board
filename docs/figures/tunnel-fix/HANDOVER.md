@@ -128,7 +128,7 @@ needle/beacon/lamp envelopes decay per tick.
 ## Hard rules
 - NOTHING is committed, merged, pushed, or shipped. The figure ships only via
   the standing release flow (bump both package.json manifests → CHANGELOG →
-  doc version strings → tests 708 server / 303 client → check-version-bump.sh
+  doc version strings → tests 727 server / 303 client → check-version-bump.sh
   → merge --no-ff → tag → GitHub Release) after explicit user confirmation.
 - No WebSockets, no new npm dependencies, no `dangerouslySetInnerHTML`.
 - Keep the interactive script working (route toggle via click/space, reduced
