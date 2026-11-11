@@ -16,6 +16,15 @@ the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
 
+## [3.11.1] — 2026-11-11
+
+### Fixed
+
+- The About page's trust metrics now report the real server suite size (727),
+  which grew by 19 tests in v3.11.0. The client test that compares the page
+  against the declarations in `server/test/` was failing on `main`.
+- `docs/figures/tunnel-fix/HANDOVER.md` no longer quotes the stale 708 count.
+
 ## [3.11.0] — 2026-11-11
 
 ### Added
