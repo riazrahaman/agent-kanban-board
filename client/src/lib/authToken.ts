@@ -59,10 +59,26 @@ export function writeStoredToken(token: string): void {
  * claim/heartbeat/log/comment/next-claim. Callers still put `agent_id` in the
  * body too: it keeps working against a server older than v3.12.8.
  *
- * Control characters are stripped from the identity: an embedded newline would
- * otherwise make `fetch` throw (the request would fail before it left the
- * browser) and could reach the server's audit reason as a forged log line.
+ * The header value is reduced to printable ASCII. `fetch` converts header
+ * values to a ByteString, so ANY codepoint above U+00FF (Cyrillic, CJK, emoji —
+ * all plausible agent names) makes the call throw "Cannot convert argument to
+ * a ByteString" before the request leaves the browser; an embedded newline
+ * throws for the same reason and could forge an audit log line. Runs of such
+ * characters collapse to a single `-`, and an identity with nothing printable
+ * left becomes `agent` so the header is never empty. This is presentation only:
+ * the raw id still travels in the JSON body, and a credential-bound caller is
+ * unaffected because the server prefers the credential's id.
  */
+
+/** Stable stand-in when an identity has no printable ASCII left to send. */
+const AGENT_ID_FALLBACK = 'agent'
+
+function headerSafeAgentId(agentId: string): string {
+  const ascii = agentId.replace(/[^\u0020-\u007e]+/g, '-').trim()
+  const trimmed = ascii.replace(/^[-\s]+|[-\s]+$/g, '')
+  return trimmed || AGENT_ID_FALLBACK
+}
+
 export function authHeaders(
   token: string | null | undefined,
   role: string = CLIENT_ROLE,
@@ -72,7 +88,9 @@ export function authHeaders(
   const trimmed = typeof token === 'string' ? token.trim() : ''
   if (trimmed) headers.Authorization = `Bearer ${trimmed}`
   if (role) headers['X-Agent-Role'] = role
-  const agent = typeof agentId === 'string' ? agentId.replace(/[\u0000-\u001f\u007f]/g, '').trim() : ''
-  if (agent) headers['X-Agent-Id'] = agent
+  // A blank identity is still omitted rather than replaced by the fallback: no
+  // caller supplied one, so there is nothing to stand in for.
+  const agent = typeof agentId === 'string' ? agentId.trim() : ''
+  if (agent) headers['X-Agent-Id'] = headerSafeAgentId(agent)
   return headers
 }

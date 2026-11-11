@@ -96,6 +96,20 @@ test('next-claim sends X-Agent-Id (and never puts identity in the query)', async
   assert.ok(!call.url.includes(AGENT), 'the identity is not copied into the URL')
 })
 
+test('non-ASCII identities send a ByteString-safe header and keep the raw body id', async () => {
+  // Cyrillic / emoji agent names would make fetch throw on the header value.
+  // The header is reduced to printable ASCII; identity still travels raw in the
+  // body (what a v3.12.8+ server ignores only for a credential-bound caller).
+  for (const agent of ['Агент-7', '🤖 builder']) {
+    const call = await capture(() => api.claimTask('t1', agent, { project: 'p' }))
+    const header = call.init.headers['X-Agent-Id']
+    assert.ok(header, `expected a header for ${agent}`)
+    assert.match(header, /^[\u0020-\u007e]+$/, `header must be printable ASCII for ${agent}`)
+    assert.doesNotThrow(() => new Headers(call.init.headers))
+    assert.equal(JSON.parse(call.init.body).agent_id, agent, 'body keeps the raw identity')
+  }
+})
+
 test('assignment does NOT declare the target as the caller', async () => {
   const call = await capture(() => api.assignTask('t1', 'target-agent', { project: 'p' }))
   assert.equal(call.init.headers['X-Agent-Id'], undefined)
