@@ -1,7 +1,7 @@
 // Test helper — the About page's source, as one string.
 //
 // v3.12.5 split the page into a shell (components/About.tsx), per-chapter
-// sections (components/about/*.tsx) and small shared primitives. The source
+// sections (client/src/about/*.tsx) and small shared primitives. The source
 // contracts in about.test.mjs, aboutFieldGuide.test.mjs, responsive.test.mjs,
 // bugReportContract.test.mjs and useVisitCount.test.mjs describe the PAGE —
 // its masthead, chapter grammar, SVG and Ask console — not one filename. They
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 const CLIENT_SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-/** Concatenated source of components/About.tsx + components/about/*.tsx. */
+/** Concatenated source of client/src/components/About.tsx + client/src/about/*.tsx. */
 export function readAboutSources() {
   const parts = [readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')]
   const dir = join(CLIENT_SRC, 'about')

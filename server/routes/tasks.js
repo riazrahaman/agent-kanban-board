@@ -39,22 +39,34 @@ function resolveProjectFromReq(req) {
  * Strip the weak prefix and the surrounding quotes; `*` means "any current
  * representation", i.e. no version precondition. Only the version number is
  * meaningful here — an ETag's payload is never interpreted.
+ *
+ * Documented contract for a list: only the FIRST tag is authoritative (a
+ * conditional request against one resource is answered by one entity-tag);
+ * later entries are ignored and never fall back. `"2", "9"` therefore matches
+ * version 2; `"9", "2"` is a 409 echoing `9`.
+ *
+ * Only an ABSENT header (or `*`) may mean "no precondition". Every present,
+ * non-`*` value reaches the CAS guard, including an empty entity-tag:
+ * `If-Match: ""` and `W/""` are syntactically valid tags that match no
+ * representation, so they must 409 — folding them into "absent" silently
+ * disabled the guard (a lost-update bug, C5 regression).
  */
 function parseIfMatchVersion(header) {
-  if (header === undefined || header === null || header === '') return undefined;
+  if (header === undefined || header === null) return undefined;
   // Express may surface the header as an array on repeated names; coerce.
   const raw = Array.isArray(header) ? header[0] : header;
   if (typeof raw !== 'string') return raw;
-  // A conditional request against a single resource is answered by its first
-  // entity-tag; later list entries describe other representations we do not
-  // serve.
+  // First tag only; a later entry never rescues an unmatched first one.
   let value = raw.split(',')[0].trim();
   if (value === '*') return undefined;
   if (value.startsWith('W/')) value = value.slice(2).trim();
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    value = value.slice(1, -1).trim();
+    const inner = value.slice(1, -1).trim();
+    // `""` is an empty entity-tag, not an omitted precondition: keep the
+    // quoted form so the CAS guard rejects it and echoes the validator.
+    return inner === '' ? value : inner;
   }
-  return value === '' ? undefined : value;
+  return value;
 }
 
 function resolveExpectedVersion(req) {

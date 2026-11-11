@@ -1,5 +1,8 @@
-// C1 (v3.12.5): the fs/git/yaml plumbing that needed these imports moved to
-// ./store/{core,backups}.js with the code that used it.
+// C1 (v3.12.5): the engine was split into ./store/{core,listeners,aggregates,
+// leases,archive,trash,backups}.js and this file is the facade over them. The
+// remaining node:fs/(promises) and node:path imports stay here: the inline-log
+// spill helpers (spillDir/spillFile/appendSpill/readSpill) still live in this
+// module, not in store/core.js or store/backups.js.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -155,7 +158,6 @@ import {
   restoreFromTrash,
   hardDeleteFromTrash,
   runTrashSweep,
-  runTrashSweepInner,
 } from './store/trash.js';
 import {
   startBackup,

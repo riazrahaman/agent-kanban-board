@@ -19,7 +19,7 @@ flowchart TD
         PreAuth["Pre-Auth Routers\n(routes/auth.js, routes/bugReports.js, routes/ask.js)"]
         RoutesTasks["routes/tasks.js\n(Task REST API Router)"]
         AuxRouters["Auxiliary Routers\n(projects, agents, metrics, settings, milestones, audit, health)"]
-        Store["store.js\n(Mutation Lock Queue, Engine Composition, Reaper)"]
+        Store["store.js facade + store/*\n(core: Mutation Lock Queue & State; listeners, aggregates,\nleases, archive, trash, backups)"]
         StateMachine["state-machine.js\n(8 States + BLOCKED, canTransition, canRoleTransition)"]
         StorageEngine["storage.js\n(JsonStorage, GitYamlStorage, writeAtomic)"]
         AskEngine["askKnowledge.js\n(Verbatim Source-Code Retrieval & Live Snapshot)"]
@@ -111,10 +111,10 @@ sequenceDiagram
     participant PreAuth as Pre-Auth Routers (/api/auth, /api/bug-reports, /api/ask)
     participant Auth as middleware/auth.js & rateLimit.js
     participant Router as routes/*.js
-    participant Engine as store.js (withMutationLock)
+    participant Engine as store.js facade + store/core.js (withMutationLock)
     participant Machine as state-machine.js (RBAC & Transitions)
     participant Storage as storage.js (JsonStorage / GitYamlStorage)
-    participant EventBus as store.js notify()
+    participant EventBus as store/listeners.js notify()
     participant SSE as SSE (/api/events)
     participant Sinks as Notifier / Webhooks / Audit
 
@@ -169,7 +169,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    App["App.tsx\nState: tasks, openTaskId, theme, loading, error\nEffect: getTasks() & subscribeToEvents()"]
+    App["App.tsx\nState: tasks, openTaskId, theme, loading, error\nEffect: getTasks() & subscribeToBoard()"]
     
     Header["Header Bar\nLive indicator, task count, theme toggle"]
     ErrorBoundary["ErrorBoundary.tsx\nCatches render crashes, displays fallback"]
@@ -310,9 +310,10 @@ resolution, `updateSettings` under the mutation lock, `onSettings` listeners,
 (defaulted in `backfillLeaseFields`, seeded in `createTask`, round-tripped in
 `serializeCard`, written only through `addComment` — deliberately outside
 `patchTask`'s allowlist).
-v2.10.0: `store.js` is now a thin stateful core that re-exports four extracted modules (`state-machine.js`, `task-identity.js`, `task-fields.js`, `storage.js`); every existing importer is unchanged and `store.X === module.X` identity is asserted by `kanban.modulesplit.test.js`.
+v2.10.0: `store.js` became a thin stateful core that re-exports four extracted modules (`state-machine.js`, `task-identity.js`, `task-fields.js`, `storage.js`); every existing importer was unchanged and `store.X === module.X` identity is asserted by `kanban.modulesplit.test.js`.
+v3.12.5: the engine itself is split by responsibility behind that facade — [`server/store/core.js`](../server/store/core.js) is the single home of state (live `tasks`, composite index, archive/trash/settings sinks, mutation queue and lock, storage factory, serials, read accessors, `nextVersionFor`/`versionConflict`), `store/listeners.js` owns the snapshot/diff/audit/settings buses behind `notify()`, `store/aggregates.js` the project summaries/metrics caches and claim contention, `store/leases.js` the clock, lease windows, claim caps, reclaim path and reaper, and `store/archive.js` / `store/trash.js` / `store/backups.js` the sweeps and periodic snapshots. Extracted modules import the state (ESM live bindings) and `store.js` re-exports every moved symbol with its original identity, so every `../store.js` importer is unchanged (`kanban.modulesplit.test.js` pins the identities).
 v2.8.0 additions: an **optional append-only journal** for `JsonStorage` (`KANBAN_STORAGE_JOURNAL=1` appends one `{op,id,task}` line per mutation to `<partition>.journal.jsonl`, `_replayJournal` replays it on load and `_writeCanonical` compacts past `KANBAN_JOURNAL_COMPACT_BYTES`; off by default so the on-disk layout is unchanged) and **bounded inline logs/comments** (`getInlineLogCap`/`getInlineCommentCap`, `spillOverflow`/`appendSpill`/`readSpill`, which keep the newest `KANBAN_INLINE_LOG_CAP`/`KANBAN_INLINE_COMMENT_CAP` entries inline and spill older ones to `spill/<project>/<taskId>.jsonl`, read back via `getTaskLogs`).
-- **Path:** [`server/store.js`](../server/store.js) (the pure state machine lives in [`server/state-machine.js`](../server/state-machine.js) and is re-exported here)
+- **Path:** [`server/store.js`](../server/store.js) is the facade; the engine modules live in [`server/store/`](../server/store) (`core.js`, `listeners.js`, `aggregates.js`, `leases.js`, `archive.js`, `trash.js`, `backups.js`). The pure state machine lives in [`server/state-machine.js`](../server/state-machine.js).
 - **Core Domain State & Engine:**
   - `STATUSES`: Dictionary of the v3 loop statuses (`BACKLOG`, `READY`, `PLANNING`, `IN_PROGRESS`, `IN_REVIEW`, `VALIDATION`, `READY_TO_SHIP`, `DONE`, `BLOCKED`; ADR-004).
   - `normalizeStatus(status)`: Normalizes casing and legacy aliases (`TODO` $\to$ `BACKLOG`, `BUILDING` $\to$ `IN_PROGRESS`, `IN_TEST` $\to$ `VALIDATION`).

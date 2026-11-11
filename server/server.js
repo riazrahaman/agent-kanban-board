@@ -25,9 +25,7 @@ import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js
 import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
-import { createLogger, logError, logWarn } from './logger.js';
-
-const log = createLogger('server');
+import { formatLine, log as emitLog, logError, logWarn } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -510,7 +508,9 @@ export async function startServer(
  * @param {import('node:http').Server} server
  * @param {object} [opts]
  * @param {function} [opts.exit]
- * @param {function} [opts.log]
+ * @param {function} [opts.log] Line sink. Receives every line this function
+ *   emits, whatever the level; omitted in production, where the module logger
+ *   keeps its level-aware console sinks.
  * @param {number} [opts.timeoutMs]
  * @param {function} [opts.drain] Ends long-lived streams. Defaults to
  *   `drainSseStreams`; injectable so the unit tests can observe the ordering.
@@ -518,36 +518,52 @@ export async function startServer(
  */
 export function registerShutdownHandlers(
   server,
-  { exit = process.exit, log = console.log, timeoutMs = 5000, drain = drainSseStreams } = {}
+  { exit = process.exit, log, timeoutMs = 5000, drain = drainSseStreams } = {}
 ) {
+  // One line sink for every message below. An injected `log` (test/operator
+  // seam) receives warn and error lines too; without this, `logError`/
+  // `logWarn` are module functions and bypass the caller's sink entirely, so
+  // the lines split across two destinations. The production path keeps the
+  // module logger's level-aware console sinks.
+  const emit =
+    typeof log === 'function'
+      ? (level, msg, fields = {}) => {
+          try {
+            log(formatLine(level, 'server', msg, fields));
+          } catch {
+            /* logging must never abort a shutdown */
+          }
+        }
+      : (level, msg, fields) => emitLog(level, 'server', msg, fields);
+
   let stopping = false;
   const shutdown = (signal) => {
     if (stopping) return;
     stopping = true;
-    log(`[kanban server] received ${signal}, shutting down gracefully...`);
+    emit('info', `received ${signal}, shutting down gracefully...`);
 
     // Before close(), or close() waits on streams that never end by design.
     let drained = 0;
     try {
       drained = drain() ?? 0;
     } catch (err) {
-      logError('server', 'error draining event streams', { error: err });
+      emit('error', 'error draining event streams', { error: err });
     }
     if (drained > 0) {
-      log(`[kanban server] ended ${drained} open event stream(s)`);
+      emit('info', `ended ${drained} open event stream(s)`);
     }
 
     const closeStarted = Date.now();
     server.close((err) => {
       if (err) {
-        logError('server', 'error during close', { error: err });
+        emit('error', 'error during close', { error: err });
         exit(1);
         return;
       }
       // Logged so a retirement can be told apart from a container that was
       // killed before it ever got here — the two are indistinguishable in the
       // deploy log otherwise, which is what made #108 hard to confirm.
-      log(`[kanban server] closed cleanly in ${Date.now() - closeStarted}ms`);
+      emit('info', `closed cleanly in ${Date.now() - closeStarted}ms`);
       exit(0);
     });
     // Node 18.2+. Idle keep-alive sockets are dropped at once: nothing is being
@@ -557,7 +573,7 @@ export function registerShutdownHandlers(
       try {
         server.closeIdleConnections();
       } catch (err) {
-        logError('server', 'error closing idle connections', { error: err });
+        emit('error', 'error closing idle connections', { error: err });
       }
     }
 
@@ -569,14 +585,14 @@ export function registerShutdownHandlers(
         try {
           server.closeAllConnections();
         } catch (err) {
-          logError('server', 'error closing connections', { error: err });
+          emit('error', 'error closing connections', { error: err });
         }
       }, 1000);
       if (typeof hard.unref === 'function') hard.unref();
     }
 
     const timer = setTimeout(() => {
-      logWarn('server', 'graceful shutdown timed out; exiting forcefully');
+      emit('warn', 'graceful shutdown timed out; exiting forcefully');
       exit(0);
     }, timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();

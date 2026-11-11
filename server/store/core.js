@@ -378,10 +378,15 @@ export function nextVersionFor(task) {
 
 /**
  * Evaluates an optional expected-version guard supplied via a body
- * `expected_version` field or an `If-Match` header (Etag-style bare int).
+ * `expected_version` field or an `If-Match` header (RFC 7232 entity-tag).
  * Returns a 409 version-conflict payload when the supplied version differs
  * from the task's current version, or `null` when no guard was supplied so
  * callers that omit a version keep working unchanged.
+ *
+ * "No guard" means `undefined`/`null` ONLY. The route resolves `If-Match: ""`
+ * (a valid empty entity-tag) and other unmatched validators to a provided
+ * value, and those must conflict rather than disappear: treating `''` as
+ * "absent" here silently disabled the CAS guard.
  *
  * The conflict error reads "Version mismatch" so it is distinguishable from
  * the claim-contention 409 ("… already claimed by …"): a version conflict is a
@@ -389,7 +394,7 @@ export function nextVersionFor(task) {
  * about*. Both carry a details object with the current vs. supplied version.
  */
 export function versionConflict(task, rawExpected) {
-  if (rawExpected === undefined || rawExpected === null || rawExpected === '') return null;
+  if (rawExpected === undefined || rawExpected === null) return null;
   const current = Number.isInteger(task.version) ? task.version : 1;
   const provided = Number(rawExpected);
   if (Number.isNaN(provided) || provided !== current) {
