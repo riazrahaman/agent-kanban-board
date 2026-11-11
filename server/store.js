@@ -457,6 +457,19 @@ function projectBucket(project, candidate) {
   return out;
 }
 
+/**
+ * B1 (v3.12.3) — like `projectBucket`, but applies a BATCH of already-mutated
+ * candidates to the project's live bucket. Used by `renewAllLeasesInner` so a
+ * whole sibling-renewal sweep persists in ONE save per project with every
+ * renewal applied.
+ */
+function projectBucketFor(project, candidates) {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  return tasks
+    .filter((t) => t.project === project)
+    .map((t) => byId.get(t.id) ?? t);
+}
+
 // ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
@@ -2138,9 +2151,21 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
 // `agentId` (optionally scoped to one `project`), persisting each. Caller MUST
 // already hold withMutationLock. Returns the composite keys renewed. Never
 // emits notify (the caller folds these into its own semantic event).
+//
+// B1 (v3.12.3): the persist step is grouped per project. Previously each
+// sibling was persisted with its own `saveTask`, which on the JSON backend
+// (journal OFF, the default) degrades to a FULL-partition rewrite per sibling —
+// N held cards meant N whole-partition stringify+write passes on every
+// heartbeat. Now all candidates are computed first, updated in memory, and
+// each affected project is persisted ONCE via `storage.saveTasks(changed,
+// bucket)`. Event semantics (the renewed-keys list, the semantic Map entries)
+// and the I-6 failure isolation (a failing persist never throws to the caller)
+// are unchanged.
 async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project = null } = {}) {
   if (!agentId || typeof agentId !== 'string') return [];
-  const renewed = [];
+  // Pass 1 — compute every renewal candidate, grouped by project (first-seen
+  // project order preserved so the returned key list stays stable).
+  const byProject = new Map();
   for (const t of tasks.slice()) {
     if (excludeKey !== null && compositeKey(t.project, t.id) === excludeKey) continue;
     if (project !== null && t.project !== project) continue;
@@ -2148,18 +2173,27 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
     if (!ACTIVE_STATUS_SET.has(t.status)) continue;
     const expiresMs = t.claim_expires_at ? Date.parse(t.claim_expires_at) : NaN;
     if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) continue;
+    const candidate = structuredClone(t);
+    candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
+    candidate.updated = isoFromMs(nowMs);
+    if (!byProject.has(candidate.project)) byProject.set(candidate.project, []);
+    byProject.get(candidate.project).push(candidate);
+  }
+  // Pass 2 — ONE persist per project, then fold the candidates into memory.
+  const renewed = [];
+  for (const [p, candidates] of byProject) {
     try {
-      const candidate = structuredClone(t);
-      candidate.claim_expires_at = isoFromMs(nowMs + leaseWindowFor(candidate));
-      candidate.updated = isoFromMs(nowMs);
-      const storage = getStorage(candidate.project);
-      await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
-      updateInMemoryTask(candidate);
-      renewed.push(compositeKey(candidate.project, candidate.id));
+      const storage = getStorage(p);
+      const bucket = projectBucketFor(p, candidates);
+      await storage.saveTasks(candidates, bucket);
+      for (const candidate of candidates) {
+        updateInMemoryTask(candidate);
+        renewed.push(compositeKey(p, candidate.id));
+      }
     } catch (err) {
       // I-6: never let a sibling's save failure fail the caller's real write.
       console.error(
-        `[kanban] sibling lease renewal failed for ${compositeKey(t.project, t.id)}:`,
+        `[kanban] sibling lease renewal failed for project ${p}:`,
         err && err.message,
       );
     }
