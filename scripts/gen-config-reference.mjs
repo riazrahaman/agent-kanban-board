@@ -35,6 +35,7 @@ const DESCRIPTIONS = {
   'KANBAN_DEPLOY_DRIFT_INTERVAL_MS': 'Deploy-drift check interval in ms (default 1800000 = 30 min; <= 0 disables the monitor)',
   'KANBAN_DEPLOY_DRIFT_GRACE_MS': 'How long a version mismatch must persist before it is reported as drift (default 2700000 = 45 min)',
   'KANBAN_DEPLOY_DRIFT_API_URL': '(optional) Release feed the drift monitor reads (default https://api.github.com/repos/riazrahaman/agent-kanban-board/releases/latest)',
+  'KANBAN_DEPLOY_DRIFT_TAGS_API_URL': '(optional) Tag list used when the release feed is missing or older than the newest tag; defaults to the tags endpoint of the same repository (/releases/latest -> /tags?per_page=100)',
   'KANBAN_GIT_COMMIT': 'Set falsy to skip the per-transition git commit',
   'KANBAN_GIT_DIR': 'Directory for the git-backed YAML storage backend',
   'KANBAN_INLINE_COMMENT_CAP': 'Inline comments kept per task before spilling (default 50)',

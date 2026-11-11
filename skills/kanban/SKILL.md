@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.12.6
+version: 3.12.7
 ---
 
 # Kanban Orchestrator Protocol
@@ -77,10 +77,12 @@ If `kanban_url` is not provided in `.opencode/config.json` or environment variab
    - Check if `credential_map.status` is `"undercovered"` or `"malformed"`.
    - When authenticated, check if your configured `project_name` is listed in `credential_map.missing` (`missing?.includes(project_name)`). Unauthenticated probes alert on `credential_map.missing_count > 0`.
    - If your project is missing or the credential map is undercovered, **warn or halt immediately**: the board has stored tasks for the project but lacks an active token entry in `KANBAN_PROJECT_TOKENS`. Future task mutations will fail with `403 Forbidden: token is not authorized for project '<project_name>'`. Alert the operator to restore the missing token in the server's environment configuration (e.g. Railway / Render).
-3. **Deploy-Drift Check (v3.9.5+)**: `GET /api/health` also carries `deploy_drift: {status, running, latest_tag, checked_at, drift_since}` — the running version compared with the newest GitHub release.
-   - `status: "drift"` means the release on GitHub is **not** the build that is live. Treat it as **the deploy was SKIPPED, not failed**: a hosted service set to require a green CI skips a push-triggered deployment when CI is red, and the previous build keeps serving a healthy board. Check the CI run for the release commit and let the operator redeploy. **Do not retry writes or re-file work because of drift** — the board's data and API are healthy; a write that failed failed for its own reason.
-   - `status: "unknown"` means the check itself failed (GitHub unreachable, bad payload, or the monitor is disabled/just booted). It is **not** a board outage — `/api/health` answered, so the process is up. Report it, do not halt.
-   - `status: "in_sync"` needs no action. A mismatch is only reported after a grace window (default 45 min), so a release that has just been tagged and not yet redeployed is normal, not drift.
+3. **Deploy-Drift Check (v3.9.5+, semver since v3.12.7)**: `GET /api/health` also carries `deploy_drift: {status, reason, running, latest_tag, source, checked_at, drift_since}` — the running version compared with the newest published version using **semver**, not string equality.
+   - `status: "drift"` means the live build is **BEHIND** the newest release (`running < latest`). Treat it as **the deploy was SKIPPED, not failed**: a hosted service set to require a green CI skips a push-triggered deployment when CI is red, and the previous build keeps serving a healthy board. Check the CI run for the release commit and let the operator redeploy. **Do not retry writes or re-file work because of drift** — the board's data and API are healthy; a write that failed failed for its own reason.
+   - `status: "in_sync"` covers a match, a mismatch still inside the grace window, **and a build that is AHEAD of the newest release**. Running ahead is not drift: the release simply has not been published yet, nothing is missing from the live build, and no deploy was skipped. `reason` says which (`match`, `behind_within_grace`, `running_ahead`).
+   - `status: "unknown"` means the check itself failed (GitHub unreachable, bad payload, or the monitor is disabled/just booted); `reason` is `check_failed`, `not_checked` or `unparseable_*`. It is **not** a board outage — `/api/health` answered, so the process is up. Report it, do not halt.
+   - `source: "release" | "tags"` records which feed produced `latest_tag`. The monitor reads `releases/latest` first and falls back to the repository's tag list when the release is missing or older than the highest semver tag (this repo published tags without GitHub Releases for a while). A tags-sourced verdict is as authoritative as a release-sourced one.
+   - A mismatch is only reported after a grace window (default 45 min), so a release that has just been tagged and not yet redeployed is normal, not drift.
 
 **Security**: Never commit configuration files. `.opencode/` holds authentication tokens. Confirm it is added to `.gitignore` before writing, and never stage `.opencode/` in git commits.
 
@@ -102,7 +104,7 @@ Verified endpoint scoping behavior:
 | `GET /tasks/:id` (no `?project=`) | None | Fails with `404 Not Found` |
 | `GET /tasks?project=X` | Query parameter: `?project=X` | Lists tasks within project |
 | `GET /projects` | Header `x-api-token` mandatory | Returns authorized project summaries (anonymous returns []) |
-| `GET /api/health` | No scoping needed | Server health, version probe (`version`), credential-map status (`credential_map` v3.1.0+, project name privacy v3.2.0+, project scope isolation v3.3.0+), and deploy-drift verdict (`deploy_drift` v3.9.5+) |
+| `GET /api/health` | No scoping needed | Server health, version probe (`version`), credential-map status (`credential_map` v3.1.0+, project name privacy v3.2.0+, project scope isolation v3.3.0+), and deploy-drift verdict (`deploy_drift` v3.9.5+, semver + `source` field v3.12.7+) |
 | `GET /api/events` | Optional: `?project=X` | EventSource SSE real-time event stream (diffs or snapshots) |
 | `POST /api/bug-reports` | No scoping needed | Public human bug reporting to GitHub (takes no token, creates no card) |
 | `POST /api/ask` | No scoping needed | Password-gated Q&A (`x-ask-pass` mandatory; read-only assistant, takes no board token) |
@@ -177,7 +179,11 @@ The Orchestrator operates as `admin` for status resets, unblocking, and lifecycl
 Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 1. **Docs & Versioning**: Update README/docs/CHANGELOG and bump version numbers in lockstep.
 2. **Merge**: `git checkout main && git merge --no-ff <branch>`
-3. **Tag & Push**: `git tag -a v<version> -m "release <version>" && git push origin main --tags`
+3. **Tag, Release & Push**: `git tag -a v<version> -m "release <version>" && git push origin main --tags`, then **publish a GitHub Release for that same tag** — every release ships both, never a bare tag:
+   ```bash
+   gh release create v<version> --title "v<version>" --notes-file <changelog-section.md>
+   ```
+   `releases/latest` is what the deploy-drift monitor reads first. A tag pushed without a Release leaves that feed stale, which is exactly how v3.10.5 sat at the top while the board ran 3.12.x (the tags fallback in v3.12.7 now covers that case, but the Release is still the contract). Verify with `gh release view v<version>` and `curl -s https://api.github.com/repos/<owner>/<repo>/releases/latest | jq -r .tag_name`.
 4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `releaser` or `admin`, with `expected_version`) + log completion metadata.
 5. **Close GitHub Issue**: `gh issue close <N> --comment "Resolved in v<version>: ..."`
 6. **Deployment Check**: Confirm live deployment status (e.g. `railway status` and `GET /api/health`).

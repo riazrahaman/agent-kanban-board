@@ -93,7 +93,7 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '822',
+    value: '834',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
@@ -840,7 +840,7 @@ SIGTERM
     eli5:
       'Everything that changes how the board behaves is an environment variable. Set none and you get a safe, local, single-token board.',
     underTheHood:
-      'The server reads its configuration from the environment at call time, so tests and redeploys can change behaviour without a code change. Secrets are server-only — they are never inlined into the client bundle (the client stores its one write token in localStorage rather than a build-time env var). A feature whose prerequisite secrets are unset stays off: Ask-the-Board, reclaim alerts and bug reports are all fail-closed by default. This deployment also checks every 30 minutes whether the version it is running is the newest GitHub release, reports `in_sync`, `drift` or `unknown` under `deploy_drift` in `/api/health`, and raises one GitHub issue plus a Telegram message when a release is not live — silence there is not proof of health, because if the process is down nothing checks at all.',
+      'The server reads its configuration from the environment at call time, so tests and redeploys can change behaviour without a code change. Secrets are server-only — they are never inlined into the client bundle (the client stores its one write token in localStorage rather than a build-time env var). A feature whose prerequisite secrets are unset stays off: Ask-the-Board, reclaim alerts and bug reports are all fail-closed by default. This deployment also checks every 30 minutes whether the version it is running is the newest published version, reports `in_sync`, `drift` or `unknown` under `deploy_drift` in `/api/health`, and raises one GitHub issue plus a Telegram message when the live build is behind a release. The comparison is semver and one-directional: a build ahead of the newest release is in sync, and a release feed that lags the tag list falls back to the tags endpoint.',
     snippet: {
       label: 'docs/CONFIGURATION.md is generated',
       code: `# regenerate the reference table from the code
