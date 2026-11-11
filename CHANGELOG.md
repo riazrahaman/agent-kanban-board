@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,73 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.12.7] - 2026-11-11
+
+A correctness fix for the deploy-drift monitor: it compared versions with string
+equality and read only `releases/latest`, so a build that was AHEAD of the
+newest release, or a release feed that lagged the git tags, was reported as a
+skipped deploy after the grace window. Drift now means one thing only - the
+running build is BEHIND - and the monitor falls back to the tag list when the
+release feed is missing or stale.
+
+### Fixed
+
+- **Deploy drift is semver, not string equality.** `server/deployDrift.js` now
+  compares `running` with `latest_tag` through the new `server/semver.js`
+  (`parseSemver`, `compareSemver`, `pickHighestTag`). Numeric components order
+  as numbers (`3.12.10 > 3.12.9`); a prerelease ranks below its release
+  (`3.12.7-rc.1 < 3.12.7`). Drift is one-directional: only `running < latest`
+  can become `drift`, and only after the grace window. `running > latest` is
+  `in_sync` with `reason: "running_ahead"` - nothing is missing from the live
+  build, so there is no deploy to recover. Unparsable input on either side is
+  `unknown` (`unparseable_running` / `unparseable_latest`), never drift.
+- **Tags-API fallback when the release feed is missing or stale.** Each check
+  reads `releases/latest` and then the repository's tag list. The tag list is
+  used when the release feed 404s/403s/throws/has no tag, or when the release
+  tag is OLDER than the highest semver tag (`/repos/<owner>/<repo>/tags?per_page=100`,
+  chosen by semver - not array order, not lexicographic). The endpoint defaults
+  to the same repository as the release URL (`deriveTagsApiUrl` maps
+  `/releases/latest` to `/tags?per_page=100`) and is overridable with the new
+  `KANBAN_DEPLOY_DRIFT_TAGS_API_URL`. This is the historical false alarm: git
+  tags were published without GitHub Releases, so `releases/latest` stayed at
+  v3.10.5 while the board ran 3.12.x.
+- **`deploy_drift` carries `reason` and `source`.** The public snapshot is now
+  `{ status, reason, running, latest_tag, source, checked_at, drift_since }`.
+  Both fields are additive and backward-compatible: `reason` names the verdict
+  (`match`, `running_ahead`, `behind`, `behind_within_grace`, `check_failed`,
+  `unparseable_*`, `not_checked`) and `source` says which feed produced
+  `latest_tag` (`"release"` or `"tags"`). A failed check keeps the previous
+  `latest_tag`, `source` and `drift_since`, so an outage cannot erase a drift
+  that is already being timed.
+- **Neutral alert copy.** `formatDeployDriftMessage` reserves "BEHIND" and
+  "most likely SKIPPED (red CI)" for a real behind-drift. A running-ahead
+  recovery gets its own "AHEAD ... not drift, no action needed" wording, and an
+  `unknown` snapshot gets a distinct "check unavailable" message that makes no
+  deploy claim at all. Only drift/in_sync transitions are sent, so a GitHub
+  outage stays silent on Telegram.
+
+### Changed
+
+- **Protocol: every tag ships with a GitHub Release.** `skills/kanban/SKILL.md`
+  Stage C now pairs `git tag` + push with
+  `gh release create v<version> --notes-file ...`, and its deploy-drift section
+  documents that `source` may be `release` or `tags` and that a build ahead of
+  the newest release is `in_sync`, not drift. A bare tag leaves
+  `releases/latest` stale, which is what the fallback now compensates for but
+  should not have to.
+- **Docs.** `docs/CONFIGURATION.md` (regenerated) and `.env.example` document
+  `KANBAN_DEPLOY_DRIFT_TAGS_API_URL`; the operator manual, system design,
+  file-by-file guide and their `with-images/` copies describe the semver rule,
+  the tags fallback and the new snapshot fields.
+- **Tests.** `server/test/kanban.deploydrift.test.js` grows from 10 to 22 cases:
+  numeric ordering (3.12.10 vs 3.12.9), prerelease ordering, highest-tag
+  selection from unordered input, running-ahead -> `in_sync` with no alert,
+  equal -> `in_sync`, behind within/past grace, unparsable -> `unknown`, tags
+  fallback on a 404 release, tags preferred for a stale release, tags failure
+  tolerated, fetch failure preserving `drift_since` + `source`, the `source`
+  field on both feeds, and alert copy that never says "skipped"/"deploy was"
+  for a running-ahead snapshot. All driven by an injected fetch - no network.
 
 ## [3.12.6] - 2026-11-11
 

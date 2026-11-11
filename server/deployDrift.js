@@ -15,9 +15,9 @@
  *     with a null `checked_at` and the client chip stays hidden).
  *   - NEVER throws. Any fetch/parse failure is `unknown` — GitHub being
  *     unreachable says nothing about this deployment's health.
- *   - NO new secret and no GitHub token. `releases/latest` is a public read;
- *     the only credentials it uses are the Telegram pair the notifier already
- *     owns, and if either is unset it stays silent.
+ *   - NO new secret and no GitHub token. `releases/latest` and `tags` are
+ *     public reads; the only credentials it uses are the Telegram pair the
+ *     notifier already owns, and if either is unset it stays silent.
  *   - GRACE. A release tag appears on GitHub the moment it is cut, minutes
  *     before the redeploy lands. Reporting drift in that window would alert on
  *     every single good deploy, so a mismatch only becomes `drift` once it has
@@ -25,15 +25,34 @@
  *   - The timer is unref()'d and started ONLY from `startServer`, never from
  *     `createApp`, so the HTTP-contract tests never make a network call.
  *
+ * v3.12.7 - drift means BEHIND, and only behind. Two corrections to the
+ * original comparison:
+ *
+ *   - SEMVER, not string equality (server/semver.js). A build that is AHEAD of
+ *     the newest release is `in_sync`: nothing is missing, the release just has
+ *     not been published. Only `running < latest` can ever become `drift`.
+ *   - TAGS fallback. This repo historically cut git tags without GitHub
+ *     Releases, so `releases/latest` sat at v3.10.5 while the board ran 3.12.x
+ *     and every check after the grace window reported a "skipped" deploy. When
+ *     the release feed 404s/403s/throws, or its tag is older than the highest
+ *     tag on `/tags`, the monitor now reads the tags endpoint and compares
+ *     against the highest semver tag there. `source` records which feed won so
+ *     an operator can tell a release-based verdict from a tags-based one.
+ *
  * Everything the monitor decides is in the pure `evaluateDrift()` helper, which
  * takes an explicit clock — the tests drive it without network or timers.
  */
 
 // C4 (v3.12.5): the deployed version comes from the one shared helper.
 import { APP_VERSION } from './version.js';
+import { compareSemver, parseSemver, pickHighestTag } from './semver.js';
 
 export const DEFAULT_API_URL =
   'https://api.github.com/repos/riazrahaman/agent-kanban-board/releases/latest';
+// The same repo's tag list, used when `releases/latest` is missing or stale
+// (see the header). Public read; no credential.
+export const DEFAULT_TAGS_API_URL =
+  'https://api.github.com/repos/riazrahaman/agent-kanban-board/tags?per_page=100';
 export const DEFAULT_INTERVAL_MS = 1800000; // 30 min
 export const DEFAULT_GRACE_MS = 2700000; // 45 min
 export const DEFAULT_BOARD_URL = 'https://agent-kanban.riazrahaman.com';
@@ -60,14 +79,38 @@ function envInt(raw, fallback) {
  * with `checked_at: null`, which the client treats as "no check configured" and
  * hides). `graceMs` is a floor of 0 so a test/deployment may opt into
  * "report the mismatch immediately".
+ *
+ * `tagsApiUrl` defaults to the tags endpoint of the SAME repo the release feed
+ * points at (see `deriveTagsApiUrl`), so pointing the monitor at a fork needs
+ * one env var, not two.
  */
 export function deployDriftConfig() {
+  const apiUrl = String(process.env.KANBAN_DEPLOY_DRIFT_API_URL || '').trim() || DEFAULT_API_URL;
   return {
     intervalMs: envInt(process.env.KANBAN_DEPLOY_DRIFT_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     graceMs: Math.max(0, envInt(process.env.KANBAN_DEPLOY_DRIFT_GRACE_MS, DEFAULT_GRACE_MS)),
-    apiUrl:
-      String(process.env.KANBAN_DEPLOY_DRIFT_API_URL || '').trim() || DEFAULT_API_URL,
+    apiUrl,
+    tagsApiUrl:
+      String(process.env.KANBAN_DEPLOY_DRIFT_TAGS_API_URL || '').trim() ||
+      deriveTagsApiUrl(apiUrl),
   };
+}
+
+/**
+ * Map a `.../releases/latest` URL to the tag list of the same repository.
+ *
+ * The tag endpoint is the fallback feed, so it must follow a custom
+ * `KANBAN_DEPLOY_DRIFT_API_URL` (a fork) rather than silently reading this
+ * repo's tags. A URL that is not shaped like a release feed keeps the default
+ * endpoint, which the env var can override explicitly.
+ */
+export function deriveTagsApiUrl(releaseUrl) {
+  const trimmed = typeof releaseUrl === 'string' ? releaseUrl.trim().replace(/\/+$/, '') : '';
+  const suffix = '/releases/latest';
+  if (trimmed.endsWith(suffix)) {
+    return `${trimmed.slice(0, -suffix.length)}/tags?per_page=100`;
+  }
+  return DEFAULT_TAGS_API_URL;
 }
 
 /** `v3.9.5` and `3.9.5` are the same release; compare the bare triple. */
@@ -85,18 +128,24 @@ export function normalizeTag(tag) {
 /**
  * Decide the drift status from two version strings and a clock.
  *
- * Returns `{ status, drift_since }` where `status` is one of
- * `'in_sync' | 'drift' | 'unknown'` and `drift_since` is epoch milliseconds
- * (the first observation of the current mismatch) or null.
+ * Returns `{ status, reason, drift_since }` where `status` is one of
+ * `'in_sync' | 'drift' | 'unknown'`, `reason` is a short machine-readable word
+ * for the verdict (also surfaced in the health snapshot) and `drift_since` is
+ * epoch milliseconds (the first observation of the current mismatch) or null.
  *
- * A mismatch inside the grace window reports `in_sync` — the release is simply
- * newer than the deploy that has not landed yet — but the observation is
- * RETURNED in `drift_since` so the caller can keep timing it across checks.
- * Equality clears the timer.
+ * Semver rules (v3.12.7):
+ *   - running < latest  -> `behind`; `drift` once the grace window has passed,
+ *     `in_sync` before that (the release is simply newer than the deploy that
+ *     has not landed yet). The observation is RETURNED in `drift_since` inside
+ *     the grace window so the caller can keep timing it across checks.
+ *   - running === latest -> `in_sync` (`match`); clears the timer.
+ *   - running > latest  -> `in_sync` (`running_ahead`); nothing is missing.
+ *   - unparsable on either side -> `unknown` (`unparseable_running` /
+ *     `unparseable_latest` / `invalid_clock`), never `drift`.
  *
  * @param {object} args
  * @param {string} args.running Version this process runs (server/package.json).
- * @param {string|null} args.latestTag Newest release tag from GitHub.
+ * @param {string|null} args.latestTag Newest release/tag from GitHub.
  * @param {number} args.now Clock, epoch ms.
  * @param {number|null} [args.driftSince] First observation of the mismatch.
  * @param {number} [args.graceMs] How long a mismatch must persist.
@@ -108,20 +157,38 @@ export function evaluateDrift({
   driftSince = null,
   graceMs = DEFAULT_GRACE_MS,
 }) {
-  const runningTag = normalizeTag(running);
-  const latest = normalizeTag(latestTag);
-  if (!runningTag || !latest || !Number.isFinite(now)) {
-    return { status: 'unknown', drift_since: null };
+  const runningParsed = parseSemver(running);
+  if (!runningParsed) {
+    return { status: 'unknown', reason: 'unparseable_running', drift_since: null };
   }
-  if (runningTag === latest) {
-    return { status: 'in_sync', drift_since: null };
+  const latestParsed = parseSemver(latestTag);
+  if (!latestParsed) {
+    return { status: 'unknown', reason: 'unparseable_latest', drift_since: null };
   }
+  if (!Number.isFinite(now)) {
+    return { status: 'unknown', reason: 'invalid_clock', drift_since: null };
+  }
+
+  const order = compareSemver(running, latestTag);
+  if (order === null) {
+    // Defensive: parseSemver already agreed on both sides.
+    return { status: 'unknown', reason: 'unparseable_version', drift_since: null };
+  }
+  if (order === 0) {
+    return { status: 'in_sync', reason: 'match', drift_since: null };
+  }
+  if (order > 0) {
+    // Ahead is not drift: the newest published release is older than the build
+    // that is live. Keep no timer; there is nothing to recover from.
+    return { status: 'in_sync', reason: 'running_ahead', drift_since: null };
+  }
+
   const since = Number.isFinite(driftSince) ? driftSince : now;
   const elapsed = now - since;
-  return {
-    status: elapsed >= Math.max(0, graceMs) ? 'drift' : 'in_sync',
-    drift_since: since,
-  };
+  if (elapsed >= Math.max(0, graceMs)) {
+    return { status: 'drift', reason: 'behind', drift_since: since };
+  }
+  return { status: 'in_sync', reason: 'behind_within_grace', drift_since: since };
 }
 
 // ============================================================================
@@ -131,8 +198,15 @@ export function evaluateDrift({
 function emptyState() {
   return {
     status: 'unknown',
+    // Why this verdict: `not_checked` before any run, `check_failed` when a
+    // read fails, otherwise the evaluateDrift reason (match, running_ahead,
+    // behind, behind_within_grace, unparseable_*). Additive in v3.12.7.
+    reason: 'not_checked',
     running: APP_VERSION,
     latest_tag: null,
+    // Which feed produced `latest_tag`: 'release', 'tags', or null before the
+    // first successful check. Additive in v3.12.7.
+    source: null,
     checked_at: null,
     drift_since: null,
   };
@@ -193,30 +267,78 @@ function humanDuration(ms) {
 }
 
 /**
- * Render the one message a transition sends. `kind` is `'drift'` or `'in_sync'`.
- * Exported only so the wording can be read in a test; the monitor calls it with
- * its own state.
+ * Render the one message a transition sends. `kind` is `'drift'`,
+ * `'in_sync'` or `'unknown'`.
+ *
+ * Copy rule (v3.12.7): only a real behind-drift says the deploy is behind, and
+ * only a behind-drift may call it a SKIPPED deploy. A build that is AHEAD gets
+ * its own sentence ("not drift"), because the old message told an operator to
+ * look for a skipped deploy that did not exist. `unknown` never mentions a
+ * deploy at all: the check failed, the board did not.
+ *
+ * Exported only so the wording can be read in a test; the monitor calls it
+ * with its own state.
  */
 export function formatDeployDriftMessage(kind, snapshot, boardUrl = DEFAULT_BOARD_URL) {
   const running = esc(normalizeTag(snapshot.running) ?? 'unknown');
   const latest = esc(normalizeTag(snapshot.latest_tag) ?? 'unknown');
   const board = esc(boardUrl);
-  if (kind === 'drift') {
+  const order = compareSemver(snapshot.running, snapshot.latest_tag);
+  const behind = order !== null && order < 0;
+
+  if (kind === 'drift' && behind) {
     const sinceMs = Date.parse(snapshot.drift_since || '');
     const forHowLong = Number.isNaN(sinceMs) ? '' : ` for ${humanDuration(Date.now() - sinceMs)}`;
     return [
       '🔻 <b>Deploy drift</b>',
       '',
-      `Live board is running <b>v${running}</b> but the newest release is <b>v${latest}</b>${forHowLong}.`,
-      'The deploy was most likely SKIPPED (red CI), not failed — the board itself is healthy.',
+      `Live board is running <b>v${running}</b>, which is BEHIND the newest release <b>v${latest}</b>${forHowLong}.`,
+      'A deploy that is behind is most likely SKIPPED (red CI), not failed - the board itself is healthy.',
       '',
       `<b>Board:</b> ${board}`,
     ].join('\n');
   }
+
+  if (kind === 'in_sync' && order !== null && order > 0) {
+    return [
+      '🔺 <b>Running ahead of the newest release</b>',
+      '',
+      `Live board runs <b>v${running}</b>, which is AHEAD of the newest published release <b>v${latest}</b>.`,
+      'Not drift: nothing is missing from the live build, so no action is needed.',
+      '',
+      `<b>Board:</b> ${board}`,
+    ].join('\n');
+  }
+
+  if (kind === 'drift') {
+    // A drift verdict we cannot confirm as behind (unparsable on one side, or a
+    // caller passing a hand-built snapshot). Stay neutral: never claim a
+    // skipped deploy the comparison does not support.
+    return [
+      '⚠️ <b>Deploy version check needs attention</b>',
+      '',
+      `Live board runs <b>v${running}</b>; the newest version seen is <b>v${latest}</b>, and the comparison could not confirm the deploy is behind.`,
+      '',
+      `<b>Board:</b> ${board}`,
+    ].join('\n');
+  }
+
+  if (kind === 'in_sync') {
+    return [
+      '✅ <b>Deploy back in sync</b>',
+      '',
+      `Live board now runs <b>v${running}</b>, matching the newest release <b>v${latest}</b>.`,
+      '',
+      `<b>Board:</b> ${board}`,
+    ].join('\n');
+  }
+
+  const reason = esc(snapshot.reason || 'check failed');
   return [
-    '✅ <b>Deploy back in sync</b>',
+    '❔ <b>Deploy-drift check unavailable</b>',
     '',
-    `Live board now runs <b>v${running}</b>, matching the newest release <b>v${latest}</b>.`,
+    `The board could not compare its version with GitHub (${reason}).`,
+    'This is a check failure, not a board outage, and not a deploy verdict.',
     '',
     `<b>Board:</b> ${board}`,
   ].join('\n');
@@ -257,15 +379,52 @@ async function sendTelegram(text, { env = process.env, fetchImpl = globalThis.fe
 }
 
 // ============================================================================
-// One check
+// One check: GitHub reads - release first, tags as the fallback feed
 // ============================================================================
 
+const GITHUB_HEADERS = {
+  // GitHub rejects API requests with no User-Agent.
+  Accept: 'application/vnd.github+json',
+};
+
+async function readJson(url, fetchImpl) {
+  const res = await fetchImpl(url, {
+    headers: { ...GITHUB_HEADERS, 'User-Agent': `agent-kanban-board/${APP_VERSION}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
+  return res.json();
+}
+
+/** The newest release's tag, or a thrown error (404/403/network/no tag). */
+async function readReleaseTag(url, fetchImpl) {
+  const body = await readJson(url, fetchImpl);
+  const tag = normalizeTag(body && body.tag_name);
+  if (!tag) throw new Error('release payload has no tag_name');
+  return tag;
+}
+
+/** The HIGHEST semver tag in the list, or a thrown error. */
+async function readHighestTag(url, fetchImpl) {
+  const body = await readJson(url, fetchImpl);
+  if (!Array.isArray(body)) throw new Error('tags payload is not an array');
+  const best = pickHighestTag(body);
+  if (!best) throw new Error('tags payload has no semver tag');
+  return best;
+}
+
 /**
- * Run a single check: fetch the newest release, compare it with the running
- * version, record the state, and alert ONLY on a status transition.
+ * Run a single check: read the newest version from GitHub, compare it with the
+ * running version, record the state, and alert ONLY on a status transition.
  *
- * Injectable (`fetchImpl`, `now`, `env`, `graceMs`, `apiUrl`) so the tests drive
- * every branch with no network, no timers and no clock.
+ * Both feeds are read on every check: the release feed is the primary source,
+ * but "is this release stale?" can only be answered against the tag list. A
+ * failed tag read is tolerated - the release verdict still stands - while a
+ * failed release read falls back to tags. Only when BOTH fail does the check
+ * report `unknown`.
+ *
+ * Injectable (`fetchImpl`, `now`, `env`, `graceMs`, `apiUrl`, `tagsApiUrl`) so
+ * the tests drive every branch with no network, no timers and no clock.
  *
  * @returns {Promise<object>} the new `deployDriftStatus()` snapshot.
  */
@@ -275,28 +434,58 @@ export async function runDeployDriftCheck({
   env = process.env,
   graceMs,
   apiUrl,
+  tagsApiUrl,
   send = true,
 } = {}) {
   const cfg = deployDriftConfig();
   const grace = Number.isFinite(graceMs) ? graceMs : cfg.graceMs;
   const url = apiUrl || cfg.apiUrl;
+  const tagsUrl = tagsApiUrl || cfg.tagsApiUrl;
   const previous = state;
   const checkedAt = new Date(now).toISOString();
 
+  let latestTag = null;
+  let source = null;
+
   try {
     if (typeof fetchImpl !== 'function') throw new Error('no fetch implementation');
-    const res = await fetchImpl(url, {
-      headers: {
-        // GitHub rejects API requests with no User-Agent.
-        'User-Agent': `agent-kanban-board/${APP_VERSION}`,
-        Accept: 'application/vnd.github+json',
-      },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
-    const body = await res.json();
-    const latestTag = normalizeTag(body && body.tag_name);
-    if (!latestTag) throw new Error('release payload has no tag_name');
+
+    let releaseTag = null;
+    let releaseError = null;
+    try {
+      releaseTag = await readReleaseTag(url, fetchImpl);
+    } catch (err) {
+      // 404/403/network/no tag_name: the tags endpoint may still know the
+      // newest version (this repo published tags before GitHub Releases).
+      releaseError = err;
+    }
+
+    let highestTag = null;
+    let tagsError = null;
+    try {
+      highestTag = await readHighestTag(tagsUrl, fetchImpl);
+    } catch (err) {
+      tagsError = err;
+    }
+
+    if (highestTag) {
+      // Stale = the release has no usable tag, or its tag is OLDER than the
+      // highest tag on the repository. Prefer the tags verdict in both cases.
+      const releaseIsStale =
+        !parseSemver(releaseTag) || compareSemver(releaseTag, highestTag) < 0;
+      if (releaseIsStale) {
+        latestTag = highestTag;
+        source = 'tags';
+      } else {
+        latestTag = releaseTag;
+        source = 'release';
+      }
+    } else if (parseSemver(releaseTag)) {
+      latestTag = releaseTag;
+      source = 'release';
+    } else {
+      throw releaseError || tagsError || new Error('no usable version from GitHub');
+    }
 
     const decision = evaluateDrift({
       running: APP_VERSION,
@@ -308,18 +497,26 @@ export async function runDeployDriftCheck({
 
     state = {
       status: decision.status,
+      reason: decision.reason,
       running: APP_VERSION,
-      latest_tag: latestTag,
+      latest_tag: normalizeTag(latestTag),
+      source,
       checked_at: checkedAt,
       drift_since:
         decision.drift_since === null ? null : new Date(decision.drift_since).toISOString(),
     };
     lastLoggedFailure = null;
   } catch (err) {
-    // Keep `latest_tag`/`drift_since` from the last SUCCESSFUL observation: a
-    // GitHub outage must not erase a drift we are already timing. The status is
-    // honest about this check alone.
-    state = { ...previous, status: 'unknown', running: APP_VERSION, checked_at: checkedAt };
+    // Keep `latest_tag`/`source`/`drift_since` from the last SUCCESSFUL
+    // observation: a GitHub outage must not erase a drift we are already
+    // timing. The status is honest about this check alone.
+    state = {
+      ...previous,
+      status: 'unknown',
+      reason: 'check_failed',
+      running: APP_VERSION,
+      checked_at: checkedAt,
+    };
     const line = `[kanban deploy-drift] check failed: ${err && err.message}`;
     // One line per distinct failure; a 30-minute tick would otherwise spam a
     // week of identical DNS errors into the log.

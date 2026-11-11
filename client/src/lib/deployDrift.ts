@@ -8,7 +8,8 @@
  *   - `in_sync`                    -> null (a healthy day shows only the version)
  *   - never checked (`checked_at` null, e.g. the monitor is disabled or this
  *     deployment predates v3.9.5)  -> null (nothing to say, not a warning)
- *   - `drift`                      -> amber: the deploy was skipped, not failed
+ *   - `drift`                      -> amber: the running build is BEHIND the
+ *     newest release, which usually means the deploy was skipped, not failed
  *   - `unknown`                    -> muted: GitHub was unreachable, not an outage
  */
 
@@ -16,10 +17,14 @@ export type DeployDriftStatus = 'in_sync' | 'drift' | 'unknown'
 
 export type DeployDrift = {
   status: DeployDriftStatus
+  /** Why this verdict (`match`, `running_ahead`, `behind`, `check_failed`, ...). */
+  reason?: string
   /** Version this process is running (server/package.json), no `v` prefix. */
   running: string | null
-  /** Newest release tag seen, `v` stripped. */
+  /** Newest version seen, `v` stripped. */
   latest_tag: string | null
+  /** Which feed produced `latest_tag`: the release feed or the tag list. */
+  source?: 'release' | 'tags' | null
   /** ISO timestamp of the last check attempt; null = never checked. */
   checked_at: string | null
   /** ISO timestamp of the first observation of the current mismatch. */
@@ -48,9 +53,9 @@ export function driftChip(d: DeployDrift | null | undefined): DriftChip | null {
       label: `deploy drift · ${running} ≠ ${latest}`,
       tone: 'warn',
       title:
-        `The live board runs v${running} but the newest release is v${latest}` +
+        `The live board runs v${running}, behind the newest release v${latest}` +
         `${d.drift_since ? `, first seen ${d.drift_since}` : ''}. ` +
-        'The deploy was most likely SKIPPED (red CI), not failed — the board itself is healthy.',
+        'A deploy that is behind is most likely SKIPPED (red CI), not failed — the board itself is healthy.',
     }
   }
 
