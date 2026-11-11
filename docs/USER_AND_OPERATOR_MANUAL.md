@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.12.7
+**System:** Agent Kanban Board v3.12.8
 
 ---
 
@@ -99,7 +99,7 @@ The server and client are configured via environment variables.
 | `HOST` | `127.0.0.1` (local) / `0.0.0.0` (when `PORT` injected) | Network interface to bind. |
 | `KANBAN_AUTH_TOKEN` | *(None)* | **Mandatory for mutations** unless another mechanism is set. Shared secret for all `POST`, `PATCH`, `PUT`, `DELETE`. Unset → mutations return `503`. |
 | `KANBAN_ADMIN_TOKEN` | *(None)* | Superuser token spanning every project. Audited as `admin_write`. |
-| `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map enabling per-project isolation. Each credential may be role-bound: a legacy string or `{"token":"tok"}` is unbound (header role kept); `{"token":"tok","role":"builder"}` forces that role server-side; `{"credentials":[…]}` carries several credentials per project. Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound. Boot check (§2.10) reports any store projects missing from this map plus bound/unbound counts. |
+| `KANBAN_PROJECT_TOKENS` | *(None)* | JSON map enabling per-project isolation. Each credential may be role-bound and/or identity-bound: a legacy string or `{"token":"tok"}` is unbound (header role/identity kept); `{"token":"tok","role":"builder"}` forces that role server-side; `{"token":"tok","agent_id":"agent-7"}` forces the agent identity server-side (v3.12.8, A7); a credential may carry both; `{"credentials":[…]}` carries several credentials per project. `agent_id` must be 1-64 chars from `[A-Za-z0-9._@:/-]`, and one token bound to different agent ids across projects is rejected. Privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound. Boot check (§2.10) reports any store projects missing from this map plus bound/unbound counts. |
 | `KANBAN_AUTH_SECRET` | *(None)* | Enables HMAC session tokens via `POST /api/auth/session` (stateless, 24h, revocable since v2.10.0 via `POST /api/auth/revoke`). |
 | `KANBAN_AUTH_LOG` | `off` | Set truthy (not `0`/`false`) to emit redacted auth-failure logs. |
 | `KANBAN_STORAGE_BACKEND` | `json` | Storage engine: `json` (file) or `git` (YAML card per task). |
@@ -297,7 +297,7 @@ Both rely on a `startCommand` and the fact that the server binds `0.0.0.0` whene
 | `KANBAN_DATA_FILE` | `/data/tasks.json` | **Default project** location — its built-in default is the ephemeral `server/tasks.json`. |
 | `KANBAN_DATA_DIR` | `/data` | Named projects (`tasks/<project>.json`) and archives. |
 | `KANBAN_AUTH_TOKEN` | *(secret)* | Required — mutations fail closed with `503` when unset. |
-| `KANBAN_PROJECT_TOKENS` | *(JSON map, role-bound)* | Per-project credentials, e.g. `{"myapp":{"credentials":[{"token":"tok-b","role":"builder"},…]}}` — one bound credential per agent role. |
+| `KANBAN_PROJECT_TOKENS` | *(JSON map, role-bound)* | Per-project credentials, e.g. `{"myapp":{"credentials":[{"token":"tok-b","role":"builder","agent_id":"agent-7"},…]}}` — one bound credential per agent role; `agent_id` is an optional identity binding (v3.12.8). |
 | `KANBAN_ALLOWED_ORIGIN` | *(public URL)* | Comma-separated CORS allow-list. |
 | `HOST` | `0.0.0.0` | Bind all interfaces (auto when `PORT` is set). |
 
@@ -505,12 +505,12 @@ Autonomous agents interact with the board exclusively through HTTP requests.
 
 ### 6.1 Authentication & Role Headers
 Every mutating request must include:
-1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all — derives the `admin` role), `KANBAN_PROJECT_TOKENS` (per-project credentials, each optionally **role-bound**: `{"token":"…","role":"…"}`), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; revoke your own token early with `POST /api/auth/revoke`).
+1. **Token:** `Authorization: Bearer <token>` or `X-API-Token: <token>`. Sources: `KANBAN_AUTH_TOKEN` (global), `KANBAN_ADMIN_TOKEN` (spans all — derives the `admin` role), `KANBAN_PROJECT_TOKENS` (per-project credentials, each optionally **role-bound** `{"token":"…","role":"…"}` and/or **identity-bound** `{"token":"…","agent_id":"…"}`, v3.12.8), or an HMAC session token issued via `POST /api/auth/session` (when `KANBAN_AUTH_SECRET` is set; sessions minted while presenting an identity-bound credential carry that `agent_id`; revoke your own token early with `POST /api/auth/revoke`).
 2. **Role:** every agent role (planner, builder, reviewer, tester/validator, releaser) requires **its own token bound to that role in `KANBAN_PROJECT_TOKENS`** — the role is forced server-side from the credential, and a self-declared `X-Agent-Role` header that conflicts with the bound role is ignored and audited (`role_binding_mismatch`). The header still declares the role for legacy **unbound** credentials only; a `role` field on a `PATCH` body is rejected with `400`; privileged roles (`runner`/`system`/`human`/`admin`) cannot be bound and come only from the admin token or a session.
    The same token may appear under several projects. Mixing a **bound** and an **unbound** credential for one token across projects is allowed — the binding of the *first referenced project* on the request resolves the role. Binding the same token to **different roles in different projects** is rejected as malformed `KANBAN_PROJECT_TOKENS` configuration (fail-closed, `503` on mutations) — issue a distinct token per role instead.
+3. **Agent ID:** `X-Agent-Id: <agent-name>`. Since v3.12.8 (A7) a credential may also bind `agent_id`; the bound identity then WINS over the header and over any body `agent_id`, and a conflict is ignored and audited (`identity_binding_mismatch`). On a legacy **unbound** credential the header remains the identity channel, but a body `agent_id` alone is no longer identity for a non-privileged caller — claim/log/comment writes without `X-Agent-Id` return `400`. The admin token and privileged sessions may assert identity via header or body. `agent_id` must be 1-64 chars from `[A-Za-z0-9._@:/-]`; binding the same token to different agent ids across projects is rejected for the same scope-ambiguity reason as roles.
 4. **Project:** every task path carries `?project=<name>` (only `POST /api/tasks` takes `project` in the body instead).
 5. **Version:** every `PATCH` carries the card's current `version` as `expected_version` (or `If-Match`); a stale write is rejected `409 Version mismatch`.
-3. **Agent ID (Optional but recommended):** `X-Agent-Id: <agent-name>`
 
 **Idempotent creates (v3.12.6).** `POST /api/tasks` accepts an
 `Idempotency-Key` header, so a retry after a timeout returns the ORIGINAL `201`

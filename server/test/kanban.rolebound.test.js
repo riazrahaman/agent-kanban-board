@@ -137,7 +137,10 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
   const claim = async (id, token, role, body = {}) =>
     jsonRequest(baseUrl, `/api/tasks/${id}/claim?project=${PROJECT}`, {
       method: 'POST',
-      headers: headers(token, role),
+      // A7 (v3.12.8): identity is never body-only for a non-privileged caller.
+      // These credentials bind a role but no agent id, so the documented legacy
+      // channel is X-Agent-Id — send it alongside the body value.
+      headers: headers(token, role, { 'X-Agent-Id': body.agent_id || `agent-${role || 'x'}` }),
       body: JSON.stringify({ agent_id: `agent-${role || 'x'}`, ...body }),
     });
 
@@ -186,7 +189,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     const id = await makeReadyTask('a4-bodyrole');
     const r = await jsonRequest(baseUrl, `/api/tasks/${id}/claim?project=${PROJECT}`, {
       method: 'POST',
-      headers: headers(CREDENTIALS.builder), // token only; role smuggled in body
+      headers: headers(CREDENTIALS.builder, null, { 'X-Agent-Id': 'agent-smuggle' }),
       body: JSON.stringify({ agent_id: 'agent-smuggle', role: 'admin' }),
     });
     assert.equal(r.response.status, 200);
@@ -348,7 +351,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     await makeReadyTask('d1-nc');
     const r = await jsonRequest(baseUrl, '/api/tasks/next-claim?project=' + PROJECT + '&role=reviewer', {
       method: 'POST',
-      headers: headers(CREDENTIALS.builder),
+      headers: headers(CREDENTIALS.builder, null, { 'X-Agent-Id': 'agent-nc' }),
       body: JSON.stringify({ agent_id: 'agent-nc', role: 'reviewer' }),
     });
     assert.equal(r.response.status, 200, 'claimable as the bound builder');
@@ -547,13 +550,13 @@ describe('§2.3d-rv — review findings on 5d2d4bc (stream tickets, parser ambig
     });
     const claim = await jsonRequest(baseUrl, `/api/tasks/${id}/claim?project=${PROJECT}`, {
       method: 'POST',
-      headers: headers(CREDENTIALS.builder, 'builder'),
+      headers: headers(CREDENTIALS.builder, 'builder', { 'X-Agent-Id': 'rv-builder-1' }),
       body: JSON.stringify({ agent_id: 'rv-builder-1' }),
     });
     assert.equal(claim.response.status, 200);
     const hb = await jsonRequest(baseUrl, `/api/tasks/${id}/heartbeat?project=${PROJECT}`, {
       method: 'POST',
-      headers: headers(CREDENTIALS.reviewer, 'reviewer'),
+      headers: headers(CREDENTIALS.reviewer, 'reviewer', { 'X-Agent-Id': 'rv-reviewer-1' }),
       body: JSON.stringify({ agent_id: 'rv-reviewer-1' }),
     });
     assert.equal(hb.response.status, 409);

@@ -7,7 +7,7 @@
  * The token is self-describing so the server never keeps a session table:
  *
  *   <payload-base64url>.<mac-hex>
- *     payload  = base64url(JSON.stringify({ cn, sn, exp, role, project }))
+ *     payload  = base64url(JSON.stringify({ cn, sn, exp, role, project, agent_id? }))
  *     mac      = HMAC_SHA256(secret, payload) hex
  *
  * Verifying a presented token re-parses the payload to recover expiry + scope
@@ -57,14 +57,17 @@ function b64urlDecode(input) {
  * `server_nonce` are non-secret strings that only need to be unique enough to
  * make the MAC inputs collision-resistant; the MAC is what carries integrity.
  */
-export function createSessionToken({ clientNonce, serverNonce, role, project }) {
+export function createSessionToken({ clientNonce, serverNonce, role, project, agentId = null }) {
   const secret = authSecret();
   if (!secret) return null;
   const exp = Date.now() + SESSION_EXPIRY_MS;
   const jti = crypto.randomBytes(16).toString('hex');
-  const payload = b64url(
-    JSON.stringify({ cn: clientNonce, sn: serverNonce, jti, exp, role, project })
-  );
+  // A7 (v3.12.8): carry the credential-bound agent identity when the minting
+  // credential has one. Absent for legacy/unbound credentials so every session
+  // minted before this release still verifies byte-for-byte the same way.
+  const claims = { cn: clientNonce, sn: serverNonce, jti, exp, role, project };
+  if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
+  const payload = b64url(JSON.stringify(claims));
   const mac = macHex(secret, payload);
   return { token: `${payload}.${mac}`, expiresAt: exp, jti };
 }
@@ -94,7 +97,7 @@ export function verifySessionToken(token) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  const { jti, exp, role, project } = parsed;
+  const { jti, exp, role, project, agent_id: agentId } = parsed;
   if (!Number.isInteger(exp)) return null;
   if (exp <= Date.now()) return null;
   // ENH-12: a revoked jti fails even with a valid MAC. Tokens minted before
@@ -104,7 +107,14 @@ export function verifySessionToken(token) {
     else return null;
   }
 
-  return { role, project, jti: typeof jti === 'string' ? jti : null };
+  // A7 (v3.12.8): return the bound identity when present. Tokens minted
+  // before identity binding carry no agent_id and still verify (undefined).
+  return {
+    role,
+    project,
+    jti: typeof jti === 'string' ? jti : null,
+    agent_id: typeof agentId === 'string' && agentId !== '' ? agentId : null,
+  };
 }
 
 /**
