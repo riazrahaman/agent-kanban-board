@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
+import { readAboutSources } from './aboutSources.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = join(__dirname, '..')
@@ -69,7 +70,7 @@ test('the About page renders the counter and keeps the telemetry copy honest', (
     'App.tsx must pass the visit state into About',
   )
 
-  const about = readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
+  const about = readAboutSources()
   assert.doesNotMatch(
     about,
     /useVisitCount\(\)/,

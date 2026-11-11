@@ -11,6 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
+import { readAboutSources } from './aboutSources.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = join(__dirname, '..')
@@ -31,7 +32,7 @@ const boardSource = readFileSync(BOARD_PATH, 'utf8')
 const taskCardSource = readFileSync(TASK_CARD_PATH, 'utf8')
 const taskSheetSource = readFileSync(TASK_SHEET_PATH, 'utf8')
 const errorBoundarySource = readFileSync(ERROR_BOUNDARY_PATH, 'utf8')
-const aboutSource = readFileSync(ABOUT_PATH, 'utf8')
+const aboutSource = readAboutSources()
 const portfolioSource = readFileSync(PORTFOLIO_PATH, 'utf8')
 const cssSource = readFileSync(CSS_PATH, 'utf8')
 

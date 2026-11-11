@@ -25,6 +25,7 @@ import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js
 import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
+import { formatLine, log as emitLog, logError, logWarn } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -361,7 +362,7 @@ export function createApp(opts = {}) {
     if (err && typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
       return res.status(err.status).json({ error: err.code || err.type || 'client_error' });
     }
-    console.error(`[kanban error] ${req.method} ${req.originalUrl}:`, err.message);
+    logError('error', `${req.method} ${req.originalUrl}`, { error: err.message });
     res.status(500).json({ error: 'Internal Server Error' });
   });
 
@@ -394,7 +395,7 @@ export async function startServer(
       parsed
     );
   } catch (err) {
-    console.warn(`[kanban auth] credential-map check skipped: ${err.message}`);
+    logWarn('auth', 'credential-map check skipped', { error: err.message });
   }
 
   const rl = rateLimitConfig();
@@ -407,16 +408,18 @@ export async function startServer(
   // In a hosted environment (PORT set) with no auth mechanism configured, warn
   // once at startup that mutations are fail-closed until a token is set.
   if (process.env.PORT && !process.env.KANBAN_AUTH_TOKEN && !process.env.KANBAN_AUTH_SECRET) {
-    console.warn(
-      '[kanban auth] no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
-      'mutations are fail-closed (503) until a token is set'
+    logWarn(
+      'auth',
+      'no KANBAN_AUTH_TOKEN/KANBAN_AUTH_SECRET configured; ' +
+        'mutations are fail-closed (503) until a token is set',
     );
   }
 
   const app = createApp();
   if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {
-    console.warn(
-      '[kanban warning] KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).'
+    logWarn(
+      'warning',
+      'KANBAN_ALLOWED_ORIGIN is unset: CORS is falling back to the localhost dev origin (http://localhost:5173). Set it explicitly in production (e.g. to RENDER_EXTERNAL_HOSTNAME).',
     );
   }
   return new Promise((resolve, reject) => {
@@ -450,8 +453,9 @@ export async function startServer(
       if (!notifier) {
         const ncfg = notifierConfig();
         if (process.env.KANBAN_TELEGRAM_BOT_TOKEN || process.env.KANBAN_TELEGRAM_CHAT_ID) {
-          console.warn(
-            '[kanban warning] Telegram notifications are partially configured: set BOTH KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to enable them.'
+          logWarn(
+            'warning',
+            'Telegram notifications are partially configured: set BOTH KANBAN_TELEGRAM_BOT_TOKEN and KANBAN_TELEGRAM_CHAT_ID to enable them.',
           );
         }
       }
@@ -464,7 +468,7 @@ export async function startServer(
     // IMPL-01 (v2.7.0): handle a bind failure (EADDRINUSE, EADDRNOTAVAIL, …)
     // so an unhandled 'error' event does not crash the process/restart-loop.
     server.on('error', (err) => {
-      console.error('[kanban server] listen error:', err);
+      logError('server', 'listen error', { error: err });
       reject(err);
     });
     });
@@ -504,7 +508,9 @@ export async function startServer(
  * @param {import('node:http').Server} server
  * @param {object} [opts]
  * @param {function} [opts.exit]
- * @param {function} [opts.log]
+ * @param {function} [opts.log] Line sink. Receives every line this function
+ *   emits, whatever the level; omitted in production, where the module logger
+ *   keeps its level-aware console sinks.
  * @param {number} [opts.timeoutMs]
  * @param {function} [opts.drain] Ends long-lived streams. Defaults to
  *   `drainSseStreams`; injectable so the unit tests can observe the ordering.
@@ -512,36 +518,52 @@ export async function startServer(
  */
 export function registerShutdownHandlers(
   server,
-  { exit = process.exit, log = console.log, timeoutMs = 5000, drain = drainSseStreams } = {}
+  { exit = process.exit, log, timeoutMs = 5000, drain = drainSseStreams } = {}
 ) {
+  // One line sink for every message below. An injected `log` (test/operator
+  // seam) receives warn and error lines too; without this, `logError`/
+  // `logWarn` are module functions and bypass the caller's sink entirely, so
+  // the lines split across two destinations. The production path keeps the
+  // module logger's level-aware console sinks.
+  const emit =
+    typeof log === 'function'
+      ? (level, msg, fields = {}) => {
+          try {
+            log(formatLine(level, 'server', msg, fields));
+          } catch {
+            /* logging must never abort a shutdown */
+          }
+        }
+      : (level, msg, fields) => emitLog(level, 'server', msg, fields);
+
   let stopping = false;
   const shutdown = (signal) => {
     if (stopping) return;
     stopping = true;
-    log(`[kanban server] received ${signal}, shutting down gracefully...`);
+    emit('info', `received ${signal}, shutting down gracefully...`);
 
     // Before close(), or close() waits on streams that never end by design.
     let drained = 0;
     try {
       drained = drain() ?? 0;
     } catch (err) {
-      console.error('[kanban server] error draining event streams:', err);
+      emit('error', 'error draining event streams', { error: err });
     }
     if (drained > 0) {
-      log(`[kanban server] ended ${drained} open event stream(s)`);
+      emit('info', `ended ${drained} open event stream(s)`);
     }
 
     const closeStarted = Date.now();
     server.close((err) => {
       if (err) {
-        console.error('[kanban server] error during close:', err);
+        emit('error', 'error during close', { error: err });
         exit(1);
         return;
       }
       // Logged so a retirement can be told apart from a container that was
       // killed before it ever got here — the two are indistinguishable in the
       // deploy log otherwise, which is what made #108 hard to confirm.
-      log(`[kanban server] closed cleanly in ${Date.now() - closeStarted}ms`);
+      emit('info', `closed cleanly in ${Date.now() - closeStarted}ms`);
       exit(0);
     });
     // Node 18.2+. Idle keep-alive sockets are dropped at once: nothing is being
@@ -551,7 +573,7 @@ export function registerShutdownHandlers(
       try {
         server.closeIdleConnections();
       } catch (err) {
-        console.error('[kanban server] error closing idle connections:', err);
+        emit('error', 'error closing idle connections', { error: err });
       }
     }
 
@@ -563,14 +585,14 @@ export function registerShutdownHandlers(
         try {
           server.closeAllConnections();
         } catch (err) {
-          console.error('[kanban server] error closing connections:', err);
+          emit('error', 'error closing connections', { error: err });
         }
       }, 1000);
       if (typeof hard.unref === 'function') hard.unref();
     }
 
     const timer = setTimeout(() => {
-      console.warn('[kanban server] graceful shutdown timed out; exiting forcefully');
+      emit('warn', 'graceful shutdown timed out; exiting forcefully');
       exit(0);
     }, timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();

@@ -243,8 +243,14 @@ describe('ask: source-code retrieval', () => {
   });
 
   it('gatherSourceContext window reaches the concurrency lock for a mutex question', () => {
-    const ctx = gatherSourceContext('how does the mutex serialise writes');
-    assert.ok(ctx.files.includes('server/store.js'), `expected server/store.js, got ${JSON.stringify(ctx.files)}`);
+    // C1 (v3.12.5): `withMutationLock` lives in the store's state module now;
+    // store.js re-exports it. The contract is that the symbol is retrievable
+    // from its real source file, not that the file is the old monolith.
+    const ctx = gatherSourceContext('how does the mutation lock serialise writes');
+    assert.ok(
+      ctx.files.includes('server/store/core.js'),
+      `expected server/store/core.js, got ${JSON.stringify(ctx.files)}`,
+    );
     assert.match(ctx.text, /withMutationLock/);
   });
 

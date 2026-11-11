@@ -18,13 +18,14 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
+import { readAboutSources } from './aboutSources.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = join(__dirname, '..')
 
 const dialogSource = readFileSync(join(CLIENT_SRC, 'components', 'BugReportDialog.tsx'), 'utf8')
 const appSource = readFileSync(join(CLIENT_SRC, 'App.tsx'), 'utf8')
-const aboutSource = readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
+const aboutSource = readAboutSources()
 const apiSource = readFileSync(join(CLIENT_SRC, 'api.ts'), 'utf8')
 const headerHelpSource = readFileSync(join(CLIENT_SRC, 'components', 'HeaderHelp.tsx'), 'utf8')
 

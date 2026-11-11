@@ -26,7 +26,7 @@ driving the board over plain HTTP; humans watch.
 
 | Path | What it is |
 | :-- | :-- |
-| `server/` | The whole backend: `server.js` (composition/boot), `store.js` (engine), split modules, `routes/`, `middleware/`, `test/`, `utils/`. |
+| `server/` | The whole backend: `server.js` (composition/boot), `store.js` (facade over `store/*` — state, listeners, aggregates, leases, archive, trash, backups), `logger.js`, `version.js`, `routes/`, `middleware/`, `test/`, `utils/`. |
 | `client/` | React 19 + Vite + TypeScript + Tailwind v4 SPA (`client/src/`); built into `client/dist/`, served statically by the server. |
 | `scripts/` | CI/local tooling: `check-version-bump.sh`, `gen-config-reference.mjs`, `test-client-status.js`, headless-browser layout guards, `restore-backup.mjs`. |
 | `docs/` | Operator/maintainer docs (`CONFIGURATION.md` is generated), ADRs under `docs/decisions/`, presentation assets. |

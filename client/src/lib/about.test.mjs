@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
+import { readAboutSources } from './aboutSources.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = join(__dirname, '..')
@@ -326,7 +327,7 @@ test('the orchestrator skill entry names the bundled file and its rules', () => 
 // Source contract
 // ---------------------------------------------------------------------------
 
-const aboutSource = await readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
+const aboutSource = readAboutSources()
 const appSource = await readFileSync(join(CLIENT_SRC, 'App.tsx'), 'utf8')
 
 test('About.tsx uses the editorial serif display face and scrolls its own pane', () => {

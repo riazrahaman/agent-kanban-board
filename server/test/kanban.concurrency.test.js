@@ -337,3 +337,207 @@ describe('§2.6 optimistic-concurrency', () => {
     assert.deepEqual(seen, ['probe', 'tail'], 'ops run in FIFO order after a throw');
    });
 });
+
+// C5 (v3.12.5): If-Match carries an RFC 7232 entity-tag, not a bare integer in
+// every client's hands. A quoted (`"1"`) or weak (`W/"1"`) validator used to
+// stringify to NaN and 409 forever; `*` is "any current representation" and is
+// not a version precondition. The body field still wins when both are present.
+describe('§2.6 If-Match validator syntax (RFC 7232)', () => {
+  let tmpDir;
+  let server;
+  let baseUrl;
+
+  before(async () => {
+    process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    delete process.env.KANBAN_STORAGE_BACKEND;
+    delete process.env.KANBAN_DEFAULT_PROJECT;
+    delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-oc-validators-'));
+    store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
+    await store.loadStore();
+    ({ server, baseUrl } = await startTestServer(createApp()));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_AUTH_TOKEN;
+    store.setStorage(null);
+  });
+
+  async function seed(id) {
+    const created = await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody(id, `Task ${id}`),
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.body.version, 1);
+  }
+
+  it('accepts a quoted strong validator ("1")', async () => {
+    await seed('oc-quoted');
+    const res = await jsonRequest(baseUrl, '/api/tasks/oc-quoted', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1"' },
+      body: JSON.stringify({ title: 'Quoted validator' }),
+    });
+    assert.equal(res.response.status, 200, 'quoted If-Match is parsed, not NaN');
+    assert.equal(res.body.version, 2);
+  });
+
+  it('accepts a weak validator (W/"2")', async () => {
+    await seed('oc-weak');
+    const first = await jsonRequest(baseUrl, '/api/tasks/oc-weak', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1"' },
+      body: JSON.stringify({ title: 'First' }),
+    });
+    assert.equal(first.body.version, 2);
+    const weak = await jsonRequest(baseUrl, '/api/tasks/oc-weak', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': 'W/"2"' },
+      body: JSON.stringify({ title: 'Weak validator' }),
+    });
+    assert.equal(weak.response.status, 200, 'W/"2" compares as version 2');
+    assert.equal(weak.body.version, 3);
+  });
+
+  it('a stale quoted validator still 409s with expected vs. provided', async () => {
+    await seed('oc-quoted-stale');
+    await jsonRequest(baseUrl, '/api/tasks/oc-quoted-stale', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1"' },
+      body: JSON.stringify({ title: 'Bumped' }),
+    });
+    const stale = await jsonRequest(baseUrl, '/api/tasks/oc-quoted-stale', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': 'W/"1"' },
+      body: JSON.stringify({ title: 'Stale' }),
+    });
+    assert.equal(stale.response.status, 409);
+    assert.equal(stale.body.error, 'Version mismatch');
+    assert.deepEqual(stale.body.details, { expected: 2, provided: 1 });
+    const recheck = await jsonRequest(baseUrl, '/api/tasks/oc-quoted-stale');
+    assert.equal(recheck.body.title, 'Bumped', 'the stale quoted write did not land');
+  });
+
+  it('a non-numeric validator is a 409, never a silent write', async () => {
+    await seed('oc-junk');
+    const res = await jsonRequest(baseUrl, '/api/tasks/oc-junk', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': 'not-a-version' },
+      body: JSON.stringify({ title: 'Junk' }),
+    });
+    assert.equal(res.response.status, 409);
+    assert.equal(res.body.error, 'Version mismatch');
+    assert.equal(res.body.details.provided, 'not-a-version', 'the raw validator is echoed back');
+    const recheck = await jsonRequest(baseUrl, '/api/tasks/oc-junk');
+    assert.equal(recheck.body.title, 'Task oc-junk', 'no write happened');
+    assert.equal(recheck.body.version, 1);
+  });
+
+  it('If-Match: * asserts existence only, and the body expected_version still wins', async () => {
+    await seed('oc-star');
+    const star = await jsonRequest(baseUrl, '/api/tasks/oc-star', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '*' },
+      body: JSON.stringify({ title: 'Any representation' }),
+    });
+    assert.equal(star.response.status, 200, '* is not a version precondition');
+    assert.equal(star.body.version, 2);
+
+    // Body field has precedence over the header (both are supplied).
+    const both = await jsonRequest(baseUrl, '/api/tasks/oc-star', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1"' },
+      body: JSON.stringify({ title: 'Body wins', expected_version: 2 }),
+    });
+    assert.equal(both.response.status, 200, 'body expected_version overrides a stale header');
+    assert.equal(both.body.version, 3);
+  });
+
+  // Regression (round 2): `""` and `W/""` are syntactically valid RFC 7232
+  // entity-tags that match no representation. Folding an empty tag into
+  // "absent" silently disabled the CAS guard and let a stale write land.
+  it('an empty strong entity-tag ("") is a 409 that echoes the validator, never a silent write', async () => {
+    await seed('oc-empty-tag');
+    const res = await jsonRequest(baseUrl, '/api/tasks/oc-empty-tag', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '""' },
+      body: JSON.stringify({ title: 'Should not land' }),
+    });
+    assert.equal(res.response.status, 409, 'an empty entity-tag is a precondition, not an omission');
+    assert.equal(res.body.error, 'Version mismatch');
+    assert.deepEqual(res.body.details, { expected: 1, provided: '""' });
+    const recheck = await jsonRequest(baseUrl, '/api/tasks/oc-empty-tag');
+    assert.equal(recheck.body.title, 'Task oc-empty-tag', 'no write happened');
+    assert.equal(recheck.body.version, 1);
+  });
+
+  it('an empty weak entity-tag (W/"") is also a 409', async () => {
+    await seed('oc-empty-weak');
+    const res = await jsonRequest(baseUrl, '/api/tasks/oc-empty-weak', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': 'W/""' },
+      body: JSON.stringify({ title: 'Should not land' }),
+    });
+    assert.equal(res.response.status, 409);
+    assert.equal(res.body.error, 'Version mismatch');
+    assert.deepEqual(res.body.details, { expected: 1, provided: '""' });
+    const recheck = await jsonRequest(baseUrl, '/api/tasks/oc-empty-weak');
+    assert.equal(recheck.body.title, 'Task oc-empty-weak');
+    assert.equal(recheck.body.version, 1);
+  });
+
+  it('surrounding whitespace inside quotes is tolerated (" 2 ")', async () => {
+    await seed('oc-spaced');
+    await jsonRequest(baseUrl, '/api/tasks/oc-spaced', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1"' },
+      body: JSON.stringify({ title: 'Bumped' }),
+    });
+    const spaced = await jsonRequest(baseUrl, '/api/tasks/oc-spaced', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '" 2 "' },
+      body: JSON.stringify({ title: 'Spaced validator' }),
+    });
+    assert.equal(spaced.response.status, 200, '" 2 " compares as version 2');
+    assert.equal(spaced.body.version, 3);
+  });
+
+  // Documented contract: a comma list is answered by its FIRST tag only.
+  // Later entries never fall back, so order is observable and pinned here.
+  it('a comma list of tags uses the first tag: "2", "9" matches; "9", "2" 409s', async () => {
+    await seed('oc-list');
+    const first = await jsonRequest(baseUrl, '/api/tasks/oc-list', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"1", "9"' },
+      body: JSON.stringify({ title: 'First tag wins' }),
+    });
+    assert.equal(first.response.status, 200, 'the matching first tag is used');
+    assert.equal(first.body.version, 2);
+
+    const second = await jsonRequest(baseUrl, '/api/tasks/oc-list', {
+      method: 'PATCH',
+      headers: { ...headers('builder'), 'If-Match': '"9", "2"' },
+      body: JSON.stringify({ title: 'Should not land' }),
+    });
+    assert.equal(second.response.status, 409, 'a later matching tag does not rescue the first');
+    assert.deepEqual(second.body.details, { expected: 2, provided: 9 });
+    const recheck = await jsonRequest(baseUrl, '/api/tasks/oc-list');
+    assert.equal(recheck.body.title, 'First tag wins');
+    assert.equal(recheck.body.version, 2);
+  });
+
+  it('an ABSENT If-Match still means no version precondition', async () => {
+    await seed('oc-absent');
+    for (const expectedVersion of [1, 2, 3]) {
+      const res = await jsonRequest(baseUrl, '/api/tasks/oc-absent', {
+        method: 'PATCH',
+        headers: headers('builder'),
+        body: JSON.stringify({ title: `Write ${expectedVersion}` }),
+      });
+      assert.equal(res.response.status, 200, 'no header, no guard');
+      assert.equal(res.body.version, expectedVersion + 1);
+    }
+  });
+});

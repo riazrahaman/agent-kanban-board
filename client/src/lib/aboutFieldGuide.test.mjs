@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
+import { readAboutSources } from './aboutSources.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = join(__dirname, '..')
@@ -39,7 +40,7 @@ await rm(tmpDir, { recursive: true, force: true })
 
 const { CHAPTERS, ENV_VARS, ASK_SCOPE_NOTE, FIELD_GUIDE, HERO } = content
 
-const aboutSource = readFileSync(join(CLIENT_SRC, 'components', 'About.tsx'), 'utf8')
+const aboutSource = readAboutSources()
 const askSource = readFileSync(join(CLIENT_SRC, 'lib', 'ask.ts'), 'utf8')
 const cssSource = readFileSync(join(CLIENT_SRC, 'index.css'), 'utf8')
 

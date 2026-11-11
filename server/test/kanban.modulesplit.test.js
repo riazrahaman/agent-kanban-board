@@ -16,6 +16,13 @@ import * as stateMachine from '../state-machine.js';
 import * as taskIdentity from '../task-identity.js';
 import * as taskFields from '../task-fields.js';
 import * as storage from '../storage.js';
+import * as core from '../store/core.js';
+import * as listeners from '../store/listeners.js';
+import * as aggregates from '../store/aggregates.js';
+import * as leases from '../store/leases.js';
+import * as archive from '../store/archive.js';
+import * as trash from '../store/trash.js';
+import * as backups from '../store/backups.js';
 
 describe('ENH-11 store module split', () => {
   it('(a) store.js re-exports the SAME identities as the extracted modules', () => {
@@ -53,6 +60,83 @@ describe('ENH-11 store module split', () => {
     // Storage backends
     assert.equal(store.JsonStorage, storage.JsonStorage);
     assert.equal(store.GitYamlStorage, storage.GitYamlStorage);
+  });
+
+  it('(a2) C1 (v3.12.5): store.js re-exports the ./store/* split with the SAME identities', () => {
+    // State/primitives module
+    assert.equal(store.withMutationLock, core.withMutationLock);
+    assert.equal(store.getStorage, core.getStorage);
+    assert.equal(store.setStorage, core.setStorage);
+    assert.equal(store.getTasks, core.getTasks);
+    assert.equal(store.getTask, core.getTask);
+    assert.equal(store.getTaskCount, core.getTaskCount);
+    assert.equal(store.getArchivedTasks, core.getArchivedTasks);
+    assert.equal(store.getProjectBucket, core.getProjectBucket);
+    assert.equal(store.setTaskInMemory, core.setTaskInMemory);
+    assert.equal(store.nextVersionFor, core.nextVersionFor);
+    assert.equal(store.listGitProjects, core.listGitProjects);
+
+    // Listener buses
+    assert.equal(store.onDiff, listeners.onDiff);
+    assert.equal(store.onAudit, listeners.onAudit);
+    assert.equal(store.emitAudit, listeners.emitAudit);
+    assert.equal(store.notify, listeners.notify);
+    assert.equal(store.listenerCounts, listeners.listenerCounts);
+    assert.equal(store.onChange, listeners.onChange);
+    assert.equal(store.onSettings, listeners.onSettings);
+    assert.equal(store.settingsListenerCount, listeners.settingsListenerCount);
+    assert.equal(store.emitSettings, listeners.emitSettings);
+
+    // Aggregates
+    assert.equal(store.getProjectSummaries, aggregates.getProjectSummaries);
+    assert.equal(store.getMetrics, aggregates.getMetrics);
+    assert.equal(store.resetClaimContention, aggregates.resetClaimContention);
+
+    // Leases / reaper
+    assert.equal(store.setNowFn, leases.setNowFn);
+    assert.equal(store.leaseWindowFor, leases.leaseWindowFor);
+    assert.equal(store.getMinLeaseMs, leases.getMinLeaseMs);
+    assert.equal(store.getMaxLeaseMs, leases.getMaxLeaseMs);
+    assert.equal(store.getProgressStallMs, leases.getProgressStallMs);
+    assert.equal(store.isReaperEnabled, leases.isReaperEnabled);
+    assert.equal(store.reclaimTask, leases.reclaimTask);
+    assert.equal(store.reapExpiredClaims, leases.reapExpiredClaims);
+    assert.equal(store.startReaper, leases.startReaper);
+    assert.equal(store.stopReaper, leases.stopReaper);
+    assert.equal(store.isReaperRunning, leases.isReaperRunning);
+
+    // Archive / trash / backups
+    assert.equal(store.runArchiveSweep, archive.runArchiveSweep);
+    assert.equal(store.getTrashedTasks, trash.getTrashedTasks);
+    assert.equal(store.restoreFromTrash, trash.restoreFromTrash);
+    assert.equal(store.hardDeleteFromTrash, trash.hardDeleteFromTrash);
+    assert.equal(store.runTrashSweep, trash.runTrashSweep);
+    assert.equal(store.startBackup, backups.startBackup);
+    assert.equal(store.stopBackup, backups.stopBackup);
+    assert.equal(store.isBackupRunning, backups.isBackupRunning);
+    assert.equal(store.runBackupNow, backups.runBackupNow);
+    assert.equal(store.backupStatus, backups.backupStatus);
+  });
+
+  it('(a3) C1: the split has ONE home for the live state, shared by identity', () => {
+    // The live task array is the same binding the accessors read; the index and
+    // archive sinks live beside it. A duplicated `tasks = []` would make the
+    // accessors observe a different array than the mutation paths.
+    const project = taskIdentity.defaultProjectName();
+    const before = store.getTaskCount();
+    core.setTaskInMemory({ id: 'split-probe', project, status: 'READY', version: 1 });
+    assert.equal(store.getTaskCount(), before + 1, 'facade accessor sees the core array');
+    assert.equal(core.getTaskCount(), before + 1);
+    assert.equal(store.getTask('split-probe', project).id, 'split-probe', 'same composite index');
+    core.removeFromMemory(project, 'split-probe');
+    assert.equal(store.getTaskCount(), before, 'cleanup restored the count');
+    assert.ok(core.index instanceof Map);
+    assert.equal(typeof core.archive, 'object');
+    assert.equal(typeof core.trash, 'object');
+    // The extracted modules import that state rather than keeping copies.
+    assert.equal(typeof leases.reapExpiredClaims, 'function');
+    assert.equal(typeof archive.runArchiveSweep, 'function');
+    assert.equal(typeof trash.restoreFromTrash, 'function');
   });
 
   it('(b) state-machine module: statuses, transitions, role matrix', () => {

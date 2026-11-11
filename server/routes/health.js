@@ -1,13 +1,11 @@
 import { Router } from 'express';
-import { createRequire } from 'node:module';
 import * as store from '../store.js';
 import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
 import { checkCredentialCoverage } from '../utils/credentialMap.js';
 import { deployDriftStatus } from '../deployDrift.js';
-
-const require = createRequire(import.meta.url);
-// Single source of truth for the deployed version: server/package.json.
-const { version: APP_VERSION } = require('../package.json');
+// C4 (v3.12.5): the deployed version comes from the one shared helper, never a
+// second `require('../package.json')` at the call site.
+import { APP_VERSION } from '../version.js';
 
 const router = Router();
 

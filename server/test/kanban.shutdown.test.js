@@ -70,6 +70,7 @@ describe('registerShutdownHandlers', () => {
 
   it('exits with code 1 if server.close fails with an error', async () => {
     let exitCode = null;
+    const logs = [];
 
     const mockServer = {
       close: (cb) => {
@@ -81,12 +82,19 @@ describe('registerShutdownHandlers', () => {
       exit: (code) => {
         exitCode = code;
       },
-      log: () => {},
+      log: (msg) => logs.push(msg),
     });
 
     try {
       process.emit('SIGTERM');
       assert.equal(exitCode, 1, 'process.exit must be called with 1 on close error');
+      // An injected sink receives error-level lines too: `logError`/`logWarn`
+      // used to bypass it, so the diagnostic landed in stderr and the caller
+      // saw only the info lines.
+      assert.ok(
+        logs.some((l) => l.includes('error during close')),
+        `the injected sink must receive the error line; got ${JSON.stringify(logs)}`,
+      );
     } finally {
       cleanup();
     }

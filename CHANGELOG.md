@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,110 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.12.5] — 2026-11-11
+
+Tidy-up release: six small hardening/maintenance items (C1, C4, C5, C6, C8 and a
+test-file rename) with **no behaviour change outside the C5 parser fix (quoted/
+weak validators now 200; empty validator still 409)**. The mutation, lease,
+archive and SSE contracts are byte-identical; the suite grew by the new
+regression cases only.
+
+### Fixed
+
+- **C5 — `If-Match` was passed to the CAS check raw.** `resolveExpectedVersion`
+  (`server/routes/tasks.js`) forwarded the header verbatim, so a spec-conformant
+  client that sent an RFC 7232 entity-tag — `"5"`, weak `W/"5"`, or an ETag
+  echoed back by a proxy — produced `Number('"5"') === NaN` and a permanent 409
+  from a *correct* version. The route now strips the weak prefix and surrounding
+  quotes, takes the first tag of a list, and treats `*` as "any current
+  representation" (no version precondition). A body `expected_version` still
+  wins, a stale quoted validator still 409s with `details.expected/provided`, and
+  a non-numeric validator is still a 409 — never a silent write. Only the
+  version number is interpreted; the ETag payload is ignored. `versionConflict`
+  (`server/store/core.js`) now treats only an absent (`undefined`/`null`) guard as
+  "no precondition": `""` and `W/""` are valid empty entity-tags that match no
+  representation and must 409 with the validator echoed, never silently disable
+  the CAS guard. Pinned by ten cases in `kanban.concurrency.test.js`.
+  - Deviation from RFC 7232, deliberate: a comma list is answered by its
+    **first** tag only. Later entries are ignored and never fall back, so
+    `"2", "9"` matches version 2 while `"9", "2"` is a 409 echoing `9`.
+  - Deviation from RFC 7232, deliberate: `W/"5"` is accepted on a strong
+    comparison. The board serves one representation per task, so weak revision
+    semantics would only add a second 409 path without protecting anything.
+
+### Changed
+
+- **C1 — `store.js` (3.6k lines) split into focused modules behind re-exports.**
+  The store is now a facade over `server/store/`:
+  - `core.js` is the **single home of state** — live `tasks`, the composite
+    index, archive/trash/settings sinks, the mutation queue and lock, storage
+    factory, mutation serials, aggregate-invalidation flag, read accessors and
+    `nextVersionFor`/`versionConflict`;
+  - `listeners.js` — snapshot/diff/audit/settings buses behind `notify()`;
+  - `aggregates.js` — project summaries, metrics caches, claim-contention;
+  - `leases.js` — clock, lease windows, claim caps, reclaim path, reaper;
+  - `archive.js`, `trash.js`, `backups.js` — the sweeps and periodic snapshots.
+  `store.js` re-exports every moved symbol with its original identity
+  (`kanban.modulesplit.test.js` now pins all of them, including the
+  `store.writeAtomic === task-identity.writeAtomic` identity), so the 44 test
+  files that import `../store.js` (of 58 in `server/test/`; 48 mention it) and
+  every route that imports `../store.js` are untouched. State is
+  imported, never copied: extracted modules share the one live binding, and a
+  module that must reassign goes through a named setter in `core.js` (ESM live
+  bindings, no circular import). The claim/patch state-machine walk and the
+  dependency gate deliberately stay in `store.js` — they share the same
+  transition/role rules, and moving them would re-couple the two halves.
+  `callerIsPrivileged`/`destructivePrivilege` moved to the pure
+  `task-fields.js` so `store/trash.js` can gate destructive ops without
+  importing the facade back.
+- **C1 (client) — the About page is split by chapter.** `components/About.tsx`
+  keeps the shell (masthead, hero, rail, chapter bar, scroll-spy); the article
+  body and its figures live in `client/src/about/`: `ChapterBody.tsx`,
+  `ArchitectureDiagram.tsx`, `Ask.tsx` (hero `AskCard` + chapter-11 figure),
+  `VideoShowcase.tsx` and `primitives.tsx`. The JSX was moved verbatim, so the
+  rendered markup is unchanged. The five source-contract suites now read the
+  page's full source through `lib/aboutSources.mjs` — they describe the page,
+  not one filename.
+- **C4 — one version helper.** `server/version.js` reads `server/package.json`
+  once (module-relative, `unknown` on a missing manifest). `routes/health.js`,
+  `deployDrift.js`, `askKnowledge.js` and `routes/bugReports.js` all import
+  `APP_VERSION` instead of re-reading the manifest themselves; the bug-report
+  copy previously resolved from `process.cwd()` and could disagree with
+  `/api/health` when the server was started from another directory.
+- **C6 — structured logger + one dedupe helper.** `server/logger.js` emits one
+  `[kanban <scope>] <msg> key=value …` line per record (values serialised,
+  Errors reduced to their message) and exposes `warnOnce(key, ttlMs, msg,
+  fields)` as the single dedupe implementation. Migrated hot paths: task-route
+  rejection/version-conflict warnings, webhook delivery/status warnings (its
+  private 60s map is gone), reaper/reclaim and backup lifecycle messages, store
+  load/spill/hook errors, and server boot/shutdown/error warnings. The
+  `[kanban …]` prefixes are preserved, so log greps and the spawn test that
+  waits for "listening on" are unaffected. The audit-record line stays exactly
+  as it was (it is a machine-parsed record, not a diagnostic).
+  `registerShutdownHandlers` now routes every line — info, warn and error —
+  through its injectable `log` sink (the dead module-level
+  `createLogger('server')` binding that shadowed it is gone), so an injected
+  logger sees the error diagnostics instead of them bypassing it and landing in
+  stderr.
+- **Renamed `server/test/kanban.deepeview.test.js` → `kanban.deepreview.test.js`**
+  (the v3.10.0 deep-review suite was misspelled). No importers referenced the
+  filename; the CHANGELOG's historical mention is left as written.
+
+### Removed
+
+- **C8 — dead client SSE exports.** `subscribeToEvents` and
+  `subscribeToSettings` (and their now-unused `streamUrl` helper) were replaced
+  by `subscribeToBoard` in v2.13.0 and had no runtime consumer left. Their
+  `EventSource` error paths were the only reason stale messages referred to a
+  separate settings stream. Deleted; `kanban`-side behaviour is unchanged.
+
+### Docs
+
+- `CLAUDE.md`, `docs/` architecture notes and the Ask knowledge map describe the
+  new `server/store/*` layout, `server/version.js`, `server/logger.js` and the
+  About page's `client/src/about/*` split. Release-version housekeeping (docs ×5,
+  presentation page + deck cover, skill frontmatter) bumped in lockstep.
 
 ## [3.12.4] — 2026-11-11
 

@@ -85,3 +85,33 @@ export function priorityRank(priority) {
   if (priority === 'low' || priority === 'LOW') return 2;
   return 1;
 }
+
+/**
+ * SEC-02 (v2.5.2): destructive operations are gated on a privilege flag the
+ * auth middleware DERIVES from the credential, never on the caller-asserted
+ * `X-Agent-Role` header alone. When the middleware stamped a flag, it wins;
+ * direct store callers (unit tests, legacy middleware) fall back to the role
+ * check so single-token deployments keep their historical semantics.
+ */
+export function destructivePrivilege(caller) {
+  return callerIsPrivileged(caller);
+}
+
+/**
+ * v2.12.1 (I-4): shared credential-derived privilege check, extracted from
+ * `destructivePrivilege` so the bulk-heartbeat route (and any other caller)
+ * can use the SAME rule instead of trusting the self-asserted `X-Agent-Role`
+ * header directly. A per-project token cannot send itself `X-Agent-Role:
+ * admin` and pass this check — the auth middleware sets `caller.privileged`
+ * from the credential itself (see middleware/auth.js), and that flag wins
+ * whenever it is present.
+ *
+ * C1 (v3.12.5): moved here from store.js so ./store/trash.js can gate restore
+ * and hard-delete without importing the store facade back (a cycle). Pure, no
+ * state; store.js re-exports `callerIsPrivileged` unchanged.
+ */
+export function callerIsPrivileged(caller) {
+  return caller.privileged === undefined || caller.privileged === null
+    ? isPrivilegedRole(caller.role)
+    : caller.privileged === true;
+}
