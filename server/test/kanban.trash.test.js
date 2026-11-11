@@ -141,6 +141,40 @@ describe('KB-12 soft-delete trash sink (ENH-03, v2.5.6)', { concurrency: 1 }, ()
     assert.equal(res.status, 409);
   });
 
+  it('2d. restoreFromTrash requires a privileged credential (v3.12.1)', async () => {
+    await store.createTask(taskBody('tr-priv', 'admin only'));
+    await store.deleteTask('tr-priv', { caller: { agent_id: 'trash-admin', role: 'admin' } });
+    const res = await store.restoreFromTrash('tr-priv', { caller: { agent_id: 'x', role: 'builder' } });
+    assert.equal(res.status, 403);
+    assert.match(res.error, /Forbidden: admin role required to restore tasks/);
+  });
+
+  it('2e. restoreFromTrash honors expected_version (409 on mismatch, 200 on match)', async () => {
+    await store.createTask(taskBody('tr-cas', 'cas guarded'));
+    await store.deleteTask('tr-cas', { caller: { agent_id: 'trash-admin', role: 'admin' } });
+    const trashed = store.getTrashedTasks('default').find((t) => t.id === 'tr-cas');
+    assert.ok(trashed, 'the soft-deleted row carries its pre-delete version');
+
+    // Stale expectation → 409 "Version mismatch" with expected/provided details.
+    const stale = await store.restoreFromTrash('tr-cas', {
+      caller: { agent_id: 'trash-admin', role: 'admin' },
+      expected_version: trashed.version + 5,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.error, 'Version mismatch');
+    assert.equal(stale.details.expected, trashed.version);
+    assert.equal(stale.details.provided, trashed.version + 5);
+
+    // Current expectation → the restore proceeds.
+    const ok = await store.restoreFromTrash('tr-cas', {
+      caller: { agent_id: 'trash-admin', role: 'admin' },
+      expected_version: trashed.version,
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.task.status, 'READY');
+    assert.equal(store.getTask('tr-cas', 'default').id, 'tr-cas');
+  });
+
   it('3. hardDeleteFromTrash permanently removes the row from the sink', async () => {
     await store.createTask(taskBody('tr-3', 'hard'));
     await store.deleteTask('tr-3', { caller: { agent_id: 'trash-admin', role: 'admin' } });

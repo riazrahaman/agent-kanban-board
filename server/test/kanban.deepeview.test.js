@@ -196,6 +196,83 @@ describe('deep-review hardening', () => {
     });
   });
 
+  it('P1 (v3.12.1): logs ignore body agent_id for non-privileged callers', async () => {
+    await withApp({ KANBAN_PROJECT_TOKENS: MAP }, async (baseUrl) => {
+      const { body: seeded } = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'a-1'), body: taskBody('kdr-lg1', 'alpha card', { project: 'alpha' }),
+      });
+      assert.equal(seeded.project, 'alpha');
+
+      // The bearer tries to log AS someone else; the entry must be attributed
+      // to the identity on their credential.
+      const logged = await jsonRequest(baseUrl, '/api/tasks/kdr-lg1/logs?project=alpha', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'real-owner'),
+        body: JSON.stringify({ agent_id: 'spoofed', message: 'progress update' }),
+      });
+      assert.equal(logged.response.status, 200, JSON.stringify(logged.body));
+      const last = logged.body.agent_logs[logged.body.agent_logs.length - 1];
+      assert.equal(last.agent_id, 'real-owner', 'body agent_id is ignored for non-privileged log callers');
+    });
+  });
+
+  it('P1 (v3.12.1): comments ignore body agent_id for non-privileged callers', async () => {
+    await withApp({ KANBAN_PROJECT_TOKENS: MAP }, async (baseUrl) => {
+      const { body: seeded } = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'a-1'), body: taskBody('kdr-cm1', 'alpha card', { project: 'alpha' }),
+      });
+      assert.equal(seeded.project, 'alpha');
+
+      const commented = await jsonRequest(baseUrl, '/api/tasks/kdr-cm1/comments?project=alpha', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'real-owner'),
+        body: JSON.stringify({ agent_id: 'spoofed', message: 'a comment' }),
+      });
+      assert.equal(commented.response.status, 200, JSON.stringify(commented.body));
+      const last = commented.body.comments[commented.body.comments.length - 1];
+      assert.equal(last.agent_id, 'real-owner', 'body agent_id is ignored for non-privileged comment callers');
+    });
+  });
+
+  it('P1 (v3.12.1): next-claim ignores ?agent_id= and body agent_id for non-privileged callers', async () => {
+    await withApp({ KANBAN_PROJECT_TOKENS: MAP }, async (baseUrl) => {
+      const { body: seeded } = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'a-1'), body: taskBody('kdr-nc1', 'alpha card', { project: 'alpha' }),
+      });
+      assert.equal(seeded.project, 'alpha');
+
+      // The query string is scope/params only, never identity: BOTH channels
+      // of a spoofed agent_id must be ignored.
+      const claimed = await jsonRequest(baseUrl, '/api/tasks/next-claim?project=alpha&agent_id=spoofed', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'real-owner'),
+        body: JSON.stringify({ agent_id: 'spoofed' }),
+      });
+      assert.equal(claimed.response.status, 200, JSON.stringify(claimed.body));
+      assert.equal(claimed.body.assigned_agent, 'real-owner', 'the claim is attributed to the credential identity');
+    });
+  });
+
+  it('P1 (v3.12.1): logs/comments 400 when a non-privileged caller sends no agent identity', async () => {
+    await withApp({ KANBAN_PROJECT_TOKENS: MAP }, async (baseUrl) => {
+      const { body: seeded } = await jsonRequest(baseUrl, '/api/tasks', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', 'a-1'), body: taskBody('kdr-an1', 'alpha card', { project: 'alpha' }),
+      });
+      assert.equal(seeded.project, 'alpha');
+
+      // No X-Agent-Id header and no body agent_id: with the identity now
+      // credential-bound, the route has no agent to attribute the write to.
+      const noLog = await jsonRequest(baseUrl, '/api/tasks/kdr-an1/logs?project=alpha', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', null),
+        body: JSON.stringify({ message: 'progress update' }),
+      });
+      assert.equal(noLog.response.status, 400);
+
+      const noComment = await jsonRequest(baseUrl, '/api/tasks/kdr-an1/comments?project=alpha', {
+        method: 'POST', headers: headers(TOKEN_ALPHA, 'builder', null),
+        body: JSON.stringify({ message: 'a comment' }),
+      });
+      assert.equal(noComment.response.status, 400);
+    });
+  });
+
   it('P1: reaper never touches READY_TO_SHIP, even with a live lease', async () => {
     await withApp({ KANBAN_AUTH_TOKEN: TOKEN }, async (baseUrl) => {
       await jsonRequest(baseUrl, '/api/tasks', {

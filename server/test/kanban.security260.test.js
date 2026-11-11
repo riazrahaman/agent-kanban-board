@@ -301,6 +301,47 @@ describe('SEC-05 SSE concurrent stream cap', () => {
     await new Promise((r) => setTimeout(r, 50));
   });
 
+  it('403 rejections do not consume stream slots (v3.12.1 slot-leak reorder)', async () => {
+    const alphaToken = 'sec260-sse-alpha';
+    process.env.KANBAN_MAX_SSE_STREAMS = '2';
+    process.env.KANBAN_PROJECT_TOKENS = JSON.stringify({
+      alpha: { credentials: [{ token: alphaToken, role: 'builder' }] },
+    });
+    resetSseStreams();
+    try {
+      // Several FORBIDDEN streams: an alpha-scoped credential cannot stream
+      // beta. Each 403 must return BEFORE any counting — the pre-fix code
+      // incremented first and never decremented, permanently leaking slots.
+      for (let i = 0; i < 3; i += 1) {
+        const controller = new AbortController();
+        const res = await fetch(`${baseUrl}/api/events?project=beta`, {
+          headers: { 'x-api-token': alphaToken },
+          signal: controller.signal,
+        });
+        assert.equal(res.status, 403, `forbidden stream ${i} must be rejected`);
+        await res.text().catch(() => '');
+        controller.abort();
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(liveSseStreamCount(), 0, 'forbidden streams must not leak slots');
+
+      // The cap still holds for legitimate streams: 2 connect, the 3rd is 503.
+      const s1 = await openStream(baseUrl, '/api/events');
+      assert.equal(s1.res.status, 200);
+      const s2 = await openStream(baseUrl, '/api/events');
+      assert.equal(s2.res.status, 200);
+      const s3 = await openStream(baseUrl, '/api/events');
+      assert.equal(s3.res.status, 503);
+      s1.close();
+      s2.close();
+      s3.close();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(liveSseStreamCount(), 0);
+    } finally {
+      delete process.env.KANBAN_PROJECT_TOKENS;
+    }
+  });
+
   it('negative KANBAN_MAX_SSE_STREAMS disables the cap', async () => {
     process.env.KANBAN_MAX_SSE_STREAMS = '-1';
     resetSseStreams();
