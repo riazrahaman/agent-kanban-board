@@ -153,31 +153,31 @@ The Orchestrator operates as `admin` for status resets, unblocking, and lifecycl
 **Enter an active stage by CLAIMING from READY, never by a status-only PATCH from BACKLOG.** `POST /tasks/:id/claim` sets the owner and lease, promoting `READY` → `IN_PROGRESS` (or `READY` → `PLANNING` for planner role).
 
 1. **IN_PROGRESS**:
-   - `POST /tasks/:id/claim?project=X` (`agent_id` = orchestrator id, credential bound to `role: "builder"` — header `X-Agent-Role: builder` must not conflict and is otherwise ignored on bound credentials, v3.8.0+). This establishes ownership, sets `claim_expires_at`, promotes `READY` → `IN_PROGRESS`, and stamps `stage_owners.IN_PROGRESS`.
+   - `POST /tasks/:id/claim?project=X` **by the BUILDER**, using its own role-bound credential (`role: "builder"`, v3.8.0+; a conflicting `X-Agent-Role` header is ignored on a bound credential) and a distinct `agent_id` (e.g. `builder-1`). The orchestrator dispatches this step; it must not claim on the builder's behalf with the admin token. This establishes ownership, sets `claim_expires_at`, promotes `READY` → `IN_PROGRESS`, and stamps `stage_owners.IN_PROGRESS` with the builder's id.
    - `POST /tasks/:id/logs?project=X` (Log: "Starting build phase...").
    - Start the heartbeat loop (§4).
-   - **Dispatch BUILDER**: Pass `task_id`, `repo_path`, `branch`, `kanban_url`, and the **builder's own role-bound `kanban_token`** (v3.8.0+: each worker holds only its own role credential — never the orchestrator's or admin credential). The builder PATCHes status and appends logs — it must NOT attempt to claim.
+   - **Dispatch BUILDER**: Pass `task_id`, `repo_path`, `branch`, `kanban_url`, and the **builder's own role-bound `kanban_token`** (v3.8.0+: each worker holds only its own role credential — never the orchestrator's or admin credential). The builder claims the card (claim-first, §4), PATCHes status and appends logs; the orchestrator observes and logs, it does not perform those writes itself.
    - Await Builder completion and verification evidence.
 
 2. **IN_REVIEW**:
-   - `PATCH /tasks/:id?project=X` (Status: `IN_REVIEW`, Role: `builder` or `admin`, with `expected_version`). The card is already owned from the claim; do NOT re-claim.
+   - `PATCH /tasks/:id?project=X` (Status: `IN_REVIEW`, Role: `builder`; `admin` only for lifecycle repair, with `expected_version`). The card is already owned from the claim; do NOT re-claim.
    - `POST /tasks/:id/logs?project=X` (Log: "Submitting for review...").
    - **Dispatch REVIEWER**: Pass `diff` or `commit_range`.
    - Await Reviewer response (`Approve` | `Blocking Findings`).
    - If **Findings**: Append findings to logs → Transition status back to `IN_PROGRESS` → Re-dispatch Builder.
 
 3. **VALIDATION**:
-   - `PATCH /tasks/:id?project=X` (Status: `VALIDATION`, Role: `reviewer` or `admin`, with `expected_version`).
+   - `PATCH /tasks/:id?project=X` (Status: `VALIDATION`, Role: `reviewer`; `admin` only for lifecycle repair, with `expected_version`).
    - `POST /tasks/:id/logs?project=X` (Log: "Running test suite and validation...").
    - **Dispatch TESTER / VALIDATOR**: Pass test suite commands and verification scope.
    - Await Tester result (`Pass` | `Fail`).
    - If **Fail**:
-     - `PATCH /tasks/:id?project=X` (Status: `IN_PROGRESS`, Role: `tester` or `admin`, with `expected_version`) to reject back to the builder. (`VALIDATION → READY` is not a legal transition; `IN_PROGRESS` is the only way back.)
+     - `PATCH /tasks/:id?project=X` (Status: `IN_PROGRESS`, Role: `tester`; `admin` only for lifecycle repair, with `expected_version`) to reject back to the builder. (`VALIDATION → READY` is not a legal transition; `IN_PROGRESS` is the only way back.)
      - `POST /tasks/:id/logs?project=X` (Log: "Tester failed. Returning to IN_PROGRESS.").
      - Restart build loop.
 
 4. **READY_TO_SHIP**:
-   - `PATCH /tasks/:id?project=X` (Status: `READY_TO_SHIP`, Role: `tester`, `validator`, or `admin`, with `expected_version`).
+   - `PATCH /tasks/:id?project=X` (Status: `READY_TO_SHIP`, Role: `tester` or `validator`; `admin` only for lifecycle repair, with `expected_version`).
    - `POST /tasks/:id/logs?project=X` (Log: "Validated. Ready to ship.").
 
 ### Stage C: Closure
@@ -189,7 +189,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
    gh release create v<version> --title "v<version>" --notes-file <changelog-section.md>
    ```
    `releases/latest` is what the deploy-drift monitor reads first. A tag pushed without a Release leaves that feed stale, which is exactly how v3.10.5 sat at the top while the board ran 3.12.x (the tags fallback in v3.12.7 now covers that case, but the Release is still the contract). Verify with `gh release view v<version>` and `curl -s https://api.github.com/repos/<owner>/<repo>/releases/latest | jq -r .tag_name`.
-4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `releaser` or `admin`, with `expected_version`) + log completion metadata.
+4. **Finalize**: `PATCH /tasks/:id?project=X` (Status: `DONE`, Role: `releaser`; `admin` only for lifecycle repair, with `expected_version`) + log completion metadata.
 5. **Close GitHub Issue**: `gh issue close <N> --comment "Resolved in v<version>: ..."`
 6. **Deployment Check**: Confirm live deployment status (e.g. `railway status` and `GET /api/health`).
 7. **Report**: Summarize completion to user (commit hash, test outputs, completion status).
@@ -200,6 +200,8 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 - **Credential-Bound Roles (MANDATORY, v3.8.0+)**: every agent role above requires its own credential bound to that role in `KANBAN_PROJECT_TOKENS`; the server forces the role from the credential. A self-declared `X-Agent-Role` header that conflicts with the bound role is ignored — the request is served with the credential's role — and the mismatch is audited as `role_binding_mismatch`. Legacy string tokens keep current (unbound, header-role) behavior; migration is opt-in.
 - **Credential-Bound Identity (MANDATORY, v3.12.8+ / A7)**: bind `agent_id` on the same credential so the acting agent is server-derived. A conflicting `X-Agent-Id` header or body `agent_id` is ignored and audited as `identity_binding_mismatch`. On an unbound credential, send `X-Agent-Id`: a body `agent_id` alone is not identity for a non-privileged caller, so claim/log/comment writes without the header are rejected with `400`. The admin token and an UNBOUND privileged session may assert via header or body; a session minted from an identity-bound credential keeps that identity even when its role is privileged. Sessions minted from a bound credential carry the bound identity.
 - **One agent per role (MANDATORY, v3.9.0+):** dispatch each stage to a distinct `x-agent-id` **and** its own role-bound credential — never swap one agent's credential across stages to cover a card yourself. The board's opt-in `role_crossing` audit signal (`KANBAN_ROLE_CROSSING_AUDIT`, off by default) reports one agent id presenting several bound roles; it never rejects, but the correct posture is to never trigger it.
+- **Never walk a card with the admin token (MANDATORY).** The orchestrator's `admin`/`runner` credential is for lifecycle repair only: resetting a reaped card, unblocking, correcting a bad status. Claiming or PATCHing the normal stage transitions as `admin`, or with one agent id across stages, stamps a single `stage_owners` entry — the card then renders a **RED** severity dot ("self-approval"), even when the work was genuinely reviewed and tested. `stage_owners` is the board's evidence of separation of duties; keep it truthful rather than convenient.
+- **Severity dot** (`client/src/lib/ownership.ts`): GREEN = two or more distinct agents covered the active stages; AMBER = one agent held 2-3 stages; RED = one agent held 4 or more; hollow = filed straight to `DONE` or only one stage witnessed, so separation cannot be evaluated. A freshly finished card that is RED means the protocol above was not followed. Never rewrite `stage_owners` after the fact to turn a dot green.
 - **Headers**: All requests must include `x-agent-id`, `x-agent-role`, and `x-api-token`. Header `x-agent-role` alone no longer grants a role on a role-bound credential (v3.8.0+) — the role comes from the credential; the header remains the role source only for legacy unbound tokens.
 - **Project Scoping**: Always append `?project=<name>` on task-specific endpoints.
 - **Optimistic Locking**: Every `PATCH` requires the card's CURRENT `version` as `expected_version`. Operations like `POST /claim`, `POST /logs`, and `POST /heartbeat` each increment the card's version on the server, so a version read earlier in the cycle is stale. Always fetch the fresh version before issuing a `PATCH`:
