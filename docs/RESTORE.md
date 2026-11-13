@@ -50,6 +50,14 @@ below).
    `tasks.json` (default project) or a non-empty `tasks/` directory (named
    projects) plus `archive/`.
 
+   A snapshot holds every project's storage files: the default project's live
+   file, journal, `archive/<project>.json`, `trash/<project>.json` and
+   `settings.json` (laid out relative to the directory of `KANBAN_DATA_FILE`),
+   and the data dir's `tasks/` (named partitions with their `archive/` and
+   `trash/`), `settings/` and `spill/`. A `backup-manifest.json` at the root
+   records where the default project's files came from (`default_project.dir`)
+   and whether that directory differs from the data dir (`split`).
+
 3. **Copy the snapshot off the volume** (nightly, e.g. via cron / Railway
    cron service):
 
@@ -68,6 +76,16 @@ below).
 
    Add `--dry-run` to list what would be copied without writing. The script
    refuses to restore from an empty or missing snapshot.
+
+   If `KANBAN_DATA_FILE` lives outside `KANBAN_DATA_DIR` (the manifest says
+   `"split": true`, and the script prints a note), also tell the script where
+   the default project belongs, so its files go back where the server reads
+   them:
+
+   ```bash
+   node scripts/restore-backup.mjs /data/backups/2026-09-24T18-10-00-123Z \
+     --into /data --default-into "$(dirname "$KANBAN_DATA_FILE")"
+   ```
 
 5. **Restart the service** and verify recovery:
 
