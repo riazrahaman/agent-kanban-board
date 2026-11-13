@@ -571,7 +571,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
 | `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
 | `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
-| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated}`; `provider`, `model` and `scope` are added only when a valid `x-ask-pass` is sent, v3.13.1); the console only renders when enabled | Public (limited view) / Shared password (full view) |
+| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated}`; `provider`, `model` and `scope` are added only when a valid `x-ask-pass` is sent); the console only renders when enabled | Public (limited view) / Shared password (full view) |
 | `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never mutates a card, reads the named card's record and logs in-process (redacted by default) | Shared password (not a board token) |
 
 ---
