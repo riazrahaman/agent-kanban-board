@@ -260,7 +260,9 @@ Credential families, resolved in `middleware/auth.js` `getAuthorizedProjects`:
   silent fallback to global). A per-project token confers `privileged=false` by
   convention. Admin token → `caller.role = "admin"`.
 - **`KANBAN_AUTH_SECRET`** — HMAC stateless session tokens (`sessionAuth.js`):
-  `POST /api/auth/session` (proof-of-secret handshake) → self-describing token
+  `POST /api/auth/challenge` (single-use nonce, required by default) then
+  `POST /api/auth/session` (proof over challenge, client nonce, role and
+  project) → self-describing token
   `base64url(payload).hmac` with `{cn,sn,jti,exp,role,project}`, 24 h expiry, and
   a process-local **jti deny-list** (`POST /api/auth/revoke`).
 - **Stream tickets** (`streamTicket.js`) — 60 s, single-use, signed with

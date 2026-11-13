@@ -223,6 +223,32 @@ export function startupAuthWarnings(env = process.env) {
   return out;
 }
 
+/**
+ * Auth configurations that must refuse to start. Pure (reads only `env`) so
+ * the conditions are unit-testable; never includes a secret value in the
+ * message.
+ *  - KANBAN_ADMIN_TOKEN equal to KANBAN_AUTH_TOKEN, or to any credential token
+ *    in KANBAN_PROJECT_TOKENS: every request carrying that shared token would
+ *    be served as admin, silently granting destructive privilege.
+ */
+export function startupAuthErrors(env = process.env) {
+  const out = [];
+  const admin = typeof env.KANBAN_ADMIN_TOKEN === 'string' ? env.KANBAN_ADMIN_TOKEN.trim() : '';
+  if (!admin) return out;
+  const shared = typeof env.KANBAN_AUTH_TOKEN === 'string' ? env.KANBAN_AUTH_TOKEN.trim() : '';
+  if (shared && shared === admin) {
+    out.push('KANBAN_ADMIN_TOKEN must differ from KANBAN_AUTH_TOKEN (an identical value would make every shared-token request an admin request).');
+  }
+  const parsed = env.KANBAN_PROJECT_TOKENS ? parseProjectTokens(env.KANBAN_PROJECT_TOKENS) : null;
+  if (parsed?.map) {
+    const clash = [...parsed.map.values()].some((creds) => creds.some((c) => c.token === admin));
+    if (clash) {
+      out.push('KANBAN_ADMIN_TOKEN must differ from every credential token in KANBAN_PROJECT_TOKENS (an identical value would make that credential an admin credential).');
+    }
+  }
+  return out;
+}
+
 export function createApp(opts = {}) {
   const app = express();
   // A6 (v3.12.4): security headers FIRST, so every response — API JSON, the
@@ -559,6 +585,12 @@ export async function startServer(
   port = process.env.PORT || 4000,
   host = resolveHost()
 ) {
+  const fatal = startupAuthErrors();
+  if (fatal.length > 0) {
+    for (const line of fatal) logError('auth', line);
+    throw new Error(`Refusing to start: ${fatal.join(' ')}`);
+  }
+
   await loadStore();
 
   // §2.10: compare the projects named in KANBAN_PROJECT_TOKENS against the
@@ -802,5 +834,8 @@ if (isDirectRun) {
   startServer(PORT, HOST).then(({ server }) => {
     console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
     registerShutdownHandlers(server);
+  }).catch((err) => {
+    console.error(err.message);
+    process.exit(1);
   });
 }

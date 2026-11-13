@@ -541,12 +541,12 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 |---|---|---|---|
 | `GET` | `/api/tasks` | List all tasks (`?project=` scopes to one project; unfiltered spans all) | Public |
 | `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
-| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | Auth + privileged role required |
+| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | The admin token or a privileged session |
 | `GET` | `/api/tasks/trash` | List soft-deleted tasks in the trash sink (project-scoped) | Read |
-| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to READY (owner and lease cleared) | Auth (admin) |
-| `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | Auth + privileged role required |
+| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to READY (owner and lease cleared) | The admin token or a privileged session |
+| `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | The admin token or a privileged session |
 | `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
-| `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
+| `DELETE` | `/api/tasks/:id` | Delete one task | The admin token or a privileged session |
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body, optional `lease_ms`) | Auth + Contention gated |
 | `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease (optional `lease_ms` re-windows it) | Auth required |

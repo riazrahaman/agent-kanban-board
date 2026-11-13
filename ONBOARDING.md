@@ -180,9 +180,9 @@ renewed before the TTL expires or if the holder stops making progress.
 | Method | Endpoint | Auth |
 |---|---|---|
 | `GET` / `POST` | `/api/tasks` | read open / write auth |
-| `POST` | `/api/tasks/purge` | auth + privileged role |
+| `POST` | `/api/tasks/purge` | the admin token or a privileged session |
 | `GET` / `PATCH` | `/api/tasks/:id` | read open / write auth+role |
-| `DELETE` | `/api/tasks/:id` | auth + privileged role |
+| `DELETE` | `/api/tasks/:id` | the admin token or a privileged session |
 | `POST` | `/api/tasks/:id/claim` | auth + contention |
 | `POST` | `/api/tasks/:id/heartbeat` | auth |
 | `POST` | `/api/tasks/:id/logs` | auth |
