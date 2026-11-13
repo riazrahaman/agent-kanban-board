@@ -146,7 +146,7 @@ describe('ask: feature gate', () => {
 
   it('is on when both are present; config never leaks the key or password', async () => {
     await withApp({ env: baseEnv(), fetch: makeFetch(), store: fakeStore() }, async (baseUrl) => {
-      const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+      const cfg = await jsonRequest(baseUrl, '/api/ask/config', { headers: { 'x-ask-pass': FAKE_PASSWORD } });
       assert.equal(cfg.res.status, 200);
       assert.deepEqual(cfg.body, { enabled: true, gated: true, provider: 'openrouter', model: DEFAULT_MODEL, scope: 'all' });
       const raw = JSON.stringify(cfg.body);
@@ -159,7 +159,7 @@ describe('ask: feature gate', () => {
     await withApp(
       { env: baseEnv({ KANBAN_ASK_MODEL: 'anthropic/claude-3.5-haiku' }), fetch: makeFetch(), store: fakeStore() },
       async (baseUrl) => {
-        const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+        const cfg = await jsonRequest(baseUrl, '/api/ask/config', { headers: { 'x-ask-pass': FAKE_PASSWORD } });
         assert.equal(cfg.body.model, 'anthropic/claude-3.5-haiku');
       },
     );
@@ -1147,7 +1147,7 @@ describe('ask: ollama provider', () => {
         store: fakeStore(),
       },
       async (baseUrl) => {
-        const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+        const cfg = await jsonRequest(baseUrl, '/api/ask/config', { headers: { 'x-ask-pass': FAKE_PASSWORD } });
         assert.equal(cfg.res.status, 200);
         assert.equal(cfg.body.enabled, true);
         assert.equal(cfg.body.provider, 'ollama');
@@ -1254,7 +1254,7 @@ describe('ask: ollama provider', () => {
         store: fakeStore(),
       },
       async (baseUrl) => {
-        const cfg = await jsonRequest(baseUrl, '/api/ask/config');
+        const cfg = await jsonRequest(baseUrl, '/api/ask/config', { headers: { 'x-ask-pass': FAKE_PASSWORD } });
         assert.equal(cfg.body.enabled, true);
         assert.equal(cfg.body.provider, 'ollama');
       },

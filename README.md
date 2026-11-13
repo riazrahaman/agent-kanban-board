@@ -437,6 +437,7 @@ one-line note, and `POST /api/ask` is unavailable.
 | `KANBAN_ASK_PROVIDER` | no | `openrouter` or `ollama`. Auto-detected when unset (see above). |
 | `KANBAN_ASK_OLLAMA_HOST` | no | Base URL of the Ollama instance. Default `http://localhost:11434`. |
 | `KANBAN_ASK_OLLAMA_AUTH_HEADER` | no | Bearer token sent to the Ollama host — the shared secret the tunnel gateway verifies. |
+| `KANBAN_ASK_GITHUB_TOKEN` | no | Optional **read-only** GitHub token for the recent-commits lookup. Unset = unauthenticated public API (60 requests/hour, cached; a failed lookup just omits the section). The bug-report token is never used here. |
 | `KANBAN_ASK_MODEL` | no | Model id. Default `openai/gpt-oss-20b` (OpenRouter) or `qwen3.6:latest` (Ollama). |
 | `KANBAN_ASK_DAILY_CAP` | no | Global answers per UTC day. Default 50. |
 | `KANBAN_ASK_PER_IP_PER_HOUR` | no | Per-IP answers per hour. Default 3. |

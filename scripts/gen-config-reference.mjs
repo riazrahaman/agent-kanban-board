@@ -81,6 +81,7 @@ const DESCRIPTIONS = {
   'KANBAN_REPORT_GITHUB_API_URL': '(optional) GitHub API base URL (default https://api.github.com)',
   'KANBAN_ASK_PROVIDER': 'LLM provider for Ask-the-Board: "openrouter" or "ollama" (auto-detected if unset)',
   'KANBAN_ASK_OLLAMA_HOST': 'Base URL for Ollama instance (default http://localhost:11434)',
+  'KANBAN_ASK_GITHUB_TOKEN': '(secret) Optional read-only GitHub token for the Ask commit-history lookup; unset = unauthenticated public API',
   'KANBAN_ASK_OLLAMA_AUTH_HEADER': '(secret) Optional Authorization header token for Ollama / tunnel gateway',
   'KANBAN_ASK_OPENROUTER_API_KEY': '(secret) OpenRouter API key; required only for the "openrouter" provider (the default)',
   'KANBAN_ASK_PASSWORD': '(secret) Shared password gate for POST /api/ask — an OWNER credential: by default it grants read access to every project on the board',

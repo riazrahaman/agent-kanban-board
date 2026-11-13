@@ -473,12 +473,27 @@ export function createAskRouter(deps = {}) {
     return req.ip || req.socket?.remoteAddress || 'unknown';
   }
 
+  // Unauthenticated callers (and anyone without a valid password) get only the
+  // on/off + gated flags. The provider, model and snapshot scope are returned
+  // only with a valid `x-ask-pass`. A supplied password is checked with the same
+  // lockout-before-compare logic as POST /api/ask and a wrong one counts
+  // against the same failed-auth limiter, so this is not a bypass of the
+  // lockout. A header-less call is not counted (the UI loads it before the
+  // visitor has typed anything).
   router.get('/config', (req, res) => {
     if (!isEnabled(env)) return res.json({ enabled: false });
+    const limited = { enabled: true, gated: true };
+    const provided = req.get('x-ask-pass');
+    if (provided === undefined) return res.json(limited);
+    const ip = clientIp(req);
+    if (isLockedOut(ip)) return res.json(limited);
+    if (!tokensMatch(provided, env.KANBAN_ASK_PASSWORD)) {
+      recordFailedAuth(ip);
+      return res.json(limited);
+    }
     const scoped = snapshotProjects(env);
     res.json({
-      enabled: true,
-      gated: true,
+      ...limited,
       provider,
       model: modelName(env),
       // v3.9.2: 'all' means the password is an owner credential over the whole

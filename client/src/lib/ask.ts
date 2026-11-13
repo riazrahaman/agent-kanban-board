@@ -70,9 +70,13 @@ export function writeStoredAskPass(password: string): void {
   }
 }
 
-/** Feature state for the Ask card. `enabled:false` means the operator has not set it up. */
-export async function getAskConfig(): Promise<AskConfig> {
-  const res = await fetch(`${API_BASE}/ask/config`)
+/**
+ * Feature state for the Ask card. `enabled:false` means the operator has not
+ * set it up. Without a valid password the server returns only
+ * `{ enabled, gated }`; provider/model come back when `password` is valid.
+ */
+export async function getAskConfig(password?: string): Promise<AskConfig> {
+  const res = await fetch(`${API_BASE}/ask/config`, password ? { headers: { 'x-ask-pass': password } } : undefined)
   if (!res.ok) throw new AskError(res.status, 'config_unavailable')
   return (await res.json()) as AskConfig
 }
