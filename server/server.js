@@ -360,11 +360,11 @@ export function createApp(opts = {}) {
     // slow-but-steady reader, is never cut off: while output is pending we re-check
     // every stall interval whether bytes were actually flushed to the socket
     // (`queued - writableLength` only grows as data leaves), re-arm on progress and
-    // destroy only after a full interval with NO progress. There is deliberately no
-    // byte-count guard: any threshold would have to exclude the (legitimately huge)
-    // prime, and the no-progress timeout already bounds how long a dead reader can
-    // pin memory; diff frames are small (no `prev`) so a live reader's backlog stays
-    // bounded by its own read rate.
+    // destroy only after a full interval with NO progress (bounds a dead reader).
+    // A second bound covers a reader that crawls just fast enough to keep
+    // re-arming that timer: bytes queued AFTER the latest priming/snapshot frame
+    // may not exceed SSE_MAX_BACKLOG_BYTES (64 MB). The prime itself is exempt
+    // (a big board's prime is legitimately huge), so only post-prime backlog counts.
     let queuedBytes = 0;
     const flushedBytes = () => queuedBytes - res.writableLength;
     // Node completes (and decrements `writableLength` for) a whole batched write
