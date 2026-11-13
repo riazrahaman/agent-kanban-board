@@ -1,7 +1,7 @@
 # Agent Kanban Board — Presenter's Runbook
 
 **Audience:** whoever is demoing this board live.
-**System:** Agent Kanban Board v3.13.0
+**System:** Agent Kanban Board v3.14.0
 **Status:** living document — see [§11 Keeping this file alive](#11-keeping-this-file-alive). It is version-pinned by `server/test/kanban.version.test.js`, so a release that forgets it fails CI.
 
 This is one ordered path from a clean machine to a live reclaim alert. It does not
@@ -209,8 +209,9 @@ export KANBAN_ASK_OLLAMA_HOST="http://localhost:11434"
 Verify before you present:
 
 ```bash
-curl -s localhost:4000/api/ask/config
-# {"enabled":true,"gated":true,"provider":"ollama","model":"qwen3.6:latest"}
+curl -s -H "x-ask-pass: $KANBAN_ASK_PASSWORD" localhost:4000/api/ask/config
+# {"enabled":true,"gated":true,"provider":"ollama","model":"qwen3.6:latest","scope":"all"}
+# (without the header you only get {"enabled":true,"gated":true})
 ```
 
 `provider` tells you which engine is live. `enabled:false` means a required secret is
@@ -325,6 +326,7 @@ sequence with expected version numbers: manual §6.2. Python client: §6.3.
 | `409` on a `PATCH` | Stale `expected_version` | `GET` the card, resend with the current version |
 | `409` on a claim | Another agent holds it, or the card is not `READY` | Expected — this is the point |
 | `403` on a transition | Role not permitted for that edge | Check the role matrix, §1 |
+| `403 admin role required` on delete, purge or trash restore | Since v3.14.0 destructive operations need the admin credential in every auth mode; `X-Agent-Role: admin` with the shared token is not enough | Set `KANBAN_ADMIN_TOKEN` (different from every other token) and send it as the token |
 | Card snapped back to `READY` | Reaper: lease expired, stalled, or ownerless | Expected — this is also the point |
 | Ask console missing | `GET /api/ask/config` says `enabled:false` | A required secret is unset (§7) |
 | Ask refuses a question | Rate cap: 3 per IP per hour, 50 per day by default; a question the model was sent counts even if it then failed or timed out | Raise `KANBAN_ASK_PER_IP_PER_HOUR` (§7); on the hosted board, wait |

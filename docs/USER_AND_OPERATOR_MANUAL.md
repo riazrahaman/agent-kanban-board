@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.13.0
+**System:** Agent Kanban Board v3.14.0
 
 ---
 
@@ -211,9 +211,11 @@ When running the Kanban board on Railway and Ollama on your local development ma
   Set `KANBAN_ASK_PROVIDER=ollama` and `KANBAN_ASK_OLLAMA_HOST=http://<tailscale-ip-or-magicdns>:11434`.
 
 A wrong password is counted separately from the answer caps, so brute-forcing
-the gate cannot exhaust the day's budget. Verify a deployment with `curl
-<board-url>/api/ask/config`; the first genuine end-to-end check is asking one
-real question from the page.
+the gate cannot exhaust the day's budget. Verify a deployment with `curl -s -H
+"x-ask-pass: $KANBAN_ASK_PASSWORD" <board-url>/api/ask/config` (without the
+header only `{"enabled":true,"gated":true}` comes back; a wrong password counts
+toward the Ask lockout); the first genuine end-to-end check is asking one real
+question from the page.
 
 > The topic limit is a **prompt instruction, not a hard fence**. The assistant
 > is told to stay on this board, but it is the same model answering, so an

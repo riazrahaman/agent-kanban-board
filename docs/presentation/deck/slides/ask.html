@@ -22,7 +22,7 @@
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#8C8470">Two engines</p>
 <p style="font-size:30px;color:#F6F2E8;line-height:1.4"><b>OpenRouter</b> for a hosted model — any model in the catalogue, one key.</p>
 <p style="font-size:30px;color:#F6F2E8;line-height:1.4"><b>Ollama</b> for a model on your own machine, reached through a token-verifying tunnel.</p>
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#BFD8D5;line-height:1.5">curl /api/ask/config<br>&#8594; {"enabled":true,"provider":"ollama"}</p>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#BFD8D5;line-height:1.5">curl -H "x-ask-pass: $KANBAN_ASK_PASSWORD" \<br>&nbsp;&nbsp;/api/ask/config<br>&#8594; {"enabled":true,"gated":true,"provider":"ollama",&#8230;}</p>
 </div>
 <div style="flex:1;background:#FDFBF5;border:1px solid #E6DFD0;border-left:8px solid #346538;padding:36px;display:flex;flex-direction:column;justify-content:center;gap:16px">
 <p style="font-size:36px;font-weight:600;line-height:1.25">The model is never issued a board token.</p>
@@ -30,5 +30,5 @@
 </div>
 </div>
 <p style="position:absolute;left:128px;bottom:64px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;color:#6E6857">routes/ask.js · askKnowledge.js · manual §3.1.2</p>
-<aside>Good live questions: what are the two different 409s, what does the reaper actually do, why can't a tester mark a card done. Ask is capped at 3 questions per IP per hour (KANBAN_ASK_PER_IP_PER_HOUR) and 50 per day, and a question the model was sent counts even if it then fails or times out, so raise both locally before you demo and do not rehearse from the same IP within the hour. Check /api/ask/config before you present — if a required secret is missing the console collapses to a one-line note rather than failing in front of people. The right-hand card is the point: capability is removed, not forbidden.</aside>
+<aside>Good live questions: what are the two different 409s, what does the reaper actually do, why can't a tester mark a card done. Ask is capped at 3 questions per IP per hour (KANBAN_ASK_PER_IP_PER_HOUR) and 50 per day, and a question the model was sent counts even if it then fails or times out, so raise both locally before you demo and do not rehearse from the same IP within the hour. Check /api/ask/config with the x-ask-pass header before you present (without it you only see enabled and gated) — if a required secret is missing the console collapses to a one-line note rather than failing in front of people. The right-hand card is the point: capability is removed, not forbidden.</aside>
 </section>
