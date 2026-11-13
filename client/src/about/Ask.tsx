@@ -307,7 +307,7 @@ export function AskCard() {
 
   useEffect(() => {
     let cancelled = false
-    getAskConfig()
+    getAskConfig(readStoredAskPass() || undefined)
       .then((cfg: AskConfig) => {
         if (cancelled) return
         setState(cfg.enabled ? { phase: 'ready', model: cfg.model } : { phase: 'off' })
@@ -336,6 +336,8 @@ export function AskCard() {
       const res = await askQuestion(q, password)
       setAnswer(res.answer)
       setAnswerModel(res.model)
+      // The password was accepted: the header can now show the model.
+      if (res.model) setState((prev) => (prev.phase === 'ready' ? { phase: 'ready', model: res.model } : prev))
       setFallback(res.fallback === true)
     } catch (err) {
       setError(messageForAskError(err))

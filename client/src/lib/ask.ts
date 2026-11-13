@@ -70,11 +70,26 @@ export function writeStoredAskPass(password: string): void {
   }
 }
 
-/** Feature state for the Ask card. `enabled:false` means the operator has not set it up. */
-export async function getAskConfig(): Promise<AskConfig> {
-  const res = await fetch(`${API_BASE}/ask/config`)
+/**
+ * Feature state for the Ask card. `enabled:false` means the operator has not
+ * set it up. Without a valid password the server returns only
+ * `{ enabled, gated }`; provider/model come back when `password` is valid.
+ */
+export async function getAskConfig(password?: string): Promise<AskConfig> {
+  // A password the server already answered with the limited view is not sent
+  // again this session: every send is a counted failed attempt after a rotation.
+  const send = password && password !== rejectedConfigPassword ? password : undefined
+  const res = await fetch(`${API_BASE}/ask/config`, send ? { headers: { 'x-ask-pass': send } } : undefined)
   if (!res.ok) throw new AskError(res.status, 'config_unavailable')
-  return (await res.json()) as AskConfig
+  const cfg = (await res.json()) as AskConfig
+  if (send && cfg.enabled && cfg.provider === undefined) rejectedConfigPassword = send
+  return cfg
+}
+
+// Session-scoped (module state, reset on page load). Test seam below.
+let rejectedConfigPassword: string | null = null
+export function resetAskSessionState(): void {
+  rejectedConfigPassword = null
 }
 
 /**
@@ -103,6 +118,9 @@ export async function askQuestion(
     } catch {
       // Non-JSON error body: keep the generic code.
     }
+    // The stored password is stale (e.g. rotated): drop it so later page loads
+    // stop presenting it.
+    if (res.status === 401 && code === 'invalid_pass') writeStoredAskPass('')
     throw new AskError(res.status, code)
   }
 
