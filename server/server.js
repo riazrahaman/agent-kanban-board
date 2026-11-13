@@ -52,7 +52,7 @@ export function liveSseStreamCount() {
 
 export function resetSseStreams() {
   activeSseStreams = 0;
-  for (const entry of openSseStreams.values()) clearInterval(entry.ping);
+  for (const entry of openSseStreams.values()) { clearInterval(entry.ping); clearTimeout(entry.stall); }
   openSseStreams.clear();
   sseStreamsByIp.clear();
 }
@@ -63,7 +63,24 @@ export function resetSseStreams() {
 // below the global cap.
 export const SSE_PING_INTERVAL_MS = 20_000;
 export const SSE_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
-export const SSE_MAX_STREAMS_PER_IP = 10;
+export const SSE_DEFAULT_MAX_STREAMS_PER_IP = 20;
+// PERF-04: a stream is ended only for a SUSTAINED backlog — a write that stays
+// undrained for this long — never for one large frame (priming/snapshot frames
+// can exceed the byte threshold on a big board). `stallMs` is overridable by
+// tests only; there is deliberately no env var.
+export const SSE_STALL_TIMEOUT_MS = 30_000;
+export const sseTestOverrides = { stallMs: null };
+
+// A9: per-client-IP concurrent stream cap. `KANBAN_MAX_SSE_STREAMS_PER_IP`
+// (default 20; negative disables). Keys on `req.ip`, so it depends on
+// KANBAN_TRUST_PROXY being set correctly behind a proxy.
+function maxSseStreamsPerIp() {
+  const raw = process.env.KANBAN_MAX_SSE_STREAMS_PER_IP;
+  if (raw === undefined || raw === '') return SSE_DEFAULT_MAX_STREAMS_PER_IP;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return SSE_DEFAULT_MAX_STREAMS_PER_IP;
+  return n;
+}
 const sseStreamsByIp = new Map(); // ip -> concurrent stream count
 
 // Exactly-once per-stream teardown bookkeeping shared by close and drain.
@@ -72,6 +89,7 @@ function releaseSseStream(res) {
   if (!entry) return false;
   openSseStreams.delete(res);
   clearInterval(entry.ping);
+  clearTimeout(entry.stall);
   const n = (sseStreamsByIp.get(entry.ip) || 0) - 1;
   if (n > 0) sseStreamsByIp.set(entry.ip, n);
   else sseStreamsByIp.delete(entry.ip);
@@ -102,7 +120,7 @@ function diffWireFrame(evt) {
  * the callback never fires and the process sits there until something kills
  * it. A plain counter cannot do this; we need the responses themselves.
  */
-const openSseStreams = new Map(); // res -> { ip, ping }
+const openSseStreams = new Map(); // res -> { ip, ping, stall }
 
 /**
  * Ends every open SSE stream. Called on SIGTERM/SIGINT before `server.close()`.
@@ -277,17 +295,20 @@ export function createApp(opts = {}) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
     const ip = req.ip || 'unknown';
-    if (cap >= 0 && (sseStreamsByIp.get(ip) || 0) >= Math.min(SSE_MAX_STREAMS_PER_IP, cap)) {
+    const perIp = maxSseStreamsPerIp();
+    const ipLimit = perIp < 0 ? -1 : (cap >= 0 ? Math.min(perIp, cap) : perIp);
+    if (ipLimit >= 0 && (sseStreamsByIp.get(ip) || 0) >= ipLimit) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
     activeSseStreams += 1;
     sseStreamsByIp.set(ip, (sseStreamsByIp.get(ip) || 0) + 1);
     const ping = setInterval(() => {
       if (closed) return;
-      try { res.write(': ping\n\n'); } catch { closed = true; unsubscribe(); }
+      writeFrame(': ping\n\n');
     }, SSE_PING_INTERVAL_MS);
     ping.unref();
-    openSseStreams.set(res, { ip, ping });
+    const streamEntry = { ip, ping, stall: null };
+    openSseStreams.set(res, streamEntry);
 
     // v3.12.1 (SEC-05): register the close cleanup immediately after counting,
     // so ANY connection that made it past the increment always decrements —
@@ -321,16 +342,34 @@ export function createApp(opts = {}) {
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
     // failure mode: treat it as a closed client and detach.
+    const endSlowStream = (reason, bytes) => {
+      logWarn('sse', 'ending slow event stream (sustained write backlog)', { bytes, reason });
+      closed = true;
+      unsubscribe();
+      if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
+      res.destroy();
+    };
+    // Backpressure: a single large frame (priming/snapshot) is never a reason to
+    // end the stream. Only a write that stays undrained for the stall timeout, or
+    // a backlog already over the hard limit BEFORE the next frame, ends it.
+    res.on('drain', () => {
+      clearTimeout(streamEntry.stall);
+      streamEntry.stall = null;
+    });
     const writeFrame = (frame) => {
       if (closed) return;
       try {
-        res.write(frame);
-        if (res.writableLength > SSE_MAX_BUFFERED_BYTES) {
-          logWarn('sse', 'ending slow event stream (write backlog)', { bytes: res.writableLength });
-          closed = true;
-          unsubscribe();
-          if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
-          res.destroy();
+        if (res.writableLength > SSE_MAX_BUFFERED_BYTES * 8) {
+          endSlowStream('hard-limit', res.writableLength);
+          return;
+        }
+        if (res.write(frame) === false && streamEntry.stall === null && openSseStreams.has(res)) {
+          const t = setTimeout(() => {
+            streamEntry.stall = null;
+            if (!closed) endSlowStream('stall-timeout', res.writableLength);
+          }, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
+          t.unref();
+          streamEntry.stall = t;
         }
       } catch {
         closed = true;

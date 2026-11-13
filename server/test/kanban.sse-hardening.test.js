@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   createApp, liveSseStreamCount, resetSseStreams, drainSseStreams,
-  SSE_PING_INTERVAL_MS, SSE_MAX_STREAMS_PER_IP,
+  SSE_PING_INTERVAL_MS, SSE_DEFAULT_MAX_STREAMS_PER_IP, sseTestOverrides,
 } from '../server.js';
 import * as store from '../store.js';
 
@@ -90,6 +90,8 @@ describe('SSE hardening', () => {
   });
 
   it('caps concurrent streams per client IP and releases slots exactly once', async () => {
+    const SSE_MAX_STREAMS_PER_IP = 10;
+    process.env.KANBAN_MAX_SSE_STREAMS_PER_IP = String(SSE_MAX_STREAMS_PER_IP);
     const open = [];
     for (let i = 0; i < SSE_MAX_STREAMS_PER_IP; i++) open.push(await openStream(baseUrl));
     await tick();
@@ -117,19 +119,65 @@ describe('SSE hardening', () => {
     for (const s of fresh) s.req.destroy();
     await tick(100);
     resetSseStreams();
+    delete process.env.KANBAN_MAX_SSE_STREAMS_PER_IP;
   });
 
-  it('ends a stream whose unread write backlog exceeds the threshold and frees its slot', async () => {
-    const s = await openStream(baseUrl);
-    await tick();
-    assert.equal(liveSseStreamCount(), 1);
-    s.res.pause();
-    s.res.socket.pause();
-    const big = 'x'.repeat(19_000);
-    for (let i = 0; i < 600 && liveSseStreamCount() > 0; i++) {
-      await store.createTask({ id: `sse-big-${i}`, title: 'big', description: big, status: 'BACKLOG', round: 1 });
+  it('per-IP cap defaults to 20, honours override, and is disabled by a negative value', async () => {
+    assert.equal(SSE_DEFAULT_MAX_STREAMS_PER_IP, 20);
+    const openN = async (n) => { const a = []; for (let i = 0; i < n; i++) a.push(await openStream(baseUrl)); return a; };
+    const closeAll = async (a) => { for (const s of a) s.req.destroy(); await tick(100); };
+    delete process.env.KANBAN_MAX_SSE_STREAMS_PER_IP;
+    let open = await openN(20);
+    assert.equal((await openStream(baseUrl)).res.statusCode, 503, 'default cap is 20');
+    await closeAll(open);
+    process.env.KANBAN_MAX_SSE_STREAMS_PER_IP = '2';
+    open = await openN(2);
+    assert.equal((await openStream(baseUrl)).res.statusCode, 503, 'override applies');
+    await closeAll(open);
+    process.env.KANBAN_MAX_SSE_STREAMS_PER_IP = '-1';
+    open = await openN(25);
+    assert.equal(liveSseStreamCount(), 25, 'negative disables the per-IP cap');
+    await closeAll(open);
+    delete process.env.KANBAN_MAX_SSE_STREAMS_PER_IP;
+    resetSseStreams();
+  });
+
+  it('ends a genuinely paused reader after the stall timeout and frees its slot', async () => {
+    sseTestOverrides.stallMs = 150;
+    try {
+      const s = await openStream(baseUrl);
+      await tick();
+      assert.equal(liveSseStreamCount(), 1);
+      s.res.pause();
+      s.res.socket.pause();
+      const big = 'x'.repeat(19_000);
+      for (let i = 0; i < 400; i++) {
+        await store.createTask({ id: `sse-big-${i}`, title: 'big', description: big, status: 'BACKLOG', round: 1 });
+      }
+      await tick(400);
+      assert.equal(liveSseStreamCount(), 0, 'stalled stream was ended and released');
+      s.req.destroy();
+      await tick();
+      assert.equal(liveSseStreamCount(), 0);
+    } finally {
+      sseTestOverrides.stallMs = null;
     }
-    assert.equal(liveSseStreamCount(), 0, 'slow stream was ended and released');
+  });
+
+  it('a >2MB priming frame does not end a fast reader, which keeps receiving diffs', async () => {
+    resetSseStreams();
+    const big = 'y'.repeat(19_000);
+    for (let i = 0; i < 200; i++) {
+      await store.createTask({ id: `sse-prime-big-${i}`, title: 'p', description: big, status: 'BACKLOG', round: 1 });
+    }
+    const s = await openStream(baseUrl, '?prime=1');
+    await tick(1500);
+    assert.equal(liveSseStreamCount(), 1, 'stream survives the large priming frame');
+    assert.ok(s.text().length > 2 * 1024 * 1024, 'priming frame was larger than the byte threshold');
+    await store.createTask({ id: 'sse-after-prime', title: 'after', status: 'BACKLOG', round: 1 });
+    await tick(300);
+    assert.match(s.text(), /"id":"sse-after-prime"/);
+    assert.equal(liveSseStreamCount(), 1);
     s.req.destroy();
     await tick();
     assert.equal(liveSseStreamCount(), 0);

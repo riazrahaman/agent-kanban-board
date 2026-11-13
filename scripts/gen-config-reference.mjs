@@ -42,6 +42,7 @@ const DESCRIPTIONS = {
   'KANBAN_INLINE_LOG_CAP': 'Inline agent-log entries kept per task before spilling (default 50)',
   'KANBAN_JOURNAL_COMPACT_BYTES': 'Journal size that triggers compaction (default 1MB)',
   'KANBAN_MAX_SSE_STREAMS': 'Cap on concurrent SSE connections (default 100)',
+  'KANBAN_MAX_SSE_STREAMS_PER_IP': 'Cap on concurrent SSE connections per client IP (default 20; negative disables; still bounded by the global cap). Keys on req.ip, so set KANBAN_TRUST_PROXY correctly behind a proxy',
   'KANBAN_NOTIFY_EVENTS': 'Comma-separated reclaim reasons that trigger an alert',
   'KANBAN_NOTIFY_INCLUDE_DESC': 'Set falsy to omit the task description from alerts',
   'KANBAN_NOTIFY_MIN_INTERVAL_MS': 'Minimum gap between outbound notifications',
