@@ -8,13 +8,36 @@
  * store.js re-exports every symbol here so existing `../store.js` importers are
  * unaffected.
  */
-import { writeFile, rename, mkdir } from 'node:fs/promises';
+import { open, rename, mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 // ============================================================================
 // Atomic File Operations (KB-05)
 // ============================================================================
 
+// Directory fsync is best effort. It is not supported everywhere (Windows and
+// some network/container filesystems report EPERM / EINVAL / EISDIR), and by
+// the time it runs the rename has already replaced the target: throwing here
+// would fail a request whose data is in fact on disk, so every error is
+// swallowed and the write is as durable as the platform allows.
+async function fsyncDir(dir) {
+  let handle;
+  try {
+    handle = await open(dir, 'r');
+    await handle.sync();
+  } catch {
+    // unsupported or failed: the file itself was fsynced before the rename
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
+}
+
+/**
+ * A12: durable atomic replace. Write a temp file in the target directory,
+ * fsync it, close it, rename it over the target, then fsync the directory so
+ * the rename itself survives a power loss. On any failure before the rename
+ * the temp file is removed, so a failed write never leaves `.tmp_*` litter.
+ */
 export async function writeAtomic(filePath, content) {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
@@ -22,8 +45,21 @@ export async function writeAtomic(filePath, content) {
     dir,
     `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`
   );
-  await writeFile(tmpPath, content, 'utf-8');
-  await rename(tmpPath, filePath);
+  let renamed = false;
+  try {
+    const handle = await open(tmpPath, 'w');
+    try {
+      await handle.writeFile(content, 'utf-8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(tmpPath, filePath);
+    renamed = true;
+  } finally {
+    if (!renamed) await unlink(tmpPath).catch(() => {});
+  }
+  await fsyncDir(dir);
 }
 
 // ============================================================================
@@ -33,7 +69,9 @@ export async function writeAtomic(filePath, content) {
 // Project ids are confined to a strict charset so they cannot introduce path
 // traversal into `<project>.json` or `<project>/<id>.yml` filenames.
 const PROJECT_ID_RE = /^[A-Za-z0-9_-]+$/;
-const TASK_ID_RE = /^[A-Za-z0-9_-]+$/;
+// COR-14: a task id may contain hyphens but must not START with one, so an id
+// can never be read as an option by a tool that receives it as an argument.
+const TASK_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
 
 export function isValidProjectId(id) {
   return typeof id === 'string' && PROJECT_ID_RE.test(id) && !RESERVED_PROJECT_IDS.has(id);
