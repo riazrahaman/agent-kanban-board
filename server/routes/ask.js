@@ -222,6 +222,9 @@ export function snapshotProjects(env) {
   return list.length > 0 ? Array.from(new Set(list)) : null;
 }
 
+/** Errnos that mean the request never reached the provider (not billed). */
+const NOT_REACHED_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'EAI_AGAIN']);
+
 function ollamaHost(env) {
   if (isNonEmpty(env.KANBAN_ASK_OLLAMA_HOST)) {
     return env.KANBAN_ASK_OLLAMA_HOST.trim().replace(/\/+$/, '');
@@ -319,9 +322,12 @@ export function createAskRouter(deps = {}) {
   // In-memory rate limiting — same proven peek/consume pattern as
   // routes/bugReports.js. Counters are process-local (reset on redeploy) and
   // bounded: they are pruned per request and by a periodic unref'd sweep.
-  // `checkLimits` is PEEK-only; `consume` runs ONLY after a successful answer,
-  // so a request that fails validation, auth, the upstream call, or a timeout
-  // never spends the budget.
+  // `checkLimits` is PEEK-only (in-flight reservations included). A slot is
+  // CHARGED (`consume`) once an upstream call was actually sent and the
+  // provider may have billed it: 2xx (even empty/unparseable), 5xx, timeout,
+  // client abort. It is REFUNDED when nothing billable happened: validation or
+  // auth failure, an exception before the fetch, a provider 4xx answer, or a
+  // connection failure where nothing reached the provider.
   // ---------------------------------------------------------------------
   const globalTimestamps = [];
   const ipTimestamps = new Map(); // ip -> number[]
@@ -528,12 +534,13 @@ export function createAskRouter(deps = {}) {
     // load); a request that never left the process is only refunded.
     const releaseSlot = reserve(ip);
     let sent = false;
+    let billable = false;
     let settled = false;
     const settle = () => {
       if (settled) return;
       settled = true;
       releaseSlot();
-      if (sent) consume(ip);
+      if (sent && billable) consume(ip);
     };
     try {
     // A disconnected client stops the upstream call for Ollama only: OpenRouter
@@ -653,6 +660,11 @@ export function createAskRouter(deps = {}) {
         });
       } catch (err) {
         lastErr = err;
+        // undici surfaces a connect failure as TypeError('fetch failed') with
+        // the errno on err.cause.code; nothing reached the provider then.
+        const errCode = err?.cause?.code || err?.code;
+        const isAbort = err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
+        if (isAbort || !NOT_REACHED_CODES.has(errCode)) billable = true;
         if (clientAbort.signal.aborted) return; // client is gone; nothing to answer
         const aborted =
           err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
@@ -676,6 +688,7 @@ export function createAskRouter(deps = {}) {
         // below reports the errno (do NOT clear it here).
         continue;
       }
+      if (upstream && !(upstream.status >= 400 && upstream.status < 500)) billable = true;
       // Deep-review: an HTTP 5xx (model loading / Ollama capacity) is also the
       // transient a local provider should retry — previously only thrown
       // transport errors did.

@@ -43,14 +43,48 @@ describe('ask budget reservation', () => {
     });
   });
 
-  it('a sent upstream call that fails is charged', async () => {
+  const lim = { KANBAN_ASK_OPENROUTER_API_KEY: 'sk-or-v1-x', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '2', KANBAN_ASK_DAILY_CAP: '5' };
+  const status = (n) => async () => ({ ok: false, status: n, headers: { get: () => null }, json: async () => ({}) });
+
+  it('a provider 5xx is charged', async () => {
     let calls = 0;
-    const f = async () => { calls += 1; return { ok: false, status: 500, headers: { get: () => null }, json: async () => ({}) }; };
-    await withApp({ KANBAN_ASK_OPENROUTER_API_KEY: 'sk-or-v1-x', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '2', KANBAN_ASK_DAILY_CAP: '5' }, f, async (base) => {
+    const f = async (...a) => { calls += 1; return status(500)(...a); };
+    await withApp(lim, f, async (base) => {
       assert.equal((await post(base)).status, 502);
       assert.equal((await post(base)).status, 502);
       assert.equal((await post(base)).status, 429);
       assert.equal(calls, 2);
+    });
+  });
+
+  it('a provider 401 is refunded', async () => {
+    let calls = 0;
+    const f = async (...a) => { calls += 1; return status(401)(...a); };
+    await withApp(lim, f, async (base) => {
+      for (let i = 0; i < 4; i += 1) assert.equal((await post(base)).status, 502);
+      assert.equal(calls, 4);
+    });
+  });
+
+  it('a refused connection is refunded', async () => {
+    let calls = 0;
+    const f = async () => {
+      calls += 1;
+      const e = new TypeError('fetch failed');
+      e.cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+      throw e;
+    };
+    await withApp(lim, f, async (base) => {
+      for (let i = 0; i < 4; i += 1) assert.equal((await post(base)).status, 502);
+      assert.equal(calls, 4);
+    });
+  });
+
+  it('an empty 2xx answer is charged', async () => {
+    const f = async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ choices: [] }) });
+    await withApp(lim, f, async (base) => {
+      await post(base); await post(base);
+      assert.equal((await post(base)).status, 429);
     });
   });
 });
