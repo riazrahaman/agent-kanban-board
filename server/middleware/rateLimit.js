@@ -1,5 +1,5 @@
 import { referencedProjects } from './projectScope.js';
-import { defaultProjectName, isValidProjectId } from '../store.js';
+import { defaultProjectName, emitAudit, isValidProjectId } from '../store.js';
 
 /**
  * §2.3 — per-project rate limiting for mutating requests.
@@ -122,10 +122,23 @@ export function createRateLimitMiddleware() {
 // documented default. Only failures are counted, so a correctly configured
 // client never consumes this budget. An explicit `0` disables the subsystem.
 // (The per-project mutation limiter above stays disabled unless configured.)
-const authBuckets = new Map(); // ip -> { count, windowStartMs }
+//
+// Memory is bounded: at most MAX_AUTH_BUCKETS addresses get their own bucket.
+// When the map is full, any further address shares one OVERFLOW bucket, so a
+// flood of distinct (e.g. forged forwarded) addresses is still throttled
+// collectively. Expired buckets are pruned at most once per AUTH_PRUNE_INTERVAL_MS
+// rather than on every request; a stale bucket is still ignored on read because
+// every lookup checks its window.
+const authBuckets = new Map(); // ip | AUTH_OVERFLOW_KEY -> { count, windowStartMs }
+
+export const MAX_AUTH_BUCKETS = 10000;
+export const AUTH_OVERFLOW_KEY = '\u0000overflow';
+const AUTH_PRUNE_INTERVAL_MS = 1000;
+let lastAuthPruneMs = 0;
 
 export function resetAuthLimits() {
   authBuckets.clear();
+  lastAuthPruneMs = 0;
 }
 
 export function trackedAuthIpCount() {
@@ -154,9 +167,51 @@ function clientIp(req) {
 }
 
 function pruneAuthExpired(now, span) {
+  if (now - lastAuthPruneMs < AUTH_PRUNE_INTERVAL_MS) return;
+  lastAuthPruneMs = now;
   for (const [ip, bucket] of authBuckets) {
     if (now - bucket.windowStartMs >= span) authBuckets.delete(ip);
   }
+}
+
+/**
+ * The bucket key for an address: its own entry when it already has one or
+ * there is room, otherwise the shared overflow bucket. O(1).
+ */
+function authBucketKey(ip) {
+  if (authBuckets.has(ip)) return ip;
+  // The overflow bucket does not count against the per-address capacity.
+  const perAddress = authBuckets.size - (authBuckets.has(AUTH_OVERFLOW_KEY) ? 1 : 0);
+  return perAddress < MAX_AUTH_BUCKETS ? ip : AUTH_OVERFLOW_KEY;
+}
+
+/** Live bucket for the request's address, or null (no bucket / window over). */
+function liveAuthBucket(req, now, span) {
+  const bucket = authBuckets.get(authBucketKey(clientIp(req)));
+  if (!bucket || now - bucket.windowStartMs >= span) return null;
+  return bucket;
+}
+
+/**
+ * Logged and audited once per bucket per window, on the failure that takes it
+ * past the hard cap. The address goes to the server console only; the audit
+ * entry (which can reach board readers via the audit stream) carries none.
+ */
+function noteHardCapTripped(key, count, limit, span) {
+  const who = key === AUTH_OVERFLOW_KEY ? 'the shared overflow bucket' : `address ${key}`;
+  console.warn(
+    `[kanban auth] failed-auth hard cap reached for ${who}: ${count} failures in the ` +
+    `current ${span}ms window (limit ${limit}, cap ${limit * AUTH_HARD_CAP_MULTIPLIER}); ` +
+    'all credential-checked requests from it get 429 until the window ends'
+  );
+  emitAudit({
+    ts: new Date().toISOString(),
+    kind: 'auth_hard_cap',
+    project: defaultProjectName(),
+    task: null,
+    actor: 'system',
+    reason: `failed-auth hard cap reached (${count} failures in window, cap ${limit * AUTH_HARD_CAP_MULTIPLIER})`,
+  });
 }
 
 /**
@@ -169,14 +224,17 @@ export function recordAuthFailure(req) {
   if (limit === 0) return;
   const span = windowMs();
   const now = Date.now();
-  const ip = clientIp(req);
   pruneAuthExpired(now, span);
-  let bucket = authBuckets.get(ip);
+  const key = authBucketKey(clientIp(req));
+  let bucket = authBuckets.get(key);
   if (!bucket || now - bucket.windowStartMs >= span) {
     bucket = { count: 0, windowStartMs: now };
-    authBuckets.set(ip, bucket);
+    authBuckets.set(key, bucket);
   }
   bucket.count += 1;
+  if (bucket.count === limit * AUTH_HARD_CAP_MULTIPLIER + 1) {
+    noteHardCapTripped(key, bucket.count, limit, span);
+  }
 }
 
 /**
@@ -188,11 +246,9 @@ export function authFailuresExceeded(req) {
   if (limit === 0) return null;
   const span = windowMs();
   const now = Date.now();
-  const ip = clientIp(req);
   pruneAuthExpired(now, span);
-  const bucket = authBuckets.get(ip);
+  const bucket = liveAuthBucket(req, now, span);
   if (!bucket) return null;
-  if (now - bucket.windowStartMs >= span) return null;
   if (bucket.count >= limit) {
     return Math.max(0, bucket.windowStartMs + span - now);
   }
@@ -219,9 +275,9 @@ export function authHardCapExceeded(req) {
   if (limit === 0) return null;
   const span = windowMs();
   const now = Date.now();
-  pruneAuthExpired(now, span);
-  const bucket = authBuckets.get(clientIp(req));
-  if (!bucket || now - bucket.windowStartMs >= span) return null;
+  // O(1): runs on every credential-checked request, so no pruning here.
+  const bucket = liveAuthBucket(req, now, span);
+  if (!bucket) return null;
   if (bucket.count > limit * AUTH_HARD_CAP_MULTIPLIER) {
     return Math.max(0, bucket.windowStartMs + span - now);
   }
