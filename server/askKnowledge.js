@@ -680,6 +680,8 @@ const REDACTION_RULES = [
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[redacted-jwt]'],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer [redacted]'],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted-private-key]'],
+  // Unterminated block (entry clipped before the END marker): redact to the end.
+  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*$/g, '[redacted-private-key]'],
   [/(\b[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|ACCESS_KEY)[A-Za-z0-9_]*\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]{8,})/gi,
     (match, key) => `${key}[redacted]`],
   [/(\b[a-z][a-z0-9+.-]{0,20}:\/\/[^\s:@/]+):([^\s@/]{6,})@/gi, (match, prefix) => `${prefix}:[redacted]@`],

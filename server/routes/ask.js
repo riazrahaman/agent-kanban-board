@@ -521,10 +521,14 @@ export function createAskRouter(deps = {}) {
       res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
-    // Reserve synchronously (no await since the peek); refunded on any exit
-    // that does not spend the budget, including a client disconnect.
+    // Reserve synchronously (no await since the peek). The slot is held until
+    // the HANDLER finishes (finally below), not until the client goes away: an
+    // upstream call outlives a disconnect and is still billed.
     const release = reserve(ip);
-    res.once('close', release);
+    try {
+    // A disconnected client stops the upstream call where the provider allows.
+    const clientAbort = new AbortController();
+    res.once('close', () => { if (!res.writableFinished) clientAbort.abort(); });
 
     // 4. Build the prompt from the protocol pack + retrieved source + the cards
     //    the question names + a live read-only snapshot.
@@ -625,10 +629,11 @@ export function createAskRouter(deps = {}) {
           method: 'POST',
           headers,
           body: JSON.stringify(reqBody),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), clientAbort.signal]),
         });
       } catch (err) {
         lastErr = err;
+        if (clientAbort.signal.aborted) return; // client is gone; nothing to answer
         const aborted =
           err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
         // The upstream BODY is still never logged — only the shape of the
@@ -710,6 +715,9 @@ export function createAskRouter(deps = {}) {
     consume(ip);
 
     res.json(fallback ? { answer, model, provider, fallback: true } : { answer, model, provider });
+    } finally {
+      release();
+    }
   });
 
   return router;
