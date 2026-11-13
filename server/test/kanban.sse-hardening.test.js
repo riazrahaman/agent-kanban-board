@@ -142,7 +142,7 @@ describe('SSE hardening', () => {
     resetSseStreams();
   });
 
-  it('ends a genuinely paused reader after the stall timeout and frees its slot', async () => {
+  it('ends a reader that stops completely after the no-progress timeout and frees its slot', async () => {
     sseTestOverrides.stallMs = 150;
     try {
       const s = await openStream(baseUrl);
@@ -154,7 +154,7 @@ describe('SSE hardening', () => {
       for (let i = 0; i < 400; i++) {
         await store.createTask({ id: `sse-big-${i}`, title: 'big', description: big, status: 'BACKLOG', round: 1 });
       }
-      await tick(400);
+      await tick(700);
       assert.equal(liveSseStreamCount(), 0, 'stalled stream was ended and released');
       s.req.destroy();
       await tick();
@@ -181,5 +181,40 @@ describe('SSE hardening', () => {
     s.req.destroy();
     await tick();
     assert.equal(liveSseStreamCount(), 0);
+  });
+
+  it('a 19MB prime followed by a diff, read slowly but steadily, stays open and gets the diff', async () => {
+    resetSseStreams();
+    sseTestOverrides.stallMs = 1000;
+    try {
+      const big = 'z'.repeat(19_000);
+      for (let i = 0; i < 1100; i++) {
+        await store.createTask({ id: `sse-huge-${i}`, title: 'h', description: big, status: 'BACKLOG', round: 1 });
+      }
+      let received = '';
+      let total = 0;
+      const { req, res } = await new Promise((resolve, reject) => {
+        const rq = http.get(`${baseUrl}/api/events?prime=1`, { agent: false }, (rs) => resolve({ req: rq, res: rs }));
+        rq.on('error', reject);
+      });
+      res.setEncoding('latin1');
+      let timer = setInterval(() => {
+        const c = res.read();
+        if (c) { total += c.length; received = (received + c).slice(-4096); }
+      }, 15);
+      await tick(100);
+      await store.createTask({ id: 'sse-after-huge', title: 'after', status: 'BACKLOG', round: 1 });
+      const deadline = Date.now() + 40_000;
+      while (!received.includes('sse-after-huge') && Date.now() < deadline && !res.destroyed) await tick(100);
+      clearInterval(timer);
+      assert.ok(total > 19 * 1024 * 1024, `prime was >19MB (got ${total})`);
+      assert.ok(received.includes('sse-after-huge'), 'diff event eventually received');
+      assert.equal(liveSseStreamCount(), 1, 'slow steady reader was never cut off');
+      req.destroy();
+      await tick();
+      assert.equal(liveSseStreamCount(), 0);
+    } finally {
+      sseTestOverrides.stallMs = null;
+    }
   });
 });

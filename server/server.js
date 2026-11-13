@@ -58,15 +58,12 @@ export function resetSseStreams() {
 }
 
 // B9: comment-frame keepalive so idle proxies/load balancers do not reap a quiet
-// stream. PERF-04: a stream whose socket buffer grows past this is ended (the
-// client reconnects and re-primes). A9: per-client-IP concurrent stream cap,
-// below the global cap.
+// stream. A9: per-client-IP concurrent stream cap, below the global cap.
 export const SSE_PING_INTERVAL_MS = 20_000;
-export const SSE_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 export const SSE_DEFAULT_MAX_STREAMS_PER_IP = 20;
-// PERF-04: a stream is ended only for a SUSTAINED backlog — a write that stays
-// undrained for this long — never for one large frame (priming/snapshot frames
-// can exceed the byte threshold on a big board). `stallMs` is overridable by
+// PERF-04: a stream is ended only when output is pending and NO bytes have been
+// flushed for this long — never for one large frame or a slow-but-steady reader.
+// `stallMs` is overridable by
 // tests only; there is deliberately no env var.
 export const SSE_STALL_TIMEOUT_MS = 30_000;
 export const sseTestOverrides = { stallMs: null };
@@ -343,15 +340,54 @@ export function createApp(opts = {}) {
     // no error middleware. A write to an already-destroyed socket is the real
     // failure mode: treat it as a closed client and detach.
     const endSlowStream = (reason, bytes) => {
-      logWarn('sse', 'ending slow event stream (sustained write backlog)', { bytes, reason });
+      logWarn('sse', 'ending stalled event stream (no write progress)', { bytes, reason });
       closed = true;
       unsubscribe();
       if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
       res.destroy();
     };
-    // Backpressure: a single large frame (priming/snapshot) is never a reason to
-    // end the stream. Only a write that stays undrained for the stall timeout, or
-    // a backlog already over the hard limit BEFORE the next frame, ends it.
+    // Backpressure (PERF-04): progress-based. A large priming/snapshot frame, or a
+    // slow-but-steady reader, is never cut off: while output is pending we re-check
+    // every stall interval whether bytes were actually flushed to the socket
+    // (`queued - writableLength` only grows as data leaves), re-arm on progress and
+    // destroy only after a full interval with NO progress. There is deliberately no
+    // byte-count guard: any threshold would have to exclude the (legitimately huge)
+    // prime, and the no-progress timeout already bounds how long a dead reader can
+    // pin memory; diff frames are small (no `prev`) so a live reader's backlog stays
+    // bounded by its own read rate.
+    let queuedBytes = 0;
+    const flushedBytes = () => queuedBytes - res.writableLength;
+    // Node completes (and decrements `writableLength` for) a whole batched write
+    // at once, so a multi-MB prime shows no change there while the reader is
+    // consuming it. The libuv write queue shrinks as bytes really leave, so it is
+    // the second progress signal (best-effort: absent on exotic sockets).
+    const handleQueue = () => res.socket?._handle?.writeQueueSize;
+    const armStallCheck = () => {
+      let lastFlushed = flushedBytes();
+      let lastQueue = handleQueue();
+      // The batched write is only handed to libuv after this tick; baseline then.
+      setImmediate(() => { if (!closed) lastQueue = handleQueue(); });
+      const check = () => {
+        streamEntry.stall = null;
+        if (closed) return;
+        if (res.writableLength === 0) return;
+        const now = flushedBytes();
+        const q = handleQueue();
+        const progressed = now > lastFlushed || (typeof q === 'number' && typeof lastQueue === 'number' && q < lastQueue);
+        lastQueue = q;
+        if (progressed) {
+          lastFlushed = now;
+          const t = setTimeout(check, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
+          t.unref();
+          streamEntry.stall = t;
+          return;
+        }
+        endSlowStream('no-progress', res.writableLength);
+      };
+      const t = setTimeout(check, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
+      t.unref();
+      streamEntry.stall = t;
+    };
     res.on('drain', () => {
       clearTimeout(streamEntry.stall);
       streamEntry.stall = null;
@@ -359,17 +395,10 @@ export function createApp(opts = {}) {
     const writeFrame = (frame) => {
       if (closed) return;
       try {
-        if (res.writableLength > SSE_MAX_BUFFERED_BYTES * 8) {
-          endSlowStream('hard-limit', res.writableLength);
-          return;
-        }
-        if (res.write(frame) === false && streamEntry.stall === null && openSseStreams.has(res)) {
-          const t = setTimeout(() => {
-            streamEntry.stall = null;
-            if (!closed) endSlowStream('stall-timeout', res.writableLength);
-          }, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
-          t.unref();
-          streamEntry.stall = t;
+        queuedBytes += Buffer.byteLength(frame);
+        const backpressured = res.write(frame) === false;
+        if (backpressured && streamEntry.stall === null && openSseStreams.has(res)) {
+          armStallCheck();
         }
       } catch {
         closed = true;
