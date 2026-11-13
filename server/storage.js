@@ -58,6 +58,21 @@ async function truncateDurable(file) {
   }
 }
 
+/**
+ * Runs a boot-time journal fold / set-aside step and tags any failure with
+ * `journalFold`, so `JsonStorage.load()` can refuse to start with an accurate
+ * message instead of reporting a corrupt data file.
+ */
+async function journalFoldStep(fn) {
+  try {
+    return await fn();
+  } catch (cause) {
+    const err = new Error(`journal fold failed: ${cause && cause.message ? cause.message : String(cause)}`, { cause });
+    err.journalFold = true;
+    throw err;
+  }
+}
+
 export class JsonStorage {
   constructor(filePath, options = {}) {
     this.filePath = filePath;
@@ -128,7 +143,16 @@ export class JsonStorage {
       // compaction). Replay the journal over an empty list.
       if (existsSync(this.journalFile)) {
         const list = [];
-        await this._replayJournal(list, 0);
+        try {
+          await this._replayJournal(list, 0);
+        } catch (err) {
+          if (err && err.journalFold) {
+            console.error(
+              `[kanban JsonStorage] could not fold the journal ${this.journalFile} into a new base or set it aside: ${err.cause?.message || err.message} — refusing to start (fix the cause, e.g. directory permissions, and restart; no data was discarded)`
+            );
+          }
+          throw err;
+        }
         return list;
       }
       return []; // absent file: normal first boot
@@ -149,6 +173,16 @@ export class JsonStorage {
       }
       return list;
     } catch (err) {
+      if (err && err.journalFold) {
+        // The base parsed fine; folding the journal or moving it aside failed
+        // (e.g. a refused rename). Still refuse to start, but say so instead
+        // of blaming the data file. Nothing has been discarded: the journal is
+        // still on disk and the base, if rewritten, was written atomically.
+        console.error(
+          `[kanban JsonStorage] could not fold the journal ${this.journalFile} into the base or set it aside: ${err.cause?.message || err.message} — refusing to start (fix the cause, e.g. directory permissions, and restart; no data was discarded)`
+        );
+        throw err;
+      }
       // BUG-01 (v2.5.2): the file EXISTS but is corrupt (parse failure, wrong
       // shape, unreadable). Fail closed — loading an empty list here would let
       // the next save overwrite the corrupt file and destroy the board's
@@ -219,7 +253,7 @@ export class JsonStorage {
     if (!entries.some(tagged)) {
       // A journal from before generations: the old mtime rule, exactly as
       // before (including moving a stale journal aside).
-      if (!(await this._journalIsCurrent())) return;
+      if (!(await journalFoldStep(() => this._journalIsCurrent()))) return;
       applyUntagged = true;
     } else {
       applyUntagged = entries.some((e) => !tagged(e)) ? await this._journalNewerThanBase() : false;
@@ -252,10 +286,12 @@ export class JsonStorage {
       // upgrade). Fold the lines that DID apply into a new base (which bumps
       // the generation), then move the journal aside, recoverable, exactly
       // like the all-untagged stale path.
-      await this._writeCanonical(replayed);
       const aside = `${this.journalFile}.stale-${Date.now()}`;
-      await rename(this.journalFile, aside);
-      await fsyncDir(path.dirname(this.journalFile));
+      await journalFoldStep(async () => {
+        await this._writeCanonical(replayed);
+        await rename(this.journalFile, aside);
+        await fsyncDir(path.dirname(this.journalFile));
+      });
       console.warn(
         `[kanban JsonStorage] ${ignored} superseded journal line(s) ignored; journal folded into the base and moved to ${path.basename(aside)}`
       );
@@ -263,8 +299,10 @@ export class JsonStorage {
       // Compact if the journal is large: write the replayed list to the base
       // file (writeAtomic) and truncate the journal. This keeps the journal
       // bounded while the base file stays the canonical source.
-      await this._writeCanonical(replayed);
-      await truncateDurable(this.journalFile);
+      await journalFoldStep(async () => {
+        await this._writeCanonical(replayed);
+        await truncateDurable(this.journalFile);
+      });
     }
     // Mutate baseList in place so the caller sees the replayed state.
     baseList.length = 0;

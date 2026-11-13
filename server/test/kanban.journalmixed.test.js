@@ -113,6 +113,32 @@ describe('superseded journal lines are cleared on load', { concurrency: 1 }, () 
     assert.equal(again[0].version, 2);
   });
 
+  it('a failed fold at boot refuses to start with a journal message, not "corrupt data file"', async () => {
+    const dir = await freshDir('fold-fails');
+    const file = path.join(dir, 'tasks.json');
+    await writeFile(file, JSON.stringify({ generation: 2, tasks: [T('A', 1)] }));
+    await writeFile(`${file}.journal.jsonl`,
+      JSON.stringify({ op: 'upsert', id: 'Y', task: T('Y', 1), generation: 1 }) + '\n');
+    const s = boot(file);
+    s._writeCanonical = async () => {
+      throw Object.assign(new Error('EACCES: permission denied, rename'), { code: 'EACCES' });
+    };
+    const logged = [];
+    const orig = console.error;
+    console.error = (...a) => { logged.push(a.join(' ')); };
+    try {
+      await assert.rejects(s.load(), (err) => err.journalFold === true);
+    } finally {
+      console.error = orig;
+    }
+    const msg = logged.join('\n');
+    assert.match(msg, /could not fold the journal/);
+    assert.match(msg, /EACCES/);
+    assert.match(msg, /refusing to start/);
+    assert.doesNotMatch(msg, /corrupt data file/);
+    assert.ok(existsSync(`${file}.journal.jsonl`), 'journal left on disk');
+  });
+
   it('a journal with only current lines is left in place (no extra base write)', async () => {
     const dir = await freshDir('current');
     const file = path.join(dir, 'tasks.json');
