@@ -52,7 +52,63 @@ export function liveSseStreamCount() {
 
 export function resetSseStreams() {
   activeSseStreams = 0;
+  for (const entry of openSseStreams.values()) { clearInterval(entry.ping); clearTimeout(entry.stall); }
   openSseStreams.clear();
+  sseStreamsByIp.clear();
+}
+
+// B9: comment-frame keepalive so idle proxies/load balancers do not reap a quiet
+// stream. A9: per-client-IP concurrent stream cap, below the global cap.
+export const SSE_PING_INTERVAL_MS = 20_000;
+export const SSE_DEFAULT_MAX_STREAMS_PER_IP = 20;
+// PERF-04: a stream is ended only when output is pending and NO bytes have been
+// flushed for this long — never for one large frame or a slow-but-steady reader.
+// `stallMs` is overridable by
+// tests only; there is deliberately no env var.
+export const SSE_STALL_TIMEOUT_MS = 30_000;
+// PERF-04: bound the slow-crawl case. Bytes queued AFTER the latest
+// priming/snapshot frame may not exceed this; the priming frame itself is never
+// counted. `maxBacklogBytes` is a test-only override.
+export const SSE_MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
+export const sseTestOverrides = { stallMs: null, maxBacklogBytes: null };
+
+// A9: per-client-IP concurrent stream cap. `KANBAN_MAX_SSE_STREAMS_PER_IP`
+// (default 20; negative disables). Keys on `req.ip`, so it depends on
+// KANBAN_TRUST_PROXY being set correctly behind a proxy.
+function maxSseStreamsPerIp() {
+  const raw = process.env.KANBAN_MAX_SSE_STREAMS_PER_IP;
+  if (raw === undefined || raw === '') return SSE_DEFAULT_MAX_STREAMS_PER_IP;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return SSE_DEFAULT_MAX_STREAMS_PER_IP;
+  return n;
+}
+const sseStreamsByIp = new Map(); // ip -> concurrent stream count
+
+// Exactly-once per-stream teardown bookkeeping shared by close and drain.
+function releaseSseStream(res) {
+  const entry = openSseStreams.get(res);
+  if (!entry) return false;
+  openSseStreams.delete(res);
+  clearInterval(entry.ping);
+  clearTimeout(entry.stall);
+  const n = (sseStreamsByIp.get(entry.ip) || 0) - 1;
+  if (n > 0) sseStreamsByIp.set(entry.ip, n);
+  else sseStreamsByIp.delete(entry.ip);
+  return true;
+}
+
+// PERF-01: wire frame for a diff event, serialised once per dispatch and shared
+// by every matching stream. `prev` is dropped from the wire form only; the
+// in-process listeners keep the full event.
+const diffFrameCache = new WeakMap();
+function diffWireFrame(evt) {
+  let frame = diffFrameCache.get(evt);
+  if (frame === undefined) {
+    const { prev: _prev, ...wire } = evt;
+    frame = `event: task.${evt.kind}\ndata: ${JSON.stringify(wire)}\n\n`;
+    diffFrameCache.set(evt, frame);
+  }
+  return frame;
 }
 
 /**
@@ -65,7 +121,7 @@ export function resetSseStreams() {
  * the callback never fires and the process sits there until something kills
  * it. A plain counter cannot do this; we need the responses themselves.
  */
-const openSseStreams = new Set();
+const openSseStreams = new Map(); // res -> { ip, ping, stall }
 
 /**
  * Ends every open SSE stream. Called on SIGTERM/SIGINT before `server.close()`.
@@ -78,9 +134,9 @@ const openSseStreams = new Set();
  * @returns {number} how many streams were ended.
  */
 export function drainSseStreams() {
-  const streams = [...openSseStreams];
-  openSseStreams.clear();
+  const streams = [...openSseStreams.keys()];
   for (const res of streams) {
+    releaseSseStream(res);
     try {
       res.end();
     } catch {
@@ -239,8 +295,21 @@ export function createApp(opts = {}) {
     if (cap >= 0 && activeSseStreams >= cap) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
+    const ip = req.ip || 'unknown';
+    const perIp = maxSseStreamsPerIp();
+    const ipLimit = perIp < 0 ? -1 : (cap >= 0 ? Math.min(perIp, cap) : perIp);
+    if (ipLimit >= 0 && (sseStreamsByIp.get(ip) || 0) >= ipLimit) {
+      return res.status(503).json({ error: 'Too many concurrent event streams' });
+    }
     activeSseStreams += 1;
-    openSseStreams.add(res);
+    sseStreamsByIp.set(ip, (sseStreamsByIp.get(ip) || 0) + 1);
+    const ping = setInterval(() => {
+      if (closed) return;
+      writeFrame(': ping\n\n');
+    }, SSE_PING_INTERVAL_MS);
+    ping.unref();
+    const streamEntry = { ip, ping, stall: null };
+    openSseStreams.set(res, streamEntry);
 
     // v3.12.1 (SEC-05): register the close cleanup immediately after counting,
     // so ANY connection that made it past the increment always decrements —
@@ -254,7 +323,7 @@ export function createApp(opts = {}) {
       unsubscribe();
       // `delete` reports whether it was still registered, so a stream that
       // drainSseStreams() already ended is not counted down twice.
-      if (openSseStreams.delete(res)) {
+      if (releaseSseStream(res)) {
         activeSseStreams = Math.max(0, activeSseStreams - 1);
       }
     });
@@ -274,14 +343,90 @@ export function createApp(opts = {}) {
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
     // failure mode: treat it as a closed client and detach.
-    const send = (event, payload) => {
+    const endSlowStream = (reason, bytes) => {
+      logWarn('sse', 'ending stalled event stream (no write progress)', { bytes, reason });
+      closed = true;
+      unsubscribe();
+      if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
+      res.destroy();
+    };
+    // Backpressure (PERF-04): progress-based. A large priming/snapshot frame, or a
+    // slow-but-steady reader, is never cut off: while output is pending we re-check
+    // every stall interval whether bytes were actually flushed to the socket
+    // (`queued - writableLength` only grows as data leaves), re-arm on progress and
+    // destroy only after a full interval with NO progress. There is deliberately no
+    // byte-count guard: any threshold would have to exclude the (legitimately huge)
+    // prime, and the no-progress timeout already bounds how long a dead reader can
+    // pin memory; diff frames are small (no `prev`) so a live reader's backlog stays
+    // bounded by its own read rate.
+    let queuedBytes = 0;
+    const flushedBytes = () => queuedBytes - res.writableLength;
+    // Node completes (and decrements `writableLength` for) a whole batched write
+    // at once, so a multi-MB prime shows no change there while the reader is
+    // consuming it. The libuv write queue shrinks as bytes really leave, so it is
+    // the second progress signal (best-effort: absent on exotic sockets).
+    const handleQueue = () => res.socket?._handle?.writeQueueSize;
+    const armStallCheck = () => {
+      let lastFlushed = flushedBytes();
+      let lastQueue = handleQueue();
+      // The batched write is only handed to libuv after this tick; baseline then.
+      setImmediate(() => { if (!closed) lastQueue = handleQueue(); });
+      const check = () => {
+        streamEntry.stall = null;
+        if (closed) return;
+        if (res.writableLength === 0) return;
+        const now = flushedBytes();
+        const q = handleQueue();
+        const progressed = now > lastFlushed || (typeof q === 'number' && typeof lastQueue === 'number' && q < lastQueue);
+        lastQueue = q;
+        if (progressed) {
+          lastFlushed = now;
+          const t = setTimeout(check, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
+          t.unref();
+          streamEntry.stall = t;
+          return;
+        }
+        endSlowStream('no-progress', res.writableLength);
+      };
+      const t = setTimeout(check, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
+      t.unref();
+      streamEntry.stall = t;
+    };
+    res.on('drain', () => {
+      clearTimeout(streamEntry.stall);
+      streamEntry.stall = null;
+    });
+    // Queue offset at the end of the latest priming/snapshot frame. Everything up
+    // to it is exempt from the backlog limit (a big board's prime is legitimately
+    // huge); only bytes queued after it count. `min(writableLength, ...)` is the
+    // not-yet-flushed part of those later bytes whether or not the prime itself
+    // has flushed.
+    let exemptEnd = 0;
+    const writeFrame = (frame, { exempt = false } = {}) => {
       if (closed) return;
       try {
-        res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+        const limit = sseTestOverrides.maxBacklogBytes ?? SSE_MAX_BACKLOG_BYTES;
+        // A prime/snapshot frame is judged on the backlog already there before it
+        // (never on its own size); other frames on the backlog past the exempt frame.
+        const backlog = exempt ? res.writableLength : Math.min(res.writableLength, queuedBytes - exemptEnd);
+        if (backlog > limit) {
+          endSlowStream('backlog-limit', backlog);
+          return;
+        }
+        queuedBytes += Buffer.byteLength(frame);
+        const backpressured = res.write(frame) === false;
+        if (exempt) exemptEnd = queuedBytes;
+        if (backpressured && streamEntry.stall === null && openSseStreams.has(res)) {
+          armStallCheck();
+        }
       } catch {
         closed = true;
         unsubscribe();
       }
+    };
+    const send = (event, payload) => {
+      if (closed) return;
+      writeFrame(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`, { exempt: event === 'tasks' });
     };
 
     if (isDiffMode) {
@@ -293,7 +438,7 @@ export function createApp(opts = {}) {
       unsubscribe = onDiff((evt) => {
         if (project && evt.project !== project) return;
         if (!passesScope(evt.project)) return;
-        send(`task.${evt.kind}`, evt);
+        writeFrame(diffWireFrame(evt));
       });
     } else {
       send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
