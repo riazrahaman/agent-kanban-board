@@ -10,7 +10,7 @@
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -480,7 +480,10 @@ describe('v3.12.11 git soft-delete persists the stamped row', { concurrency: 1 }
     const purge = await store.purgeTasks({ caller: ADMIN, ids: ['g2'] });
     assert.equal(purge.count, 1);
     for (const id of ['g1', 'g2']) {
-      const raw = await readFile(join(gitDir, 'trash', 'default', `${id}.yml`), 'utf-8');
+      // Trash files are keyed by id and deletion time: `<id>.<stamp>.yml`.
+      const trashDir = join(gitDir, 'trash', 'default');
+      const name = readdirSync(trashDir).find((f) => f.startsWith(`${id}.`));
+      const raw = await readFile(join(trashDir, name), 'utf-8');
       assert.match(raw, /deleted_by: ops/, `${id} deleted_by on disk`);
       assert.match(raw, /version: 2/, `${id} bumped version on disk`);
     }

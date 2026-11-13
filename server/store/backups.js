@@ -10,7 +10,7 @@ import { readdir, mkdir, copyFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jsonDataDir } from '../task-identity.js';
+import { jsonDataDir, gitRoot } from '../task-identity.js';
 import { JsonStorage } from '../storage.js';
 import { createLogger } from '../logger.js';
 
@@ -84,6 +84,28 @@ function defaultProjectFiles() {
 // is kept from the original backup set.
 const NAMED_PROJECT_TREES = ['tasks', 'archive', 'settings', 'spill'];
 
+/** Snapshot subdirectory holding a separately rooted git card tree. */
+export const GIT_SNAPSHOT_DIR = 'git-root';
+
+function isInside(child, parent) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Batch 3: the git backend's root when the data-dir copy does not already
+ * include it — i.e. KANBAN_GIT_DIR (or the in-repo fallback) outside
+ * KANBAN_DATA_DIR, or any git root when KANBAN_DATA_DIR is unset (then only
+ * the JSON storage subtrees are copied). Null for the JSON backend.
+ */
+function separateGitRoot() {
+  if ((process.env.KANBAN_STORAGE_BACKEND || 'json') !== 'git') return null;
+  const root = gitRoot();
+  const dataDir = process.env.KANBAN_DATA_DIR;
+  if (dataDir && isInside(root, dataDir)) return null;
+  return root;
+}
+
 async function runBackup() {
   const root = defaultBackupRoot();
   const stamp = sanitizeTimestamp(new Date().toISOString());
@@ -117,14 +139,28 @@ async function runBackup() {
     copied.push(rel);
   }
 
-  // 3. Layout manifest, so the restore side knows where the default project's
-  //    files came from when they do not live inside the data dir.
+  // 3. Git backend whose root is not covered by step 1: the card folders,
+  //    archive, trash and settings, copied under GIT_SNAPSHOT_DIR. The `.git`
+  //    directory itself is left out — history lives in git (push it, or back
+  //    it up separately).
+  let git = null;
+  const gitDir = separateGitRoot();
+  if (gitDir && existsSync(gitDir)) {
+    const gitSkip = new Set([...skip, path.resolve(gitDir, '.git')]);
+    await copyDirTree(gitDir, path.join(destDir, GIT_SNAPSHOT_DIR), gitSkip);
+    git = { dir: path.resolve(gitDir), snapshot_dir: GIT_SNAPSHOT_DIR };
+  }
+
+  // 4. Layout manifest, so the restore side knows where the default project's
+  //    files came from when they do not live inside the data dir, and where
+  //    the git card tree belongs.
   const manifest = {
     format: 1,
     created_at: new Date().toISOString(),
     data_dir: path.resolve(dataDir),
     default_project: { dir: path.resolve(def.dir), files: copied, live_file: def.rel[0] },
     split: path.resolve(def.dir) !== path.resolve(dataDir),
+    git,
   };
   await writeFile(path.join(destDir, BACKUP_MANIFEST), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 
