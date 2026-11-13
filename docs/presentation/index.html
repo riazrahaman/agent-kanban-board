@@ -413,7 +413,7 @@ html { scroll-behavior: smooth; }
     <div class="brand">
       <b>Agent Kanban Board</b>
       <span class="crumb">Presenter walkthrough</span>
-      <span class="ver">v3.12.10</span>
+      <span class="ver">v3.13.0</span>
     </div>
     <nav class="topnav" id="nav" aria-label="Sections">
       <a href="#idea">Idea</a>
@@ -752,7 +752,8 @@ curl -X PATCH "$B/demo-01?project=demo" -H "$T_TEST" -H "X-Agent-Role: tester" \
         <tr><td>403 on a transition</td><td>Role not permitted for that edge</td><td>Check the role matrix</td></tr>
         <tr><td>Card snapped back to READY</td><td>Reaper: lease expired, stalled, or ownerless</td><td>Also expected. Also the point</td></tr>
         <tr><td>Ask console missing</td><td><code>/api/ask/config</code> says <code>enabled:false</code></td><td>A required secret is unset</td></tr>
-        <tr><td>Ask refuses a question</td><td>Rate cap &mdash; 3 per IP per hour, 50 per day by default</td><td>Raise <code>KANBAN_ASK_PER_IP_PER_HOUR</code>; on the hosted board, wait</td></tr>
+        <tr><td>Ask refuses a question</td><td>Rate cap &mdash; 3 per IP per hour, 50 per day by default; a question the model was sent counts even if it then failed or timed out</td><td>Raise <code>KANBAN_ASK_PER_IP_PER_HOUR</code>; on the hosted board, wait</td></tr>
+        <tr><td>429 on requests with a wrong token</td><td>Failed-auth throttling, on by default since v3.13.0 (60 failures per address per window)</td><td>Fix the token; valid credentials are still served. Locally, <code>KANBAN_AUTH_RATE_LIMIT_PER_MIN=0</code> turns it off</td></tr>
         <tr><td><code>400 round must be a positive integer</code></td><td><code>POST /tasks</code> without <code>round</code></td><td>Add <code>"round": 1</code> &mdash; it is required on create</td></tr>
         <tr><td><code>409 Invalid state transition</code> where you expected <code>403</code></td><td>The edge is illegal, so the role gate never ran</td><td>Reach a state where that edge is legal first</td></tr>
         <tr><td>Board empty in the browser</td><td>Wrong <code>?project=</code>, or a token that cannot see it</td><td>Check <code>GET /api/projects</code> with that token</td></tr>
@@ -780,7 +781,7 @@ curl -X PATCH "$B/demo-01?project=demo" -H "$T_TEST" -H "X-Agent-Role: tester" \
 
   <footer>
     <p class="mono">agent-kanban.riazrahaman.com &nbsp;·&nbsp; github.com/riazrahaman/agent-kanban-board &nbsp;·&nbsp; MIT</p>
-    <p style="margin-block:8px 0">Agent Kanban Board v3.12.10. This page is kept in the repository at <code>docs/presentation/index.html</code> and is version-pinned by the test suite, so a release that leaves it behind fails CI. Built, reviewed and released by agents coordinating through the board itself.</p>
+    <p style="margin-block:8px 0">Agent Kanban Board v3.13.0. This page is kept in the repository at <code>docs/presentation/index.html</code> and is version-pinned by the test suite, so a release that leaves it behind fails CI. Built, reviewed and released by agents coordinating through the board itself.</p>
   </footer>
 </div>
 

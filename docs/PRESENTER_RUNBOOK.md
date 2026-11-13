@@ -1,7 +1,7 @@
 # Agent Kanban Board — Presenter's Runbook
 
 **Audience:** whoever is demoing this board live.
-**System:** Agent Kanban Board v3.12.10
+**System:** Agent Kanban Board v3.13.0
 **Status:** living document — see [§11 Keeping this file alive](#11-keeping-this-file-alive). It is version-pinned by `server/test/kanban.version.test.js`, so a release that forgets it fails CI.
 
 This is one ordered path from a clean machine to a live reclaim alert. It does not
@@ -34,7 +34,7 @@ single slide — two agents racing for one card, one receiving a 409.
 
 ## 2. Prerequisites
 
-Node 20.x or 22.x LTS, npm 9+, git 2.30+, a modern browser. Full list:
+Node 20.3+ (20.x or 22.x LTS), npm 9+, git 2.30+, a modern browser. Full list:
 `docs/USER_AND_OPERATOR_MANUAL.md` §2.1.
 
 ---
@@ -327,7 +327,8 @@ sequence with expected version numbers: manual §6.2. Python client: §6.3.
 | `403` on a transition | Role not permitted for that edge | Check the role matrix, §1 |
 | Card snapped back to `READY` | Reaper: lease expired, stalled, or ownerless | Expected — this is also the point |
 | Ask console missing | `GET /api/ask/config` says `enabled:false` | A required secret is unset (§7) |
-| Ask refuses a question | Rate cap: 3 per IP per hour, 50 per day by default | Raise `KANBAN_ASK_PER_IP_PER_HOUR` (§7); on the hosted board, wait |
+| Ask refuses a question | Rate cap: 3 per IP per hour, 50 per day by default; a question the model was sent counts even if it then failed or timed out | Raise `KANBAN_ASK_PER_IP_PER_HOUR` (§7); on the hosted board, wait |
+| `429` on requests with a wrong token | Failed-auth throttling, on by default since v3.13.0 (60 failures per address per window) | Fix the token; valid credentials are still served. Locally, `KANBAN_AUTH_RATE_LIMIT_PER_MIN=0` turns it off |
 | `400 round must be a positive integer` | `POST /tasks` without `round` | Add `"round": 1` — it is required on create |
 | `409 Invalid state transition` where you expected `403` | The edge is illegal, so the role gate never ran | Reach a state where the edge is legal first (§8) |
 | Board empty in the browser | Wrong `?project=`, or a token that cannot see it | Check `GET /api/projects` with that token |

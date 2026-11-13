@@ -93,12 +93,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '881',
+    value: '982',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '315',
+    value: '329',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -497,7 +497,7 @@ export const RECLAIM_FLOW: FlowStep[] = [
   {
     label: '04',
     title: 'notify() emits a reclaimed diff event.',
-    detail: 'The same event stream that drives the browser carries { kind: reclaimed, reason, prevTask }.',
+    detail: 'The same event stream that drives the browser carries { kind: reclaimed, task, reason } (the previous revision stays in-process; it is not on the wire).',
   },
   {
     label: '05',

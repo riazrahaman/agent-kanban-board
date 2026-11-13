@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,141 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.13.0] — 2026-11-13
+
+Hardening and correctness release across the store, storage backends, event
+stream, Ask-the-Board and authentication. It adds one environment variable,
+`KANBAN_MAX_SSE_STREAMS_PER_IP`, and changes several defaults, so it is a minor
+release: read the upgrade notes before deploying. `docs/CONFIGURATION.md` and
+`.env.example` gain the new variable, and the `KANBAN_AUTH_RATE_LIMIT_PER_MIN`
+description is rewritten to match the shipped behaviour.
+
+### Upgrade notes
+
+- **Cross-project `depends_on` is no longer honoured.** A dependency must name a
+  card in the same project; a cross-project entry is rejected with `400`.
+  Existing cross-project dependencies count as unsatisfied, so edit the affected
+  cards' `depends_on`.
+- **SSE diff frames no longer carry `prev`.** Wire frames are
+  `{kind, task, project, actor, reason, ts}`; in-process listeners still receive
+  the previous revision. Clients that read `prev` from `/api/events` must stop.
+- **The Ollama tunnel gateway requires `Authorization: Bearer <token>`.** A bare
+  token without the `Bearer ` prefix is rejected. The board itself always sends
+  the prefix.
+- **Failed-login throttling is on by default** at 60 failures per address per
+  window, matching the documentation. Deployments that left
+  `KANBAN_AUTH_RATE_LIMIT_PER_MIN` unset previously had no throttling;
+  `KANBAN_AUTH_RATE_LIMIT_PER_MIN=0` turns it off.
+- **Ask calls that were sent upstream now count against the caps** on every
+  outcome (success, provider 5xx, timeout, client abort). Previously upstream
+  failures did not count.
+- **New `KANBAN_MAX_SSE_STREAMS_PER_IP`** (default `20`; a negative value
+  disables it) caps concurrent `/api/events` streams per client IP below the
+  global `KANBAN_MAX_SSE_STREAMS`. It keys on `req.ip`, so set
+  `KANBAN_TRUST_PROXY` correctly behind a proxy.
+- **Set `KANBAN_TRUST_PROXY=0`** when the board is exposed directly without a
+  reverse proxy; otherwise `X-Forwarded-For` is trusted for per-address limits.
+- **Node.js 20.3 or newer is required** (`engines` in both `package.json`
+  files; Ask uses `AbortSignal.any`).
+
+### Security
+
+- **Failed-auth throttling applies only to failing requests.** Valid credentials
+  are still served from an address over the limit, and throttled responses
+  include `Retry-After`. An address past 10x the limit in one window is refused
+  outright, even with valid credentials, until the window ends; the server logs a
+  warning and records an `auth_hard_cap` audit entry.
+- **Failed-login tracking memory is bounded:** at most 10,000 addresses are
+  tracked individually; further addresses share one bucket throttled as a group.
+- **Status-change permissions and the per-agent claim limit** follow privilege
+  derived from the credential, not a self-declared role header.
+- **Stream tickets** take their role from the request body or the
+  `X-Agent-Role` header, so read-gated live updates work with credentials that
+  have no bound role. A missing role is no longer counted as a failed login;
+  privileged-role restrictions are unchanged.
+- **Ollama tunnel gateway** is restricted to the chat-completions and model-list
+  routes, compares the bearer in constant time, and caps request bodies at 1 MB.
+- **Per-client-IP SSE stream cap** (`KANBAN_MAX_SSE_STREAMS_PER_IP`, see upgrade
+  notes); over-cap requests get the same `503` as the global cap.
+- **Git backend:** path arguments to git are always passed after `--`, and task
+  ids can no longer start with a hyphen.
+- **Input limits:** PATCH validates `round` and `issues`, and log/comment
+  messages (10,000), branch (255), milestone (200), dependency entries (200) and
+  issues (100 x 200) have length limits.
+- **Ask log redaction** clips entries before redacting, bounds the
+  URL-credential pattern, and redacts a private-key block clipped before its end
+  marker.
+- **Ask** no longer installs a process-wide DNS lookup override (a former
+  Tailscale edge-node workaround).
+- **Bug reports:** user-agent and viewport are rendered inside the code fence,
+  and the viewport must be `WxH` digits.
+
+### Fixed
+
+- **Trash:** restoring or hard-deleting one trashed card no longer removes
+  another trashed card with the same id, and hard-deleting a trashed card no
+  longer sends a deletion event for a live card with the same id.
+- **Restored cards** no longer keep their old completion, archive or progress
+  timestamps, and finishing a card always records the new completion time.
+- **Dependencies:** completing a card only unblocks dependents in its own
+  project.
+- **Spilled log history** moves with a card into trash or archive and is removed
+  when the card is permanently deleted; the logs endpoint also accepts
+  `project:id`.
+- **Leases:** moving a card out of `BLOCKED` into active work re-arms its
+  owner's lease instead of letting the next sweep reclaim it; one card that
+  fails to save no longer stops the rest of a reclaim sweep.
+- **`POST /api/tasks/:id/assign`** requires an `agent_id` field; only an
+  explicit `null` releases the assignment.
+- **Atomic writes** sync the file and its directory to disk and never leave a
+  temp file behind after a failed write.
+- **Git backend:** a failed commit restores the previous card (or removes a new
+  one), so a failed request never reappears after a restart; trashed cards are
+  saved with their deletion record; with auto-commit off, archiving removes the
+  live card and archived cards no longer come back or duplicate after a restart.
+- **Backups** include the default project's archive, trash, settings and
+  journal, and the default project itself when `KANBAN_DATA_FILE` lies outside
+  `KANBAN_DATA_DIR`. Snapshots record their layout in `backup-manifest.json`,
+  and `scripts/restore-backup.mjs` gains `--default-into`.
+- **Ask budget** is reserved before the model call and held until the request
+  finishes. A provider `4xx` answer or a connection that never reached the
+  provider is refunded. A client disconnect cancels the upstream call for the
+  local Ollama provider only.
+- **Deploy drift:** a failed Telegram send no longer marks the alert as
+  delivered, so it is retried.
+- **Browser claim coordinator** counts its own fresh claim as held (and keeps
+  its lease alive) until the live stream shows it, so a slow or stalled stream no
+  longer causes repeated claims.
+
+### Changed
+
+- **SSE keepalive:** every event stream gets a `: ping` comment every 20 s so
+  idle proxies do not drop quiet connections.
+- **SSE slow readers:** a stream is ended only when it has pending output and
+  the reader has made no progress for 30 s (re-armed while bytes keep flushing),
+  or when the backlog queued after the priming/snapshot frame exceeds 64 MB.
+  Large priming frames and slow but steady readers are never cut off.
+- **Client:** the `DiffEvent` type no longer declares `prev`.
+- **Docs:** README, `docs/CONFIGURATION.md`, `.env.example`, the operator
+  manual, the presenter runbook, the presentation page and deck, and the kanban
+  skill describe the new defaults, the per-IP stream cap, the Node requirement
+  and `KANBAN_TRUST_PROXY=0` for direct exposure.
+
+### Performance
+
+- **SSE diff frames** are serialised once per dispatch and shared across
+  streams (about 98x less serialisation in the measured case).
+- **JSON storage:** task partition, archive and trash files are written as
+  compact JSON (about 35% smaller); existing pretty-printed files still load.
+- **Git backend:** batch saves make at most one commit, and pure lease renewals
+  no longer add commits to history.
+
+### Known limitations
+
+- On the git backend, trash files are named by id only; journal staleness is
+  judged by file mtime; journal appends are not fsynced; and backups do not cover
+  a separate `KANBAN_GIT_DIR`. These are tracked for a later release.
 
 ## [3.12.10] — 2026-11-13
 

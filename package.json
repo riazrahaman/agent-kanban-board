@@ -1,6 +1,9 @@
 {
   "name": "agent-kanban-board",
-  "version": "3.12.10",
+  "version": "3.13.0",
+  "engines": {
+    "node": ">=20.3"
+  },
   "private": true,
   "type": "module",
   "scripts": {

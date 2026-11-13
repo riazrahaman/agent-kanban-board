@@ -445,8 +445,6 @@ export type DiffKind = (typeof DIFF_KINDS)[number]
 export interface DiffEvent {
   kind: DiffKind
   task: Task
-  /** The previous revision; null for a creation. */
-  prev: Task | null
   project: string
   /** The agent that caused the mutation, or 'system' for reaper/unlock/archive. */
   actor: string

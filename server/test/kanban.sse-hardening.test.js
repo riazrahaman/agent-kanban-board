@@ -172,9 +172,14 @@ describe('SSE hardening', () => {
       await tick(500);
       s.res.pause();
       s.res.socket.pause();
-      const big = 'q'.repeat(19_000);
-      for (let i = 0; i < 400 && liveSseStreamCount() > 0; i++) {
-        await store.createTask({ id: `sse-crawl-${i}`, title: 'c', description: big, status: 'BACKLOG', round: 1 });
+      // Loopback socket buffers (autotuned to several MB on macOS) absorb an
+      // unpredictable amount before Node's own write queue grows, so creating a
+      // fixed number of cards was load-sensitive. Re-patch ONE card instead: each
+      // patch emits a ~19 KB frame while the partition stays small, so the loop
+      // can run far past any kernel buffering until the backlog limit trips.
+      await store.createTask({ id: 'sse-crawl', title: 'c', status: 'BACKLOG', round: 1 });
+      for (let i = 0; i < 4000 && liveSseStreamCount() > 0; i++) {
+        await store.patchTask('sse-crawl', { description: `${i}-`.padEnd(19_000, 'q') });
       }
       assert.equal(liveSseStreamCount(), 0, 'backlog limit ended the stream long before the stall timeout');
       s.req.destroy();
