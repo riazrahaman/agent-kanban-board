@@ -522,13 +522,29 @@ export function createAskRouter(deps = {}) {
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
     // Reserve synchronously (no await since the peek). The slot is held until
-    // the HANDLER finishes (finally below), not until the client goes away: an
-    // upstream call outlives a disconnect and is still billed.
-    const release = reserve(ip);
+    // the HANDLER finishes (finally below), not until the client goes away.
+    // Charging rule: once an upstream call has been SENT the slot is charged on
+    // every outcome (the provider may bill it, and a local model carries the
+    // load); a request that never left the process is only refunded.
+    const releaseSlot = reserve(ip);
+    let sent = false;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      releaseSlot();
+      if (sent) consume(ip);
+    };
     try {
-    // A disconnected client stops the upstream call where the provider allows.
+    // A disconnected client stops the upstream call for Ollama only: OpenRouter
+    // is non-streaming and bills the call regardless, so aborting saves nothing.
     const clientAbort = new AbortController();
-    res.once('close', () => { if (!res.writableFinished) clientAbort.abort(); });
+    let clientGone = false;
+    res.once('close', () => {
+      if (res.writableFinished) return;
+      clientGone = true;
+      if (provider === 'ollama') clientAbort.abort();
+    });
 
     // 4. Build the prompt from the protocol pack + retrieved source + the cards
     //    the question names + a live read-only snapshot.
@@ -624,12 +640,16 @@ export function createAskRouter(deps = {}) {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       lastErr = null;
+      if (clientGone) return; // client left before (re)sending: nothing sent, no charge
       try {
+        sent = true;
         upstream = await fetchImpl(targetUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify(reqBody),
-          signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), clientAbort.signal]),
+          signal: isOllama
+            ? AbortSignal.any([AbortSignal.timeout(timeoutMs), clientAbort.signal])
+            : AbortSignal.timeout(timeoutMs),
         });
       } catch (err) {
         lastErr = err;
@@ -697,6 +717,7 @@ export function createAskRouter(deps = {}) {
     try {
       data = await upstream.json();
     } catch {
+      if (clientGone) return; // client aborted mid-read: not a provider fault, socket is closed
       logFailure('unparseable', `${providerLabel} returned a 2xx that was not JSON`);
       return res.status(502).json({ error: 'gateway_error' });
     }
@@ -710,13 +731,12 @@ export function createAskRouter(deps = {}) {
       return res.status(502).json({ error: 'gateway_error' });
     }
 
-    // Only a fully successful answer spends the cap/IP budget.
-    release();
-    consume(ip);
+    // Charge before responding so the next request sees the spent slot.
+    settle();
 
     res.json(fallback ? { answer, model, provider, fallback: true } : { answer, model, provider });
     } finally {
-      release();
+      settle();
     }
   });
 

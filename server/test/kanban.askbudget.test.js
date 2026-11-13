@@ -43,14 +43,14 @@ describe('ask budget reservation', () => {
     });
   });
 
-  it('a failed upstream call refunds its reserved slot', async () => {
+  it('a sent upstream call that fails is charged', async () => {
     let calls = 0;
-    const f = async () => { calls += 1; return calls <= 2 ? { ok: false, status: 500, headers: { get: () => null }, json: async () => ({}) } : okBody; };
-    await withApp({ KANBAN_ASK_OPENROUTER_API_KEY: 'sk-or-v1-x', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '1', KANBAN_ASK_DAILY_CAP: '5' }, f, async (base) => {
+    const f = async () => { calls += 1; return { ok: false, status: 500, headers: { get: () => null }, json: async () => ({}) }; };
+    await withApp({ KANBAN_ASK_OPENROUTER_API_KEY: 'sk-or-v1-x', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '2', KANBAN_ASK_DAILY_CAP: '5' }, f, async (base) => {
       assert.equal((await post(base)).status, 502);
       assert.equal((await post(base)).status, 502);
-      assert.equal((await post(base)).status, 200);
       assert.equal((await post(base)).status, 429);
+      assert.equal(calls, 2);
     });
   });
 });
@@ -58,42 +58,76 @@ describe('ask budget reservation', () => {
 describe('ask budget held until the handler finishes', () => {
   const env = { KANBAN_ASK_OPENROUTER_API_KEY: 'sk-or-v1-x', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '3', KANBAN_ASK_DAILY_CAP: '5' };
 
-  it('aborted requests with a slow upstream never exceed the cap in upstream calls', async () => {
-    let calls = 0;
-    const f = async () => { calls += 1; await new Promise((r) => setTimeout(r, 300)); return okBody; };
-    await withApp(env, f, async (base) => {
-      await Promise.all(Array.from({ length: 20 }, async () => {
-        const ac = new AbortController();
-        setTimeout(() => ac.abort(), 15);
-        try {
-          await fetch(`${base}/api/ask`, {
-            method: 'POST', signal: ac.signal,
-            headers: { 'Content-Type': 'application/json', 'x-ask-pass': PASS },
-            body: JSON.stringify({ question: 'How does the reaper reclaim a card?' }),
-          });
-        } catch { /* aborted */ }
-      }));
-      // Late arrivals while the first upstream calls are still in flight.
-      const late = await post(base);
-      assert.equal(late.status, 429);
-      assert.ok(calls <= 3, `upstream calls ${calls} exceeded cap`);
-      await new Promise((r) => setTimeout(r, 400));
-      assert.ok(calls <= 3);
+  // Fake that rejects on signal abort, like undici does.
+  const signalHonouring = (counter, ms = 300) => (url, opts) => new Promise((resolve, reject) => {
+    counter.n += 1;
+    const t = setTimeout(() => resolve(okBody), ms);
+    opts.signal.addEventListener('abort', () => { clearTimeout(t); reject(opts.signal.reason); });
+  });
+  const abortedPost = (base, ms = 15) => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), ms);
+    return fetch(`${base}/api/ask`, {
+      method: 'POST', signal: ac.signal,
+      headers: { 'Content-Type': 'application/json', 'x-ask-pass': PASS },
+      body: JSON.stringify({ question: 'How does the reaper reclaim a card?' }),
+    }).catch(() => {});
+  };
+
+  it('aborted requests never exceed the cap in upstream calls (signal-honouring upstream)', async () => {
+    const c = { n: 0 };
+    await withApp(env, signalHonouring(c), async (base) => {
+      await Promise.all(Array.from({ length: 20 }, () => abortedPost(base)));
+      await new Promise((r) => setTimeout(r, 50));
+      assert.ok(c.n <= 3, `upstream calls ${c.n} exceeded cap`);
+      assert.equal((await post(base)).status, 429, 'sent calls were charged');
     });
   });
 
-  it('a client disconnect aborts the upstream fetch signal', async () => {
-    let sawAbort = false;
-    const f = (url, opts) => new Promise((resolve, reject) => {
-      opts.signal.addEventListener('abort', () => { sawAbort = true; reject(opts.signal.reason); });
-    });
+  it('the OpenRouter path does not pass the client abort signal', async () => {
+    let aborted = null;
+    const f = async (url, opts) => { await new Promise((r) => setTimeout(r, 200)); aborted = opts.signal.aborted; return okBody; };
     await withApp(env, f, async (base) => {
-      const ac = new AbortController();
-      setTimeout(() => ac.abort(), 50);
-      await fetch(`${base}/api/ask`, { method: 'POST', signal: ac.signal, headers: { 'Content-Type': 'application/json', 'x-ask-pass': PASS }, body: JSON.stringify({ question: 'How does the reaper reclaim a card?' }) }).catch(() => {});
-      await new Promise((r) => setTimeout(r, 150));
-      assert.equal(sawAbort, true);
+      await abortedPost(base, 40);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(aborted, false);
     });
+  });
+
+  it('an Ollama client disconnect aborts the upstream signal and is still charged', async () => {
+    const c = { n: 0 };
+    const oenv = { KANBAN_ASK_PROVIDER: 'ollama', KANBAN_ASK_OLLAMA_HOST: 'http://127.0.0.1:1', KANBAN_ASK_PASSWORD: PASS, KANBAN_ASK_PER_IP_PER_HOUR: '1' };
+    await withApp(oenv, signalHonouring(c, 2000), async (base) => {
+      await abortedPost(base, 60);
+      await new Promise((r) => setTimeout(r, 150));
+      assert.equal(c.n, 1, 'no retry after the client left');
+      assert.equal((await post(base)).status, 429);
+    });
+  });
+
+  it('a timeout after the fetch was sent is charged', async () => {
+    const c = { n: 0 };
+    await withApp({ ...env, KANBAN_ASK_TIMEOUT_MS: '50', KANBAN_ASK_PER_IP_PER_HOUR: '1' }, signalHonouring(c, 2000), async (base) => {
+      assert.equal((await post(base)).status, 503);
+      assert.equal((await post(base)).status, 429);
+      assert.equal(c.n, 1);
+    });
+  });
+
+  it('a client gone before the fetch starts is neither sent nor charged', async () => {
+    let calls = 0;
+    const f = async () => { calls += 1; return okBody; };
+    // Slow prompt building: the client leaves during the commit-history await.
+    resetRecentCommits();
+    const app = createApp({ ask: { env: { ...env, KANBAN_ASK_PER_IP_PER_HOUR: '1' }, fetch: f, commitsFetch: async () => { await new Promise((r) => setTimeout(r, 200)); return { ok: false, status: 403 }; } } });
+    const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      await abortedPost(base, 40);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(calls, 0);
+      assert.equal((await post(base)).status, 200, 'slot was not charged');
+    } finally { await new Promise((r) => server.close(r)); }
   });
 
   it('an exception while building the prompt still releases the slot', async () => {

@@ -454,7 +454,7 @@ describe('ask: rate limits', () => {
     });
   });
 
-  it('a failed answer does not spend the cap (only success consumes)', async () => {
+  it('a sent upstream call is charged even when it fails (the provider may bill it)', async () => {
     const fetchImpl = makeFetch((n) =>
       n === 1 ? fakeResponse(500, { error: 'down' }) : fakeResponse(200, okAnswerBody()),
     );
@@ -463,7 +463,8 @@ describe('ask: rate limits', () => {
       const failed = await jsonRequest(baseUrl, '/api/ask', askRequest());
       assert.equal(failed.res.status, 502);
       const succeeded = await jsonRequest(baseUrl, '/api/ask', askRequest());
-      assert.equal(succeeded.res.status, 200, 'the cap of 1 must still be available after a failure');
+      assert.equal(succeeded.res.status, 429, 'the cap of 1 is spent by the sent call');
+      assert.equal(succeeded.body.error, 'daily_cap_reached');
     });
   });
 
@@ -679,7 +680,7 @@ describe('ask: upstream failure diagnostics', () => {
     let t = 1_000_000;
     const fetchImpl = makeFetch(() => fakeResponse(503, {}));
     await withApp(
-      { env: baseEnv(), store: fakeStore(), fetch: fetchImpl, logger, now: () => t },
+      { env: baseEnv({ KANBAN_ASK_PER_IP_PER_HOUR: '100', KANBAN_ASK_DAILY_CAP: '100' }), store: fakeStore(), fetch: fetchImpl, logger, now: () => t },
       async (baseUrl) => {
         for (let i = 0; i < 4; i += 1) {
           await jsonRequest(baseUrl, '/api/ask', askRequest());
