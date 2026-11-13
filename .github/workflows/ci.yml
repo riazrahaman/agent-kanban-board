@@ -194,7 +194,7 @@ jobs:
           exit $STATUS
         env:
           KANBAN_AUTH_TOKEN: ci-layout-token
-          KANBAN_ADMIN_TOKEN: ci-layout-token
+          KANBAN_ADMIN_TOKEN: ci-layout-admin-token
           KANBAN_REAP_ENABLED: 'false'
           KANBAN_DATA_DIR: /tmp/ci-layout
           KANBAN_DATA_FILE: /tmp/ci-layout/tasks.json

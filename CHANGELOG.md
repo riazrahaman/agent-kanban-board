@@ -101,6 +101,8 @@ uses distinct placeholders for the shared and admin tokens).
   the limited Ask config view and `KANBAN_ASK_GITHUB_TOKEN`. The Ask config
   verification example now sends the `x-ask-pass` header.
 - **Ask:** the snapshot scope default (all projects) is unchanged.
+- **CI:** the layout-guard job now uses distinct shared and admin tokens, as the
+  new startup check requires.
 
 ### Performance
 
