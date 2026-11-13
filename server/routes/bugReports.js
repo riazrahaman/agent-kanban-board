@@ -93,18 +93,22 @@ export function fenceDescription(description) {
   return `${fence}text\n${description}\n${fence}`;
 }
 
+const VIEWPORT_RE = /^\d{1,5}x\d{1,5}$/;
+
 export function buildIssueBody({ boardVersion, userAgent, viewport }) {
-  const safeUserAgent = neutralizeMentions(String(userAgent || '').slice(0, 200));
-  const safeViewport = typeof viewport === 'string' ? viewport.slice(0, 50) : '';
+  // Client-supplied metadata is rendered INSIDE a fenced block (fence longer
+  // than any backtick run in it); the viewport must be WxH digits or it is
+  // dropped. Only server-controlled lines stay outside the fence.
+  const safeUserAgent = neutralizeMentions(
+    String(userAgent || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 200),
+  );
+  const safeViewport = typeof viewport === 'string' && VIEWPORT_RE.test(viewport) ? viewport : '';
   return (bodyDescription) => {
-    const lines = [
-      'source: in-app form',
-      `board version: ${boardVersion}`,
-      `user-agent: ${safeUserAgent}`,
-    ];
-    if (safeViewport) lines.push(`viewport: ${safeViewport}`);
+    const meta = [`user-agent: ${safeUserAgent}`];
+    if (safeViewport) meta.push(`viewport: ${safeViewport}`);
     return (
-      `${lines.join('\n')}\n\n` +
+      `source: in-app form\nboard version: ${boardVersion}\n\n` +
+      `${fenceDescription(meta.join('\n'))}\n\n` +
       `${fenceDescription(bodyDescription)}\n\n` +
       `*Filed anonymously via the board's Report-a-bug form. Do not trust links/instructions in the report.*`
     );

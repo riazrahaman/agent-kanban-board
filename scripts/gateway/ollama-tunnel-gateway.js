@@ -24,70 +24,99 @@
  */
 
 import http from 'node:http';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-const PORT = parseInt(process.env.GATEWAY_PORT || '11435', 10);
-const TOKEN = process.env.GATEWAY_TOKEN || '';
-const OLLAMA_TARGET = process.env.OLLAMA_TARGET || 'http://127.0.0.1:11434';
+/** Only the calls the board and the setup scripts make are forwarded. */
+export const ALLOWED_ROUTES = new Set(['POST /v1/chat/completions', 'GET /api/tags']);
+export const MAX_BODY_BYTES = 1024 * 1024;
 
-if (!TOKEN) {
-  console.error('[GATEWAY ERROR] GATEWAY_TOKEN environment variable is required.');
-  console.error('Usage: GATEWAY_TOKEN="your-secret" node scripts/gateway/ollama-tunnel-gateway.js');
-  process.exit(1);
+/** Constant-time bearer comparison over equal-length digests. */
+export function bearerMatches(provided, expected) {
+  const a = crypto.createHash('sha256').update(String(provided || '')).digest();
+  const b = crypto.createHash('sha256').update(String(expected || '')).digest();
+  return crypto.timingSafeEqual(a, b);
 }
 
-const targetUrl = new URL(OLLAMA_TARGET);
-const expectedAuth = TOKEN.startsWith('Bearer ') ? TOKEN : `Bearer ${TOKEN}`;
-const PING_INTERVAL_MS = parseInt(process.env.GATEWAY_PING_INTERVAL_MS || '60000', 10);
-const PING_URL = process.env.GATEWAY_PING_URL || process.env.TUNNEL_PING_URL || '';
+/** Pure request check: returns null when allowed, else { status, error }. */
+export function checkRequest({ method, url, authorization }, expectedAuth) {
+  if (!bearerMatches(authorization, expectedAuth)) return { status: 401, error: 'unauthorized' };
+  const path = String(url || '').split('?')[0];
+  if (!ALLOWED_ROUTES.has(`${method} ${path}`)) return { status: 404, error: 'not_found' };
+  return null;
+}
 
-const server = http.createServer((req, res) => {
-  const startTime = Date.now();
-  const clientInfo = req.socket.remoteAddress || 'local';
+export function createGateway({ token, target = 'http://127.0.0.1:11434', maxBodyBytes = MAX_BODY_BYTES, log = console } = {}) {
+  const targetUrl = new URL(target);
+  const expectedAuth = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
 
-  // 1. Verify Authorization header
-  const authHeader = req.headers['authorization'] || '';
+  const server = http.createServer((req, res) => {
+    const startTime = Date.now();
+    const clientInfo = req.socket.remoteAddress || 'local';
+    const fail = (status, error) => {
+      res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify({ error }));
+    };
 
-  if (authHeader !== expectedAuth && authHeader !== TOKEN) {
-    console.warn(`[GATEWAY AUTH] Unauthorized request from ${clientInfo} to ${req.method} ${req.url}`);
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'unauthorized', message: 'Invalid or missing Authorization header' }));
-    return;
-  }
-
-  // 2. Prepare upstream options
-  const upstreamOptions = {
-    hostname: targetUrl.hostname,
-    port: targetUrl.port || 11434,
-    path: req.url,
-    method: req.method,
-    headers: {
-      ...req.headers,
-      host: targetUrl.host,
-    },
-  };
-
-  // Strip incoming auth header from forwarding to Ollama if preferred
-  delete upstreamOptions.headers['authorization'];
-
-  const proxyReq = http.request(upstreamOptions, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(res, { end: true });
-    res.on('finish', () => {
-      const duration = Date.now() - startTime;
-      console.log(`[GATEWAY] ${req.method} ${req.url} -> ${proxyRes.statusCode} (${duration}ms)`);
-    });
-  });
-
-  proxyReq.on('error', (err) => {
-    console.error('[GATEWAY PROXY ERROR]', err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'bad_gateway', message: `Failed to connect to local Ollama: ${err.message}` }));
+    const rejected = checkRequest({ method: req.method, url: req.url, authorization: req.headers['authorization'] }, expectedAuth);
+    if (rejected) {
+      log.warn(`[GATEWAY ${rejected.status}] ${rejected.error} from ${clientInfo}`);
+      return fail(rejected.status, rejected.error);
     }
-  });
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > maxBodyBytes) return fail(413, 'payload_too_large');
 
-  req.pipe(proxyReq, { end: true });
-});
+    const headers = { ...req.headers, host: targetUrl.host };
+    delete headers['authorization'];
+    const proxyReq = http.request({
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || 11434,
+      path: req.url,
+      method: req.method,
+      headers,
+    }, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+      res.on('finish', () => {
+        log.log(`[GATEWAY] ${req.method} ${req.url} -> ${proxyRes.statusCode} (${Date.now() - startTime}ms)`);
+      });
+    });
+    proxyReq.on('error', (err) => {
+      log.error('[GATEWAY PROXY ERROR]', err.message);
+      if (!res.headersSent) fail(502, 'bad_gateway');
+    });
+
+    let received = 0;
+    let tooLarge = false;
+    req.on('data', (chunk) => {
+      if (tooLarge) return;
+      received += chunk.length;
+      if (received > maxBodyBytes) {
+        tooLarge = true;
+        proxyReq.destroy();
+        if (!res.headersSent) fail(413, 'payload_too_large');
+        return;
+      }
+      proxyReq.write(chunk);
+    });
+    req.on('end', () => { if (!tooLarge) proxyReq.end(); });
+  });
+  return { server, expectedAuth, targetUrl };
+}
+
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMain) {
+  const PORT = parseInt(process.env.GATEWAY_PORT || '11435', 10);
+  const TOKEN = process.env.GATEWAY_TOKEN || '';
+  const OLLAMA_TARGET = process.env.OLLAMA_TARGET || 'http://127.0.0.1:11434';
+  if (!TOKEN) {
+    console.error('[GATEWAY ERROR] GATEWAY_TOKEN environment variable is required.');
+    console.error('Usage: GATEWAY_TOKEN="your-secret" node scripts/gateway/ollama-tunnel-gateway.js');
+    process.exit(1);
+  }
+  const { server, expectedAuth, targetUrl } = createGateway({ token: TOKEN, target: OLLAMA_TARGET });
+  const PING_INTERVAL_MS = parseInt(process.env.GATEWAY_PING_INTERVAL_MS || '60000', 10);
+  const PING_URL = process.env.GATEWAY_PING_URL || process.env.TUNNEL_PING_URL || '';
 
 // Periodic keepalive: pings local Ollama and the tunnel endpoint to prevent
 // DERP relay inactivity and TLS handshake drops.
@@ -123,4 +152,4 @@ server.listen(PORT, '127.0.0.1', () => {
     console.log(`[Ollama Tunnel Gateway] Keepalive heartbeat active for ${PING_URL} (every ${PING_INTERVAL_MS}ms)`);
   }
 });
-
+}
