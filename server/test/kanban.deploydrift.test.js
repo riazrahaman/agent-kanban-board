@@ -326,14 +326,14 @@ describe('deploy-drift: one check against an injected GitHub', () => {
 
   it('18. chooses the highest semver tag, not the first or last array entry', async () => {
     const fetchImpl = githubFetch({
-      release: 'v3.12.9',
-      tags: [{ name: 'v3.12.9' }, { name: 'v3.12.10' }, { name: 'v3.12.2' }],
+      release: 'v3.99.9',
+      tags: [{ name: 'v3.99.9' }, { name: 'v3.99.10' }, { name: 'v3.99.2' }],
     });
     const snapshot = await runDeployDriftCheck({ fetchImpl, env: {}, now: 7000, graceMs: 0 });
 
-    assert.equal(snapshot.latest_tag, '3.12.10', 'numeric ordering, not array order or string order');
+    assert.equal(snapshot.latest_tag, '3.99.10', 'numeric ordering, not array order or string order');
     assert.equal(snapshot.source, 'tags');
-    assert.equal(snapshot.status, 'drift', 'the running build is genuinely behind 3.12.10');
+    assert.equal(snapshot.status, 'drift', 'the running build is genuinely behind 3.99.10');
     assert.equal(snapshot.reason, 'behind');
   });
 
