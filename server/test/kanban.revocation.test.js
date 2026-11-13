@@ -13,7 +13,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
-import { proofInput } from '../routes/auth.js';
+import { challengeProofInput } from '../routes/auth.js';
 import {
   createSessionToken,
   revokeSessionToken,
@@ -44,8 +44,9 @@ async function jsonRequest(baseUrl, route, options = {}) {
   return { response, body };
 }
 
-function proofFor(secret, clientNonce, role, project) {
-  return crypto.createHmac('sha256', secret).update(proofInput(clientNonce, role, project)).digest('hex');
+// The challenge-bound proof is the default handshake (A5); see kanban.challenge.test.js.
+function proofFor(secret, challenge, clientNonce, role, project) {
+  return crypto.createHmac('sha256', secret).update(challengeProofInput(challenge, clientNonce, role, project)).digest('hex');
 }
 
 describe('ENH-12 session-token revocation', () => {
@@ -90,12 +91,14 @@ describe('ENH-12 session-token revocation', () => {
   }
 
   async function handshake(clientNonce, role = 'builder', project = 'alpha') {
+    const challenge = (await jsonRequest(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
     return jsonRequest(baseUrl, '/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_nonce: clientNonce,
-        proof: proofFor(SECRET, clientNonce, role, project),
+        server_nonce: challenge,
+        proof: proofFor(SECRET, challenge, clientNonce, role, project),
         role,
         project,
       }),

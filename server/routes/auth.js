@@ -9,7 +9,7 @@ import {
 import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
-import { authFailuresExceeded, authHardCapExceeded, recordAuthFailure, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
+import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
 
 const router = Router();
 
@@ -222,16 +222,18 @@ export function challengeProofInput(serverNonce, clientNonce, role, project) {
  * its HMAC proof. In-memory only: a board restart forgets challenges, which is
  * safe (clients re-fetch one). Unauthenticated by design — the proof-of-secret
  * at /session is what authorizes minting; this endpoint only hands out nonce
- * material and is rate-limited like the rest of the handshake.
+ * material; it is refused only past the failed-auth hard cap.
  */
 router.post('/challenge', (req, res) => {
-  // Pre-auth: no credential is presented here, so there is nothing to validate
-  // and an over-budget address keeps getting the 429 up front.
-  const retryAfter = authFailuresExceeded(req);
-  if (retryAfter !== null) {
-    recordAuthFailure(req);
-    return sendAuthThrottled(res, retryAfter);
-  }
+  // Pre-auth: no credential is presented here. Since the challenge became
+  // mandatory for /session (A5), throttling it at the ordinary failed-auth
+  // limit would block every valid session handshake from an address that a
+  // single misconfigured client pushed over the limit. So it follows the same
+  // rule as the credential-checked routes: refused only past the hard cap.
+  // Guessing is still throttled where it happens (/session failures), and the
+  // live-challenge set is bounded (MAX_LIVE_SESSION_CHALLENGES).
+  const hardCapRetry = authHardCapExceeded(req);
+  if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
 
   const secret = authSecret();
   if (!secret) {
@@ -244,8 +246,8 @@ router.post('/challenge', (req, res) => {
   return res.status(200).json({
     challenge,
     expires_at: expiresAt,
-    // Surface the mode so a client can see whether the challenge is mandatory
-    // yet (grace release) without a separate config endpoint.
+    // Surface the mode ('required' by default; 'legacy' only when explicitly
+    // opted out) so a client can tell without a separate config endpoint.
     mode: sessionNonceMode(),
   });
 });
@@ -299,9 +301,10 @@ router.post('/session', (req, res) => {
 
   // A5 (v3.12.2): two-step handshake. When the caller presents a server_nonce
   // (the challenge from POST /api/auth/challenge), the proof must be bound to
-  // it and the challenge is consumed single-use on success. In legacy grace
-  // mode a challenge-less proof is still accepted over the historical
-  // `clientNonce:role:project` input; in required mode it is rejected.
+  // it and the challenge is consumed single-use on success. 'required' is the
+  // default: a challenge-less proof is rejected. Only an explicit
+  // KANBAN_SESSION_NONCE_MODE=legacy still accepts the historical
+  // `clientNonce:role:project` input.
   const nonceMode = sessionNonceMode();
   const challenge =
     typeof body.server_nonce === 'string' && body.server_nonce !== '' ? body.server_nonce : null;

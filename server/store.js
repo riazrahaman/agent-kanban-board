@@ -959,6 +959,8 @@ import {
   isPrivilegedRole,
   callerIsPrivileged,
   destructivePrivilege,
+  adminCredentialPrivilege,
+  destructiveForbidden,
   validatePriority,
   MAX_TITLE_LEN,
   MAX_DESCRIPTION_LEN,
@@ -2062,7 +2064,8 @@ export async function addComment(id, agentId, message, project, { expected_versi
  * Admin-only delete of a single task. Persists FIRST (fail-closed, KB-05):
  * the JSON backend rewrites the project partition minus this task; the Git
  * backend git-rms the card file + commits. Only then is the task dropped from
- * memory. Requires a privileged credential (see destructivePrivilege).
+ * memory. Requires the admin credential or a privileged session (A8,
+ * adminCredentialPrivilege).
  */
 export async function deleteTask(id, { caller = {}, project } = {}) {
   return withMutationLock(async () => {
@@ -2086,9 +2089,7 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
       };
     }
 
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
-    }
+    if (!adminCredentialPrivilege(caller)) return destructiveForbidden('delete tasks');
 
     /**
      * v2.5.6 (ENH-03): soft-delete. The task is stamped deleted_at/deleted_by,
@@ -2145,9 +2146,7 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
  */
 export async function purgeTasks({ caller = {}, project, ids, filter, hard = false } = {}) {
   return withMutationLock(async () => {
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
-    }
+    if (!adminCredentialPrivilege(caller)) return destructiveForbidden('delete tasks');
 
     /**
      * SEC-01 (v2.5.2): the purge scope is clamped to the caller's authorized

@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
-import { proofInput } from '../routes/auth.js';
+import { challengeProofInput } from '../routes/auth.js';
 import { resetAuthLimits, resetRateLimits, trackedAuthIpCount } from '../middleware/rateLimit.js';
 import * as store from '../store.js';
 
@@ -145,10 +145,13 @@ describe('failed-auth throttling spares valid credentials', () => {
   it('session: over the limit, a valid proof is served, an invalid proof gets 429', async () => {
     await exhaust(baseUrl);
     const nonce = crypto.randomBytes(8).toString('hex');
-    const proof = crypto.createHmac('sha256', SECRET).update(proofInput(nonce, 'builder', 'default')).digest('hex');
-    const ok = await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, proof, role: 'builder' } });
+    // The challenge is still issued to an over-limit address (refused only past the hard cap).
+    const challenge = (await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
+    const proof = crypto.createHmac('sha256', SECRET).update(challengeProofInput(challenge, nonce, 'builder', 'default')).digest('hex');
+    const ok = await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, server_nonce: challenge, proof, role: 'builder' } });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
-    assertThrottled(await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, proof: 'ab'.repeat(32), role: 'builder' } }));
+    const challenge2 = (await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
+    assertThrottled(await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, server_nonce: challenge2, proof: 'ab'.repeat(32), role: 'builder' } }));
 
     // revoke follows the same rule with the session token just minted.
     const revoked = await call(baseUrl, '/api/auth/revoke', { method: 'POST', token: ok.body.token });
@@ -156,9 +159,9 @@ describe('failed-auth throttling spares valid credentials', () => {
     assertThrottled(await call(baseUrl, '/api/auth/revoke', { method: 'POST', token: 'not-a-session' }));
   });
 
-  it('challenge (pre-auth, no credential) is still throttled up front', async () => {
+  it('challenge (pre-auth) is still issued to an over-limit address below the hard cap', async () => {
     assert.equal((await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).status, 200);
     await exhaust(baseUrl);
-    assertThrottled(await call(baseUrl, '/api/auth/challenge', { method: 'POST' }));
+    assert.equal((await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).status, 200);
   });
 });

@@ -154,6 +154,30 @@ export function destructivePrivilege(caller) {
 }
 
 /**
+ * A8: privilege for DESTRUCTIVE operations (task delete, bulk purge incl.
+ * hard, trash restore and hard-delete). The auth middleware stamps
+ * `caller.adminCredential` on every mutation: true only for the admin token
+ * (KANBAN_ADMIN_TOKEN) or a session whose server-issued role is privileged. A
+ * caller-declared role never sets it, in any auth mode. Direct store callers
+ * that never passed through the middleware (unit tests, internal callers)
+ * carry no stamp and fall back to callerIsPrivileged.
+ */
+export function adminCredentialPrivilege(caller) {
+  if (typeof caller.adminCredential === 'boolean') return caller.adminCredential;
+  return callerIsPrivileged(caller);
+}
+
+/** A8: the 403 body for a refused destructive operation. */
+export function destructiveForbidden(action) {
+  return {
+    error:
+      `Forbidden: admin role required to ${action} — use the admin credential ` +
+      '(KANBAN_ADMIN_TOKEN) or a privileged session token',
+    status: 403,
+  };
+}
+
+/**
  * v2.12.1 (I-4): shared credential-derived privilege check, extracted from
  * `destructivePrivilege` so the bulk-heartbeat route (and any other caller)
  * can use the SAME rule instead of trusting the self-asserted `X-Agent-Role`

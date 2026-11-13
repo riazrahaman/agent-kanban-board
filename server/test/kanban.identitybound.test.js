@@ -298,6 +298,10 @@ describe('A7 — credential-bound agent identity (v3.12.8)', () => {
   });
 
   it('I7. sessions minted via the legacy proof flow also carry agent_id', async () => {
+    // Specifically about the legacy (challenge-less) flow, which is now an
+    // explicit opt-out.
+    process.env.KANBAN_SESSION_NONCE_MODE = 'legacy';
+    after(() => { delete process.env.KANBAN_SESSION_NONCE_MODE; });
     const clientNonce = 'identity-legacy-nonce';
     const proof = signed(SECRET, proofInput(clientNonce, 'builder', PROJECT));
     const minted = await jsonRequest(baseUrl, '/api/auth/session', {
@@ -325,11 +329,12 @@ describe('A7 — credential-bound agent identity (v3.12.8)', () => {
 
     // And one minted through the handshake WITHOUT a bearer credential is unbound.
     const clientNonce = 'identity-unbound-nonce';
-    const proof = signed(SECRET, proofInput(clientNonce, 'builder', PROJECT));
+    const challenge = (await jsonRequest(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
+    const proof = signed(SECRET, challengeProofInput(challenge, clientNonce, 'builder', PROJECT));
     const minted = await jsonRequest(baseUrl, '/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_nonce: clientNonce, proof, role: 'builder', project: PROJECT }),
+      body: JSON.stringify({ client_nonce: clientNonce, server_nonce: challenge, proof, role: 'builder', project: PROJECT }),
     });
     assert.equal(minted.response.status, 200, minted.body?.error || '');
     assert.equal(minted.body.agent_id, undefined, 'no credential => no bound identity');
@@ -397,11 +402,12 @@ describe('A7 — credential-bound agent identity (v3.12.8)', () => {
     // the credential's bound identity, and the routes still preferred the body.
     // Prove the session is privileged AND bound before using it.
     const clientNonce = 'identity-privileged-nonce';
-    const proof = signed(SECRET, proofInput(clientNonce, 'system', PROJECT));
+    const challenge = (await jsonRequest(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
+    const proof = signed(SECRET, challengeProofInput(challenge, clientNonce, 'system', PROJECT));
     const minted = await jsonRequest(baseUrl, '/api/auth/session', {
       method: 'POST',
       headers: headers(CREDENTIALS.boundBuilder, null),
-      body: JSON.stringify({ client_nonce: clientNonce, proof, role: 'system', project: PROJECT }),
+      body: JSON.stringify({ client_nonce: clientNonce, server_nonce: challenge, proof, role: 'system', project: PROJECT }),
     });
     assert.equal(minted.response.status, 200, minted.body?.error || '');
     const verified = verifySessionToken(minted.body.token);

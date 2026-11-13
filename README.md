@@ -189,6 +189,8 @@ The board features pluggable persistence:
    | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |
    | `KANBAN_MAX_SSE_STREAMS_PER_IP` | `20` | Cap on concurrent `/api/events` streams per client IP (same 503). A negative value disables the per-IP cap; the global cap still applies. Keys on `req.ip`, so it depends on `KANBAN_TRUST_PROXY` being set correctly for your deployment. |
    | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | `60` *(or `KANBAN_RATE_LIMIT_PER_MIN` when that is set)* | Failed auth attempts (401/403) per client address per window on mutations, gated reads and the session/ticket handshakes. Failures over the limit are answered 429 (`retry_after_ms`, `Retry-After`) while valid credentials are still served; an address over 10× the limit is refused outright until the window ends. `0` disables it. Set `KANBAN_TRUST_PROXY=0` when the board is exposed directly without a reverse proxy, otherwise `X-Forwarded-For` is trusted. |
+   | `KANBAN_SESSION_NONCE_MODE` | `required` | Session handshake proof mode. By default `POST /api/auth/session` needs a fresh single-use `server_nonce` from `POST /api/auth/challenge`. Only the exact value `legacy` accepts the old challenge-less proof (logged as a startup warning); any other value means `required`. |
+   | `KANBAN_ADMIN_TOKEN` | *(unset)* | Admin credential spanning every project. Destructive operations (delete, purge, trash restore/hard-delete) need it, or a privileged session, in every auth mode; a declared `X-Agent-Role: admin` is not enough. With only `KANBAN_AUTH_TOKEN` set and no admin token, those operations return 403 (startup warning). |
 
    ---
 
