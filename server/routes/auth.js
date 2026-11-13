@@ -9,7 +9,7 @@ import {
 import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
-import { authFailuresExceeded, recordAuthFailure } from '../middleware/rateLimit.js';
+import { authFailuresExceeded, recordAuthFailure, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
 
 const router = Router();
 
@@ -72,20 +72,11 @@ function resolveCredential(req) {
  * ops; the legacy global token keeps its historical superuser semantics.
  */
 router.post('/stream-ticket', (req, res) => {
-  // ENH-09: rate-limit failed auth (these routes run before the main middleware).
-  const retryAfter = authFailuresExceeded(req);
-  if (retryAfter !== null) {
-    recordAuthFailure(req);
-    return res.status(429).json({
-      error: 'Too many failed authentication attempts',
-      retry_after_ms: retryAfter,
-    });
-  }
-
+  // ENH-09: failed auth is throttled at the failure point (rejectFailedAuth), so
+  // a valid credential is served even while its address is over budget.
   const cred = resolveCredential(req);
   if (!cred) {
-    recordAuthFailure(req);
-    return res.status(401).json({ error: 'Unauthorized: valid token required' });
+    return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: valid token required' });
   }
 
   const body = req.body ?? {};
@@ -231,13 +222,12 @@ export function challengeProofInput(serverNonce, clientNonce, role, project) {
  * material and is rate-limited like the rest of the handshake.
  */
 router.post('/challenge', (req, res) => {
+  // Pre-auth: no credential is presented here, so there is nothing to validate
+  // and an over-budget address keeps getting the 429 up front.
   const retryAfter = authFailuresExceeded(req);
   if (retryAfter !== null) {
     recordAuthFailure(req);
-    return res.status(429).json({
-      error: 'Too many failed authentication attempts',
-      retry_after_ms: retryAfter,
-    });
+    return sendAuthThrottled(res, retryAfter);
   }
 
   const secret = authSecret();
@@ -264,15 +254,8 @@ router.post('/challenge', (req, res) => {
  * caller's role + project.
  */
 router.post('/session', (req, res) => {
-  // ENH-09: rate-limit failed auth (these routes run before the main middleware).
-  const retryAfter = authFailuresExceeded(req);
-  if (retryAfter !== null) {
-    recordAuthFailure(req);
-    return res.status(429).json({
-      error: 'Too many failed authentication attempts',
-      retry_after_ms: retryAfter,
-    });
-  }
+  // ENH-09: failed auth is throttled at the failure point (rejectFailedAuth): a
+  // valid proof is served even while its address is over budget.
 
   const secret = authSecret();
   if (!secret) {
@@ -299,8 +282,7 @@ router.post('/session', (req, res) => {
   const rawRole = body.role;
   const role = typeof rawRole === 'string' ? rawRole.toLowerCase() : null;
   if (!role || !VALID_ROLES.has(role)) {
-    recordAuthFailure(req);
-    return res.status(403).json({ error: 'A valid agent role is required' });
+    return rejectFailedAuth(req, res, 403, { error: 'A valid agent role is required' });
   }
 
   const rawProject = body.project;
@@ -319,8 +301,7 @@ router.post('/session', (req, res) => {
     typeof body.server_nonce === 'string' && body.server_nonce !== '' ? body.server_nonce : null;
 
   if (nonceMode === 'required' && !challenge) {
-    recordAuthFailure(req);
-    return res.status(401).json({
+    return rejectFailedAuth(req, res, 401, {
       error:
         "Unauthorized: a fresh POST /api/auth/challenge nonce is required " +
         "(KANBAN_SESSION_NONCE_MODE='required')",
@@ -336,16 +317,14 @@ router.post('/session', (req, res) => {
     .digest('hex');
 
   if (!tokensMatch(expected, proof.toLowerCase())) {
-    recordAuthFailure(req);
-    return res.status(401).json({ error: 'Unauthorized: invalid proof' });
+    return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: invalid proof' });
   }
 
   // Single-use: consume the challenge on the FIRST successful verification, so
   // a replay of the same proof finds the challenge gone. Unknown/expired
   // challenges are rejected — a captured proof is inert.
   if (challenge && !consumeSessionChallenge(challenge)) {
-    recordAuthFailure(req);
-    return res.status(401).json({
+    return rejectFailedAuth(req, res, 401, {
       error: 'Unauthorized: challenge expired or already used',
       nonce_mode: nonceMode,
     });
@@ -394,19 +373,10 @@ router.post('/session', (req, res) => {
  * endpoint cannot be used to disable someone else's credential.
  */
 router.post('/revoke', (req, res) => {
-  const retryAfter = authFailuresExceeded(req);
-  if (retryAfter !== null) {
-    recordAuthFailure(req);
-    return res.status(429).json({
-      error: 'Too many failed authentication attempts',
-      retry_after_ms: retryAfter,
-    });
-  }
-
+  // Throttled at the failure point, like /session and /stream-ticket.
   const provided = extractToken(req);
   if (!provided || !verifySessionToken(provided)) {
-    recordAuthFailure(req);
-    return res.status(401).json({ error: 'Unauthorized: a valid session token is required' });
+    return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: a valid session token is required' });
   }
 
   const jti = revokeSessionToken(provided);

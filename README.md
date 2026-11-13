@@ -185,7 +185,7 @@ The board features pluggable persistence:
    | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL used in the alert's deep link (`?project=`). |
    | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Tickets are typed and verified separately from session tokens (v3.12.10), so neither can stand in for the other, and a ticket carries the credential's bound `agent_id`. Unset/`off`/`0` keeps reads open. Health probes stay open; the absolute backup directory in the health `backup` block is shown only to callers authorised for all projects. |
    | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |
-   | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | *(falls back to `KANBAN_RATE_LIMIT_PER_MIN`)* | Per-IP ceiling on FAILED auth attempts (401/403) on mutations and the session/ticket handshakes; exceeding it returns 429 with `retry_after_ms`. Inert when both this and `KANBAN_RATE_LIMIT_PER_MIN` are unset. |
+   | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | `60` *(or `KANBAN_RATE_LIMIT_PER_MIN` when that is set)* | Per-IP ceiling on FAILED auth attempts (401/403) per window on mutations, gated reads and the session/ticket handshakes. Over the limit, requests that fail authentication get 429 with `retry_after_ms` and `Retry-After`; requests with a valid credential are not throttled. `0` disables it. |
 
    ---
 

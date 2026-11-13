@@ -198,3 +198,35 @@ export function authFailuresExceeded(req) {
   }
   return null;
 }
+
+/**
+ * Answers a request that FAILED authentication. Throttling is applied here, at
+ * the failure point, rather than before credentials are checked: while an
+ * address is over the failed-auth budget only requests that would fail anyway
+ * get the 429, so one misconfigured client cannot lock out every valid caller
+ * sharing its address (an office NAT, or every local agent on 127.0.0.1). A
+ * valid request never touches the bucket, so it neither clears nor extends the
+ * window.
+ *
+ * The 429 is decided only after the full credential check has run, so it takes
+ * the same work as the 401/403 it replaces and reveals nothing the 401/403 does
+ * not.
+ *
+ * Every call records a failure, as the pre-check path did for a throttled
+ * request. Returns the Express response.
+ */
+export function rejectFailedAuth(req, res, status, payload) {
+  const retryAfter = authFailuresExceeded(req);
+  recordAuthFailure(req);
+  if (retryAfter !== null) return sendAuthThrottled(res, retryAfter);
+  return res.status(status).json(payload);
+}
+
+/** The failed-auth 429 (body unchanged; Retry-After header in whole seconds). */
+export function sendAuthThrottled(res, retryAfterMs) {
+  res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  return res.status(429).json({
+    error: 'Too many failed authentication attempts',
+    retry_after_ms: retryAfterMs,
+  });
+}
