@@ -242,17 +242,27 @@ export class JsonStorage {
         byId.delete(entry.id);
       }
     }
-    if (ignored > 0) {
-      console.warn(`[kanban JsonStorage] ${ignored} journal line(s) from an earlier base generation ignored`);
-    }
     const replayed = [...byId.values()];
     backfillLeaseFields(replayed);
 
-    // Compact if the journal is large: write the replayed list to the base
-    // file (writeAtomic) and truncate the journal. This keeps the journal
-    // bounded while the base file stays the canonical source.
-    const journalBytes = Buffer.byteLength(journalRaw, 'utf8');
-    if (journalBytes >= this._journalCompactBytes()) {
+    if (ignored > 0) {
+      // Superseded lines must not stay in the live journal: a later append
+      // would make an untagged line look current again by mtime (and a
+      // tagged one could match a future generation after a downgrade and
+      // upgrade). Fold the lines that DID apply into a new base (which bumps
+      // the generation), then move the journal aside, recoverable, exactly
+      // like the all-untagged stale path.
+      await this._writeCanonical(replayed);
+      const aside = `${this.journalFile}.stale-${Date.now()}`;
+      await rename(this.journalFile, aside);
+      await fsyncDir(path.dirname(this.journalFile));
+      console.warn(
+        `[kanban JsonStorage] ${ignored} superseded journal line(s) ignored; journal folded into the base and moved to ${path.basename(aside)}`
+      );
+    } else if (Buffer.byteLength(journalRaw, 'utf8') >= this._journalCompactBytes()) {
+      // Compact if the journal is large: write the replayed list to the base
+      // file (writeAtomic) and truncate the journal. This keeps the journal
+      // bounded while the base file stays the canonical source.
       await this._writeCanonical(replayed);
       await truncateDurable(this.journalFile);
     }

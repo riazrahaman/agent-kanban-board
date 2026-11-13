@@ -33,7 +33,7 @@
  *   node scripts/restore-backup.mjs /mnt/restore/2026-09-24T10-00-00-000Z --dry-run
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 const MANIFEST = 'backup-manifest.json';
 
@@ -76,8 +76,23 @@ if (existsSync(join(src, MANIFEST))) {
     fail(`unreadable ${MANIFEST}: ${err.message}`);
   }
 }
+/**
+ * A manifest path is used only if it is a plain relative path: no absolute
+ * path, no `..` segment, and it resolves strictly inside every directory it
+ * will be joined to. Anything else refuses the restore.
+ */
+function checkRelative(rel, what, ...bases) {
+  const ok = typeof rel === 'string' && rel !== '' && !isAbsolute(rel)
+    && !rel.split(/[\\/]/).includes('..')
+    && bases.every((b) => resolve(b, rel).startsWith(resolve(b) + sep));
+  if (!ok) fail(`${MANIFEST} lists an unsafe ${what} path: ${JSON.stringify(rel)} — refusing`);
+  return rel;
+}
+const defaultIntoBase = defaultIntoArg ? resolve(defaultIntoArg) : null;
 const defaultFiles = (manifest && manifest.default_project && Array.isArray(manifest.default_project.files))
-  ? manifest.default_project.files.filter((f) => typeof f === 'string' && !f.startsWith('..'))
+  ? manifest.default_project.files.map((f) => checkRelative(
+    f, 'default project file', src, ...(defaultIntoBase ? [defaultIntoBase] : []),
+  ))
   : [];
 const liveName = (manifest && manifest.default_project && manifest.default_project.live_file) || 'tasks.json';
 
@@ -90,8 +105,8 @@ if (!hasDefaultFile && !hasTasksDir) {
 }
 
 // Separately rooted git card tree (batch 3).
-const gitSnap = (manifest && manifest.git && typeof manifest.git.snapshot_dir === 'string'
-  && !manifest.git.snapshot_dir.includes('..') && existsSync(join(src, manifest.git.snapshot_dir)))
+const gitSnap = (manifest && manifest.git && manifest.git.snapshot_dir !== undefined
+  && existsSync(join(src, checkRelative(manifest.git.snapshot_dir, 'git snapshot', src))))
   ? join(src, manifest.git.snapshot_dir)
   : null;
 const gitDest = gitIntoArg ? resolve(gitIntoArg) : null;
