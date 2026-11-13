@@ -68,15 +68,14 @@ export function liveStreamTicketCount() {
  * Mints a stream ticket bound to a role + project. Returns null when no signing
  * key is configured, so a deployment without any secret cannot hand out tickets.
  */
-export function createStreamTicket({ role, project } = {}) {
+export function createStreamTicket({ role, project, agentId = null } = {}) {
   const secret = ticketSecret();
   if (!secret) return null;
   const jti = crypto.randomBytes(16).toString('hex');
   const exp = Date.now() + TICKET_TTL_MS;
-  const payload = Buffer.from(
-    JSON.stringify({ jti, exp, role: role ?? null, project: project ?? null }),
-    'utf8'
-  ).toString('base64url');
+  const claims = { typ: 'stream', jti, exp, role: role ?? null, project: project ?? null };
+  if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
+  const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
   const token = `${payload}.${macHex(secret, payload)}`;
   prune();
   issued.set(jti, exp);
@@ -107,11 +106,16 @@ export function verifyStreamTicket(ticket) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  const { jti, exp, role, project } = parsed;
+  const { typ, jti, exp, role, project, agent_id: agentId } = parsed;
+  if (typ !== 'stream') return null;
   if (!Number.isInteger(exp) || exp <= Date.now()) return null;
   if (typeof jti !== 'string' || !issued.has(jti)) return null;
 
   // Single-use: consume on first successful verification.
   issued.delete(jti);
-  return { role, project };
+  return {
+    role,
+    project,
+    agent_id: typeof agentId === 'string' && agentId !== '' ? agentId : null,
+  };
 }

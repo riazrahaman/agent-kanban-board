@@ -65,7 +65,7 @@ export class JsonStorage {
       // PERF-02: absent base file but journal may have entries (first boot
       // with journaling ON — saveTask only appends to the journal until
       // compaction). Replay the journal over an empty list.
-      if (this._journalEnabled() && existsSync(this.journalFile)) {
+      if (existsSync(this.journalFile)) {
         const list = [];
         await this._replayJournal(list);
         return list;
@@ -79,8 +79,9 @@ export class JsonStorage {
        // so the first patch bumps a well-defined baseline.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
       backfillLeaseFields(list);
-      // PERF-02: replay the journal over the base file if journaling is enabled.
-      if (this._journalEnabled() && existsSync(this.journalFile)) {
+      // Always replay an existing journal over the base, whatever the flag says:
+      // any full base save clears it, so a surviving journal is newer than base.
+      if (existsSync(this.journalFile)) {
         await this._replayJournal(list);
       }
       return list;
@@ -160,10 +161,10 @@ export class JsonStorage {
     // Default project keeps the legacy `{ tasks: [...] }` shape so an existing
     // single-project file is byte-for-byte compatible. Named partitions embed
     // the project name so the partition is self-describing.
-    const payload = this.isDefault
-      ? { tasks }
-      : { project: this.project, tasks };
-    await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
+    await this._writeCanonical(tasks);
+    // A full base save supersedes any journal left by an earlier run with the
+    // flag on, so it can never be replayed over this newer base.
+    if (existsSync(this.journalFile)) await rm(this.journalFile, { force: true });
   }
 
   /**

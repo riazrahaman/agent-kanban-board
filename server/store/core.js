@@ -152,9 +152,17 @@ export async function listJsonProjects() {
   } catch {
     return [];
   }
-  return entries
-    .filter((f) => f.endsWith('.json') && isValidProjectId(f.slice(0, -5)))
-    .map((f) => f.slice(0, -5));
+  // A project that has only journaled writes (no compacted base yet) has just
+  // `<p>.json.journal.jsonl`; discover it too, deduplicated.
+  const JOURNAL_SUFFIX = '.json.journal.jsonl';
+  const ids = new Set();
+  for (const f of entries) {
+    let id = null;
+    if (f.endsWith(JOURNAL_SUFFIX)) id = f.slice(0, -JOURNAL_SUFFIX.length);
+    else if (f.endsWith('.json')) id = f.slice(0, -5);
+    if (id !== null && isValidProjectId(id)) ids.add(id);
+  }
+  return [...ids];
 }
 
 export async function listGitProjects(root) {
@@ -396,7 +404,15 @@ export function nextVersionFor(task) {
 export function versionConflict(task, rawExpected) {
   if (rawExpected === undefined || rawExpected === null) return null;
   const current = Number.isInteger(task.version) ? task.version : 1;
-  const provided = Number(rawExpected);
+  // Strict: only a non-negative integer number or a plain decimal digit string
+  // is a usable version. Booleans, arrays, hex/whitespace strings and the like
+  // are never coerced - they are a version conflict.
+  let provided = NaN;
+  if (typeof rawExpected === 'number') {
+    if (Number.isSafeInteger(rawExpected) && rawExpected >= 0) provided = rawExpected;
+  } else if (typeof rawExpected === 'string' && /^\d+$/.test(rawExpected)) {
+    provided = Number(rawExpected);
+  }
   if (Number.isNaN(provided) || provided !== current) {
     return {
       error: 'Version mismatch',
