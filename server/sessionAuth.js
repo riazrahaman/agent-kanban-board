@@ -1,7 +1,9 @@
 /**
  * HMAC session-token auth (variant B). Stateless two-phase handshake:
  *
- *   1. POST /api/auth/session  { client_nonce, proof }  ->  { token, ... }
+ *   0. POST /api/auth/challenge  ->  { challenge }   (single-use, short TTL)
+ *   1. POST /api/auth/session  { server_nonce: challenge, client_nonce, proof, role, project }
+ *        ->  { token, ... }      (see sessionChallenge.js; required by default)
  *   2. Authorization: Bearer <token>  ->  re-derived + constant-time checked.
  *
  * The token is self-describing so the server never keeps a session table:

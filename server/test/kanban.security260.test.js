@@ -30,6 +30,12 @@ function authHeader(token) {
   return ['B' + 'earer', token].join(' ');
 }
 
+// A8: purge needs the admin credential in every auth mode.
+const ADMIN_TOKEN = 'sec260-admin-token';
+function adminHeaders() {
+  return { Authorization: authHeader(ADMIN_TOKEN), 'Content-Type': 'application/json' };
+}
+
 function headers(role = 'admin', agentId) {
   return {
     Authorization: authHeader(TOKEN),
@@ -128,6 +134,9 @@ describe('SEC-03 proof binding to role + project', () => {
     delete process.env.KANBAN_DATA_FILE;
     delete process.env.KANBAN_DEFAULT_PROJECT;
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
+    // These cases pin the LEGACY proof format's role/project binding; since
+    // 'required' became the default that format is an explicit opt-out.
+    process.env.KANBAN_SESSION_NONCE_MODE = 'legacy';
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-sec03-'));
     store.setStorage(null);
     process.env.KANBAN_DATA_DIR = tmpDir;
@@ -147,6 +156,7 @@ describe('SEC-03 proof binding to role + project', () => {
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_SESSION_NONCE_MODE;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
     store.setStorage(null);
@@ -376,6 +386,7 @@ describe('BUG-07 purge filter recognized-key guard', () => {
 
   before(async () => {
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_ADMIN_TOKEN = ADMIN_TOKEN;
     process.env.KANBAN_REAP_ENABLED = 'false';
     process.env.KANBAN_DEFAULT_PROJECT = 'default';
     delete process.env.KANBAN_STORAGE_BACKEND;
@@ -393,6 +404,7 @@ describe('BUG-07 purge filter recognized-key guard', () => {
     await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
     delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_ADMIN_TOKEN;
     delete process.env.KANBAN_REAP_ENABLED;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
@@ -403,13 +415,13 @@ describe('BUG-07 purge filter recognized-key guard', () => {
     // Seed a task that must survive.
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: taskBody('bug07-1', 'Survivor'),
     });
 
     const r = await jsonRequest(baseUrl, '/api/tasks/purge', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: JSON.stringify({ filter: {} }),
     });
     assert.equal(r.response.status, 400);
@@ -420,13 +432,13 @@ describe('BUG-07 purge filter recognized-key guard', () => {
   it('filter with only unrecognized keys → 400', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: taskBody('bug07-2', 'Survivor 2'),
     });
 
     const r = await jsonRequest(baseUrl, '/api/tasks/purge', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: JSON.stringify({ filter: { foo: 'bar', baz: 1 } }),
     });
     assert.equal(r.response.status, 400);
@@ -436,13 +448,13 @@ describe('BUG-07 purge filter recognized-key guard', () => {
   it('filter with a recognized key still works', async () => {
     await jsonRequest(baseUrl, '/api/tasks', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: taskBody('bug07-done', 'Done', { status: 'DONE' }),
     });
 
     const r = await jsonRequest(baseUrl, '/api/tasks/purge', {
       method: 'POST',
-      headers: headers('admin'),
+      headers: adminHeaders(),
       body: JSON.stringify({ filter: { status: 'DONE', older_than_days: 0 } }),
     });
     assert.equal(r.response.status, 200);

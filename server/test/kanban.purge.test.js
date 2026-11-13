@@ -8,6 +8,9 @@ import { createApp } from '../server.js';
 import * as store from '../store.js';
 
 const TOKEN = 'kanban-purge-token';
+// A8: destructive operations need the admin credential in every auth mode, so
+// the 'admin' role in these tests is presented with the admin token.
+const ADMIN_TOKEN = 'kanban-purge-admin-token';
 
 // Constructed without the literal "Bearer " prefix so the write-time secret
 // scanner does not mask the header value.
@@ -17,7 +20,7 @@ function authHeader(token) {
 
 function headers(role = 'admin', agentId) {
   return {
-    Authorization: authHeader(TOKEN),
+    Authorization: authHeader(role === 'admin' ? ADMIN_TOKEN : TOKEN),
     'Content-Type': 'application/json',
     ...(role ? { 'X-Agent-Role': role } : {}),
     ...(agentId ? { 'X-Agent-Id': agentId } : {}),
@@ -57,6 +60,7 @@ describe('admin purge/delete', () => {
 
   before(async () => {
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_ADMIN_TOKEN = ADMIN_TOKEN;
     process.env.KANBAN_REAP_ENABLED = 'false';
     process.env.KANBAN_DEFAULT_PROJECT = 'default';
     delete process.env.KANBAN_STORAGE_BACKEND;
@@ -74,6 +78,7 @@ describe('admin purge/delete', () => {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
     delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_ADMIN_TOKEN;
     delete process.env.KANBAN_REAP_ENABLED;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
@@ -110,7 +115,7 @@ describe('admin purge/delete', () => {
       method: 'DELETE', headers: headers('builder'),
     });
     assert.equal(del.response.status, 403);
-    assert.equal(del.body.error, 'Forbidden: admin role required to delete tasks');
+    assert.match(del.body.error, /^Forbidden: admin role required to delete tasks/);
     assert.ok(store.getTask('del-2'), 'task survives a forbidden delete');
   });
 
@@ -170,7 +175,7 @@ describe('admin purge/delete', () => {
       method: 'POST', headers: headers('builder'), body: JSON.stringify({ ids: ['x'] }),
     });
     assert.equal(r.response.status, 403);
-    assert.equal(r.body.error, 'Forbidden: admin role required to delete tasks');
+    assert.match(r.body.error, /^Forbidden: admin role required to delete tasks/);
   });
 
   it('8. purge with no matches -> count 0', async () => {
@@ -216,6 +221,7 @@ describe('purge scope + privilege hardening (v2.5.2)', () => {
 
   before(async () => {
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_ADMIN_TOKEN = ADMIN_TOKEN;
     process.env.KANBAN_REAP_ENABLED = 'false';
     process.env.KANBAN_DEFAULT_PROJECT = 'default';
     delete process.env.KANBAN_STORAGE_BACKEND;
@@ -233,6 +239,7 @@ describe('purge scope + privilege hardening (v2.5.2)', () => {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
     delete process.env.KANBAN_AUTH_TOKEN;
+    delete process.env.KANBAN_ADMIN_TOKEN;
     delete process.env.KANBAN_REAP_ENABLED;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;

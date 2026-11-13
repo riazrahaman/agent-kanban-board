@@ -11,7 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
-import { proofInput } from '../routes/auth.js';
+import { challengeProofInput } from '../routes/auth.js';
 import { AUTH_HARD_CAP_MULTIPLIER, resetAuthLimits, resetRateLimits } from '../middleware/rateLimit.js';
 import * as store from '../store.js';
 
@@ -112,16 +112,20 @@ describe('failed-auth hard cap', () => {
   it('above the hard cap a valid token gets 429 on mutation, stream-ticket, session and revoke', async () => {
     // Mint a session token first, while still under the cap, to test revoke.
     const nonce = crypto.randomBytes(8).toString('hex');
-    const proof = crypto.createHmac('sha256', SECRET).update(proofInput(nonce, 'builder', 'default')).digest('hex');
-    const session = await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, proof, role: 'builder' } });
+    const challenge = (await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
+    const proof = crypto.createHmac('sha256', SECRET).update(challengeProofInput(challenge, nonce, 'builder', 'default')).digest('hex');
+    const session = await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce, server_nonce: challenge, proof, role: 'builder' } });
     assert.equal(session.status, 200);
+    // A challenge minted before the cap, so the session attempt below is a VALID proof.
+    const challenge2 = (await call(baseUrl, '/api/auth/challenge', { method: 'POST' })).body.challenge;
 
     await fail(baseUrl, CAP + 1);
     assertThrottled(await createTask(baseUrl, TOKEN));
     assertThrottled(await call(baseUrl, '/api/auth/stream-ticket', { method: 'POST', token: TOKEN, body: { role: 'builder' } }));
     const nonce2 = crypto.randomBytes(8).toString('hex');
-    const proof2 = crypto.createHmac('sha256', SECRET).update(proofInput(nonce2, 'builder', 'default')).digest('hex');
-    assertThrottled(await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce2, proof: proof2, role: 'builder' } }));
+    const proof2 = crypto.createHmac('sha256', SECRET).update(challengeProofInput(challenge2, nonce2, 'builder', 'default')).digest('hex');
+    assertThrottled(await call(baseUrl, '/api/auth/session', { method: 'POST', body: { client_nonce: nonce2, server_nonce: challenge2, proof: proof2, role: 'builder' } }));
+    assertThrottled(await call(baseUrl, '/api/auth/challenge', { method: 'POST' }), 'challenge refused past the hard cap');
     assertThrottled(await call(baseUrl, '/api/auth/revoke', { method: 'POST', token: session.body.token }));
   });
 

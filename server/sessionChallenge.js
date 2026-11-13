@@ -13,10 +13,11 @@
  *   POST /api/auth/session    { server_nonce: challenge, client_nonce, proof, role, project }
  *   proof = HMAC_SHA256(KANBAN_AUTH_SECRET, `${challenge}:${client_nonce}:${role}:${project}`)
  *
- * Grace (this release): KANBAN_SESSION_NONCE_MODE defaults to 'legacy', which
- * still accepts the old challenge-less proof so existing clients keep working;
- * 'required' rejects proofs without a valid unconsumed challenge. 'required'
- * becomes the default in the next release (see CHANGELOG).
+ * Default (v3.13.1+): 'required' — a proof without a valid unconsumed
+ * challenge is rejected. KANBAN_SESSION_NONCE_MODE=legacy is the explicit
+ * opt-out that still accepts the old challenge-less proof for clients that
+ * have not moved to the two-step flow; the server logs a warning at startup
+ * while it is set.
  *
  * The issued-set mirrors streamTicket.js: challenge -> exp (epoch ms), pruned
  * opportunistically, with reset/count helpers so tests can assert the bound.
@@ -36,13 +37,13 @@ export function sessionChallengeTtlMs() {
 }
 
 /**
- * KANBAN_SESSION_NONCE_MODE: 'required' enforces the challenge-bound proof;
- * anything else (unset, 'legacy', junk) keeps the legacy grace behaviour. The
- * loose reading is deliberate — a typo must degrade to the compatible mode,
- * never lock clients out.
+ * KANBAN_SESSION_NONCE_MODE: only the exact value 'legacy' opts out of the
+ * challenge-bound proof. Anything else (unset, 'required', a typo) means
+ * 'required' — a misspelt opt-out must fail closed, not silently reopen the
+ * challenge-less path.
  */
 export function sessionNonceMode() {
-  return process.env.KANBAN_SESSION_NONCE_MODE === 'required' ? 'required' : 'legacy';
+  return process.env.KANBAN_SESSION_NONCE_MODE === 'legacy' ? 'legacy' : 'required';
 }
 
 /** Upper bound on live (unexpired, unconsumed) challenges. */

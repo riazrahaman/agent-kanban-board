@@ -260,7 +260,9 @@ Credential families, resolved in `middleware/auth.js` `getAuthorizedProjects`:
   silent fallback to global). A per-project token confers `privileged=false` by
   convention. Admin token → `caller.role = "admin"`.
 - **`KANBAN_AUTH_SECRET`** — HMAC stateless session tokens (`sessionAuth.js`):
-  `POST /api/auth/session` (proof-of-secret handshake) → self-describing token
+  `POST /api/auth/challenge` (single-use nonce, required by default) then
+  `POST /api/auth/session` (proof over challenge, client nonce, role and
+  project) → self-describing token
   `base64url(payload).hmac` with `{cn,sn,jti,exp,role,project}`, 24 h expiry, and
   a process-local **jti deny-list** (`POST /api/auth/revoke`).
 - **Stream tickets** (`streamTicket.js`) — 60 s, single-use, signed with
@@ -352,7 +354,7 @@ under `<data>/backups/<timestamp>/`. `scripts/restore-backup.mjs` restores one.
 - **Ask-the-Board** (`routes/ask.js` + `askKnowledge.js`, mounted public). A
   **read-only, password-gated** Q&A over the board's protocol and source. Off
   unless **both** `KANBAN_ASK_OPENROUTER_API_KEY` and `KANBAN_ASK_PASSWORD` are
-  set. `GET /api/ask/config` reports `{enabled,gated,model}`. `POST /api/ask`
+  set. `GET /api/ask/config` reports `{enabled,gated}`, plus `provider`, `model` and `scope` only when a valid `x-ask-pass` is sent (wrong passwords count toward the Ask lockout). `POST /api/ask`
   requires the `x-ask-pass` header and `{question}` (3–500 chars); it builds a
   system prompt from a curated protocol pack, **retrieved source excerpts**
   from a cached symbol/topic index of `server/`, `client/src/` and `scripts/`

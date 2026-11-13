@@ -7,7 +7,8 @@
  * Two modes are covered:
  *   - required: KANBAN_SESSION_NONCE_MODE='required' rejects proofs without a
  *     valid, live, unconsumed challenge (POST /api/auth/challenge).
- *   - legacy (default grace): the historical challenge-less proof still mints.
+ *   - legacy (explicit opt-out; 'required' is the default since v3.13.1): the
+ *     historical challenge-less proof still mints.
  */
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -198,11 +199,11 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
     assert.equal(r.response.status, 401, 'an unknown challenge cannot be consumed');
   });
 
-  // --- legacy grace mode (this release's default) ---------------------------
+  // --- legacy mode (explicit opt-out since 'required' became the default) ---
 
   it('(7) legacy mode: the historical challenge-less proof still works', async () => {
     process.env.KANBAN_AUTH_SECRET = SECRET;
-    delete process.env.KANBAN_SESSION_NONCE_MODE;
+    process.env.KANBAN_SESSION_NONCE_MODE = 'legacy';
     const r = await session({ clientNonce: 'cn-7', proof: hmac(proofInput('cn-7', 'builder', 'alpha')) });
     assert.equal(r.response.status, 200);
     assert.ok(verifySessionToken(r.body.token), 'the legacy flow still mints a valid token');
@@ -211,7 +212,7 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
 
   it('(8) legacy mode: a caller MAY still opt into the challenge flow, and it is enforced', async () => {
     process.env.KANBAN_AUTH_SECRET = SECRET;
-    delete process.env.KANBAN_SESSION_NONCE_MODE;
+    process.env.KANBAN_SESSION_NONCE_MODE = 'legacy';
     const { challenge } = await fetchChallenge();
     const body = {
       clientNonce: 'cn-8',

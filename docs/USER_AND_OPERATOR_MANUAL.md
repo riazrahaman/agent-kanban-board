@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.13.0
+**System:** Agent Kanban Board v3.14.0
 
 ---
 
@@ -211,9 +211,11 @@ When running the Kanban board on Railway and Ollama on your local development ma
   Set `KANBAN_ASK_PROVIDER=ollama` and `KANBAN_ASK_OLLAMA_HOST=http://<tailscale-ip-or-magicdns>:11434`.
 
 A wrong password is counted separately from the answer caps, so brute-forcing
-the gate cannot exhaust the day's budget. Verify a deployment with `curl
-<board-url>/api/ask/config`; the first genuine end-to-end check is asking one
-real question from the page.
+the gate cannot exhaust the day's budget. Verify a deployment with `curl -s -H
+"x-ask-pass: $KANBAN_ASK_PASSWORD" <board-url>/api/ask/config` (without the
+header only `{"enabled":true,"gated":true}` comes back; a wrong password counts
+toward the Ask lockout); the first genuine end-to-end check is asking one real
+question from the page.
 
 > The topic limit is a **prompt instruction, not a hard fence**. The assistant
 > is told to stay on this board, but it is the same model answering, so an
@@ -424,7 +426,7 @@ Clicking any card opens the Inspector Sheet:
 - **Stage ownership:** The `stage_owners` history shows which actor created, claimed, or transitioned each lifecycle stage.
 - **Operator Notes (Human Form):** Human operators can enter manual notes directly into the card timeline.
 
-Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-clean selected/filtered tasks with `POST /api/tasks/purge`. Both operations require a privileged role and are audited; they are not available to ordinary lifecycle roles.
+Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-clean selected/filtered tasks with `POST /api/tasks/purge`. Both operations require the admin token or a privileged session and are audited; they are not available to ordinary lifecycle roles.
 
 Creating a task normally lands it in `BACKLOG` and any lifecycle role may do
 that. Creating one **directly** in an active or terminal work state
@@ -706,7 +708,7 @@ flowchart TD
     Err["HTTP Error Encountered"]
     
     Err --> Code503{"Status 503?"}
-    Code503 -- Yes --> Fix503["Cause: No auth mechanism configured (KANBAN_AUTH_TOKEN,\nKANBAN_AUTH_SECRET, and KANBAN_PROJECT_TOKENS all unset),\nor KANBAN_PROJECT_TOKENS is malformed (bad JSON, empty token,\nunknown or privileged role in a binding).\nFix: Set a valid token / valid JSON map and restart the server."]
+    Code503 -- Yes --> Fix503["Cause: No auth mechanism configured (KANBAN_AUTH_TOKEN,\nKANBAN_AUTH_SECRET, KANBAN_PROJECT_TOKENS and KANBAN_ADMIN_TOKEN all unset),\nor KANBAN_PROJECT_TOKENS is malformed (bad JSON, empty token,\nunknown or privileged role in a binding).\nFix: Set a valid token / valid JSON map and restart the server."]
     
     Code503 -- No --> Code401{"Status 401?"}
     Code401 -- Yes --> Fix401["Cause: Missing or incorrect Bearer token / X-API-Token.\nFix: Check token matches server's KANBAN_AUTH_TOKEN."]
@@ -734,7 +736,7 @@ flowchart TD
 | **`404 Not Found`** | Resource Missing | - Task ID does not exist in store. Verify task ID via `GET /api/tasks`. |
 | **`409 Conflict`** | State Machine or Claim Contention | - Attempting an illegal state transition (e.g. `BACKLOG` $\to$ `DONE`).<br>- Attempting to transition out of terminal state `DONE`.<br>- Attempting to claim a task already held by another agent. |
 | **`500 Internal Error`** | Server / Git Error | - Git persistence failure (e.g. git hook rejection, index lock). Check server terminal logs. |
-| **`503 Unavailable`** | Server Unconfigured | - No auth mechanism is configured (`KANBAN_AUTH_TOKEN`, `KANBAN_AUTH_SECRET`, and `KANBAN_PROJECT_TOKENS` all unset), **or** `KANBAN_PROJECT_TOKENS` is malformed — bad JSON, an empty token, or a binding with an unknown or privileged role (`runner`/`system`/`human`/`admin`). Mutations are fail-closed until a valid token is configured. |
+| **`503 Unavailable`** | Server Unconfigured | - No auth mechanism is configured (`KANBAN_AUTH_TOKEN`, `KANBAN_AUTH_SECRET`, `KANBAN_PROJECT_TOKENS` and `KANBAN_ADMIN_TOKEN` all unset), **or** `KANBAN_PROJECT_TOKENS` is malformed — bad JSON, an empty token, or a binding with an unknown or privileged role (`runner`/`system`/`human`/`admin`). Mutations are fail-closed until a valid token is configured. |
 
 ### 7.3 Credential-Map Coverage Troubleshooting (§2.10)
 

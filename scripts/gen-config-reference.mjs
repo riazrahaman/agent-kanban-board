@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 
 const DESCRIPTIONS = {
-  'KANBAN_ADMIN_TOKEN': 'Admin token that spans every project (audited as admin_write)',
+  'KANBAN_ADMIN_TOKEN': 'Admin token that spans every project (audited as admin_write). Required, or a privileged session, for delete/purge/trash restore and hard-delete in every auth mode',
   'KANBAN_ALLOWED_ORIGIN': 'Comma-separated CORS origin allow-list',
   'KANBAN_ALLOW_DEV_CORS': 'Set to "1" to accept the localhost development CORS default even when NODE_ENV=production',
   'KANBAN_IDEMPOTENCY_TTL_MS': 'How long a POST /api/tasks Idempotency-Key is retained (default 600000)',
@@ -57,7 +57,7 @@ const DESCRIPTIONS = {
   'KANBAN_REAP_ENABLED': 'Set falsy to disable the background lease reaper',
   'KANBAN_REAP_INTERVAL_MS': 'Lease reaper sweep interval (default 30000; <= 0 disables the reaper)',
   'KANBAN_SESSION_CHALLENGE_TTL_MS': 'TTL for a single-use /api/auth/challenge nonce (default 120000). Unset/invalid falls back to the default',
-  'KANBAN_SESSION_NONCE_MODE': 'Session-handshake proof mode: "required" rejects proofs without a live unconsumed challenge; anything else keeps the legacy challenge-less grace (default). "required" becomes the default next release',
+  'KANBAN_SESSION_NONCE_MODE': 'Session-handshake proof mode. Default "required": POST /api/auth/session needs a live unconsumed POST /api/auth/challenge nonce. Only the exact value "legacy" accepts the old challenge-less proof (startup warning); any other value means "required"',
   'KANBAN_STORAGE_BACKEND': 'Persistence backend: "json" or "git"',
   'KANBAN_WEBHOOK_URLS': 'Comma-separated outbound webhook subscriber URLs (unset disables webhooks)',
   'KANBAN_WEBHOOK_EVENTS': 'Comma-separated event kinds to deliver (unset = every kind)',
@@ -81,6 +81,7 @@ const DESCRIPTIONS = {
   'KANBAN_REPORT_GITHUB_API_URL': '(optional) GitHub API base URL (default https://api.github.com)',
   'KANBAN_ASK_PROVIDER': 'LLM provider for Ask-the-Board: "openrouter" or "ollama" (auto-detected if unset)',
   'KANBAN_ASK_OLLAMA_HOST': 'Base URL for Ollama instance (default http://localhost:11434)',
+  'KANBAN_ASK_GITHUB_TOKEN': '(secret) Optional read-only GitHub token for the Ask commit-history lookup; unset = unauthenticated public API',
   'KANBAN_ASK_OLLAMA_AUTH_HEADER': '(secret) Optional Authorization header token for Ollama / tunnel gateway',
   'KANBAN_ASK_OPENROUTER_API_KEY': '(secret) OpenRouter API key; required only for the "openrouter" provider (the default)',
   'KANBAN_ASK_PASSWORD': '(secret) Shared password gate for POST /api/ask — an OWNER credential: by default it grants read access to every project on the board',

@@ -23,7 +23,7 @@ import { GitYamlStorage } from '../storage.js';
 import { STATUSES } from '../state-machine.js';
 import { defaultProjectName, isValidProjectId } from '../task-identity.js';
 import { escapeHtml } from '../utils/sanitize.js';
-import { destructivePrivilege } from '../task-fields.js';
+import { adminCredentialPrivilege, destructiveForbidden } from '../task-fields.js';
 
 // ---------------------------------------------------------------------------
 // v2.5.6 (ENH-03): soft-delete trash sink. deleteTask/purgeTasks route into
@@ -90,9 +90,7 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
     // v3.12.1 (Board Health Check): restore is a destructive-op sibling of
     // hardDeleteFromTrash — it requires the same privileged credential. 404 is
     // reported first, mirroring deleteTask's ordering.
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to restore tasks', status: 403 };
-    }
+    if (!adminCredentialPrivilege(caller)) return destructiveForbidden('restore tasks');
 
     if (index.has(compositeKey(authorizedProject, id))) {
       return { error: 'A live task with this id already exists', status: 409 };
@@ -169,9 +167,7 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
  */
 export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
   return withMutationLock(async () => {
-    if (!destructivePrivilege(caller)) {
-      return { error: 'Forbidden: admin role required to delete tasks', status: 403 };
-    }
+    if (!adminCredentialPrivilege(caller)) return destructiveForbidden('delete tasks');
     const authorizedProject =
       project === undefined || project === null || project === ''
         ? defaultProjectName()

@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`, `v3.14.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,104 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.14.0] — 2026-11-13
+
+Hardening and durability release for authentication, Ask-the-Board and the
+storage backends. It adds one optional environment variable,
+`KANBAN_ASK_GITHUB_TOKEN`, and changes behaviour that existing deployments may
+rely on, so it is a minor release: read the upgrade notes before deploying.
+`docs/CONFIGURATION.md` and `.env.example` gain the new variable and describe
+the new session-handshake default and admin-token rules (`.env.example` now
+uses distinct placeholders for the shared and admin tokens).
+
+### Upgrade notes
+
+- **Session handshakes need the challenge by default.** `POST /api/auth/session`
+  requires a fresh `server_nonce` from `POST /api/auth/challenge`; challenge-less
+  proofs are refused. Setting `KANBAN_SESSION_NONCE_MODE=legacy` (exactly that
+  value) restores the old behaviour temporarily and logs a startup warning.
+- **Destructive operations need the admin credential in every auth mode.**
+  Deleting a card, purging (including `hard`), and restoring or hard-deleting a
+  trashed card require `KANBAN_ADMIN_TOKEN` or a privileged session. In
+  single-token deployments, `X-Agent-Role: admin` with the shared token no longer
+  works for these and gets `403`; configure `KANBAN_ADMIN_TOKEN`, which
+  single-token mode now accepts (on its own it also counts as configured auth).
+  The server warns at startup when it is missing. Header roles still drive stage
+  transitions and other non-destructive actions in single-token mode.
+- **The server refuses to start when the admin token reuses another
+  credential**, that is when `KANBAN_ADMIN_TOKEN` equals `KANBAN_AUTH_TOKEN` or
+  any credential token in `KANBAN_PROJECT_TOKENS`. The error names the
+  variables, never the values.
+- **`GET /api/ask/config` returns only `{enabled, gated}` without the
+  password.** Provider, model and snapshot scope are returned only with a valid
+  `x-ask-pass`, and a wrong password on this endpoint counts toward the Ask
+  lockout. Update any health check that read `provider` or `model` from it.
+- **New optional `KANBAN_ASK_GITHUB_TOKEN`.** Ask's recent-commits lookup no
+  longer uses the bug-report GitHub token. If this read-only token is set it is
+  used; otherwise the public GitHub API is called unauthenticated (60 requests
+  per hour per IP). On hosts that share an outbound IP, set a read-only token.
+
+### Security
+
+- **Session handshake** is challenge-bound by default (see upgrade notes). An
+  address over the failed-login limit can still obtain a challenge and is
+  refused only past the hard ceiling; guessing stays throttled at
+  `/api/auth/session`.
+- **Destructive operations** are authorised by credential, never by a declared
+  role header, in every auth mode (see upgrade notes).
+- **Admin token** must be distinct from every other credential; startup refuses
+  otherwise.
+- **Ask configuration** details are visible only to callers with the Ask
+  password.
+- **Ask** no longer sends the bug-report GitHub token to the commit-history
+  lookup.
+
+### Fixed
+
+- **Git backend:** trash files are keyed by id and deletion time, so two deleted
+  cards with the same id no longer overwrite each other; trash files from
+  earlier releases still load.
+- **JSON journal:** whether a journal is replayed is decided by a generation
+  counter recorded in the base file instead of file timestamps (journals from
+  earlier releases keep the previous rule). Journal lines that loading ignores
+  are folded into a new base and set aside, so a later write cannot bring back a
+  purged or superseded card. If that fold fails at boot, the server still
+  refuses to start but now says the journal could not be folded or set aside,
+  rather than reporting a corrupt data file.
+- **JSON journal:** appends and truncations are synced to disk.
+- **Backups** include a git card tree stored outside `KANBAN_DATA_DIR`
+  (excluding `.git`), and `scripts/restore-backup.mjs` gains `--git-into`. The
+  restore script refuses manifest paths that would leave the snapshot or target
+  directory.
+- **Ask UI:** a stored password the server rejects is cleared, and a password
+  that received only the limited config view is not re-sent in the same
+  session.
+- **Ask:** a rate-limited or failed commit-history lookup is remembered for
+  5 minutes instead of being retried on every request.
+
+### Changed
+
+- **Docs:** `docs/CONFIGURATION.md`, `.env.example`, README, `ONBOARDING.md`
+  (session example rewritten for the challenge flow), the operator manual, the
+  file-by-file explanation, the handover notes, `docs/RESTORE.md`, the presenter
+  runbook, the presentation page and deck, and the kanban skill describe the
+  handshake default, the destructive-operation credential, the admin-token rule,
+  the limited Ask config view and `KANBAN_ASK_GITHUB_TOKEN`. The Ask config
+  verification example now sends the `x-ask-pass` header.
+- **Ask:** the snapshot scope default (all projects) is unchanged.
+
+### Performance
+
+- **Lease renewal:** a holder's heartbeat, log, claim or PATCH saves the card
+  and its renewed sibling leases in a single write (locally about half the time
+  per heartbeat); a failure saving a sibling never fails the holder's write.
+- **JSON journal:** syncing appends to disk bounds journal throughput to a few
+  hundred writes per second on slow disks.
+
+### Post-release operator action
+
+- Set a read-only `KANBAN_ASK_GITHUB_TOKEN` on the hosted deployment.
 
 ## [3.13.0] — 2026-11-13
 

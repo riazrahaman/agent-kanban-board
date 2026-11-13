@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.13.0
+version: 3.14.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -113,7 +113,7 @@ Verified endpoint scoping behavior:
 | `GET /api/events` | Optional: `?project=X` | EventSource SSE real-time event stream (diffs or snapshots) |
 | `POST /api/bug-reports` | No scoping needed | Public human bug reporting to GitHub (takes no token, creates no card) |
 | `POST /api/ask` | No scoping needed | Password-gated Q&A (`x-ask-pass` mandatory; read-only assistant, takes no board token) |
-| `GET /api/ask/config` | No scoping needed | Reports Ask feature status (`enabled`, `gated`, `model`, `provider`) |
+| `GET /api/ask/config` | No scoping needed | Reports Ask feature status: {enabled, gated} to everyone; provider, model and scope only with a valid x-ask-pass (a wrong password counts toward the Ask lockout) |
 
 **Rule**: Append `?project=<project_name>` to every path addressing a specific task (`/:id`, `/:id/logs`, `/:id/claim`, `/:id/heartbeat`). A `403` referencing project `'default'` indicates a missing query parameter.
 
@@ -219,6 +219,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 - **Evidence-Based Success**: Never transition stages without explicit command output, test results, or commit hashes.
 - **Rate Limiting & Proxy Configuration**: The board throttles failed authentication attempts (`KANBAN_AUTH_RATE_LIMIT_PER_MIN`, default 60 per window, **on by default since v3.13.0**; `0` disables) tracked per client IP using Express's `req.ip`. Only failing requests are throttled — valid credentials are still served — except that an address past 10x the limit in one window is refused outright until the window ends. Reverse proxy deployments must set `KANBAN_TRUST_PROXY` to the expected proxy depth (e.g., `1`, `loopback`, or `true`); a board exposed directly should set `KANBAN_TRUST_PROXY=0`. If you receive `429` (`Too many failed authentication attempts`), respect the `Retry-After` header before retrying, and fix the token rather than retrying blindly.
 - **v3.13.0 behaviour changes**: `depends_on` entries must name cards in the **same project** (a cross-project entry is `400`, and existing cross-project dependencies count as unsatisfied); completing a card only unblocks dependents in its own project. `POST /tasks/:id/assign` requires an `agent_id` field (explicit `null` releases). SSE diff frames carry `{kind, task, project, actor, reason, ts}` without `prev`, streams get a `: ping` comment every 20 s, and each client IP may hold at most `KANBAN_MAX_SSE_STREAMS_PER_IP` (default 20) concurrent streams (`503` over the cap).
+- **v3.14.0 behaviour changes**: deleting a card, purging (including `hard`), and restoring or hard-deleting a trashed card need the admin credential (`admin_token` / `KANBAN_ADMIN_TOKEN`) or a privileged session in **every** auth mode; in single-token deployments `X-Agent-Role: admin` with the shared token now gets `403` for these (header roles still drive stage transitions there). The server refuses to start if `KANBAN_ADMIN_TOKEN` equals the shared token or any project credential. `POST /api/auth/session` requires a fresh `server_nonce` from `POST /api/auth/challenge` by default (`KANBAN_SESSION_NONCE_MODE=legacy` is a temporary opt-out).
 - **Payload & Encoding Standards**: In `v3.2.1+`, the server strictly translates body-parser errors: unsupported `Content-Encoding` returns `415 Unsupported Media Type` (`error: "unsupported_encoding"`), while payload corruption or length violations return `400 Bad Request` (`request_size_invalid`, `request_aborted`). Orchestrators and workers must send standard uncompressed JSON payloads (`Content-Type: application/json; charset=utf-8`) under 100KB.
 - **HTTP Header ASCII ByteString Requirement (v3.6.3+)**: All HTTP header keys and values sent to the board (e.g., `x-agent-id`, `x-agent-role`, `x-api-token`, `x-ask-pass`) **MUST** be pure ASCII ByteStrings (`ISO-8859-1` / `U+0000` to `U+00FF`, standard printable ASCII). Non-ASCII characters (such as em dashes `—`, curly quotes, or unicode glyphs) trigger `TypeError: Cannot convert argument to a ByteString...` in Node.js HTTP clients before the packet leaves the process. Always sanitize header values to standard ASCII.
 - **Ask-the-Board Separation of Concerns (v3.4.0–v3.7.1+)**: The board provides `POST /api/ask` and `GET /api/ask/config` for human visitor inquiries over the board's protocol and source context (via OpenRouter or local Ollama). It is authenticated via `x-ask-pass` (`KANBAN_ASK_PASSWORD`), NOT `x-api-token`. Orchestrators and automated agents **MUST NOT** attempt to use `/api/ask` for mutations, task claiming, or state moves. The assistant has no mutation capabilities, no tokens, and does not claim or move cards.

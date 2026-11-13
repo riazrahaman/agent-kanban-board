@@ -130,12 +130,21 @@ describe('KB-14 persisted audit stream (§2.9, v2.9.0)', () => {
     });
     assert.equal(create.status, 201);
 
-    const res = await fetch(`${baseUrl}/api/audit`, { headers: headers('builder') });
-    assert.equal(res.status, 200);
-    const body = await res.json();
+    // The audit entry is appended asynchronously after the response, so poll
+    // the read for up to ~2 s instead of assuming it has landed already.
+    let body;
+    let found;
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      const res = await fetch(`${baseUrl}/api/audit`, { headers: headers('builder') });
+      assert.equal(res.status, 200);
+      body = await res.json();
+      found = body.entries.find((e) => e.task_id === 'aud-1');
+      if (found || Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
     assert.equal(body.enabled, true);
     assert.ok(body.count >= 1, 'at least the create should be audited');
-    const found = body.entries.find((e) => e.task_id === 'aud-1');
     assert.ok(found, 'the created task id must appear in the audit stream');
     assert.equal(found.kind, 'created');
   });

@@ -572,12 +572,14 @@ export function gatherSourceContext(question, { maxFiles = 3, maxCharsPerFile = 
  * RECENT CODE CHANGES (v3.10.4) — a commit-level history the deployed assistant
  * otherwise cannot see (the container has no `.git`).
  * Reads the PUBLIC repo's commit list via the GitHub API; reuses the optional
- * board's bug-report GitHub token when present (only to raise the rate-limit
- * ceiling — the repo is public, the token is never needed for anything else);
- * cached in-process for 15 min; fail-silent — an empty string means "section
+ * optional KANBAN_ASK_GITHUB_TOKEN (meant to be read-only) when set; otherwise
+ * the call is unauthenticated (public repo, 60/h limit). The bug-report token
+ * is never sent. Cached in-process for 15 min, and a failed lookup is
+ * remembered for 5 min so a rate limit cannot slow every Ask; fail-silent — an empty string means "section
  * omitted", never an error on the ask route.
  */
-const COMMITS_CACHE = { at: 0, text: '' };
+const COMMITS_CACHE = { at: 0, text: '', failedAt: 0 };
+const COMMITS_FAIL_BACKOFF_MS = 5 * 60 * 1000;
 const COMMITS_TTL_MS = 15 * 60 * 1000;
 
 export async function gatherRecentCommits({
@@ -589,30 +591,38 @@ export async function gatherRecentCommits({
   if (COMMITS_CACHE.text && nowMs - COMMITS_CACHE.at < COMMITS_TTL_MS) {
     return COMMITS_CACHE.text;
   }
+  if (COMMITS_CACHE.failedAt && nowMs - COMMITS_CACHE.failedAt < COMMITS_FAIL_BACKOFF_MS) {
+    return COMMITS_CACHE.text;
+  }
+  const fail = () => {
+    COMMITS_CACHE.failedAt = nowMs;
+    return COMMITS_CACHE.text;
+  };
   try {
     const headers = { 'User-Agent': 'agent-kanban-ask', Accept: 'application/vnd.github+json' };
-    const ghToken = process.env.KANBAN_REPORT_GITHUB_TOKEN;
+    const ghToken = String(process.env.KANBAN_ASK_GITHUB_TOKEN || '').trim();
     if (ghToken) headers.Authorization = `Bearer ${ghToken}`;
     const res = await fetchImpl(`${repoUrl}/commits?per_page=${maxCommits}`, {
       headers,
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return COMMITS_CACHE.text;
+    if (!res.ok) return fail();
     const commits = await res.json();
-    if (!Array.isArray(commits)) return COMMITS_CACHE.text;
+    if (!Array.isArray(commits)) return fail();
     const lines = commits.slice(0, maxCommits).map((c) => {
       const sha = String(c.sha || '').slice(0, 7);
       const date = String(c.commit?.author?.date || '').slice(0, 10);
       const msg = String(c.commit?.message || '').split('\n')[0].slice(0, 140);
       return `- ${sha} ${date} ${msg}`;
     });
-    if (!lines.length) return COMMITS_CACHE.text;
+    if (!lines.length) return fail();
     const text = `RECENT CODE CHANGES (public repo history via the GitHub API):\n${lines.join('\n')}`;
     COMMITS_CACHE.at = nowMs;
     COMMITS_CACHE.text = text;
+    COMMITS_CACHE.failedAt = 0;
     return text;
   } catch {
-    return COMMITS_CACHE.text;
+    return fail();
   }
 }
 
@@ -620,6 +630,7 @@ export async function gatherRecentCommits({
 export function resetRecentCommits() {
   COMMITS_CACHE.at = 0;
   COMMITS_CACHE.text = '';
+  COMMITS_CACHE.failedAt = 0;
 }
 
 /** Coarse prompt-token estimate (chars / 4). Exact counting is not required here. */
