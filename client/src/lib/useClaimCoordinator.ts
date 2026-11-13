@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { heartbeatTask, nextClaim } from '../api'
 import {
+  effectiveTasks,
   heartbeatTargets,
   isLostLeaseError,
   observedLeaseWindowMs,
-  shouldAutoClaim,
+  pendingClaimFromTask,
+  reconcilePendingClaim,
+  shouldAutoClaimNow,
+  type PendingClaim,
 } from './claimCoordinator'
 
 /**
@@ -27,6 +31,11 @@ export type ClaimCoordinatorOptions = {
   intervalMs?: number
       /** Which projects to participate in. Empty/undefined = all projects. */
   projects?: string[]
+  /**
+   * Whether the live event stream is currently delivering. `false` pauses
+   * auto-claim (heartbeats continue); omitted means unknown and does not block.
+   */
+  streamUp?: boolean
 }
 
 export type CoordinatorResult = {
@@ -43,6 +52,7 @@ export function useClaimCoordinator({
   tasks,
   intervalMs = 5000,
   projects,
+  streamUp,
 }: ClaimCoordinatorOptions): CoordinatorResult {
         // State, not a ref: the header renders lastClaimedId / lastError, and a
         // ref mutation never tells React to re-render, so the display only
@@ -63,6 +73,13 @@ export function useClaimCoordinator({
   const projectsRef = useRef(projects)
   projectsRef.current = projects
 
+  const streamUpRef = useRef(streamUp)
+  streamUpRef.current = streamUp
+
+        // COR-03: the last claim this coordinator made, held until the stream
+        // shows it (or its lease lapses / is lost). See PendingClaim.
+  const pendingRef = useRef<PendingClaim | null>(null)
+
         // Running estimate of the server's lease TTL; see observedLeaseWindowMs.
   const leaseMsRef = useRef<number | undefined>(undefined)
 
@@ -75,12 +92,18 @@ export function useClaimCoordinator({
         if (!who || stop) return
         const proj = projectsRef.current?.length ? projectsRef.current[0] : undefined
         const nowMs = Date.now()
+        // A pending claim belongs to the agent that made it; a rebinding drops it.
+        if (pendingRef.current && pendingRef.current.task.assigned_agent !== who) {
+          pendingRef.current = null
+        }
+        pendingRef.current = reconcilePendingClaim(pendingRef.current, tasksRef.current, nowMs)
+        const known = effectiveTasks(tasksRef.current, pendingRef.current)
         leaseMsRef.current = observedLeaseWindowMs(
-          tasksRef.current, who, nowMs, leaseMsRef.current,
+          known, who, nowMs, leaseMsRef.current,
           )
 
               // 1. Heartbeat every task this agent is actively holding.
-        const toBeat = heartbeatTargets(tasksRef.current, who, nowMs, {
+        const toBeat = heartbeatTargets(known, who, nowMs, {
           leaseMs: leaseMsRef.current,
             })
         let beat = 0
@@ -95,14 +118,20 @@ export function useClaimCoordinator({
             // Always the task's OWN project: gating this on the UI filter meant an
             // unscoped board sent no scope at all, so every heartbeat for a task
             // outside `default` 404'd and the lease lapsed.
-            await heartbeatTask(task.id, who, { project: task.project })
+            const renewed = await heartbeatTask(task.id, who, { project: task.project })
             beat += 1
+            const p = pendingRef.current
+            if (p && p.id === task.id && p.project === task.project) {
+              pendingRef.current = pendingClaimFromTask(renewed, who, Date.now()) ?? p
+            }
                  } catch (err) {
                   // A "not a lease holder" / "not claimed" hint means this lease
                    // was reaped or stolen; drop it and let the auto-claim pass
                    // pick up the orphaned task.
               const msg = err instanceof Error ? err.message : String(err)
               if (isLostLeaseError(msg)) {
+                const p = pendingRef.current
+                if (p && p.id === task.id && p.project === task.project) pendingRef.current = null
                 continue
                      }
               // Deep-review: a non-lost-lease failure (404 on a card deleted
@@ -117,10 +146,16 @@ export function useClaimCoordinator({
               // 2. If we are now idle, pull the next eligible task.
         let claimedId: string | null = null
         let claimError: string | null = null
-        if (!stop && shouldAutoClaim(tasksRef.current, who, Date.now())) {
+        if (!stop && shouldAutoClaimNow(tasksRef.current, who, Date.now(), {
+          pending: pendingRef.current,
+          streamUp: streamUpRef.current,
+        })) {
           try {
             const claimed = await nextClaim(who, proj ? { project: proj, role: 'builder' } : { role: 'builder' })
-            if (claimed) claimedId = claimed.id
+            if (claimed) {
+              claimedId = claimed.id
+              pendingRef.current = pendingClaimFromTask(claimed, who, Date.now())
+            }
                 } catch (err) {
               claimError = err instanceof Error ? err.message : 'next-claim failed'
                  }

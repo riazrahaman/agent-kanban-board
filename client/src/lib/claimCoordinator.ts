@@ -206,3 +206,92 @@ export function observedLeaseWindowMs(
   }
   return maxRemaining > 0 ? maxRemaining : previous
 }
+
+/**
+ * COR-03: a claim this coordinator made that the live task stream may not show
+ * yet. `nextClaim` answers with the claimed task, but the board state the
+ * coordinator reads is fed only by the event stream; if the stream is slow,
+ * reconnecting or not delivering, the next tick would see "nothing held" and
+ * claim yet another card. The pending claim bridges that gap.
+ */
+export type PendingClaim = {
+  project: string
+  id: string
+  /** Lease deadline from the claim (or latest heartbeat) response, epoch ms. */
+  expiresAtMs: number
+  /** `version` of the task as returned by the server for this claim. */
+  version: number
+  /** The server's copy of the task, used for heartbeats until the stream catches up. */
+  task: Task
+}
+
+/** Fallback lease when a claim response carries no usable `claim_expires_at`. */
+const PENDING_FALLBACK_LEASE_MS = 600000
+
+/**
+ * Builds a pending claim from a successful `nextClaim` / heartbeat response.
+ * Returns null when the response is not a claim held by `agentId`.
+ */
+export function pendingClaimFromTask(task: Task | null | undefined, agentId: string, nowMs: number): PendingClaim | null {
+  if (!task || task.assigned_agent !== agentId) return null
+  const parsed = task.claim_expires_at ? Date.parse(task.claim_expires_at) : NaN
+  const expiresAtMs = Number.isNaN(parsed)
+    ? nowMs + (task.claim_lease_ms ?? PENDING_FALLBACK_LEASE_MS)
+    : parsed
+  return {
+    project: task.project,
+    id: task.id,
+    expiresAtMs,
+    version: typeof task.version === 'number' ? task.version : 0,
+    task,
+  }
+}
+
+/**
+ * Re-evaluates a pending claim against the stream's view of the board:
+ * - lapsed lease → dropped (the reaper will take it back; claiming again is fine);
+ * - the stream shows the task at the claim's version or newer → the stream has
+ *   caught up, so its view is authoritative (held by us → the normal held
+ *   logic covers it; held by someone else / released → lost) and the pending
+ *   entry is dropped either way;
+ * - otherwise (absent from the stream, or an older revision) → still pending.
+ */
+export function reconcilePendingClaim(
+  pending: PendingClaim | null,
+  tasks: Task[],
+  nowMs: number,
+): PendingClaim | null {
+  if (!pending) return null
+  if (nowMs >= pending.expiresAtMs) return null
+  const seen = tasks.find((t) => t.id === pending.id && t.project === pending.project)
+  if (seen && typeof seen.version === 'number' && seen.version >= pending.version) return null
+  return pending
+}
+
+/**
+ * The task list the coordinator should reason about: the stream's tasks, with a
+ * still-pending claim's server copy standing in for the (missing or stale)
+ * stream copy, so heartbeats keep the lease alive while the stream lags.
+ */
+export function effectiveTasks(tasks: Task[], pending: PendingClaim | null): Task[] {
+  if (!pending) return tasks
+  const rest = tasks.filter((t) => !(t.id === pending.id && t.project === pending.project))
+  return [...rest, pending.task]
+}
+
+/**
+ * Auto-claim decision including the coordinator's own unconfirmed claim.
+ * `streamUp === false` (stream known to be down) never claims: without live
+ * state the coordinator cannot see what it already holds. `undefined` means the
+ * stream state is unknown and does not block.
+ */
+export function shouldAutoClaimNow(
+  tasks: Task[],
+  agentId: string,
+  nowMs: number,
+  opts: { pending?: PendingClaim | null; streamUp?: boolean } = {},
+): boolean {
+  if (opts.streamUp === false) return false
+  if (reconcilePendingClaim(opts.pending ?? null, tasks, nowMs)) return false
+  return shouldAutoClaim(tasks, agentId, nowMs)
+}

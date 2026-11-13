@@ -14,7 +14,7 @@ import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
-import { authFailuresExceeded, recordAuthFailure } from './rateLimit.js';
+import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
 import { noteRolePresentation } from '../utils/roleCrossing.js';
 
 export const VALID_ROLES = new Set([
@@ -596,16 +596,19 @@ function resolveReadCredential(req) {
 
 export function createAuthMiddleware() {
   return (req, res, next) => {
-    // ENH-09: rate-limit failed auth attempts per client IP. Checked first so a
-    // flood of bad tokens never reaches the token-comparison logic. Inert by
-    // default (no env => authFailuresExceeded returns null).
-    const retryAfter = authFailuresExceeded(req);
-    if (retryAfter !== null) {
-      recordAuthFailure(req);
-      return res.status(429).json({
-        error: 'Too many failed authentication attempts',
-        retry_after_ms: retryAfter,
-      });
+    // ENH-09: failed auth attempts are rate-limited per client IP at each
+    // failure point (rejectFailedAuth), not up front: while an address is over
+    // budget a request whose credential validates is still served, and only
+    // requests that would fail authentication get the 429. Past the hard cap
+    // (AUTH_HARD_CAP_MULTIPLIER x limit) every credential-checked request from
+    // the address is refused up front until the window ends. Open reads carry
+    // no credential check and are never refused here.
+    const credentialChecked =
+      ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) ||
+      (readAuthEnabled() && !isProbePath(req));
+    if (credentialChecked) {
+      const hardCapRetry = authHardCapExceeded(req);
+      if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
     }
 
     // Extract the CALLER-DECLARED assertions only. They are advisory: a
@@ -632,8 +635,7 @@ export function createAuthMiddleware() {
       if (!readAuthEnabled() || isProbePath(req)) return next();
       if (!authorizeRead(req)) {
         logAuthFailure(req, 401, 'read-auth-required');
-        recordAuthFailure(req);
-        return res.status(401).json({
+        return rejectFailedAuth(req, res, 401, {
           error: 'Unauthorized: read access requires a valid token or stream ticket',
         });
       }
@@ -660,8 +662,7 @@ export function createAuthMiddleware() {
     const providedToken = extractToken(req);
     const unauthorized = () => {
       logAuthFailure(req, 401, 'invalid-token');
-      recordAuthFailure(req);
-      return res.status(401).json({
+      return rejectFailedAuth(req, res, 401, {
         error: 'Unauthorized: valid token required for mutating operations',
       });
     };
@@ -696,8 +697,7 @@ export function createAuthMiddleware() {
       for (const scope of scopes) {
         if (scope !== session.project) {
           logAuthFailure(req, 403, `session-token not valid for project '${scope}'`);
-          recordAuthFailure(req);
-          return res.status(403).json({
+          return rejectFailedAuth(req, res, 403, {
             error: `Forbidden: token is not authorized for project '${scope}'`,
           });
         }
@@ -735,8 +735,7 @@ export function createAuthMiddleware() {
           const matched = expected?.find((cred) => tokensMatch(providedToken, cred.token));
           if (!matched) {
             logAuthFailure(req, 403, `token not valid for project '${scope}'`);
-            recordAuthFailure(req);
-            return res.status(403).json({
+            return rejectFailedAuth(req, res, 403, {
               error: `Forbidden: token is not authorized for project '${scope}'`,
             });
           }
@@ -837,8 +836,7 @@ export function createAuthMiddleware() {
     const effectiveRole = req.caller.role;
     if (!effectiveRole || !VALID_ROLES.has(effectiveRole)) {
       logAuthFailure(req, 403, `invalid-role (role: ${effectiveRole || 'missing'})`);
-      recordAuthFailure(req);
-      return res.status(403).json({
+      return rejectFailedAuth(req, res, 403, {
         error: 'A valid agent role is required for mutating operations',
       });
     }
