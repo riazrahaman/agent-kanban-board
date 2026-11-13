@@ -1,44 +1,8 @@
-import dns from 'node:dns';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherTaskDetails, gatherBoardFacts, gatherSourceContext, gatherRecentCommits, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
 import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
-
-// Map of temporarily failed Tailscale Funnel ingress IPs -> timestamp
-const failedTunnelIps = new Map();
-// Pre-seed known dead Tailscale DERP edge node in Paris that terminates TLS handshakes with ECONNRESET
-failedTunnelIps.set('176.58.90.63', Date.now());
-
-function setupTailscaleDnsFallback() {
-  if (globalThis.__tailscaleDnsFallbackInstalled) return;
-  globalThis.__tailscaleDnsFallbackInstalled = true;
-  const originalLookup = dns.lookup;
-  dns.lookup = function (hostname, options, callback) {
-    if (typeof options === 'function') {
-      callback = options;
-      options = {};
-    }
-    if (typeof hostname === 'string' && hostname.endsWith('.ts.net')) {
-      return originalLookup(hostname, { all: true }, (err, addresses) => {
-        if (err || !Array.isArray(addresses) || addresses.length <= 1) {
-          return originalLookup(hostname, options, callback);
-        }
-        const now = Date.now();
-        for (const [ip, ts] of failedTunnelIps) {
-          if (now - ts > 600000) failedTunnelIps.delete(ip);
-        }
-        const healthy = addresses.filter((a) => !failedTunnelIps.has(a.address));
-        const pool = healthy.length > 0 ? healthy : addresses;
-        if (options && options.all) {
-          return callback(null, pool);
-        }
-        return callback(null, pool[0].address, pool[0].family);
-      });
-    }
-    return originalLookup(hostname, options, callback);
-  };
-}
 
 /**
  * Ask-the-Board (v3.4.0) — a read-only, password-gated Q&A endpoint.
@@ -287,7 +251,6 @@ export function isLocalOllama(env) {
  * @param {object} [deps.env] injectable environment; defaults to process.env.
  */
 export function createAskRouter(deps = {}) {
-  setupTailscaleDnsFallback();
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
   const store = deps.store || storeModule;
@@ -419,10 +382,30 @@ export function createAskRouter(deps = {}) {
       return null;
     }
     pruneGlobal();
-    if (Number.isFinite(daily) && globalTimestamps.length >= daily) return 'daily_cap_reached';
+    // In-flight requests count against the caps so concurrent requests cannot
+    // all pass the peek before any of them spends a slot.
+    if (Number.isFinite(daily) && globalTimestamps.length + inflightGlobal >= daily) return 'daily_cap_reached';
     const list = pruneIp(ip);
-    if (Number.isFinite(hourly) && list.length >= hourly) return 'ip_limit_reached';
+    if (Number.isFinite(hourly) && list.length + (inflightByIp.get(ip) || 0) >= hourly) return 'ip_limit_reached';
     return null;
+  }
+
+  let inflightGlobal = 0;
+  const inflightByIp = new Map();
+
+  /** Reserve a slot synchronously (right after the peek); returns an idempotent release. */
+  function reserve(ip) {
+    inflightGlobal += 1;
+    inflightByIp.set(ip, (inflightByIp.get(ip) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inflightGlobal -= 1;
+      const n = (inflightByIp.get(ip) || 1) - 1;
+      if (n <= 0) inflightByIp.delete(ip);
+      else inflightByIp.set(ip, n);
+    };
   }
 
   function consume(ip) {
@@ -538,6 +521,10 @@ export function createAskRouter(deps = {}) {
       res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
+    // Reserve synchronously (no await since the peek); refunded on any exit
+    // that does not spend the budget, including a client disconnect.
+    const release = reserve(ip);
+    res.once('close', release);
 
     // 4. Build the prompt from the protocol pack + retrieved source + the cards
     //    the question names + a live read-only snapshot.
@@ -719,6 +706,7 @@ export function createAskRouter(deps = {}) {
     }
 
     // Only a fully successful answer spends the cap/IP budget.
+    release();
     consume(ip);
 
     res.json(fallback ? { answer, model, provider, fallback: true } : { answer, model, provider });
