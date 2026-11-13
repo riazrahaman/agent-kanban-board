@@ -289,9 +289,11 @@ describe('KB-10 claim lease + reaper (§2.4)', () => {
            }
              }
      store.setStorage(new FailingStorage(path.join(tmpDir, 'reap-fc.json')));
-      let threw = null;
-      const r = await store.reapExpiredClaims({ now: Date.now() }).catch((e) => (threw = e));
-      assert.ok(threw instanceof Error && /disk failure/.test(threw.message), 'the failing write surfaces');
+      // COR-17 (v3.12.11): the failing reclaim is isolated and logged; the
+      // sweep itself completes (it no longer rejects) and reports nothing
+      // reclaimed for the card whose write failed.
+      const r = await store.reapExpiredClaims({ now: Date.now() });
+      assert.ok(!r.reclaimed.includes('default/reap-fc'), 'the failed reclaim is not reported');
            // Memory-after-persistence: the task must still be the active claim.
       assert.equal(store.getTask('reap-fc').status, 'IN_PROGRESS', 'task unchanged in memory');
       assert.equal(store.getTask('reap-fc').assigned_agent, 'holder', 'ownership retained');

@@ -36,6 +36,18 @@ export const MAX_TITLE_LEN = 200;
 export const MAX_DESCRIPTION_LEN = 20000;
 export const MAX_METADATA_BYTES = 8000;
 
+// COR-09 (v3.12.11) bounds for the remaining free-form fields. Up to 50 inline
+// logs and 50 inline comments ride on every card, so a log/comment message is
+// capped at half a description; branch and milestone are short labels; a
+// depends_on entry is at most `project:id`; issues are short ids, bounded in
+// count as well as length.
+export const MAX_MESSAGE_LEN = 10000;
+export const MAX_BRANCH_LEN = 255;
+export const MAX_MILESTONE_LEN = MAX_TITLE_LEN;
+export const MAX_DEPENDS_ON_ENTRY_LEN = MAX_TITLE_LEN;
+export const MAX_ISSUES = 100;
+export const MAX_ISSUE_LEN = MAX_TITLE_LEN;
+
 /**
  * BUG-05 (v2.5.8): `depends_on` must be an array of non-empty strings. A bare
  * string (a common typo) used to be silently coerced to `[]`, hiding the
@@ -48,6 +60,50 @@ export function validateDependsOn(dependsOn) {
     if (typeof dep !== 'string' || dep.trim() === '') {
       return 'depends_on must contain only non-empty task ids';
     }
+    if (dep.length > MAX_DEPENDS_ON_ENTRY_LEN) {
+      return `depends_on entries must be at most ${MAX_DEPENDS_ON_ENTRY_LEN} characters`;
+    }
+  }
+  return null;
+}
+
+/**
+ * COR-09 (v3.12.11): `round` must be a positive integer — the rule createTask
+ * has always applied, now shared with PATCH. Returns an error message or null.
+ */
+export function validateRound(round) {
+  if (!Number.isInteger(round) || round < 1) return 'round must be a positive integer';
+  return null;
+}
+
+/**
+ * COR-09 (v3.12.11): `issues` must be a bounded array of short non-empty
+ * strings. Absent/null is accepted (callers decide the default). Returns an
+ * error message or null.
+ */
+export function validateIssues(issues) {
+  if (issues === undefined || issues === null) return null;
+  if (!Array.isArray(issues)) return 'issues must be an array of strings';
+  if (issues.length > MAX_ISSUES) return `issues must contain at most ${MAX_ISSUES} entries`;
+  for (const issue of issues) {
+    if (typeof issue !== 'string' || issue.trim() === '') {
+      return 'issues must contain only non-empty strings';
+    }
+    if (issue.length > MAX_ISSUE_LEN) {
+      return `issues entries must be at most ${MAX_ISSUE_LEN} characters`;
+    }
+  }
+  return null;
+}
+
+/**
+ * COR-09 (v3.12.11): length cap for the nullable label fields (branch,
+ * milestone). Non-strings are left to the shared toBranch/toMilestone
+ * normalisers (they become null). Returns an error message or null.
+ */
+export function validateLabelLength(field, value, max) {
+  if (typeof value === 'string' && value.length > max) {
+    return `${field} must be at most ${max} characters`;
   }
   return null;
 }
