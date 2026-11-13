@@ -200,6 +200,35 @@ export function authFailuresExceeded(req) {
 }
 
 /**
+ * Hard ceiling on failures per address per window, as a multiple of the
+ * failed-auth limit. Below it, valid credentials are served while an address is
+ * over the limit (see rejectFailedAuth); above it, the address is refused
+ * outright until the window ends, valid or not, so guessing cannot continue at
+ * full speed behind the "valid requests still served" rule. With the default
+ * limit of 60 that is 600 failures in one window — only a flood gets there.
+ */
+export const AUTH_HARD_CAP_MULTIPLIER = 10;
+
+/**
+ * Returns the retry-after in ms when the client IP has accumulated MORE than
+ * AUTH_HARD_CAP_MULTIPLIER x limit failures in the current window, else null.
+ * Inert when the failed-auth limiter is disabled (explicit 0).
+ */
+export function authHardCapExceeded(req) {
+  const limit = authLimitPerWindow();
+  if (limit === 0) return null;
+  const span = windowMs();
+  const now = Date.now();
+  pruneAuthExpired(now, span);
+  const bucket = authBuckets.get(clientIp(req));
+  if (!bucket || now - bucket.windowStartMs >= span) return null;
+  if (bucket.count > limit * AUTH_HARD_CAP_MULTIPLIER) {
+    return Math.max(0, bucket.windowStartMs + span - now);
+  }
+  return null;
+}
+
+/**
  * Answers a request that FAILED authentication. Throttling is applied here, at
  * the failure point, rather than before credentials are checked: while an
  * address is over the failed-auth budget only requests that would fail anyway

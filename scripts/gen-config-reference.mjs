@@ -16,7 +16,7 @@ const DESCRIPTIONS = {
   'KANBAN_ARCHIVE_AFTER_DAYS': 'Days a DONE task waits before the archive sweep moves it',
   'KANBAN_AUDIT_LOG': 'Set truthy to persist the audit stream as JSONL',
   'KANBAN_AUTH_LOG': 'Set truthy to log redacted auth failures',
-  'KANBAN_AUTH_RATE_LIMIT_PER_MIN': 'Per-IP limit for failed auth/handshake attempts per window (default 60, or KANBAN_RATE_LIMIT_PER_MIN when that is set; 0 disables; valid credentials are not throttled). Ask-the-Board wrong-password backoff reads it with its own default of 10',
+  'KANBAN_AUTH_RATE_LIMIT_PER_MIN': 'Per-IP limit for failed auth/handshake attempts per window (default 60, or KANBAN_RATE_LIMIT_PER_MIN when that is set; 0 disables; valid credentials are not throttled until an address passes 10x the limit in one window). Ask-the-Board wrong-password backoff reads it with its own default of 10',
   'KANBAN_AUTH_SECRET': 'HMAC secret enabling stateless session tokens',
   'KANBAN_AUTH_TOKEN': 'Global shared token gating every mutating request',
   'KANBAN_AUTO_PROMOTE': 'Set falsy to disable auto-promoting unblocked tasks',

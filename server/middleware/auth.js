@@ -14,7 +14,7 @@ import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
-import { rejectFailedAuth } from './rateLimit.js';
+import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
 import { noteRolePresentation } from '../utils/roleCrossing.js';
 
 export const VALID_ROLES = new Set([
@@ -599,7 +599,17 @@ export function createAuthMiddleware() {
     // ENH-09: failed auth attempts are rate-limited per client IP at each
     // failure point (rejectFailedAuth), not up front: while an address is over
     // budget a request whose credential validates is still served, and only
-    // requests that would fail authentication get the 429.
+    // requests that would fail authentication get the 429. Past the hard cap
+    // (AUTH_HARD_CAP_MULTIPLIER x limit) every credential-checked request from
+    // the address is refused up front until the window ends. Open reads carry
+    // no credential check and are never refused here.
+    const credentialChecked =
+      ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) ||
+      (readAuthEnabled() && !isProbePath(req));
+    if (credentialChecked) {
+      const hardCapRetry = authHardCapExceeded(req);
+      if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
+    }
 
     // Extract the CALLER-DECLARED assertions only. They are advisory: a
     // credential-bound role/identity always overrides them, and a body role is

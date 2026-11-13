@@ -9,7 +9,7 @@ import {
 import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch } from '../middleware/auth.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
-import { authFailuresExceeded, recordAuthFailure, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
+import { authFailuresExceeded, authHardCapExceeded, recordAuthFailure, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
 
 const router = Router();
 
@@ -73,7 +73,10 @@ function resolveCredential(req) {
  */
 router.post('/stream-ticket', (req, res) => {
   // ENH-09: failed auth is throttled at the failure point (rejectFailedAuth), so
-  // a valid credential is served even while its address is over budget.
+  // a valid credential is served even while its address is over budget. Past
+  // the hard cap the address is refused outright until the window ends.
+  const hardCapRetry = authHardCapExceeded(req);
+  if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
   const cred = resolveCredential(req);
   if (!cred) {
     return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: valid token required' });
@@ -255,7 +258,10 @@ router.post('/challenge', (req, res) => {
  */
 router.post('/session', (req, res) => {
   // ENH-09: failed auth is throttled at the failure point (rejectFailedAuth): a
-  // valid proof is served even while its address is over budget.
+  // valid proof is served even while its address is over budget. Past the
+  // hard cap the address is refused outright until the window ends.
+  const hardCapRetry = authHardCapExceeded(req);
+  if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
 
   const secret = authSecret();
   if (!secret) {
@@ -373,7 +379,10 @@ router.post('/session', (req, res) => {
  * endpoint cannot be used to disable someone else's credential.
  */
 router.post('/revoke', (req, res) => {
-  // Throttled at the failure point, like /session and /stream-ticket.
+  // Throttled at the failure point, like /session and /stream-ticket. Past the
+  // hard cap the address is refused outright until the window ends.
+  const hardCapRetry = authHardCapExceeded(req);
+  if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
   const provided = extractToken(req);
   if (!provided || !verifySessionToken(provided)) {
     return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: a valid session token is required' });
