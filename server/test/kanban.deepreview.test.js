@@ -89,20 +89,22 @@ describe('deep-review hardening', () => {
 
   it('P0: restoreFromTrash persists the restored card to the live partition (JSON)', async () => {
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
-    await withApp({ KANBAN_AUTH_TOKEN: TOKEN }, async (baseUrl) => {
+    // A8: delete/restore need the admin credential in every auth mode.
+    const ADMIN = 'kdr-admin-token';
+    await withApp({ KANBAN_AUTH_TOKEN: TOKEN, KANBAN_ADMIN_TOKEN: ADMIN }, async (baseUrl) => {
       const { body: created } = await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST', headers: headers(TOKEN, 'admin', 'op'), body: taskBody('kdr-r1', 'to restore'),
       });
       assert.equal(created.id, 'kdr-r1');
       const del = await jsonRequest(baseUrl, '/api/tasks/kdr-r1', {
-        method: 'DELETE', headers: headers(TOKEN, 'admin', 'op'),
+        method: 'DELETE', headers: headers(ADMIN, null, 'op'),
       });
       assert.equal(del.response.status, 200);
       const before1 = JSON.parse(await readFile(path.join(tmpDir, 'tasks.json'), 'utf8'));
       assert.equal(before1.tasks.filter((t) => t.id === 'kdr-r1').length, 0, 'deleted card must leave the partition');
 
       const undo = await jsonRequest(baseUrl, '/api/tasks/trash/kdr-r1/restore', {
-        method: 'POST', headers: headers(TOKEN, 'admin', 'op'),
+        method: 'POST', headers: headers(ADMIN, null, 'op'),
       });
       assert.equal(undo.response.status, 200, JSON.stringify(undo.body));
 

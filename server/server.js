@@ -195,6 +195,60 @@ export function resolveTrustProxy(raw = process.env.KANBAN_TRUST_PROXY) {
   return raw; // named preset or proxyaddr-compatible IP/CIDR list
 }
 
+/**
+ * Auth configuration warnings logged once at startup. Pure (reads only `env`)
+ * so the conditions are unit-testable.
+ *  - explicit KANBAN_SESSION_NONCE_MODE=legacy: challenge-less session proofs
+ *    are accepted (the default is 'required').
+ *  - single-token mode (KANBAN_AUTH_TOKEN without KANBAN_PROJECT_TOKENS) with no
+ *    KANBAN_ADMIN_TOKEN: destructive operations need the admin credential (or a
+ *    privileged session), so they are refused until one is configured.
+ */
+export function startupAuthWarnings(env = process.env) {
+  const out = [];
+  if (env.KANBAN_SESSION_NONCE_MODE === 'legacy') {
+    out.push(
+      "KANBAN_SESSION_NONCE_MODE=legacy: session handshakes without a POST /api/auth/challenge " +
+        'nonce are accepted. Move clients to the challenge flow and unset it.',
+    );
+  }
+  const set = (k) => typeof env[k] === 'string' && env[k].trim() !== '';
+  if (set('KANBAN_AUTH_TOKEN') && !set('KANBAN_ADMIN_TOKEN') && !set('KANBAN_PROJECT_TOKENS')) {
+    out.push(
+      'KANBAN_AUTH_TOKEN is set without KANBAN_ADMIN_TOKEN: destructive operations ' +
+        '(delete, purge, trash restore/hard-delete) are disabled until KANBAN_ADMIN_TOKEN is configured' +
+        (set('KANBAN_AUTH_SECRET') ? ' (a privileged session token also works).' : '.'),
+    );
+  }
+  return out;
+}
+
+/**
+ * Auth configurations that must refuse to start. Pure (reads only `env`) so
+ * the conditions are unit-testable; never includes a secret value in the
+ * message.
+ *  - KANBAN_ADMIN_TOKEN equal to KANBAN_AUTH_TOKEN, or to any credential token
+ *    in KANBAN_PROJECT_TOKENS: every request carrying that shared token would
+ *    be served as admin, silently granting destructive privilege.
+ */
+export function startupAuthErrors(env = process.env) {
+  const out = [];
+  const admin = typeof env.KANBAN_ADMIN_TOKEN === 'string' ? env.KANBAN_ADMIN_TOKEN.trim() : '';
+  if (!admin) return out;
+  const shared = typeof env.KANBAN_AUTH_TOKEN === 'string' ? env.KANBAN_AUTH_TOKEN.trim() : '';
+  if (shared && shared === admin) {
+    out.push('KANBAN_ADMIN_TOKEN must differ from KANBAN_AUTH_TOKEN (an identical value would make every shared-token request an admin request).');
+  }
+  const parsed = env.KANBAN_PROJECT_TOKENS ? parseProjectTokens(env.KANBAN_PROJECT_TOKENS) : null;
+  if (parsed?.map) {
+    const clash = [...parsed.map.values()].some((creds) => creds.some((c) => c.token === admin));
+    if (clash) {
+      out.push('KANBAN_ADMIN_TOKEN must differ from every credential token in KANBAN_PROJECT_TOKENS (an identical value would make that credential an admin credential).');
+    }
+  }
+  return out;
+}
+
 export function createApp(opts = {}) {
   const app = express();
   // A6 (v3.12.4): security headers FIRST, so every response — API JSON, the
@@ -531,6 +585,12 @@ export async function startServer(
   port = process.env.PORT || 4000,
   host = resolveHost()
 ) {
+  const fatal = startupAuthErrors();
+  if (fatal.length > 0) {
+    for (const line of fatal) logError('auth', line);
+    throw new Error(`Refusing to start: ${fatal.join(' ')}`);
+  }
+
   await loadStore();
 
   // §2.10: compare the projects named in KANBAN_PROJECT_TOKENS against the
@@ -565,6 +625,8 @@ export async function startServer(
         'mutations are fail-closed (503) until a token is set',
     );
   }
+
+  for (const line of startupAuthWarnings()) logWarn('auth', line);
 
   const app = createApp();
   if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {
@@ -772,5 +834,8 @@ if (isDirectRun) {
   startServer(PORT, HOST).then(({ server }) => {
     console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
     registerShutdownHandlers(server);
+  }).catch((err) => {
+    console.error(err.message);
+    process.exit(1);
   });
 }

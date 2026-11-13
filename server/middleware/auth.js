@@ -652,7 +652,7 @@ export function createAuthMiddleware() {
 
     const requiredToken = process.env.KANBAN_AUTH_TOKEN;
     const sessionEnabled = authSecret() !== null;
-    if (!projectTokens && !requiredToken && !sessionEnabled) {
+    if (!projectTokens && !requiredToken && !sessionEnabled && !process.env.KANBAN_ADMIN_TOKEN) {
       console.error('[kanban auth] no auth mechanism is configured; refusing mutation');
       return res.status(503).json({
         error: 'Mutating API is unavailable until an auth token is configured',
@@ -674,13 +674,54 @@ export function createAuthMiddleware() {
      * operations (task delete / purge) additionally require `caller.privileged`,
      * which is DERIVED from the credential that proved the request, not from
      * the header: the admin token, or a session token whose server-issued role
-     * is privileged. When neither is configured the legacy single-token mode
-     * keeps its historical semantics (any valid bearer token may claim admin),
-     * so single-token deployments keep working; per-project deployments are the
-     * configuration this hardening targets, and there project tokens never
-     * confer privileged ops.
+     * is privileged. A8: this holds in every mode — in legacy single-token
+     * mode a declared header role still drives the non-destructive role gates
+     * (stage transitions etc.), but delete/purge/trash restore/hard-delete
+     * require `caller.adminCredential`, which only the admin token or a
+     * privileged session sets. Project tokens never confer privileged ops.
      */
     const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+
+    /**
+     * The admin token (KANBAN_ADMIN_TOKEN) spans every project and derives role
+     * 'admin'. Shared by the per-project and the single-token configurations.
+     * A8: `adminCredential` marks a credential-derived destructive privilege —
+     * the only thing delete/purge/trash restore/hard-delete accept.
+     */
+    const serveAsAdmin = (scopes) => {
+      req.caller.adminCredential = true;
+      req.caller.privileged = true;
+      // v3.8.0: the admin token DERIVES its role from the credential — 'admin'
+      // is what the credential says, never what the header asserts.
+      if (role && role !== 'admin') {
+        emitRoleBindingMismatch(req, role, 'admin', scopes[0] || undefined);
+      }
+      req.caller.role = 'admin';
+      req.caller.roleSource = 'admin_token';
+      // A7: privileged — may assert identity via header or body.
+      const adminAgentId = bindCallerIdentity(req, {
+        boundAgentId: null,
+        privileged: true,
+        source: 'admin_token',
+        scope: scopes[0],
+      });
+      // Admin token spans every project — intended superuser behaviour, but
+      // kept observable. Emit a distinct audit entry so admin usage is
+      // distinguishable from ordinary per-project writes in the audit log.
+      const scopesStr = scopes.length > 0 ? scopes.join(',') : defaultProjectName();
+      console.warn(
+        `[kanban auth] ADMIN write on ${req.method} ${req.originalUrl} ` +
+        `(project: ${scopesStr}, agent: ${adminAgentId || 'anonymous'}) role: admin`
+      );
+      emitAudit({
+        ts: new Date().toISOString(),
+        kind: 'admin_write',
+        project: scopes.length > 0 ? scopes[0] : defaultProjectName(),
+        task: null,
+        actor: adminAgentId || 'admin',
+        reason: 'admin_token',
+      });
+    };
 
     // Session-token path. A valid HMAC session token carries its own role and
     // project; authenticate against those without consulting a server-side
@@ -692,6 +733,8 @@ export function createAuthMiddleware() {
       req.caller.roleSource = 'session';
       const sessionPrivileged = isPrivilegedRole(session.role);
       req.caller.privileged = sessionPrivileged;
+      // A8: a session's server-issued privileged role is credential-derived.
+      req.caller.adminCredential = sessionPrivileged;
       const referenced = referencedProjects(req);
       const scopes = referenced.length > 0 ? referenced : [defaultProjectName()];
       for (const scope of scopes) {
@@ -747,6 +790,7 @@ export function createAuthMiddleware() {
         // A per-project token is by-convention a worker credential: functional
         // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
         req.caller.privileged = false;
+        req.caller.adminCredential = false;
         // A7 (v3.12.8): bind identity BEFORE the role-mismatch emission. Both
         // audits interpolate req.caller.agent_id as their actor, and identity
         // binding is what settles it — running it afterwards left the
@@ -783,44 +827,23 @@ export function createAuthMiddleware() {
           req.caller.roleSource = 'header';
         }
       } else {
-        req.caller.privileged = true;
-        // v3.8.0: the admin token DERIVES its role from the credential — 'admin'
-        // is what the credential says, never what the header asserts.
-        if (role && role !== 'admin') {
-          emitRoleBindingMismatch(req, role, 'admin', scopes[0] || undefined);
-        }
-        req.caller.role = 'admin';
-        req.caller.roleSource = 'admin_token';
-        // A7: privileged — may assert identity via header or body.
-        const adminAgentId = bindCallerIdentity(req, {
-          boundAgentId: null,
-          privileged: true,
-          source: 'admin_token',
-          scope: scopes[0],
-        });
-        // Admin token spans every project — intended superuser behaviour, but
-        // kept observable. Emit a distinct audit entry so admin usage is
-        // distinguishable from ordinary per-project writes in the audit log.
-        const scopesStr = scopes.length > 0 ? scopes.join(',') : defaultProjectName();
-        console.warn(
-          `[kanban auth] ADMIN write on ${req.method} ${req.originalUrl} ` +
-          `(project: ${scopesStr}, agent: ${adminAgentId || 'anonymous'}) role: admin`
-        );
-        emitAudit({
-          ts: new Date().toISOString(),
-          kind: 'admin_write',
-          project: scopes.length > 0 ? scopes[0] : defaultProjectName(),
-          task: null,
-          actor: adminAgentId || 'admin',
-          reason: 'admin_token',
-        });
+        serveAsAdmin(scopes);
       }
+    } else if (adminToken && tokensMatch(providedToken, adminToken)) {
+      // A8: the admin token is honoured in single-token mode too, so a
+      // single-token deployment has a credential for destructive operations.
+      const referenced = referencedProjects(req);
+      serveAsAdmin(referenced.length > 0 ? referenced : [defaultProjectName()]);
     } else if (!tokensMatch(providedToken, requiredToken)) {
       return unauthorized();
     } else {
       // Legacy single-token (KANBAN_AUTH_TOKEN) deployment: no credential map,
       // so identity stays caller-asserted. A privileged header role keeps the
-      // historical body fallback; everyone else is header-only (A7).
+      // historical body fallback; everyone else is header-only (A7). A8: a
+      // declared role never confers DESTRUCTIVE privilege — that needs the
+      // admin token or a privileged session — but it still drives stage
+      // transitions and the other non-destructive role gates here.
+      req.caller.adminCredential = false;
       const referenced = referencedProjects(req);
       bindCallerIdentity(req, {
         boundAgentId: null,

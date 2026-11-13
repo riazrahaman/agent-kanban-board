@@ -189,6 +189,8 @@ The board features pluggable persistence:
    | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |
    | `KANBAN_MAX_SSE_STREAMS_PER_IP` | `20` | Cap on concurrent `/api/events` streams per client IP (same 503). A negative value disables the per-IP cap; the global cap still applies. Keys on `req.ip`, so it depends on `KANBAN_TRUST_PROXY` being set correctly for your deployment. |
    | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | `60` *(or `KANBAN_RATE_LIMIT_PER_MIN` when that is set)* | Failed auth attempts (401/403) per client address per window on mutations, gated reads and the session/ticket handshakes. Failures over the limit are answered 429 (`retry_after_ms`, `Retry-After`) while valid credentials are still served; an address over 10× the limit is refused outright until the window ends. `0` disables it. Set `KANBAN_TRUST_PROXY=0` when the board is exposed directly without a reverse proxy, otherwise `X-Forwarded-For` is trusted. |
+   | `KANBAN_SESSION_NONCE_MODE` | `required` | Session handshake proof mode. By default `POST /api/auth/session` needs a fresh single-use `server_nonce` from `POST /api/auth/challenge`. Only the exact value `legacy` accepts the old challenge-less proof (logged as a startup warning); any other value means `required`. |
+   | `KANBAN_ADMIN_TOKEN` | *(unset)* | Admin credential spanning every project. Destructive operations (delete, purge, trash restore/hard-delete) need it, or a privileged session, in every auth mode; a declared `X-Agent-Role: admin` is not enough. With only `KANBAN_AUTH_TOKEN` set and no admin token, those operations return 403 (startup warning). |
 
    ---
 
@@ -539,12 +541,12 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 |---|---|---|---|
 | `GET` | `/api/tasks` | List all tasks (`?project=` scopes to one project; unfiltered spans all) | Public |
 | `POST` | `/api/tasks` | Create task (`id` and `title` required; `project`/`workspace_id`/`?project=` scopes the card) | Auth required |
-| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | Auth + privileged role required |
+| `POST` | `/api/tasks/purge` | Bulk-delete selected or filtered tasks (soft into trash by default; `{"hard": true}` = permanent) | The admin token or a privileged session |
 | `GET` | `/api/tasks/trash` | List soft-deleted tasks in the trash sink (project-scoped) | Read |
-| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to READY (owner and lease cleared) | Auth (admin) |
-| `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | Auth + privileged role required |
+| `POST` | `/api/tasks/trash/:id/restore` | Restore a soft-deleted task to READY (owner and lease cleared) | The admin token or a privileged session |
+| `DELETE` | `/api/tasks/trash/:id` | Permanently remove a task from the trash sink | The admin token or a privileged session |
 | `GET` | `/api/tasks/:id` | Get single task details (composite `atlas:task-1` or `?project=` accepted) | Public |
-| `DELETE` | `/api/tasks/:id` | Delete one task | Auth + privileged role required |
+| `DELETE` | `/api/tasks/:id` | Delete one task | The admin token or a privileged session |
 | `PATCH` | `/api/tasks/:id` | Update task status or fields (`project` is immutable) | Auth + Role gated |
 | `POST` | `/api/tasks/:id/claim` | Claim task for agent (`agent_id` body, optional `lease_ms`) | Auth + Contention gated |
 | `POST` | `/api/tasks/:id/heartbeat` | Renew the claimant's task lease (optional `lease_ms` re-windows it) | Auth required |
