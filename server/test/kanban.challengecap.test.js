@@ -9,6 +9,7 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import {
   createSessionChallenge,
+  consumeSessionChallenge,
   resetSessionChallenges,
   liveSessionChallengeCount,
   MAX_LIVE_SESSION_CHALLENGES,
@@ -49,16 +50,16 @@ describe('session challenge cap', () => {
     store.setStorage(null);
   });
 
-  it('refuses new challenges with 503 when full, without evicting pending ones', async () => {
+  it('holds at the cap by evicting the oldest, and always issues the newest', async () => {
     const first = createSessionChallenge();
     for (let i = 1; i < MAX_LIVE_SESSION_CHALLENGES; i += 1) createSessionChallenge();
     assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
-    assert.equal(createSessionChallenge(), null);
     const res = await fetch(`${baseUrl}/api/auth/challenge`, { method: 'POST' });
-    assert.equal(res.status, 503);
+    assert.equal(res.status, 200);
+    const { challenge } = await res.json();
     assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
-    const { consumeSessionChallenge } = await import('../sessionChallenge.js');
-    assert.equal(consumeSessionChallenge(first.challenge), true, 'oldest pending challenge survives');
+    assert.equal(consumeSessionChallenge(first.challenge), false, 'oldest was evicted');
+    assert.equal(consumeSessionChallenge(challenge), true, 'newest is live');
   });
 
   it('still drops expired entries so capacity frees up', async () => {

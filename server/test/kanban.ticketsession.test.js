@@ -7,6 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
+import crypto from 'node:crypto';
 import { createSessionToken, verifySessionToken } from '../sessionAuth.js';
 import { createStreamTicket, verifyStreamTicket, resetStreamTickets } from '../streamTicket.js';
 import * as store from '../store.js';
@@ -130,5 +131,24 @@ describe('stream ticket / session token separation', () => {
     }
     const worker = await mintTicket({ role: 'builder' });
     assert.equal(worker.res.status, 200);
+  });
+
+  const signRaw = (claims) => {
+    const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
+    const mac = crypto.createHmac('sha256', SECRET).update(payload).digest('hex');
+    return `${payload}.${mac}`;
+  };
+
+  it('an untyped ticket-shaped payload is not a session; an untyped legacy session still verifies', () => {
+    const exp = Date.now() + 60000;
+    assert.equal(
+      verifySessionToken(signRaw({ jti: 'j1', exp, role: 'admin', project: 'p' })),
+      null
+    );
+    const legacy = verifySessionToken(
+      signRaw({ cn: 'client-nonce', sn: 's', jti: 'j2', exp, role: 'builder', project: 'p' })
+    );
+    assert.equal(legacy?.role, 'builder');
+    assert.equal(verifySessionToken(signRaw({ typ: 'stream', cn: 'x', jti: 'j3', exp, role: 'builder' })), null);
   });
 });

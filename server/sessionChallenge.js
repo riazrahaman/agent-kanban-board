@@ -70,14 +70,18 @@ export function liveSessionChallengeCount() {
 }
 
 /**
- * Issues a fresh challenge nonce, or returns null when the live set is full. Server-side random (32 hex bytes), never
+ * Issues a fresh challenge nonce, evicting the oldest pending one when the live set is full. Server-side random (32 hex bytes), never
  * client-supplied, so a captured proof cannot be bound to an attacker nonce
  * retroactively.
  */
 export function createSessionChallenge() {
   prune();
-  // Full: refuse rather than evict, so pending legitimate challenges survive.
-  if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) return null;
+  // Full: evict the oldest (O(1)). A real client consumes its challenge within
+  // milliseconds, and refusing instead would let anonymous traffic block every
+  // new handshake.
+  if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) {
+    issued.delete(issued.keys().next().value);
+  }
   const challenge = crypto.randomBytes(32).toString('hex');
   const exp = Date.now() + sessionChallengeTtlMs();
   issued.set(challenge, exp);

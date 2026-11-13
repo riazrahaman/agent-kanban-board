@@ -28,14 +28,17 @@ Hardening release. No new environment variables, so `docs/CONFIGURATION.md` and
   agent identity of the credential that minted it. When per-project credentials
   are configured, the legacy global token no longer mints privileged-role tickets.
 - **Journal load path.** With `KANBAN_STORAGE_JOURNAL=1`, a named project that has
-  only journaled writes is discovered on restart. An existing journal is always
-  replayed on load regardless of the flag, and any full base save clears it, so a
-  stale journal is never replayed over a newer base.
+  only journaled writes is discovered on restart. An existing journal is
+  replayed on load regardless of the flag when it is not older than the base; an
+  older journal is moved aside (`*.stale-<epochms>`) instead of replayed, and an
+  older version of a task never overwrites a newer one. Any full base save
+  clears the journal.
 - **Ask-the-Board lockout** is applied before the password is compared.
-- **Session challenges** are bounded (10,000 pending); when full,
-  `POST /api/auth/challenge` returns 503 instead of evicting, and expired entries
-  are pruned in insertion order.
-- **`/api/health`** includes `backup.backup_root` only for admin callers.
+- **Session challenges** are bounded (10,000 pending); when full the oldest
+  pending challenge is evicted, and expired entries are pruned in insertion
+  order.
+- **`/api/health`** includes `backup.backup_root` only for callers authorised
+  for all projects (the admin token or the legacy global token).
 - **`expected_version`** accepts only a non-negative integer or a digit string;
   anything else is a version conflict (409).
 

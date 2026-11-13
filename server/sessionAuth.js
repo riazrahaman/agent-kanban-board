@@ -98,8 +98,11 @@ export function verifySessionToken(token) {
   if (!parsed || typeof parsed !== 'object') return null;
 
   const { typ, jti, exp, role, project, agent_id: agentId } = parsed;
-  // Stream tickets share the key and format; they are never session tokens.
-  if (typ === 'stream') return null;
+  // Stream tickets share the key and format. Accept only an explicitly typed
+  // session, or an untyped legacy session (those always carry a client nonce).
+  const isSession =
+    typ === 'session' || (typ === undefined && typeof parsed.cn === 'string' && parsed.cn !== '');
+  if (!isSession) return null;
   if (!Number.isInteger(exp)) return null;
   if (exp <= Date.now()) return null;
   // ENH-12: a revoked jti fails even with a valid MAC. Tokens minted before

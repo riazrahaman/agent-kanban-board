@@ -3,7 +3,7 @@
  */
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, utimes, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -89,5 +89,45 @@ describe('journal load path', () => {
     assert.deepEqual(byId, { a: 'newest', c: 'c0' });
     const base = JSON.parse(await readFile(s.filePath, 'utf-8'));
     assert.equal(base.tasks.length, 2);
+  });
+
+  const writeJournal = async (file, entries) =>
+    writeFile(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const ageJournal = async (file) => {
+    const old = new Date(Date.now() - 3600_000);
+    await utimes(file, old, old);
+  };
+
+  for (const flag of ['off', 'on']) {
+    it(`a journal older than the base is not replayed, is moved aside, and does not resurrect deleted tasks (flag ${flag})`, async () => {
+      if (flag === 'on') process.env.KANBAN_STORAGE_JOURNAL = '1';
+      const s = storageFor();
+      // Newer base: t1 at v9, t2 was deleted.
+      await s.save([{ ...task('t1', 'current'), version: 9 }]);
+      const journal = `${s.filePath}.journal.jsonl`;
+      await writeJournal(journal, [
+        { op: 'upsert', id: 't1', task: { ...task('t1', 'old'), version: 2 } },
+        { op: 'upsert', id: 't2', task: task('t2', 'deleted-later') },
+      ]);
+      await ageJournal(journal);
+      const loaded = await storageFor().load();
+      assert.deepEqual(loaded.map((t) => [t.id, t.version]), [['t1', 9]]);
+      assert.ok(!existsSync(journal), 'journal no longer in place');
+      const aside = (await readdir(tasksDir)).filter((f) => f.includes('.journal.jsonl.stale-'));
+      assert.equal(aside.length, 1);
+    });
+  }
+
+  it('a lower-version upsert in a fresh journal is ignored', async () => {
+    const s = storageFor();
+    await s.save([{ ...task('t1', 'current'), version: 5 }]);
+    const journal = `${s.filePath}.journal.jsonl`;
+    await writeJournal(journal, [
+      { op: 'upsert', id: 't1', task: { ...task('t1', 'older'), version: 3 } },
+      { op: 'upsert', id: 't1', task: { ...task('t1', 'newer'), version: 6 } },
+      { op: 'upsert', id: 't1', task: { ...task('t1', 'older-again'), version: 4 } },
+    ]);
+    const loaded = await storageFor().load();
+    assert.deepEqual(loaded.map((t) => [t.title, t.version]), [['newer', 6]]);
   });
 });

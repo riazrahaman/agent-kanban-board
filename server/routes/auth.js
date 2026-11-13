@@ -231,11 +231,7 @@ router.post('/challenge', (req, res) => {
     });
   }
 
-  const issuedChallenge = createSessionChallenge();
-  if (!issuedChallenge) {
-    return res.status(503).json({ error: 'Too many pending challenges; retry shortly' });
-  }
-  const { challenge, expiresAt } = issuedChallenge;
+  const { challenge, expiresAt } = createSessionChallenge();
   return res.status(200).json({
     challenge,
     expires_at: expiresAt,

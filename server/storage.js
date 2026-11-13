@@ -79,9 +79,10 @@ export class JsonStorage {
        // so the first patch bumps a well-defined baseline.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
       backfillLeaseFields(list);
-      // Always replay an existing journal over the base, whatever the flag says:
-      // any full base save clears it, so a surviving journal is newer than base.
-      if (existsSync(this.journalFile)) {
+      // Replay an existing journal over the base whatever the flag says, but
+      // only when it is not older than the base: a journal left behind by an
+      // earlier release (whose flag-off save did not clear it) is stale.
+      if (existsSync(this.journalFile) && (await this._journalIsCurrent())) {
         await this._replayJournal(list);
       }
       return list;
@@ -95,6 +96,36 @@ export class JsonStorage {
       );
       throw err;
     }
+  }
+
+  /**
+   * True when the journal is not older than the base file. An older, non-empty
+   * journal is moved aside (recoverable) so a later append cannot make it look
+   * fresh again; an older empty one is simply removed.
+   *
+   * Known window: a full save writes the base and THEN clears the journal, so
+   * a crash in between leaves the old journal next to the newer base; the
+   * mtime rule and the per-task version guard in `_replayJournal` cover the
+   * common cases, and a generation id would close it fully (not built here).
+   */
+  async _journalIsCurrent() {
+    let base;
+    let journal;
+    try {
+      base = await stat(this.filePath);
+      journal = await stat(this.journalFile);
+    } catch {
+      return true; // no base to compare against (or journal vanished)
+    }
+    if (journal.mtimeMs >= base.mtimeMs) return true;
+    if (journal.size === 0) {
+      await rm(this.journalFile, { force: true });
+      return false;
+    }
+    const aside = `${this.journalFile}.stale-${Date.now()}`;
+    await rename(this.journalFile, aside);
+    console.warn(`[kanban JsonStorage] journal older than base ignored and moved to ${path.basename(aside)}`);
+    return false;
   }
 
   /**
@@ -112,6 +143,10 @@ export class JsonStorage {
       try {
         const entry = JSON.parse(line);
         if (entry.op === 'upsert' && entry.task) {
+          // Never let an older version of a task overwrite a newer one.
+          const existing = byId.get(entry.task.id);
+          if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
+              && entry.task.version < existing.version) continue;
           byId.set(entry.task.id, entry.task);
         } else if (entry.op === 'remove' && entry.id) {
           byId.delete(entry.id);
