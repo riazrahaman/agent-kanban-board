@@ -529,9 +529,11 @@ export function createAskRouter(deps = {}) {
     }
     // Reserve synchronously (no await since the peek). The slot is held until
     // the HANDLER finishes (finally below), not until the client goes away.
-    // Charging rule: once an upstream call has been SENT the slot is charged on
-    // every outcome (the provider may bill it, and a local model carries the
-    // load); a request that never left the process is only refunded.
+    // Charging rule: a call that was SENT and may have been billed is charged
+    // (success, provider 5xx, timeout, client abort: the provider may bill it,
+    // and a local model carries the load). A provider 4xx answer, a connection
+    // that never reached the provider, and a request that never left the process
+    // are refunded.
     const releaseSlot = reserve(ip);
     let sent = false;
     let billable = false;

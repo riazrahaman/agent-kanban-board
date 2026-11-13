@@ -38,8 +38,9 @@ description is rewritten to match the shipped behaviour.
   token without the `Bearer ` prefix is rejected. The board itself always sends
   the prefix.
 - **Failed-login throttling is on by default** at 60 failures per address per
-  window, matching the documentation. Deployments that left
-  `KANBAN_AUTH_RATE_LIMIT_PER_MIN` unset previously had no throttling;
+  window, matching the documentation. Deployments with neither
+  `KANBAN_AUTH_RATE_LIMIT_PER_MIN` nor `KANBAN_RATE_LIMIT_PER_MIN` set
+  previously had no failed-login throttling;
   `KANBAN_AUTH_RATE_LIMIT_PER_MIN=0` turns it off.
 - **Ask calls that were sent upstream now count against the caps** on every
   outcome (success, provider 5xx, timeout, client abort). Previously upstream

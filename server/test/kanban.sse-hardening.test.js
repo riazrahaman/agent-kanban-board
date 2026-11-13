@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
   createApp, liveSseStreamCount, resetSseStreams, drainSseStreams,
   SSE_PING_INTERVAL_MS, SSE_DEFAULT_MAX_STREAMS_PER_IP, sseTestOverrides,
+  sseLastEndReason,
 } from '../server.js';
 import * as store from '../store.js';
 
@@ -167,8 +168,12 @@ describe('SSE hardening', () => {
   it('ends a crawling reader once the backlog queued after the prime exceeds the limit', async () => {
     resetSseStreams();
     sseTestOverrides.maxBacklogBytes = 100 * 1024;
+    // Push the no-progress timer far past the loop, so ONLY the backlog bound
+    // can end this stream (with the bound disabled the test must fail).
+    sseTestOverrides.stallMs = 10 * 60_000;
+    let s;
     try {
-      const s = await openStream(baseUrl, '?prime=1');
+      s = await openStream(baseUrl, '?prime=1');
       await tick(500);
       s.res.pause();
       s.res.socket.pause();
@@ -178,14 +183,18 @@ describe('SSE hardening', () => {
       // patch emits a ~19 KB frame while the partition stays small, so the loop
       // can run far past any kernel buffering until the backlog limit trips.
       await store.createTask({ id: 'sse-crawl', title: 'c', status: 'BACKLOG', round: 1 });
-      for (let i = 0; i < 4000 && liveSseStreamCount() > 0; i++) {
-        await store.patchTask('sse-crawl', { description: `${i}-`.padEnd(19_000, 'q') });
+      let patches = 0;
+      for (; patches < 1500 && liveSseStreamCount() > 0; patches++) {
+        await store.patchTask('sse-crawl', { description: `${patches}-`.padEnd(19_000, 'q') });
       }
-      assert.equal(liveSseStreamCount(), 0, 'backlog limit ended the stream long before the stall timeout');
-      s.req.destroy();
-      await tick();
+      assert.equal(liveSseStreamCount(), 0, `backlog limit did not end the stream within ${patches} patches`);
+      assert.equal(sseLastEndReason(), 'backlog-limit', 'the stream was ended by the backlog bound');
     } finally {
+      s?.req.destroy();
+      await tick();
       sseTestOverrides.maxBacklogBytes = null;
+      sseTestOverrides.stallMs = null;
+      resetSseStreams();
     }
   });
 

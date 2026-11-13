@@ -52,6 +52,7 @@ export function liveSseStreamCount() {
 
 export function resetSseStreams() {
   activeSseStreams = 0;
+  lastSseEndReason = null;
   for (const entry of openSseStreams.values()) { clearInterval(entry.ping); clearTimeout(entry.stall); }
   openSseStreams.clear();
   sseStreamsByIp.clear();
@@ -71,6 +72,10 @@ export const SSE_STALL_TIMEOUT_MS = 30_000;
 // counted. `maxBacklogBytes` is a test-only override.
 export const SSE_MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
 export const sseTestOverrides = { stallMs: null, maxBacklogBytes: null };
+// Why the server last ended a slow stream ('no-progress' | 'backlog-limit'), so
+// tests can tell the two bounds apart. Cleared by resetSseStreams().
+let lastSseEndReason = null;
+export function sseLastEndReason() { return lastSseEndReason; }
 
 // A9: per-client-IP concurrent stream cap. `KANBAN_MAX_SSE_STREAMS_PER_IP`
 // (default 20; negative disables). Keys on `req.ip`, so it depends on
@@ -344,7 +349,8 @@ export function createApp(opts = {}) {
     // no error middleware. A write to an already-destroyed socket is the real
     // failure mode: treat it as a closed client and detach.
     const endSlowStream = (reason, bytes) => {
-      logWarn('sse', 'ending stalled event stream (no write progress)', { bytes, reason });
+      lastSseEndReason = reason;
+      logWarn('sse', `ending slow event stream (${reason})`, { bytes, reason });
       closed = true;
       unsubscribe();
       if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
