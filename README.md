@@ -437,7 +437,7 @@ one-line note, and `POST /api/ask` is unavailable.
 | `KANBAN_ASK_PROVIDER` | no | `openrouter` or `ollama`. Auto-detected when unset (see above). |
 | `KANBAN_ASK_OLLAMA_HOST` | no | Base URL of the Ollama instance. Default `http://localhost:11434`. |
 | `KANBAN_ASK_OLLAMA_AUTH_HEADER` | no | Bearer token sent to the Ollama host — the shared secret the tunnel gateway verifies. |
-| `KANBAN_ASK_GITHUB_TOKEN` | no | Optional **read-only** GitHub token for the recent-commits lookup. Unset = unauthenticated public API (60 requests/hour, cached; a failed lookup just omits the section). The bug-report token is never used here. |
+| `KANBAN_ASK_GITHUB_TOKEN` | no | Optional **read-only** GitHub token for the recent-commits lookup. Unset = unauthenticated public API (60 requests/hour, cached; a failed lookup just omits the section). The bug-report token is never used here. Without it the recent-commits section may often be empty on shared-IP hosts, because unauthenticated GitHub allows only 60 requests per hour per IP. |
 | `KANBAN_ASK_MODEL` | no | Model id. Default `openai/gpt-oss-20b` (OpenRouter) or `qwen3.6:latest` (Ollama). |
 | `KANBAN_ASK_DAILY_CAP` | no | Global answers per UTC day. Default 50. |
 | `KANBAN_ASK_PER_IP_PER_HOUR` | no | Per-IP answers per hour. Default 3. |
@@ -452,12 +452,15 @@ one-line note, and `POST /api/ask` is unavailable.
 Verify a deployment the same way as report-a-bug:
 
 ```bash
-curl <board-url>/api/ask/config
+curl -H 'x-ask-pass: <password>' <board-url>/api/ask/config
 ```
 
-`{"enabled":true,"gated":true,"provider":"...","model":"..."}` confirms
-configuration — `provider` tells you which engine is live — and the first
-genuine end-to-end check is asking one real question from the page.
+With the password, `{"enabled":true,"gated":true,"provider":"...","model":"...","scope":"all"}`
+confirms configuration — `provider` tells you which engine is live. Without a
+valid `x-ask-pass` (or while locked out) the response is only
+`{"enabled":true,"gated":true}`; a wrong password counts toward the Ask
+failed-attempt lockout. The first genuine end-to-end check is asking one real
+question from the page.
 
 ### Troubleshooting: "The assistant is temporarily unavailable"
 
@@ -568,7 +571,7 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
 | `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
 | `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
-| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated, provider, model}`; `provider` added v3.7.0); the console only renders when enabled | Public |
+| `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated}`; `provider`, `model` and `scope` are added only when a valid `x-ask-pass` is sent, v3.13.1); the console only renders when enabled | Public (limited view) / Shared password (full view) |
 | `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never mutates a card, reads the named card's record and logs in-process (redacted by default) | Shared password (not a board token) |
 
 ---

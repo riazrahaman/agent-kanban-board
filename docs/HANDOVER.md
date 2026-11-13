@@ -352,7 +352,7 @@ under `<data>/backups/<timestamp>/`. `scripts/restore-backup.mjs` restores one.
 - **Ask-the-Board** (`routes/ask.js` + `askKnowledge.js`, mounted public). A
   **read-only, password-gated** Q&A over the board's protocol and source. Off
   unless **both** `KANBAN_ASK_OPENROUTER_API_KEY` and `KANBAN_ASK_PASSWORD` are
-  set. `GET /api/ask/config` reports `{enabled,gated,model}`. `POST /api/ask`
+  set. `GET /api/ask/config` reports `{enabled,gated}`, plus `provider`, `model` and `scope` only when a valid `x-ask-pass` is sent (wrong passwords count toward the Ask lockout). `POST /api/ask`
   requires the `x-ask-pass` header and `{question}` (3–500 chars); it builds a
   system prompt from a curated protocol pack, **retrieved source excerpts**
   from a cached symbol/topic index of `server/`, `client/src/` and `scripts/`
