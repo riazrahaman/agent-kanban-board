@@ -418,6 +418,9 @@ router.post('/next-claim', asyncHandler(async (req, res) => {
       role: rawRole ? String(rawRole).toLowerCase() : undefined,
       project,
       lease_ms: req.query?.lease_ms ?? req.body?.lease_ms,
+      // SEC-04 (v3.12.11): the credential-derived privilege flag decides the
+      // claim-cap exemption, not the declared role alone.
+      caller: req.caller || {},
      });
 
      if (result.unavailable) {
@@ -556,7 +559,14 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
  * null` releases the assignment. Mirrors the claim route's 409 passthroughs.
  */
 router.post('/:id/assign', asyncHandler(async (req, res) => {
-  const agentId = 'agent_id' in (req.body || {}) ? req.body.agent_id : undefined;
+  // COR-19 (v3.12.11): only an EXPLICIT `agent_id: null` releases. A missing
+  // field (empty body, mistyped key) used to be mapped to null and silently
+  // stripped the holder; it is now a 400.
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (!Object.prototype.hasOwnProperty.call(body, 'agent_id')) {
+    return res.status(400).json({ error: 'agent_id is required (use agent_id: null to release the assignment)' });
+  }
+  const agentId = body.agent_id;
   const guard = resolveExpectedVersion(req);
   const result = await store.assignTask(req.params.id, agentId === undefined ? null : agentId, {
     caller: req.caller || {},

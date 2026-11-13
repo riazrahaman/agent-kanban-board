@@ -221,8 +221,13 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     const claimed = await claim(id, CREDENTIALS.legacy, 'reviewer');
     assert.equal(claimed.response.status, 200, 'legacy token + header reviewer claims as reviewer');
     assert.equal(claimed.body.status, 'IN_PROGRESS');
+    // SEC-04 (v3.12.11): a privileged header role on an unbound project
+    // credential no longer bypasses the role matrix (the credential is not
+    // privileged); a functional header role keeps working.
     const walk = await patchStatus(id, CREDENTIALS.legacy, 'runner', 'IN_REVIEW');
-    assert.equal(walk.response.status, 200, 'legacy header role runner still bypasses transitions');
+    assert.equal(walk.response.status, 403, 'unbound project credential + header runner is not privileged');
+    const asBuilder = await patchStatus(id, CREDENTIALS.legacy, 'builder', 'IN_REVIEW');
+    assert.equal(asBuilder.response.status, 200, 'legacy header role builder still walks its own edge');
     });
 
   it('B1. patchTask rejects a body "role" field with 400 (the old side door is closed), even for admin callers', async () => {

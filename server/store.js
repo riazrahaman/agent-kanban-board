@@ -106,6 +106,11 @@ import {
   compositeKey,
   resetArchive,
   resetTrash,
+  spillDir,
+  spillFile,
+  parkedSpillFile,
+  moveSpillFile,
+  removeSpillFile,
   resetProjectSettings,
   markStoreLoaded,
   getTasks,
@@ -549,6 +554,11 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
 
     // BUG-08 (v2.7.0): reject self-references and dependency cycles. Placed
     // after the validateDependsOn shape check and after project/id resolution.
+    // SEC-08: dependencies are resolved within the card's own project only.
+    const scopeError = validateDependsOnScope(project, data.depends_on);
+    if (scopeError) {
+      return { error: scopeError, status: 400 };
+    }
     const cycleError = validateDependencyGraph(project, data.id, data.depends_on);
     if (cycleError) {
       return { error: cycleError, status: 400 };
@@ -571,9 +581,21 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
         status: 403,
       };
     }
-    if (!Number.isInteger(data.round) || data.round < 1) {
-      return { error: 'round must be a positive integer', status: 400 };
+    const roundError = validateRound(data.round);
+    if (roundError) {
+      return { error: roundError, status: 400 };
     }
+    // COR-09: issues/branch/milestone share the PATCH bounds. A non-array
+    // `issues` keeps its historical coercion to [] on create; an array must be
+    // short strings (escaped like addIssue).
+    if (Array.isArray(data.issues)) {
+      const issuesError = validateIssues(data.issues);
+      if (issuesError) return { error: issuesError, status: 400 };
+    }
+    const branchError = validateLabelLength('branch', data.branch, MAX_BRANCH_LEN);
+    if (branchError) return { error: branchError, status: 400 };
+    const milestoneError = validateLabelLength('milestone', data.milestone, MAX_MILESTONE_LEN);
+    if (milestoneError) return { error: milestoneError, status: 400 };
 
     const now = new Date().toISOString();
     const newTask = {
@@ -595,7 +617,7 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
       milestone: toMilestone(data.milestone),
       depends_on: Array.isArray(data.depends_on) ? data.depends_on : [],
       round: data.round,
-      issues: Array.isArray(data.issues) ? data.issues : [],
+      issues: Array.isArray(data.issues) ? data.issues.map((i) => escapeHtml(i)) : [],
       // BUG-04 (v2.5.8): an owner is only ever written by a claim. A
       // caller-supplied `assigned_agent` at create time used to stick to a
       // BACKLOG card with NO lease, which made it unclaimable forever (the
@@ -624,6 +646,9 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
     // KB-05: mutate in memory only after the partition write lands.
     await getStorage(project).saveTask(newTask, projectBucket(project, newTask));
     updateInMemoryTask(newTask);
+    // COR-12: a brand-new card owns no spilled history. Retire a sidecar a
+    // pre-v3.12.11 delete may have left behind under this id.
+    await removeSpillFile(spillFile(project, newTask.id));
     notify();
     return { task: newTask, status: 201 };
   });
@@ -661,7 +686,12 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     const candidate = structuredClone(task);
     // v3.8.0 Phase 2: caller.role only — the `|| patch.role` fallback is gone.
     // A body can no longer confer the role that gates KB-02 transitions.
-    const role = caller.role || null;
+    // SEC-04 (v3.12.11): a privileged role string only counts when the
+    // credential itself is privileged (callerIsPrivileged: admin token,
+    // privileged session, legacy single-token / direct callers with no
+    // middleware flag). An unbound project credential that merely DECLARES
+    // `X-Agent-Role: admin` is treated as roleless for the KB-02 matrix.
+    const role = effectiveTransitionRole(caller);
        // §2.5: detect a *transition into DONE* so we can fire the completion hook
        // after this write commits. The pre-write status is the live task's status
        // (updateInMemoryTask has not run yet, so `task` still carries the old one).
@@ -727,8 +757,10 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       }
      }
 
-     // §2.8: anchor completion time on the transition into DONE.
-    if (candidate.status === STATUSES.DONE && !candidate.completed_at) {
+     // §2.8: anchor completion time on the transition into DONE. COR-07: a
+     // REAL transition into DONE always restamps (a stale completed_at from an
+     // earlier life of the card must not survive); a DONE -> DONE edit keeps it.
+    if (candidate.status === STATUSES.DONE && (wasStatus !== STATUSES.DONE || !candidate.completed_at)) {
      candidate.completed_at = new Date().toISOString();
     }
 
@@ -780,17 +812,24 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           // (an explicit clear) and a real ref is set verbatim. escapeHtml is
           // deliberately NOT applied here — a branch is a ref, not prose, and
           // has never been HTML-escaped on any path.
+          const branchError = validateLabelLength('branch', patch[key], MAX_BRANCH_LEN);
+          if (branchError) return { error: branchError, status: 400 };
           candidate[key] = toBranch(patch[key]);
         } else if (key === 'milestone') {
           // v2.11.0 (opt-milestones): same shared rule as branch — a non-empty
           // string is kept verbatim, `milestone: null` clears it, and anything
           // else (number/object/blank) becomes null rather than a bogus label.
+          const milestoneError = validateLabelLength('milestone', patch[key], MAX_MILESTONE_LEN);
+          if (milestoneError) return { error: milestoneError, status: 400 };
           candidate[key] = toMilestone(patch[key]);
         } else if (key === 'depends_on') {
           // BUG-05 (v2.5.8): same shape rule as createTask — a bare string is
           // rejected rather than silently dropped.
           const dependsOnError = validateDependsOn(patch[key]);
           if (dependsOnError) return { error: dependsOnError, status: 400 };
+          // SEC-08: a dependency must live in the card's own project.
+          const scopeError = validateDependsOnScope(candidate.project, patch[key]);
+          if (scopeError) return { error: scopeError, status: 400 };
           // BUG-08 (v2.7.0): reject self-references and dependency cycles.
           const cycleError = validateDependencyGraph(candidate.project, candidate.id, patch[key]);
           if (cycleError) return { error: cycleError, status: 400 };
@@ -801,8 +840,18 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           const metadataError = validateMetadata(patch[key]);
           if (metadataError) return { error: metadataError, status: 400 };
           candidate[key] = patch[key] === undefined || patch[key] === null ? {} : patch[key];
-        } else {
+        } else if (key === 'round') {
+          // COR-09: the createTask rule. A non-integer round used to be stored
+          // verbatim (and broke every later git-backend save of the card).
+          const roundError = validateRound(patch[key]);
+          if (roundError) return { error: roundError, status: 400 };
           candidate[key] = patch[key];
+        } else if (key === 'issues') {
+          // COR-09: a bounded array of short strings, escaped like addIssue.
+          // `issues: null` clears the list.
+          const issuesError = validateIssues(patch[key]);
+          if (issuesError) return { error: issuesError, status: 400 };
+          candidate[key] = Array.isArray(patch[key]) ? patch[key].map((i) => escapeHtml(i)) : [];
         }
       }
     }
@@ -827,6 +876,18 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       candidate.assigned_agent &&
       candidate.assigned_agent === caller.agent_id &&
       candidate.claim_expires_at
+    ) {
+      candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
+    }
+
+    // COR-13: BLOCKED keeps owner + lease and is never swept, so the old lease
+    // has usually lapsed by the time it is unblocked. Leaving BLOCKED for an
+    // active stage re-arms the lease for the existing owner; an absent owner
+    // simply lets the fresh lease lapse one window later.
+    if (
+      wasStatus === STATUSES.BLOCKED &&
+      ACTIVE_STATUS_SET.has(candidate.status) &&
+      candidate.assigned_agent
     ) {
       candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
     }
@@ -874,7 +935,7 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     const enteredDone = candidate.status === STATUSES.DONE && wasStatus !== STATUSES.DONE;
     if (enteredDone && isAutoPromoteEnabled()) {
       try {
-        await maybeUnlockDependentsInner(candidate.id, Date.now());
+        await maybeUnlockDependentsInner(candidate.id, Date.now(), candidate.project);
        } catch (err) {
         log.error('auto-promote unlock failed', { error: err && err.message });
       }
@@ -905,6 +966,14 @@ import {
   validateDependsOn,
   validateMetadata,
   priorityRank,
+  MAX_MESSAGE_LEN,
+  MAX_BRANCH_LEN,
+  MAX_MILESTONE_LEN,
+  MAX_ISSUES,
+  MAX_ISSUE_LEN,
+  validateRound,
+  validateIssues,
+  validateLabelLength,
 } from './task-fields.js';
 export {
   PRIVILEGED_ROLE_SET,
@@ -944,10 +1013,54 @@ export function dependencyGate(task) {
   if (deps.length === 0) return { ok: true, unresolved: [] };
   const unresolved = [];
   for (const dep of deps) {
-    const depTask = getTask(dep, task.project);
+    // SEC-08: same-project lookup only. A `project:id` entry naming another
+    // project (legacy data predating the write-time check) fails closed
+    // instead of resolving across the project boundary.
+    const key = dependencyKey(dep, task.project);
+    const depTask = key ? index.get(key) : null;
     if (!depTask || depTask.status !== STATUSES.DONE) unresolved.push(dep);
   }
   return { ok: unresolved.length === 0, unresolved };
+}
+
+/**
+ * SEC-08 / COR-08: the composite key a depends_on entry names within the
+ * owning card's project, or null when the entry names a DIFFERENT project.
+ * A bare id and `<own-project>:id` both resolve to `<own-project>/id`.
+ */
+function dependencyKey(dep, ownerProject) {
+  const { project, shortId } = resolveProjectScope(dep, ownerProject);
+  const owner = normalizeProject(ownerProject);
+  if (project !== owner) return null;
+  return compositeKey(owner, shortId);
+}
+
+/**
+ * SEC-08: write-time check — every depends_on entry must address the card's
+ * own project. Returns an error string or null.
+ */
+function validateDependsOnScope(project, dependsOn) {
+  if (!Array.isArray(dependsOn)) return null;
+  for (const dep of dependsOn) {
+    if (typeof dep === 'string' && dependencyKey(dep, project) === null) {
+      return `depends_on entry '${escapeHtml(dep)}' must reference a task in project '${project}'`;
+    }
+  }
+  return null;
+}
+
+/**
+ * SEC-04 (v3.12.11): the role used for privilege decisions. A privileged role
+ * string (runner/system/human/admin) is honoured only when the credential is
+ * privileged per callerIsPrivileged — the same rule delete/purge/assign use.
+ * When the middleware stamped `privileged: false` (an unbound project
+ * credential declaring a privileged header role) the role is dropped to null.
+ * Functional roles (builder/reviewer/...) pass through unchanged.
+ */
+function effectiveTransitionRole(caller) {
+  const role = caller?.role || null;
+  if (isPrivilegedRole(role) && !callerIsPrivileged(caller || {})) return null;
+  return role;
 }
 
 /**
@@ -1007,7 +1120,9 @@ function validateDependencyGraph(project, id, dependsOn) {
  */
 async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs = null, leaseExplicit = false } = {}) {
   const role = caller?.role || null;
-  const isPriv = isPrivilegedRole(role);
+  // SEC-04 (v3.12.11): the claim-cap exemption and the privileged renewal
+  // branch follow the CREDENTIAL (callerIsPrivileged), not the declared role.
+  const isPriv = isPrivilegedRole(role) && callerIsPrivileged(caller || {});
 
   // E-2: a fresh claim is capped per agent (KANBAN_MAX_CLAIMS_PER_AGENT, 0 =
   // unlimited). This runs before contention so a caller at their cap gets a
@@ -1221,15 +1336,22 @@ async function unlockTaskInner(task, nowMs, completedRef) {
 }
 
 // Inner (no lock — caller already holds it via patchTask, or via the wrapper).
-async function maybeUnlockDependentsInner(completedRef, nowMs) {
+// COR-08: `completedProject` scopes the match. Short ids are unique only per
+// project, so a BLOCKED card is unblocked only when one of its deps resolves
+// (in its own project) to the completed card's composite key. A
+// `project:id` completedRef carries its own project.
+async function maybeUnlockDependentsInner(completedRef, nowMs, completedProject) {
   const unblocked = [];
+  const { project: doneProject, shortId: doneId } = resolveProjectScope(completedRef, completedProject);
+  const doneKey = compositeKey(doneProject, doneId);
   for (const t of tasks.slice()) {
     if (t.status !== STATUSES.BLOCKED) continue;
+    if (t.project !== doneProject) continue;
     const deps = Array.isArray(t.depends_on) ? t.depends_on : [];
-    if (!deps.includes(completedRef)) continue;
+    if (!deps.some((dep) => dependencyKey(dep, t.project) === doneKey)) continue;
       // Only unlock when *every* dep is now DONE (the last-dep-completes case).
     if (!dependencyGate(t).ok) continue;
-    const r = await unlockTaskInner(t, nowMs, completedRef);
+    const r = await unlockTaskInner(t, nowMs, doneId);
     if (!r.error) unblocked.push(t.id);
     }
   // Each unlock fired its own semantic event inside unlockTaskInner; this
@@ -1247,10 +1369,10 @@ async function maybeUnlockDependentsInner(completedRef, nowMs) {
  * unblocks them (clears owner + lease). Re-running finds no matching BLOCKED
  * task, so it is safe to call repeatedly.
  */
-export async function maybeUnlockDependents(completedRef, { now } = {}) {
+export async function maybeUnlockDependents(completedRef, { now, project } = {}) {
   return withMutationLock(async () => {
     const nowMs = typeof now === 'number' ? now : nowFn();
-    return maybeUnlockDependentsInner(completedRef, nowMs);
+    return maybeUnlockDependentsInner(completedRef, nowMs, project);
   });
 }
 
@@ -1556,7 +1678,7 @@ export function getMilestones(project) {
    * Returns `{ task, status: 200 }` on a claim, or `{ unavailable: true,
    * status: 204 }` when nothing is claimable (a cheap poll target for agents).
    */
-  export async function nextClaim({ agentId, role, project, now, lease_ms: requestedLease } = {}) {
+  export async function nextClaim({ agentId, role, project, now, lease_ms: requestedLease, caller = null } = {}) {
     return withMutationLock(async () => {
       if (!agentId || typeof agentId !== 'string') {
         return { error: 'agent_id is required', status: 400 };
@@ -1604,7 +1726,13 @@ export function getMilestones(project) {
          // serializes, but this keeps the shared core total).
        const lease = resolveLeaseMs(requestedLease);
        if (!lease.ok) return { error: lease.error, status: lease.status };
-       const r = await applyClaim(winner, agentId, role ? { role } : {}, nowMs, { leaseMs: lease.ms, leaseExplicit: lease.explicit });
+       // SEC-04: carry the credential-derived `privileged` flag (when the route
+       // supplies the caller) so the claim-cap exemption follows the credential.
+       const claimCaller = role ? { role } : {};
+       if (caller && typeof caller === 'object' && 'privileged' in caller) {
+         claimCaller.privileged = caller.privileged;
+       }
+       const r = await applyClaim(winner, agentId, claimCaller, nowMs, { leaseMs: lease.ms, leaseExplicit: lease.explicit });
         if (r.error) return r;
         return { task: r.task, status: 200 };
         });
@@ -1640,13 +1768,8 @@ function getInlineCommentCap() {
  * Resolves the spill directory for a project. Lives under the same data root
  * as the task partitions, in a `spill/<project>/` subdirectory.
  */
-function spillDir(project) {
-  return path.join(jsonDataDir(), 'spill', project || defaultProjectName());
-}
-
-function spillFile(project, taskId) {
-  return path.join(spillDir(project), `${taskId}.jsonl`);
-}
+// spillDir/spillFile live in ./store/core.js (COR-12) so the trash and archive
+// modules can retire a sidecar without a cycle back into this facade.
 
 /**
  * Appends one JSON line to the spill file for a task. Creates the directory
@@ -1738,11 +1861,13 @@ export async function getTaskLogs(id, project, { offset = 0, limit = 50, include
   const logs = Array.isArray(task.agent_logs) ? task.agent_logs : [];
   // Inline logs: newest-first (reverse of append order).
   const inline = [...logs].reverse();
-  const spilled_count = await countSpill(task.project, id);
+  // COR-12: the sidecar is keyed by the card's SHORT id. Using the request id
+  // missed it for the documented `project:id` form.
+  const spilled_count = await countSpill(task.project, task.id);
   // Deep-review: `include_spilled=1` must mean "the spilled page", not "the
   // entire spill file regardless of offset/limit" — a reclamation-storm card
   // would otherwise return its whole history on every open read.
-  const allSpilled = await readSpill(task.project, id);
+  const allSpilled = await readSpill(task.project, task.id);
   const entries = allSpilled.slice(offset, offset + limit);
   return { inline, spilled_count, entries, status: 200 };
 }
@@ -1762,6 +1887,9 @@ export async function appendLog(id, agentId, message, project, { expected_versio
     }
     if (typeof message !== 'string' || message.trim() === '') {
       return { error: 'message must be a non-empty string', status: 400 };
+    }
+    if (message.length > MAX_MESSAGE_LEN) {
+      return { error: `message must be at most ${MAX_MESSAGE_LEN} characters`, status: 400 };
     }
     if (typeof agentId !== 'string' || agentId.trim() === '') {
       return { error: 'agent_id must be a non-empty string', status: 400 };
@@ -1839,6 +1967,10 @@ export async function addIssue(id, issueId, project, { expected_version: expecte
     if (!issueId || typeof issueId !== 'string') {
       return { error: 'issue_id is required', status: 400 };
        }
+    // COR-09: the same bounds PATCH applies to `issues`.
+    if (issueId.length > MAX_ISSUE_LEN) {
+      return { error: `issue_id must be at most ${MAX_ISSUE_LEN} characters`, status: 400 };
+    }
 
         // §2.6: enforce the version guard before building the candidate.
     const conflict = versionConflict(task, expectedVersion);
@@ -1851,6 +1983,9 @@ export async function addIssue(id, issueId, project, { expected_version: expecte
       candidate.issues = [];
       }
     if (!candidate.issues.includes(safeIssueId)) {
+      if (candidate.issues.length >= MAX_ISSUES) {
+        return { error: `issues must contain at most ${MAX_ISSUES} entries`, status: 400 };
+      }
       candidate.issues.push(safeIssueId);
       }
     candidate.updated = new Date().toISOString();
@@ -1881,6 +2016,9 @@ export async function addComment(id, agentId, message, project, { expected_versi
     }
     if (message.trim() === '') {
       return { error: 'message must be a non-empty string', status: 400 };
+    }
+    if (message.length > MAX_MESSAGE_LEN) {
+      return { error: `message must be at most ${MAX_MESSAGE_LEN} characters`, status: 400 };
     }
     if (typeof agentId !== 'string' || agentId.trim() === '') {
       return { error: 'agent_id must be a non-empty string', status: 400 };
@@ -1967,7 +2105,9 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
     });
 
     if (storage instanceof GitYamlStorage) {
-      await storage.trashTask(task);
+      // COR-15: persist the STAMPED copy (deleted_by, bumped version) so disk
+      // and memory agree after a restart, exactly as the JSON branch does.
+      await storage.trashTask(trashed);
     } else {
       // Deep-review: write the SAFETY SINK first, then the partition. A crash
       // between the two must leave the card parked in trash, never lost in both
@@ -1980,6 +2120,12 @@ export async function deleteTask(id, { caller = {}, project } = {}) {
 
     trash[task.project] = [...(trash[task.project] || []), trashed];
     removeFromMemory(task.project, task.id);
+    // COR-12: the trash row takes its spill sidecar along (keyed by deleted_at)
+    // so a re-created card with this id starts with no inherited history.
+    await moveSpillFile(
+      spillFile(task.project, task.id),
+      parkedSpillFile(task.project, task.id, 'trash', trashed.deleted_at),
+    );
     notify({
       actor: caller.agent_id || 'admin',
       reason: 'deleted',
@@ -2104,37 +2250,37 @@ export async function purgeTasks({ caller = {}, project, ids, filter, hard = fal
           const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
           await storage.deleteTask(list[0], survivors);
         }
+        // COR-12: a permanent delete retires the card's spill sidecar too, so
+        // a future card reusing the id never inherits this card's logs.
+        for (const t of list) await removeSpillFile(spillFile(p, t.id));
       } else {
         // Soft-delete: park each row in the trash sink (persist-first), then
         // drop it from the live partition.
         const deletedAt = new Date(nowFn()).toISOString();
+        // COR-15: stamp once and persist the SAME stamped copies on both
+        // backends (the git branch used to write the un-stamped rows).
+        const stamped = list.map((t) => Object.assign(structuredClone(t), {
+          deleted_at: deletedAt,
+          deleted_by: caller.agent_id || 'admin',
+          version: nextVersionFor(t),
+        }));
         if (storage instanceof GitYamlStorage) {
-          for (const t of list) {
-            await storage.trashTask(t);
+          for (const row of stamped) {
+            await storage.trashTask(row);
           }
         } else {
           const deleteIds = new Set(list.map((t) => t.id));
           const survivors = getProjectBucket(p).filter((t) => !deleteIds.has(t.id));
           // Deep-review: write the SAFETY SINK first, then the partition.
-          const sink = [
-            ...(trash[p] || []),
-            ...list.map((t) => Object.assign(structuredClone(t), {
-              deleted_at: deletedAt,
-              deleted_by: caller.agent_id || 'admin',
-              version: nextVersionFor(t),
-            })),
-          ];
+          const sink = [...(trash[p] || []), ...stamped];
           await storage.saveTrash(sink);
           await storage.save(survivors);
         }
-        trash[p] = [
-          ...(trash[p] || []),
-          ...list.map((t) => Object.assign(structuredClone(t), {
-            deleted_at: deletedAt,
-            deleted_by: caller.agent_id || 'admin',
-            version: nextVersionFor(t),
-          })),
-        ];
+        trash[p] = [...(trash[p] || []), ...stamped];
+        // COR-12: each trash row takes its sidecar along, keyed by deleted_at.
+        for (const row of stamped) {
+          await moveSpillFile(spillFile(p, row.id), parkedSpillFile(p, row.id, 'trash', row.deleted_at));
+        }
       }
       for (const t of list) {
         removeFromMemory(p, t.id);

@@ -13,6 +13,10 @@ import {
   withMutationLock,
   versionConflict,
   nextVersionFor,
+  spillFile,
+  parkedSpillFile,
+  moveSpillFile,
+  removeSpillFile,
 } from './core.js';
 import { notify } from './listeners.js';
 import { GitYamlStorage } from '../storage.js';
@@ -54,9 +58,12 @@ function trashFind(project, id) {
   return list.find((t) => t.id === id) || null;
 }
 
+// COR-05: remove exactly ONE row, by object identity. An id can be deleted,
+// re-created and deleted again, leaving two trash rows with the same id;
+// filtering by bare id destroyed the sibling row too (memory and disk).
 async function trashPersistRemove(project, removedTask) {
   const storage = getStorage(project);
-  const remaining = (trash[project] || []).filter((t) => t.id !== removedTask.id);
+  const remaining = (trash[project] || []).filter((t) => t !== removedTask);
   if (storage instanceof GitYamlStorage) {
     await storage.trashRemove(removedTask);
   } else {
@@ -99,6 +106,12 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
 
     const restored = structuredClone(trashed);
     restored.status = STATUSES.READY;
+    // COR-07: a restored card is NOT finished, archived or recently progressed.
+    // A stale completed_at made a re-finished card keep its old completion
+    // time (archive eligibility and cycle-time metrics key on it).
+    delete restored.completed_at;
+    delete restored.archived_at;
+    restored.last_progress_at = null;
     restored.assigned_agent = null;
     restored.claim_expires_at = null;
     restored.claim_lease_ms = null;
@@ -132,6 +145,12 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
     }
 
     updateInMemoryTask(restored);
+    // COR-12: bring the row's parked spill sidecar back to the live name (no
+    // live card with this id exists — checked above).
+    await moveSpillFile(
+      parkedSpillFile(authorizedProject, id, 'trash', trashed.deleted_at),
+      spillFile(authorizedProject, id),
+    );
     notify({
       actor: caller.agent_id || 'admin',
       reason: 'restored',
@@ -160,14 +179,25 @@ export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
     const trashed = trashFind(authorizedProject, id);
     if (!trashed) return { error: 'Task not found in trash', status: 404 };
     await trashPersistRemove(authorizedProject, trashed);
-    notify({
-      actor: caller.agent_id || 'admin',
-      reason: 'purged_from_trash',
-      semantic: new Map([[
-        compositeKey(authorizedProject, id),
-        { kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'purged_from_trash', task: trashed },
-      ]]),
-    });
+    await removeSpillFile(parkedSpillFile(authorizedProject, id, 'trash', trashed.deleted_at));
+    // COR-06: the semantic override is keyed by project/id, and the diff
+    // dispatcher applies it to a LIVE row with that key. When the id has been
+    // re-created, a 'deleted' event would drop the live card from every
+    // client, webhook and audit log — so only attach it when no live row
+    // shares the key.
+    const key = compositeKey(authorizedProject, id);
+    if (index.has(key)) {
+      notify({ actor: caller.agent_id || 'admin', reason: 'purged_from_trash' });
+    } else {
+      notify({
+        actor: caller.agent_id || 'admin',
+        reason: 'purged_from_trash',
+        semantic: new Map([[
+          key,
+          { kind: 'deleted', actor: caller.agent_id || 'admin', reason: 'purged_from_trash', task: trashed },
+        ]]),
+      });
+    }
     return { task: trashed, status: 200 };
   });
 }
@@ -203,6 +233,7 @@ export async function runTrashSweepInner(projects = null) {
     });
     for (const t of expired) {
       await trashPersistRemove(project, t);
+      await removeSpillFile(parkedSpillFile(project, t.id, 'trash', t.deleted_at));
       purged.push(compositeKey(project, t.id));
     }
   }

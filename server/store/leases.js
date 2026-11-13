@@ -368,7 +368,14 @@ export function isoFromMs(ms) {
             ? 'orphan_normalized'
             : 'lease_expired'
         );
-        const r = await reclaimTaskInner(task, { reason, nowMs });
+        // COR-17: isolate each item so one failing save cannot abort the sweep.
+        let r;
+        try {
+          r = await reclaimTaskInner(task, { reason, nowMs });
+        } catch (err) {
+          log.error('sweep item failed', { project: t.project, task_id: t.id, error: err && err.message });
+          continue;
+        }
         if (r && r.reclaimed) {
           reclaimed += 1;
           ids.push(compositeKey(t.project, t.id));

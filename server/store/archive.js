@@ -14,11 +14,15 @@ import {
   getMutationSerial,
   getLastSweepSerial,
   setLastSweepSerial,
+  spillFile,
+  parkedSpillFile,
+  moveSpillFile,
 } from './core.js';
 import { notify } from './listeners.js';
 import { runTrashSweepInner } from './trash.js';
 import { GitYamlStorage } from '../storage.js';
 import { STATUSES } from '../state-machine.js';
+import { resolveProjectScope } from '../task-identity.js';
 
 // ---------------------------------------------------------------------------
 // Archiving & Storage Hygiene (§2.8)
@@ -82,10 +86,16 @@ export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
     // be archived. dependencyGate resolves deps in the LIVE index only, so an
     // archived blocker becomes permanently dangling and its dependents can
     // never again be claimed or even PATCH-ed (their gate 409s forever).
+    // COR-08 (v3.12.11): keyed by composite project/id — a short id is unique
+    // only within a project, so a dep in project B must not pin (or fail to
+    // pin, for a `project:id` entry) a same-named card in project A.
     const blockedByLive = new Set();
     for (const t of tasks) {
       if (t.status === STATUSES.DONE) continue;
-      for (const dep of t.depends_on || []) blockedByLive.add(dep);
+      for (const dep of t.depends_on || []) {
+        const { project: depProject, shortId } = resolveProjectScope(dep, t.project);
+        blockedByLive.add(compositeKey(depProject, shortId));
+      }
     }
 
     // Group live tasks by project; also track projects that already hold
@@ -102,7 +112,9 @@ export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
     const archivedSemantic = new Map();
 
     const runFor = async (project, liveList) => {
-      const eligible = (liveList || []).filter((t) => !blockedByLive.has(t.id) && isEligibleForArchive(t, days, nowMs));
+      const eligible = (liveList || []).filter(
+        (t) => !blockedByLive.has(compositeKey(project, t.id)) && isEligibleForArchive(t, days, nowMs),
+      );
       const storage = getStorage(project);
       const isGit = storage instanceof GitYamlStorage;
 
@@ -148,6 +160,16 @@ export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
       const list = archive[project] || (archive[project] = []);
       for (const archived of newArchived) {
         list.push(archived);
+      }
+      // COR-12: the archived snapshot keeps its inline logs; its spilled
+      // history moves out of the live namespace with it (parked beside the
+      // archive, keyed by archived_at) so a future card reusing the id does
+      // not inherit it.
+      for (const archived of newArchived) {
+        await moveSpillFile(
+          spillFile(project, archived.id),
+          parkedSpillFile(project, archived.id, 'archive', archived.archived_at),
+        );
       }
       for (const archived of newArchived) {
         archivedSemantic.set(compositeKey(project, archived.id), {
