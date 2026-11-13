@@ -164,8 +164,29 @@ describe('SSE hardening', () => {
     }
   });
 
+  it('ends a crawling reader once the backlog queued after the prime exceeds the limit', async () => {
+    resetSseStreams();
+    sseTestOverrides.maxBacklogBytes = 100 * 1024;
+    try {
+      const s = await openStream(baseUrl, '?prime=1');
+      await tick(500);
+      s.res.pause();
+      s.res.socket.pause();
+      const big = 'q'.repeat(19_000);
+      for (let i = 0; i < 400 && liveSseStreamCount() > 0; i++) {
+        await store.createTask({ id: `sse-crawl-${i}`, title: 'c', description: big, status: 'BACKLOG', round: 1 });
+      }
+      assert.equal(liveSseStreamCount(), 0, 'backlog limit ended the stream long before the stall timeout');
+      s.req.destroy();
+      await tick();
+    } finally {
+      sseTestOverrides.maxBacklogBytes = null;
+    }
+  });
+
   it('a >2MB priming frame does not end a fast reader, which keeps receiving diffs', async () => {
     resetSseStreams();
+    sseTestOverrides.maxBacklogBytes = 256 * 1024; // far below the prime size: the prime must not count
     const big = 'y'.repeat(19_000);
     for (let i = 0; i < 200; i++) {
       await store.createTask({ id: `sse-prime-big-${i}`, title: 'p', description: big, status: 'BACKLOG', round: 1 });
@@ -178,6 +199,7 @@ describe('SSE hardening', () => {
     await tick(300);
     assert.match(s.text(), /"id":"sse-after-prime"/);
     assert.equal(liveSseStreamCount(), 1);
+    sseTestOverrides.maxBacklogBytes = null;
     s.req.destroy();
     await tick();
     assert.equal(liveSseStreamCount(), 0);
@@ -188,9 +210,11 @@ describe('SSE hardening', () => {
     sseTestOverrides.stallMs = 1000;
     try {
       const big = 'z'.repeat(19_000);
-      for (let i = 0; i < 1100; i++) {
-        await store.createTask({ id: `sse-huge-${i}`, title: 'h', description: big, status: 'BACKLOG', round: 1 });
-      }
+      // Bulk-seed in memory (no persistence, one baseline notify) instead of
+      // 1,100 sequential createTask calls.
+      const tpl = store.getTasks().find((x) => x.id === 'sse-wire');
+      for (let i = 0; i < 1100; i++) store.setTaskInMemory({ ...tpl, id: `sse-huge-${i}`, description: big });
+      store.notify();
       let received = '';
       let total = 0;
       const { req, res } = await new Promise((resolve, reject) => {
@@ -201,7 +225,7 @@ describe('SSE hardening', () => {
       let timer = setInterval(() => {
         const c = res.read();
         if (c) { total += c.length; received = (received + c).slice(-4096); }
-      }, 15);
+      }, 5);
       await tick(100);
       await store.createTask({ id: 'sse-after-huge', title: 'after', status: 'BACKLOG', round: 1 });
       const deadline = Date.now() + 40_000;

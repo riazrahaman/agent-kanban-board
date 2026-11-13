@@ -66,7 +66,11 @@ export const SSE_DEFAULT_MAX_STREAMS_PER_IP = 20;
 // `stallMs` is overridable by
 // tests only; there is deliberately no env var.
 export const SSE_STALL_TIMEOUT_MS = 30_000;
-export const sseTestOverrides = { stallMs: null };
+// PERF-04: bound the slow-crawl case. Bytes queued AFTER the latest
+// priming/snapshot frame may not exceed this; the priming frame itself is never
+// counted. `maxBacklogBytes` is a test-only override.
+export const SSE_MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
+export const sseTestOverrides = { stallMs: null, maxBacklogBytes: null };
 
 // A9: per-client-IP concurrent stream cap. `KANBAN_MAX_SSE_STREAMS_PER_IP`
 // (default 20; negative disables). Keys on `req.ip`, so it depends on
@@ -392,11 +396,26 @@ export function createApp(opts = {}) {
       clearTimeout(streamEntry.stall);
       streamEntry.stall = null;
     });
-    const writeFrame = (frame) => {
+    // Queue offset at the end of the latest priming/snapshot frame. Everything up
+    // to it is exempt from the backlog limit (a big board's prime is legitimately
+    // huge); only bytes queued after it count. `min(writableLength, ...)` is the
+    // not-yet-flushed part of those later bytes whether or not the prime itself
+    // has flushed.
+    let exemptEnd = 0;
+    const writeFrame = (frame, { exempt = false } = {}) => {
       if (closed) return;
       try {
+        const limit = sseTestOverrides.maxBacklogBytes ?? SSE_MAX_BACKLOG_BYTES;
+        // A prime/snapshot frame is judged on the backlog already there before it
+        // (never on its own size); other frames on the backlog past the exempt frame.
+        const backlog = exempt ? res.writableLength : Math.min(res.writableLength, queuedBytes - exemptEnd);
+        if (backlog > limit) {
+          endSlowStream('backlog-limit', backlog);
+          return;
+        }
         queuedBytes += Buffer.byteLength(frame);
         const backpressured = res.write(frame) === false;
+        if (exempt) exemptEnd = queuedBytes;
         if (backpressured && streamEntry.stall === null && openSseStreams.has(res)) {
           armStallCheck();
         }
@@ -407,7 +426,7 @@ export function createApp(opts = {}) {
     };
     const send = (event, payload) => {
       if (closed) return;
-      writeFrame(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      writeFrame(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`, { exempt: event === 'tasks' });
     };
 
     if (isDiffMode) {
