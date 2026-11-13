@@ -10,7 +10,7 @@
  *
  * store.js re-exports both so existing `../store.js` importers are unaffected.
  */
-import { readFile, writeFile, rename, mkdir, readdir, copyFile, rm, stat } from 'node:fs/promises';
+import { readFile, rename, mkdir, readdir, rm, stat, open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import yaml from 'yaml';
 import {
   writeAtomic,
+  fsyncDir,
   toBranch,
   toMilestone,
   defaultProjectName,
@@ -27,6 +28,35 @@ import {
 import { STATUSES } from './state-machine.js';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Batch 3: durable journal I/O. Each append opens the journal, writes, fsyncs
+ * and closes it (a persistent handle would keep writing to a journal that
+ * load moved aside); a newly created journal also fsyncs its directory.
+ */
+async function appendDurable(file, data) {
+  const dir = path.dirname(file);
+  await mkdir(dir, { recursive: true });
+  const created = !existsSync(file);
+  const handle = await open(file, 'a');
+  try {
+    await handle.writeFile(data, 'utf-8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  if (created) await fsyncDir(dir);
+}
+
+/** Truncates (or creates) the journal and fsyncs it. */
+async function truncateDurable(file) {
+  const handle = await open(file, 'w');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
 
 export class JsonStorage {
   constructor(filePath, options = {}) {
@@ -60,14 +90,45 @@ export class JsonStorage {
     return Number.isFinite(n) && n > 0 ? n : 1024 * 1024;
   }
 
+  /**
+   * Batch 3 — journal generations. The base file records an integer
+   * `generation` in its JSON wrapper (`{ generation, tasks }` for the default
+   * project, `{ project, generation, tasks }` for a named one; both shapes are
+   * already objects, so no sidecar file is needed and older readers ignore the
+   * extra key). Every journal line carries the generation of the base it was
+   * appended against, and every full base write increments it. On load only
+   * lines whose generation equals the base's are replayed, so lines that
+   * survive a base rewrite (crash before truncation) are ignored however the
+   * clocks moved. A base without the key is generation 0.
+   *
+   * Journals written before this release carry no generation; for those the
+   * previous mtime rule still decides, once, until the next base write.
+   */
+  static generationOf(parsed) {
+    const g = parsed && parsed.generation;
+    return Number.isInteger(g) && g >= 0 ? g : 0;
+  }
+
+  /** Generation of the base on disk (cached after load or the first lookup). */
+  async _baseGeneration() {
+    if (Number.isInteger(this.generation)) return this.generation;
+    try {
+      this.generation = JsonStorage.generationOf(JSON.parse(await readFile(this.filePath, 'utf-8')));
+    } catch {
+      this.generation = 0; // absent (or unreadable: load refuses to boot on it)
+    }
+    return this.generation;
+  }
+
   async load() {
     if (!existsSync(this.filePath)) {
+      this.generation = 0;
       // PERF-02: absent base file but journal may have entries (first boot
       // with journaling ON — saveTask only appends to the journal until
       // compaction). Replay the journal over an empty list.
       if (existsSync(this.journalFile)) {
         const list = [];
-        await this._replayJournal(list);
+        await this._replayJournal(list, 0);
         return list;
       }
       return []; // absent file: normal first boot
@@ -79,11 +140,12 @@ export class JsonStorage {
        // so the first patch bumps a well-defined baseline.
       const list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
       backfillLeaseFields(list);
-      // Replay an existing journal over the base whatever the flag says, but
-      // only when it is not older than the base: a journal left behind by an
-      // earlier release (whose flag-off save did not clear it) is stale.
-      if (existsSync(this.journalFile) && (await this._journalIsCurrent())) {
-        await this._replayJournal(list);
+      this.generation = JsonStorage.generationOf(parsed);
+      // Replay an existing journal over the base whatever the flag says; the
+      // generation check (or, for an old journal, the mtime rule) drops lines
+      // that the base already supersedes.
+      if (existsSync(this.journalFile)) {
+        await this._replayJournal(list, this.generation);
       }
       return list;
     } catch (err) {
@@ -98,27 +160,32 @@ export class JsonStorage {
     }
   }
 
-  /**
-   * True when the journal is not older than the base file. An older, non-empty
-   * journal is moved aside (recoverable) so a later append cannot make it look
-   * fresh again; an older empty one is simply removed.
-   *
-   * Known window: a full save writes the base and THEN clears the journal, so
-   * a crash in between leaves the old journal next to the newer base; the
-   * mtime rule and the per-task version guard in `_replayJournal` cover the
-   * common cases, and a generation id would close it fully (not built here).
-   */
-  async _journalIsCurrent() {
-    let base;
-    let journal;
+  /** Pre-generation rule: the journal is not older than the base (no side effects). */
+  async _journalNewerThanBase() {
     try {
-      base = await stat(this.filePath);
-      journal = await stat(this.journalFile);
+      const base = await stat(this.filePath);
+      const journal = await stat(this.journalFile);
+      return journal.mtimeMs >= base.mtimeMs;
     } catch {
       return true; // no base to compare against (or journal vanished)
     }
-    if (journal.mtimeMs >= base.mtimeMs) return true;
-    if (journal.size === 0) {
+  }
+
+  /**
+   * Legacy (generation-less) journals only: true when the journal is not older
+   * than the base file. An older, non-empty journal is moved aside
+   * (recoverable) so a later append cannot make it look fresh again; an older
+   * empty one is simply removed.
+   */
+  async _journalIsCurrent() {
+    if (await this._journalNewerThanBase()) return true;
+    let size = 0;
+    try {
+      size = (await stat(this.journalFile)).size;
+    } catch {
+      return false;
+    }
+    if (size === 0) {
       await rm(this.journalFile, { force: true });
       return false;
     }
@@ -130,30 +197,53 @@ export class JsonStorage {
 
   /**
    * PERF-02 — replay the append-only journal over the base task list.
-   * Each journal line is `{op:'upsert'|'remove', id, task?}`. An `upsert`
-   * replaces or appends the task by id; a `remove` drops it. After replay,
+   * Each journal line is `{op:'upsert'|'remove', id, task?, generation}`. An
+   * `upsert` replaces or appends the task by id; a `remove` drops it. Only
+   * lines of the base's generation apply (see `generationOf`). After replay,
    * if the journal exceeds the compact threshold, compact it into the base
    * file and truncate the journal.
    */
-  async _replayJournal(baseList) {
+  async _replayJournal(baseList, baseGeneration) {
     const journalRaw = await readFile(this.journalFile, 'utf-8');
-    const lines = journalRaw.split('\n').filter((l) => l.trim());
-    const byId = new Map(baseList.map((t) => [t.id, t]));
-    for (const line of lines) {
+    const entries = [];
+    for (const line of journalRaw.split('\n')) {
+      if (!line.trim()) continue;
       try {
-        const entry = JSON.parse(line);
-        if (entry.op === 'upsert' && entry.task) {
-          // Never let an older version of a task overwrite a newer one.
-          const existing = byId.get(entry.task.id);
-          if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
-              && entry.task.version < existing.version) continue;
-          byId.set(entry.task.id, entry.task);
-        } else if (entry.op === 'remove' && entry.id) {
-          byId.delete(entry.id);
-        }
+        entries.push(JSON.parse(line));
       } catch (err) {
         console.warn(`[kanban JsonStorage] journal replay skip bad line: ${err.message}`);
       }
+    }
+    const tagged = (e) => Number.isInteger(e && e.generation);
+    let applyUntagged;
+    if (!entries.some(tagged)) {
+      // A journal from before generations: the old mtime rule, exactly as
+      // before (including moving a stale journal aside).
+      if (!(await this._journalIsCurrent())) return;
+      applyUntagged = true;
+    } else {
+      applyUntagged = entries.some((e) => !tagged(e)) ? await this._journalNewerThanBase() : false;
+    }
+
+    const byId = new Map(baseList.map((t) => [t.id, t]));
+    let ignored = 0;
+    for (const entry of entries) {
+      if (tagged(entry) ? entry.generation !== baseGeneration : !applyUntagged) {
+        ignored += 1;
+        continue;
+      }
+      if (entry.op === 'upsert' && entry.task) {
+        // Never let an older version of a task overwrite a newer one.
+        const existing = byId.get(entry.task.id);
+        if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
+            && entry.task.version < existing.version) continue;
+        byId.set(entry.task.id, entry.task);
+      } else if (entry.op === 'remove' && entry.id) {
+        byId.delete(entry.id);
+      }
+    }
+    if (ignored > 0) {
+      console.warn(`[kanban JsonStorage] ${ignored} journal line(s) from an earlier base generation ignored`);
     }
     const replayed = [...byId.values()];
     backfillLeaseFields(replayed);
@@ -164,7 +254,7 @@ export class JsonStorage {
     const journalBytes = Buffer.byteLength(journalRaw, 'utf8');
     if (journalBytes >= this._journalCompactBytes()) {
       await this._writeCanonical(replayed);
-      await writeFile(this.journalFile, '', 'utf-8');
+      await truncateDurable(this.journalFile);
     }
     // Mutate baseList in place so the caller sees the replayed state.
     baseList.length = 0;
@@ -172,33 +262,59 @@ export class JsonStorage {
   }
 
   /**
-   * Writes the canonical base file (the full `{tasks:[...]}` or
-   * `{project, tasks:[...]}` shape). Used by both `save()` and journal
-   * compaction so the on-disk format stays byte-compatible.
+   * Writes the canonical base file (the full `{generation, tasks:[...]}` or
+   * `{project, generation, tasks:[...]}` shape) with the NEXT generation, so
+   * any journal line written against the previous base is superseded. Used by
+   * both `save()` and journal compaction.
    */
   async _writeCanonical(tasks) {
+    const generation = (await this._baseGeneration()) + 1;
     const payload = this.isDefault
-      ? { tasks }
-      : { project: this.project, tasks };
+      ? { generation, tasks }
+      : { project: this.project, generation, tasks };
     // B1: compact JSON. The partition is rewritten on every mutation, so the
     // two-space indentation cost real bytes and stringify time; the loader is
     // a plain JSON.parse and reads either form.
     await writeAtomic(this.filePath, JSON.stringify(payload));
+    this.generation = generation;
+  }
+
+  /** Appends journal entries tagged with the current base generation (fsynced). */
+  async _appendJournal(entries) {
+    const generation = await this._baseGeneration();
+    let payload = '';
+    for (const e of entries) payload += JSON.stringify({ ...e, generation }) + '\n';
+    await appendDurable(this.journalFile, payload);
+  }
+
+  /** One compaction check after an append. */
+  async _maybeCompact(allTasks) {
+    let size;
+    try {
+      size = (await stat(this.journalFile)).size;
+    } catch {
+      return; // stat failure: the journal is advisory, not authoritative.
+    }
+    if (size >= this._journalCompactBytes()) {
+      await this._writeCanonical(allTasks);
+      await truncateDurable(this.journalFile);
+    }
   }
 
   async save(tasks) {
     // PERF-02: when journaling is ON, `save` is a full canonical rewrite
     // (used by archive sweep / delete / purge — the partition must reflect the
     // surviving set). The journal is truncated because the base file is now
-    // authoritative for the full set.
+    // authoritative for the full set (and its new generation would make any
+    // surviving line inert even if the truncation did not happen).
     if (this._journalEnabled()) {
       await this._writeCanonical(tasks);
-      await writeFile(this.journalFile, '', 'utf-8');
+      await truncateDurable(this.journalFile);
       return;
     }
-    // Default project keeps the legacy `{ tasks: [...] }` shape so an existing
-    // single-project file is byte-for-byte compatible. Named partitions embed
-    // the project name so the partition is self-describing.
+    // Default project keeps the legacy `{ tasks: [...] }` shape (plus the
+    // generation key). Named partitions embed the project name so the
+    // partition is self-describing.
     await this._writeCanonical(tasks);
     // A full base save supersedes any journal left by an earlier run with the
     // flag on, so it can never be replayed over this newer base.
@@ -212,67 +328,36 @@ export class JsonStorage {
    * amplification from O(partition) to O(1) per mutation. The journal is
    * replayed on `load()` and compacted when it exceeds the threshold.
    *
-   * With the journal OFF (default), this delegates to the original
-   * whole-partition rewrite — byte-identical to the pre-2.8 behavior.
+   * With the journal OFF (default), this delegates to the whole-partition
+   * rewrite.
    */
   async saveTask(task, allTasks) {
     if (this._journalEnabled()) {
-      const entry = JSON.stringify({ op: 'upsert', id: task.id, task }) + '\n';
-      await mkdir(path.dirname(this.journalFile), { recursive: true });
-      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
-      // Compact if the journal has grown past the threshold.
-      if (existsSync(this.journalFile)) {
-        const stat = await import('node:fs/promises').then((m) => m.stat);
-        try {
-          const st = await stat(this.journalFile);
-          if (st.size >= this._journalCompactBytes()) {
-            // Compact: write the full partition and truncate the journal.
-            await this._writeCanonical(allTasks);
-            await writeFile(this.journalFile, '', 'utf-8');
-          }
-        } catch {
-          // stat failure: fall through — the journal is advisory, not authoritative.
-        }
-      }
+      await this._appendJournal([{ op: 'upsert', id: task.id, task }]);
+      await this._maybeCompact(allTasks);
       return;
     }
     await this.save(allTasks);
   }
 
   /**
-   * B1 (v3.12.3) — batched persist for grouped sibling lease renewals.
+   * B1 (v3.12.3) — batched persist for a holder write plus its sibling lease
+   * renewals.
    *
    * `changed` is the set of tasks mutated in this batch; `allTasks` is the full
    * project bucket AFTER those mutations. The two backends persist at different
    * granularity, so the arguments carry both shapes:
    *   - JsonStorage persists the WHOLE partition file, so with the journal OFF
-   *     the batch collapses into ONE `save(allTasks)` write instead of N
-   *     whole-partition rewrites (one per sibling). With the journal ON the
-   *     batch appends N journal lines in a single write and runs ONE
-   *     compaction check for the whole batch — preserving the O(1)-per-task
-   *     journal behavior.
-   *   - GitYamlStorage persists ONE card file per task, so it loops `saveTask`
-   *     over `changed` only (rewriting every card in `allTasks` would be a
-   *     write regression for the git backend).
+   *     the batch collapses into ONE `save(allTasks)` write. With the journal
+   *     ON the batch appends N journal lines in a single (fsynced) append and
+   *     runs ONE compaction check for the whole batch.
+   *   - GitYamlStorage persists ONE card file per task and commits the batch
+   *     at most once.
    */
   async saveTasks(changed, allTasks) {
     if (this._journalEnabled()) {
-      await mkdir(path.dirname(this.journalFile), { recursive: true });
-      let payload = '';
-      for (const task of changed) {
-        payload += JSON.stringify({ op: 'upsert', id: task.id, task }) + '\n';
-      }
-      await writeFile(this.journalFile, payload, { encoding: 'utf-8', flag: 'a' });
-      // One compaction check for the whole batch (saveTask checks per append).
-      try {
-        const st = await stat(this.journalFile);
-        if (st.size >= this._journalCompactBytes()) {
-          await this._writeCanonical(allTasks);
-          await writeFile(this.journalFile, '', 'utf-8');
-        }
-      } catch {
-        // stat failure: fall through — the journal is advisory, not authoritative.
-      }
+      await this._appendJournal(changed.map((task) => ({ op: 'upsert', id: task.id, task })));
+      await this._maybeCompact(allTasks);
       return;
     }
     await this.save(allTasks);
@@ -282,11 +367,9 @@ export class JsonStorage {
     if (this._journalEnabled()) {
       // Record the removal in the journal, then rewrite the canonical file
       // (a delete changes the partition set, so the base file must reflect it).
-      const entry = JSON.stringify({ op: 'remove', id: task.id }) + '\n';
-      await mkdir(path.dirname(this.journalFile), { recursive: true });
-      await writeFile(this.journalFile, entry, { encoding: 'utf-8', flag: 'a' });
+      await this._appendJournal([{ op: 'remove', id: task.id }]);
       await this._writeCanonical(survivors);
-      await writeFile(this.journalFile, '', 'utf-8');
+      await truncateDurable(this.journalFile);
       return;
     }
     await this.save(survivors);
@@ -750,16 +833,36 @@ export class GitYamlStorage {
   // under <root>/trash/<project>/ (NOT git-tracked — the trash is an operator
   // safety net, not history); restore re-writes the live card via saveTask,
   // which resumes normal git commits.
-  async trashTask(task) {
-    const p = this.ownedProject;
-    const trashDir = path.join(this.root, 'trash', p);
-    await mkdir(trashDir, { recursive: true });
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(trashDir, filename);
+  //
+  // Batch 3: an id can be deleted, re-created and deleted again, so the trash
+  // can hold two rows with the same id. Files are keyed by id AND deletion
+  // time (`<id>.<deletedAtSafe>.yml`) so those rows no longer overwrite each
+  // other on disk. Ids cannot contain '.', so the name is unambiguous. Files
+  // written by earlier releases (`<id>.yml`) still load and are removed by
+  // matching their recorded `deleted_at`.
+  static trashStamp(deletedAt) {
+    return String(deletedAt || '').replace(/[^0-9A-Za-z]/g, '');
+  }
+
+  _trashDir() {
+    return path.join(this.root, 'trash', this.ownedProject);
+  }
+
+  _trashPath(task, deletedAt) {
+    const stamp = GitYamlStorage.trashStamp(deletedAt);
+    const filename = stamp ? `${task.id}.${stamp}.yml` : `${task.id}.yml`;
+    const filePath = path.resolve(this._trashDir(), filename);
     this._guard(filePath, task, 'trash ');
+    return filePath;
+  }
+
+  async trashTask(task) {
+    await mkdir(this._trashDir(), { recursive: true });
+    const filename = `${task.id}.yml`;
     const trashed = Object.assign({}, task, {
       deleted_at: task.deleted_at || new Date().toISOString(),
     });
+    const filePath = this._trashPath(task, trashed.deleted_at);
     await writeAtomic(filePath, yaml.stringify(this.serializeCard(trashed, task.status)));
     // Remove the live card file (untracked removal — no commit; the trash
     // write is authoritative and git status stays clean).
@@ -769,21 +872,29 @@ export class GitYamlStorage {
   }
 
   async loadTrash() {
-    const trashDir = path.join(this.root, 'trash', this.ownedProject);
     try {
-      return (await this._readCardDir(trashDir, 'trash read ')).map((e) => e.task);
+      // Both `<id>.<stamp>.yml` and legacy `<id>.yml` names load; the row's
+      // identity comes from the card content.
+      return (await this._readCardDir(this._trashDir(), 'trash read ')).map((e) => e.task);
     } catch {
       return []; // absent trash dir is the normal first-boot case
     }
   }
 
+  /** Removes exactly the trash file of this row (same id AND deleted_at). */
   async trashRemove(task) {
-    const p = this.ownedProject;
-    const filename = `${task.id}.yml`;
-    const trashDir = path.join(this.root, 'trash', p);
-    const trashPath = path.resolve(trashDir, filename);
-    this._guard(trashPath, task, 'trash ');
-    await rm(trashPath, { force: true });
+    if (task.deleted_at) await rm(this._trashPath(task, task.deleted_at), { force: true });
+    // Legacy `<id>.yml`: remove it only when it is this row.
+    const legacy = this._trashPath(task, null);
+    if (!existsSync(legacy)) return;
+    try {
+      const parsed = yaml.parse(await readFile(legacy, 'utf-8'));
+      if (!parsed || parsed.id !== task.id) return;
+      if (String(parsed.deleted_at || '') !== String(task.deleted_at || '')) return;
+    } catch {
+      return; // unreadable: leave it for the operator
+    }
+    await rm(legacy, { force: true });
   }
 
   async deleteTask(task) {

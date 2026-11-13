@@ -58,6 +58,13 @@ below).
    records where the default project's files came from (`default_project.dir`)
    and whether that directory differs from the data dir (`split`).
 
+   With the git backend (`KANBAN_STORAGE_BACKEND=git`) and a git root that is
+   not inside `KANBAN_DATA_DIR` (a separate `KANBAN_GIT_DIR`), the snapshot
+   also holds the git card tree (per-project card folders, `archive/`,
+   `trash/`, `settings.yml`) under `git-root/`, recorded as `git` in the
+   manifest. The `.git` directory itself is not copied: history lives in git,
+   so push the repository or back it up separately.
+
 3. **Copy the snapshot off the volume** (nightly, e.g. via cron / Railway
    cron service):
 
@@ -86,6 +93,11 @@ below).
    node scripts/restore-backup.mjs /data/backups/2026-09-24T18-10-00-123Z \
      --into /data --default-into "$(dirname "$KANBAN_DATA_FILE")"
    ```
+
+   If the manifest has a `git` entry, restore the card tree with
+   `--git-into "$KANBAN_GIT_DIR"`; without it the script leaves `git-root/`
+   out of the data dir and prints a note. An existing `.git` in the target is
+   left as it is.
 
 5. **Restart the service** and verify recovery:
 

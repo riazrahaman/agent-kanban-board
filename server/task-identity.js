@@ -20,7 +20,7 @@ import path from 'node:path';
 // the time it runs the rename has already replaced the target: throwing here
 // would fail a request whose data is in fact on disk, so every error is
 // swallowed and the write is as durable as the platform allows.
-async function fsyncDir(dir) {
+export async function fsyncDir(dir) {
   let handle;
   try {
     handle = await open(dir, 'r');

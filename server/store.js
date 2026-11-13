@@ -892,9 +892,6 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
     }
 
-    const storage = getStorage(candidate.project);
-    await storage.saveTask(candidate, projectBucket(candidate.project, candidate));
-    updateInMemoryTask(candidate);
     // §2.4b Fix 3: a HOLDER that PATCHes any one card renews all its OTHER
     // active leases. Gate on the *caller* being the card's holder (a
     // non-holder's write must never extend the real holder's leases), and
@@ -906,19 +903,14 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
     // SAME notify() call below rather than a separate no-op broadcast — so
     // siblings' new expiries reach clients in this tick instead of only on
     // some later, unrelated mutation.
+    // Batch 3: the primary and the renewed siblings persist in ONE save.
     const semantic = new Map();
-    if (
-      holderWriteRenewsAll() &&
-      caller.agent_id &&
-      caller.agent_id === candidate.assigned_agent
-    ) {
-      const siblingKeys = await renewAllLeasesInner(caller.agent_id, nowFn(), {
-        excludeKey: compositeKey(candidate.project, candidate.id),
-        project: candidate.project,
-      });
-      for (const key of siblingKeys) {
-        semantic.set(key, { kind: 'renewed', actor: caller.agent_id, reason: 'lease_renewed_holder_write' });
-      }
+    const renewFor = holderWriteRenewsAll() && caller.agent_id && caller.agent_id === candidate.assigned_agent
+      ? caller.agent_id
+      : null;
+    const siblingKeys = await persistHolderWrite(candidate, renewFor, nowFn());
+    for (const key of siblingKeys) {
+      semantic.set(key, { kind: 'renewed', actor: caller.agent_id, reason: 'lease_renewed_holder_write' });
     }
     notify(semantic.size > 0 ? { semantic } : undefined);
 
@@ -1237,8 +1229,8 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   }
 
   // KB-05: persist first, then mutate memory, then notify.
-  await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-  updateInMemoryTask(candidate);
+  // Batch 3: the primary and the renewed siblings (below) persist in ONE save.
+  const siblingKeys = await persistHolderWrite(candidate, holderWriteRenewsAll() ? agentId : null, nowMs);
    // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
    // The auth middleware populates req.caller as { agent_id, role } — reading
    // `caller.agentId` was always undefined, which attributed every renewal by a
@@ -1255,14 +1247,8 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
   // as a distinct 'renewed' event in the SAME notify call (I-5/I-7 — the
   // sibling's new expiry reaches clients in this tick, not some later,
   // unrelated mutation, and does not masquerade as a plain 'updated').
-  if (holderWriteRenewsAll()) {
-    const siblingKeys = await renewAllLeasesInner(agentId, nowMs, {
-      excludeKey: compositeKey(candidate.project, candidate.id),
-      project: candidate.project,
-    });
-    for (const key of siblingKeys) {
-      semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
-    }
+  for (const key of siblingKeys) {
+    semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
   }
   notify({
     actor,
@@ -1480,11 +1466,12 @@ export async function renewLease(id, agentId, { caller = {}, project: projectArg
 // bucket)`. Event semantics (the renewed-keys list, the semantic Map entries)
 // and the I-6 failure isolation (a failing persist never throws to the caller)
 // are unchanged.
-async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project = null } = {}) {
-  if (!agentId || typeof agentId !== 'string') return [];
-  // Pass 1 — compute every renewal candidate, grouped by project (first-seen
-  // project order preserved so the returned key list stays stable).
+// Pass 1 of a sibling renewal: every renewal candidate, grouped by project
+// (first-seen project order preserved so the returned key list stays stable).
+// Pure: touches neither disk nor memory.
+function siblingRenewalCandidates(agentId, nowMs, { excludeKey = null, project = null } = {}) {
   const byProject = new Map();
+  if (!agentId || typeof agentId !== 'string') return byProject;
   for (const t of tasks.slice()) {
     if (excludeKey !== null && compositeKey(t.project, t.id) === excludeKey) continue;
     if (project !== null && t.project !== project) continue;
@@ -1498,6 +1485,12 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
     if (!byProject.has(candidate.project)) byProject.set(candidate.project, []);
     byProject.get(candidate.project).push(candidate);
   }
+  return byProject;
+}
+
+async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project = null } = {}) {
+  if (!agentId || typeof agentId !== 'string') return [];
+  const byProject = siblingRenewalCandidates(agentId, nowMs, { excludeKey, project });
   // Pass 2 — ONE persist per project, then fold the candidates into memory.
   const renewed = [];
   for (const [p, candidates] of byProject) {
@@ -1518,6 +1511,47 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
     }
   }
   return renewed;
+}
+
+/**
+ * Holder write with sibling renewal in ONE persist (batch 3). The primary
+ * card and the holder's other active leases in the same project are saved
+ * together with a single `saveTasks(changed, allTasks)`, instead of a primary
+ * `saveTask` followed by a separate sibling batch (two full persists, each
+ * fsynced, inside the mutation lock).
+ *
+ * `renewFor` is the agent whose OTHER leases are renewed, or null when this
+ * write renews none. Failure semantics are unchanged:
+ *   - memory is updated only after a successful persist (KB-05);
+ *   - if the combined save fails, the primary is retried ALONE, so a sibling
+ *     problem can never fail the caller's own write (I-6); only a failure of
+ *     the primary itself throws, exactly as the plain `saveTask` did.
+ * Returns the composite keys of the renewed siblings.
+ */
+async function persistHolderWrite(candidate, renewFor, nowMs) {
+  const p = candidate.project;
+  const storage = getStorage(p);
+  const siblings = renewFor
+    ? (siblingRenewalCandidates(renewFor, nowMs, {
+      excludeKey: compositeKey(p, candidate.id),
+      project: p,
+    }).get(p) || [])
+    : [];
+  if (siblings.length > 0) {
+    const byId = new Map(siblings.map((c) => [c.id, c]));
+    const bucket = projectBucket(p, candidate).map((t) => byId.get(t.id) ?? t);
+    try {
+      await storage.saveTasks([candidate, ...siblings], bucket);
+      updateInMemoryTask(candidate);
+      for (const s of siblings) updateInMemoryTask(s);
+      return siblings.map((s) => compositeKey(p, s.id));
+    } catch (err) {
+      log.error('sibling lease renewal failed', { project: p, error: err && err.message });
+    }
+  }
+  await storage.saveTask(candidate, projectBucket(p, candidate));
+  updateInMemoryTask(candidate);
+  return [];
 }
 
 export async function renewAllLeases(agentId, { project: projectArg, caller = {} } = {}) {
@@ -1937,18 +1971,13 @@ export async function appendLog(id, agentId, message, project, { expected_versio
     // attempt sibling renewals. A sibling save failure must never leave this
     // log persisted-but-not-in-memory, nor fail the caller's own request —
     // renewAllLeasesInner already isolates per-card failures internally.
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
-    updateInMemoryTask(candidate);
+    // Batch 3: primary + siblings in ONE save (persistHolderWrite keeps both
+    // guarantees above). v2.12.1 (I-2): scoped to the SAME project as this write.
     const semantic = new Map();
-    if (holderWriteRenewsAll() && agentId && agentId === candidate.assigned_agent) {
-      // v2.12.1 (I-2): scoped to the SAME project as this write.
-      const siblingKeys = await renewAllLeasesInner(agentId, nowFn(), {
-        excludeKey: compositeKey(candidate.project, candidate.id),
-        project: candidate.project,
-      });
-      for (const key of siblingKeys) {
-        semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
-      }
+    const renewFor = holderWriteRenewsAll() && agentId && agentId === candidate.assigned_agent ? agentId : null;
+    const siblingKeys = await persistHolderWrite(candidate, renewFor, nowFn());
+    for (const key of siblingKeys) {
+      semantic.set(key, { kind: 'renewed', actor: agentId, reason: 'lease_renewed_holder_write' });
     }
     notify(semantic.size > 0 ? { semantic } : undefined);
     return { task: candidate, status: 200 };

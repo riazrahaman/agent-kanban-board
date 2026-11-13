@@ -177,7 +177,7 @@ describe('v3.12.3 B1 — sibling lease renewals grouped into one save per projec
     }
   });
 
-  it('3. holder write (appendLog) still renews siblings: 1 primary + 1 grouped save', async () => {
+  it('3. holder write (appendLog) still renews siblings, primary and siblings in ONE save', async () => {
     const storage = store.getStorage('default');
     seedHeldTask('ws-h1', 'default', 'ws-holder');
     seedHeldTask('ws-h2', 'default', 'ws-holder');
@@ -187,13 +187,13 @@ describe('v3.12.3 B1 — sibling lease renewals grouped into one save per projec
     const result = await store.appendLog('ws-h1', 'ws-holder', 'progress on h1', 'default');
 
     assert.equal(result.status, 200);
-    // Pre-fix: 1 primary saveTask + 3 sibling saveTask = 4 full-partition
-    // writes. Post-fix: the primary write is unchanged (1 save) and ALL
-    // siblings collapse into ONE save.
-    assert.equal(storage.saveCount, 2, 'primary write + ONE grouped sibling save');
-    // The grouped sibling save is the live project bucket: every renewal card
-    // present exactly once, with all three h-cards included.
-    const siblingBucket = storage.savedBuckets[1];
+    // v3.12.3: 1 primary saveTask + 3 sibling saveTask = 4 full-partition
+    // writes became 1 primary + 1 grouped sibling save. Batch 3: the primary
+    // and its siblings persist together in ONE save.
+    assert.equal(storage.saveCount, 1, 'primary write and sibling renewals in ONE save');
+    // The single save is the live project bucket: every card present exactly
+    // once, with all three h-cards included.
+    const siblingBucket = storage.savedBuckets[0];
     assert.equal(new Set(siblingBucket).size, siblingBucket.length, 'no duplicate cards in the bucket');
     for (const id of ['ws-h1', 'ws-h2', 'ws-h3']) {
       assert.ok(siblingBucket.includes(id), `bucket includes ${id}`);
