@@ -50,6 +50,10 @@ router.get('/', asyncHandler(async (req, res) => {
     };
   }
 
+  // The absolute backup directory is an operator detail: admin/global only.
+  const { backup_root: backupRoot, ...backupPublic } = store.backupStatus();
+  const backup = authorized === '*' ? { ...backupPublic, backup_root: backupRoot } : backupPublic;
+
   res.json({
     status: loaded && reaperEnabled ? 'ok' : 'degraded',
     uptime_seconds: Math.round(process.uptime()),
@@ -61,7 +65,7 @@ router.get('/', asyncHandler(async (req, res) => {
       enabled: reaperEnabled,
       running: store.isReaperRunning(),
     },
-    backup: store.backupStatus(),
+    backup,
     // §2.10 (v3.9.5): is the RUNNING version the newest release? Public and
     // secret-free. `unknown` means the check itself failed (GitHub unreachable),
     // not that the board is unhealthy; `checked_at: null` means no check has run

@@ -45,9 +45,16 @@ export function sessionNonceMode() {
   return process.env.KANBAN_SESSION_NONCE_MODE === 'required' ? 'required' : 'legacy';
 }
 
+/** Upper bound on live (unexpired, unconsumed) challenges. */
+export const MAX_LIVE_SESSION_CHALLENGES = 10000;
+
+// Map iteration order is insertion order and the TTL is constant, so expiry
+// times are non-decreasing: stop at the first live entry instead of scanning
+// the whole map on every call.
 function prune(now = Date.now()) {
   for (const [challenge, exp] of issued) {
-    if (!Number.isInteger(exp) || exp <= now) issued.delete(challenge);
+    if (Number.isInteger(exp) && exp > now) break;
+    issued.delete(challenge);
   }
 }
 
@@ -63,14 +70,20 @@ export function liveSessionChallengeCount() {
 }
 
 /**
- * Issues a fresh challenge nonce. Server-side random (32 hex bytes), never
+ * Issues a fresh challenge nonce, evicting the oldest pending one when the live set is full. Server-side random (32 hex bytes), never
  * client-supplied, so a captured proof cannot be bound to an attacker nonce
  * retroactively.
  */
 export function createSessionChallenge() {
+  prune();
+  // Full: evict the oldest (O(1)). A real client consumes its challenge within
+  // milliseconds, and refusing instead would let anonymous traffic block every
+  // new handshake.
+  if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) {
+    issued.delete(issued.keys().next().value);
+  }
   const challenge = crypto.randomBytes(32).toString('hex');
   const exp = Date.now() + sessionChallengeTtlMs();
-  prune();
   issued.set(challenge, exp);
   return { challenge, expiresAt: exp };
 }

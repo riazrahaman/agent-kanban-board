@@ -131,6 +131,13 @@ router.post('/stream-ticket', (req, res) => {
         error: `Role '${role}' is privileged — stream tickets for privileged roles require the admin token, a privileged session, or the legacy global token`,
       });
     }
+    // Hardening: when per-project credentials are configured, the legacy global
+    // token is not a source of privileged stream tickets.
+    if (isPrivilegedRole(role) && cred.kind === 'global' && parseProjectTokens()?.map) {
+      return res.status(403).json({
+        error: `Role '${role}' is privileged — stream tickets for privileged roles require the admin token or a privileged session`,
+      });
+    }
   }
 
   const rawProject = body.project;
@@ -159,7 +166,10 @@ router.post('/stream-ticket', (req, res) => {
     });
   }
 
-  const minted = createStreamTicket({ role, project });
+  let boundAgentId = null;
+  if (cred.kind === 'session') boundAgentId = cred.session.agent_id ?? null;
+  else if (cred.kind === 'project') boundAgentId = cred.credential.agent_id ?? null;
+  const minted = createStreamTicket({ role, project, agentId: boundAgentId });
   if (!minted) {
     return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
   }

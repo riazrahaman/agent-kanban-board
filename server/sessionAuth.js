@@ -65,7 +65,7 @@ export function createSessionToken({ clientNonce, serverNonce, role, project, ag
   // A7 (v3.12.8): carry the credential-bound agent identity when the minting
   // credential has one. Absent for legacy/unbound credentials so every session
   // minted before this release still verifies byte-for-byte the same way.
-  const claims = { cn: clientNonce, sn: serverNonce, jti, exp, role, project };
+  const claims = { typ: 'session', cn: clientNonce, sn: serverNonce, jti, exp, role, project };
   if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
   const payload = b64url(JSON.stringify(claims));
   const mac = macHex(secret, payload);
@@ -97,7 +97,12 @@ export function verifySessionToken(token) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  const { jti, exp, role, project, agent_id: agentId } = parsed;
+  const { typ, jti, exp, role, project, agent_id: agentId } = parsed;
+  // Stream tickets share the key and format. Accept only an explicitly typed
+  // session, or an untyped legacy session (those always carry a client nonce).
+  const isSession =
+    typ === 'session' || (typ === undefined && typeof parsed.cn === 'string' && parsed.cn !== '');
+  if (!isSession) return null;
   if (!Number.isInteger(exp)) return null;
   if (exp <= Date.now()) return null;
   // ENH-12: a revoked jti fails even with a valid MAC. Tokens minted before

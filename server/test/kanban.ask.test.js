@@ -489,6 +489,21 @@ describe('ask: rate limits', () => {
       assert.equal(fetchImpl.calls.length, 0, 'a guessing burst must never spend OpenRouter quota');
     });
   });
+
+  it('a locked-out client is refused with 429 even when the correct password is supplied', async () => {
+    const fetchImpl = makeFetch();
+    const env = baseEnv({ KANBAN_AUTH_RATE_LIMIT_PER_MIN: '2' });
+    await withApp({ env, fetch: fetchImpl, store: fakeStore() }, async (baseUrl) => {
+      for (let i = 0; i < 3; i += 1) {
+        await jsonRequest(baseUrl, '/api/ask', askRequest({ pass: 'wrong' }));
+      }
+      const correct = await jsonRequest(baseUrl, '/api/ask', askRequest());
+      assert.equal(correct.res.status, 429);
+      assert.equal(correct.body.error, 'too_many_attempts');
+      assert.ok(correct.res.headers.get('retry-after'));
+      assert.equal(fetchImpl.calls.length, 0, 'upstream is not called while locked out');
+    });
+  });
 });
 
 describe('ask: no secrets in responses', () => {

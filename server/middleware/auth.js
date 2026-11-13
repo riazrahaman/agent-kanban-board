@@ -309,7 +309,11 @@ function computeAuthorizedProjects(req) {
   if (ticket) {
     const scope = verifyStreamTicket(ticket);
     if (scope) {
-      req.caller = { ...req.caller, role: scope.role ?? req.caller.role };
+      req.caller = {
+        ...req.caller,
+        role: scope.role ?? req.caller.role,
+        ...(scope.agent_id ? { agent_id: scope.agent_id } : {}),
+      };
       if (scope.project) return new Set([scope.project]);
       return '*';
     }

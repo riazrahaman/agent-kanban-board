@@ -466,6 +466,14 @@ export function createAskRouter(deps = {}) {
     return rec.count;
   }
 
+  /** True while this IP has exceeded the failed-attempt limit in the live window. */
+  function isLockedOut(ip) {
+    const rec = failedAuth.get(ip);
+    if (!rec) return false;
+    if (now() - rec.windowStartMs >= MINUTE_MS) return false;
+    return rec.count > authLimit();
+  }
+
   function failedAuthRetryAfterMs(ip) {
     const rec = failedAuth.get(ip);
     if (!rec) return MINUTE_MS;
@@ -499,6 +507,13 @@ export function createAskRouter(deps = {}) {
 
     // 1. Password gate. Same generic 401 for missing AND wrong — never hint
     //    which. A failure is counted so a guessing burst backs off.
+    //    A locked-out client is refused BEFORE any credential comparison, so the
+    //    lockout holds whatever was supplied.
+    if (isLockedOut(ip)) {
+      const ms = failedAuthRetryAfterMs(ip);
+      res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
+      return res.status(429).json({ error: 'too_many_attempts', retry_after_ms: ms });
+    }
     const provided = req.get('x-ask-pass');
     if (!tokensMatch(provided, env.KANBAN_ASK_PASSWORD)) {
       const count = recordFailedAuth(ip);
