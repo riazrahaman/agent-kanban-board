@@ -52,7 +52,44 @@ export function liveSseStreamCount() {
 
 export function resetSseStreams() {
   activeSseStreams = 0;
+  for (const entry of openSseStreams.values()) clearInterval(entry.ping);
   openSseStreams.clear();
+  sseStreamsByIp.clear();
+}
+
+// B9: comment-frame keepalive so idle proxies/load balancers do not reap a quiet
+// stream. PERF-04: a stream whose socket buffer grows past this is ended (the
+// client reconnects and re-primes). A9: per-client-IP concurrent stream cap,
+// below the global cap.
+export const SSE_PING_INTERVAL_MS = 20_000;
+export const SSE_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
+export const SSE_MAX_STREAMS_PER_IP = 10;
+const sseStreamsByIp = new Map(); // ip -> concurrent stream count
+
+// Exactly-once per-stream teardown bookkeeping shared by close and drain.
+function releaseSseStream(res) {
+  const entry = openSseStreams.get(res);
+  if (!entry) return false;
+  openSseStreams.delete(res);
+  clearInterval(entry.ping);
+  const n = (sseStreamsByIp.get(entry.ip) || 0) - 1;
+  if (n > 0) sseStreamsByIp.set(entry.ip, n);
+  else sseStreamsByIp.delete(entry.ip);
+  return true;
+}
+
+// PERF-01: wire frame for a diff event, serialised once per dispatch and shared
+// by every matching stream. `prev` is dropped from the wire form only; the
+// in-process listeners keep the full event.
+const diffFrameCache = new WeakMap();
+function diffWireFrame(evt) {
+  let frame = diffFrameCache.get(evt);
+  if (frame === undefined) {
+    const { prev: _prev, ...wire } = evt;
+    frame = `event: task.${evt.kind}\ndata: ${JSON.stringify(wire)}\n\n`;
+    diffFrameCache.set(evt, frame);
+  }
+  return frame;
 }
 
 /**
@@ -65,7 +102,7 @@ export function resetSseStreams() {
  * the callback never fires and the process sits there until something kills
  * it. A plain counter cannot do this; we need the responses themselves.
  */
-const openSseStreams = new Set();
+const openSseStreams = new Map(); // res -> { ip, ping }
 
 /**
  * Ends every open SSE stream. Called on SIGTERM/SIGINT before `server.close()`.
@@ -78,9 +115,9 @@ const openSseStreams = new Set();
  * @returns {number} how many streams were ended.
  */
 export function drainSseStreams() {
-  const streams = [...openSseStreams];
-  openSseStreams.clear();
+  const streams = [...openSseStreams.keys()];
   for (const res of streams) {
+    releaseSseStream(res);
     try {
       res.end();
     } catch {
@@ -239,8 +276,18 @@ export function createApp(opts = {}) {
     if (cap >= 0 && activeSseStreams >= cap) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
+    const ip = req.ip || 'unknown';
+    if (cap >= 0 && (sseStreamsByIp.get(ip) || 0) >= Math.min(SSE_MAX_STREAMS_PER_IP, cap)) {
+      return res.status(503).json({ error: 'Too many concurrent event streams' });
+    }
     activeSseStreams += 1;
-    openSseStreams.add(res);
+    sseStreamsByIp.set(ip, (sseStreamsByIp.get(ip) || 0) + 1);
+    const ping = setInterval(() => {
+      if (closed) return;
+      try { res.write(': ping\n\n'); } catch { closed = true; unsubscribe(); }
+    }, SSE_PING_INTERVAL_MS);
+    ping.unref();
+    openSseStreams.set(res, { ip, ping });
 
     // v3.12.1 (SEC-05): register the close cleanup immediately after counting,
     // so ANY connection that made it past the increment always decrements —
@@ -254,7 +301,7 @@ export function createApp(opts = {}) {
       unsubscribe();
       // `delete` reports whether it was still registered, so a stream that
       // drainSseStreams() already ended is not counted down twice.
-      if (openSseStreams.delete(res)) {
+      if (releaseSseStream(res)) {
         activeSseStreams = Math.max(0, activeSseStreams - 1);
       }
     });
@@ -274,14 +321,25 @@ export function createApp(opts = {}) {
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
     // failure mode: treat it as a closed client and detach.
-    const send = (event, payload) => {
+    const writeFrame = (frame) => {
       if (closed) return;
       try {
-        res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+        res.write(frame);
+        if (res.writableLength > SSE_MAX_BUFFERED_BYTES) {
+          logWarn('sse', 'ending slow event stream (write backlog)', { bytes: res.writableLength });
+          closed = true;
+          unsubscribe();
+          if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
+          res.destroy();
+        }
       } catch {
         closed = true;
         unsubscribe();
       }
+    };
+    const send = (event, payload) => {
+      if (closed) return;
+      writeFrame(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
     if (isDiffMode) {
@@ -293,7 +351,7 @@ export function createApp(opts = {}) {
       unsubscribe = onDiff((evt) => {
         if (project && evt.project !== project) return;
         if (!passesScope(evt.project)) return;
-        send(`task.${evt.kind}`, evt);
+        writeFrame(diffWireFrame(evt));
       });
     } else {
       send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
