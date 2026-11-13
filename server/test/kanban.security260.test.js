@@ -615,7 +615,10 @@ describe('ENH-09 auth failure rate limiting', () => {
     store.setStorage(null);
   });
 
-  it('disabled by default — no 429 after many failures', async () => {
+  it('disabled by an explicit 0 — no 429 after many failures', async () => {
+    // The limiter is on by default (60/window) since the documented default was
+    // made real; an explicit 0 is the off switch.
+    process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '0';
     resetAuthLimits();
     for (let i = 0; i < 10; i += 1) {
       const r = await jsonRequest(baseUrl, '/api/tasks', {

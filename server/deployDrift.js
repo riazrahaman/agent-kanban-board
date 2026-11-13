@@ -537,18 +537,21 @@ export async function runDeployDriftCheck({
       // covering (unknown -> in_sync).
       const decision = state.status;
       if (decision !== 'unknown') {
+        let delivered = true;
         if (lastDecisionStatus !== 'drift' && decision === 'drift') {
-          await sendTelegram(formatDeployDriftMessage('drift', state, target.boardUrl), {
+          delivered = await sendTelegram(formatDeployDriftMessage('drift', state, target.boardUrl), {
             env,
             fetchImpl,
           });
         } else if (lastDecisionStatus === 'drift' && decision === 'in_sync') {
-          await sendTelegram(formatDeployDriftMessage('in_sync', state, target.boardUrl), {
+          delivered = await sendTelegram(formatDeployDriftMessage('in_sync', state, target.boardUrl), {
             env,
             fetchImpl,
           });
         }
-        lastDecisionStatus = decision;
+        // Advance only when no send was needed or the send succeeded, so a
+        // failed delivery is retried on the next tick.
+        if (delivered) lastDecisionStatus = decision;
       }
     }
   }

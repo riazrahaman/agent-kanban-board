@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import { parseProjectTokens } from '../middleware/auth.js';
-import { resetRateLimits, trackedProjectCount } from '../middleware/rateLimit.js';
+import { resetAuthLimits, resetRateLimits, trackedProjectCount } from '../middleware/rateLimit.js';
 import * as store from '../store.js';
 
 const ALPHA_TOKEN = 'tok-alpha';
@@ -67,6 +67,9 @@ describe('§2.3 per-project auth + rate limiting', () => {
     delete process.env.KANBAN_RATE_LIMIT_PER_MIN;
     delete process.env.KANBAN_RATE_LIMIT_WINDOW_MS;
     resetRateLimits();
+    // The failed-auth limiter is on by default: earlier tests' deliberate 401s
+    // must not carry into the next test's budget.
+    resetAuthLimits();
    });
 
   after(async () => {

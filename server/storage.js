@@ -180,7 +180,10 @@ export class JsonStorage {
     const payload = this.isDefault
       ? { tasks }
       : { project: this.project, tasks };
-    await writeAtomic(this.filePath, JSON.stringify(payload, null, 2));
+    // B1: compact JSON. The partition is rewritten on every mutation, so the
+    // two-space indentation cost real bytes and stringify time; the loader is
+    // a plain JSON.parse and reads either form.
+    await writeAtomic(this.filePath, JSON.stringify(payload));
   }
 
   async save(tasks) {
@@ -309,7 +312,7 @@ export class JsonStorage {
       archived_at: new Date().toISOString(),
       tasks,
     };
-    await writeAtomic(this.archiveFile, JSON.stringify(payload, null, 2));
+    await writeAtomic(this.archiveFile, JSON.stringify(payload)); // B1: compact
   }
 
   // v2.5.6: trash sink, mirroring the archive sibling. Deleted tasks land here
@@ -338,7 +341,7 @@ export class JsonStorage {
       updated_at: new Date().toISOString(),
       tasks,
     };
-    await writeAtomic(this.trashFile, JSON.stringify(payload, null, 2));
+    await writeAtomic(this.trashFile, JSON.stringify(payload)); // B1: compact
   }
 
   async loadSettings() {
@@ -380,36 +383,100 @@ export class GitYamlStorage {
     return !this.project || this.project === defaultProjectName();
   }
 
-  async load() {
-    try {
-      await mkdir(this.dir, { recursive: true });
-      const entries = await readdir(this.dir);
-      const yamlFiles = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
+  // ---------------------------------------------------------------------------
+  // Internal helpers
+  // ---------------------------------------------------------------------------
 
-      const tasks = [];
-      for (const file of yamlFiles) {
+  // COR-14: every git invocation that names a path passes `--` before the
+  // path list, so a path can never be parsed as an option.
+  _git(args, cwd) {
+    return execFileAsync('git', args, { cwd });
+  }
+
+  // Traversal guard: the resolved path must remain inside the git root
+  // (extended to the intermediate `<project>` directory level).
+  _guard(filePath, task, label = '') {
+    const targetDir = path.resolve(this.root);
+    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
+      throw new Error(`Path traversal attempt detected in ${label}task id: ${task.id}`);
+    }
+  }
+
+  _composite(id) {
+    return this.isDefaultProject ? id : `${this.project}/${id}`;
+  }
+
+  // C7: capture a file's current state so a failed commit can put it back.
+  async _snapshot(filePath) {
+    try {
+      return { filePath, existed: true, content: await readFile(filePath, 'utf-8') };
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return { filePath, existed: false, content: null };
+      throw err;
+    }
+  }
+
+  /**
+   * C7: undo the working-tree side of a write whose commit failed — restore
+   * each file's previous content, or remove a file the write created — and
+   * re-stage those paths so a half-staged change cannot ride along with the
+   * next unrelated commit. Best effort per file: the original commit error is
+   * what the caller rethrows.
+   */
+  async _rollback(snaps) {
+    for (const s of snaps) {
+      try {
+        if (s.existed) await writeAtomic(s.filePath, s.content);
+        else await rm(s.filePath, { force: true });
+      } catch (err) {
+        console.error(`[kanban GitYamlStorage] rollback of ${s.filePath} failed: ${err.message}`);
+      }
+      if (this.autoCommit) {
         try {
-          const raw = await readFile(path.join(this.dir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-           }
-        } catch (err) {
-          console.warn(`[kanban GitYamlStorage] error reading ${file}: ${err.message}`);
+          await this._git(['add', '-A', '--', path.basename(s.filePath)], path.dirname(s.filePath));
+        } catch {
+          // Path unknown to git (never staged) — nothing to unstage.
         }
       }
-      // Deep-review: readdir order is filesystem order, which degrades the
-      // array-index FIFO tiebreak in nextClaim on every restart. Sort by
-      // created_at so boot order matches creation order.
-      tasks.sort((a, b) => {
-        const ta = Date.parse(a.created_at || '') || 0;
-        const tb = Date.parse(b.created_at || '') || 0;
-        return ta - tb || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-      });
-      return tasks;
+    }
+  }
+
+  _cardTarget(task) {
+    if (!Number.isInteger(task.round) || task.round < 1) {
+      throw new Error('Git-backed task persistence requires a positive integer round');
+    }
+    const filename = `${task.id}.yml`;
+    const filePath = path.resolve(this.dir, filename);
+    this._guard(filePath, task);
+    return { filename, filePath };
+  }
+
+  async _readCardDir(dir, label) {
+    const entries = await readdir(dir);
+    const files = entries.filter(
+      (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
+    );
+    const tasks = [];
+    for (const file of files) {
+      try {
+        const raw = await readFile(path.join(dir, file), 'utf-8');
+        const parsed = yaml.parse(raw);
+        if (parsed && parsed.id) {
+          backfillLeaseFields([parsed]);
+          tasks.push({ file, task: parsed });
+        }
+      } catch (err) {
+        console.warn(`[kanban GitYamlStorage] ${label}${file}: ${err.message}`);
+      }
+    }
+    return tasks;
+  }
+
+  async load() {
+    let entries;
+    try {
+      await mkdir(this.dir, { recursive: true });
+      entries = await this._readCardDir(this.dir, 'error reading ');
     } catch (err) {
       // BUG-01 (v2.5.2): a readdir/environmental failure is not "no data" —
       // fail closed rather than starting empty (the JSON backend's corrupt
@@ -420,57 +487,86 @@ export class GitYamlStorage {
       );
       throw err;
     }
+    const tasks = [];
+    for (const { file, task } of entries) {
+      if (await this._isArchivedLeftover(file, task)) continue;
+      tasks.push(task);
+    }
+    // Deep-review: readdir order is filesystem order, which degrades the
+    // array-index FIFO tiebreak in nextClaim on every restart. Sort by
+    // created_at so boot order matches creation order.
+    tasks.sort((a, b) => {
+      const ta = Date.parse(a.created_at || '') || 0;
+      const tb = Date.parse(b.created_at || '') || 0;
+      return ta - tb || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    });
+    return tasks;
+  }
+
+  /**
+   * COR-10: before this fix, archiving with auto-commit off wrote the archive
+   * card but left the live card in place, so it reloaded on every restart and
+   * was archived again (duplicating it in the in-memory archive). A live card
+   * whose archive twin is the same card (identical apart from `archived_at`)
+   * is such a leftover: skip it, and with auto-commit off remove the stale file
+   * (with auto-commit on the archive path always `git rm`s the live card, so a
+   * twin there is left for the operator rather than silently deleted).
+   * A re-created task that reuses an archived id differs in at least
+   * `created_at`, so it is never mistaken for a leftover.
+   */
+  async _isArchivedLeftover(file, task) {
+    const twinPath = path.join(this.root, 'archive', this.ownedProject, file);
+    if (!existsSync(twinPath)) return false;
+    try {
+      const twin = yaml.parse(await readFile(twinPath, 'utf-8'));
+      if (!twin || twin.id !== task.id || !twin.archived_at) return false;
+      backfillLeaseFields([twin]);
+      const strip = (c) => JSON.stringify({ ...c, archived_at: undefined });
+      if (strip(twin) !== strip(task)) return false;
+      if (!this.autoCommit) await rm(path.join(this.dir, file), { force: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async loadArchive() {
     const archDir = path.join(this.root, 'archive', this.ownedProject);
     try {
       await mkdir(archDir, { recursive: true });
-      const entries = await readdir(archDir);
-      const files = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
-      const tasks = [];
-      for (const file of files) {
-        try {
-          const raw = await readFile(path.join(archDir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-            }
-         } catch (err) {
-          console.warn(`[kanban GitYamlStorage] archive read ${file}: ${err.message}`);
-         }
-       }
-      return tasks;
-     } catch (err) {
+      const entries = await this._readCardDir(archDir, 'archive read ');
+      // COR-10: deduplicate by id (e.g. both `<id>.yml` and `<id>.yaml`
+      // present); the most recently archived copy wins.
+      const byId = new Map();
+      for (const { task } of entries) {
+        const prev = byId.get(task.id);
+        if (!prev || String(task.archived_at || '') >= String(prev.archived_at || '')) {
+          byId.set(task.id, task);
+        }
+      }
+      return [...byId.values()];
+    } catch (err) {
       console.warn(`[kanban GitYamlStorage] loadArchive error: ${err.message}`);
       return [];
-     }
-   }
+    }
+  }
 
   async saveTask(task) {
     await mkdir(this.dir, { recursive: true });
-    if (!Number.isInteger(task.round) || task.round < 1) {
-      throw new Error('Git-backed task persistence requires a positive integer round');
-    }
-    const filename = `${task.id}.yml`;
-    const filePath = path.resolve(this.dir, filename);
-    // Traversal guard, extended to the intermediate `<project>` directory level:
-    // the resolved path must remain inside the git root.
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
-    }
-
-    const status = task.status;
-    const cardData = this.serializeCard(task, status);
-    const ymlContent = yaml.stringify(cardData);
+    const { filename, filePath } = this._cardTarget(task);
+    const ymlContent = yaml.stringify(this.serializeCard(task, task.status));
+    // C7: remember the previous card so a failed commit leaves the working
+    // tree exactly as it was (memory is not updated on a throw either).
+    const snap = this.autoCommit ? await this._snapshot(filePath) : null;
     await writeAtomic(filePath, ymlContent);
 
     if (this.autoCommit) {
-      await this._tryGitCommit(task, filename);
+      try {
+        await this._tryGitCommit(task, filename);
+      } catch (err) {
+        await this._rollback([snap]);
+        throw err;
+      }
     }
   }
 
@@ -500,15 +596,15 @@ export class GitYamlStorage {
       agent_logs: task.agent_logs || [],
       comments: Array.isArray(task.comments) ? task.comments : [],
       metadata: task.metadata || {},
-        // §2.6: persist the CAS version; default to 1 for legacy cards.
+      // §2.6: persist the CAS version; default to 1 for legacy cards.
       version: task.version ?? 1,
-       // §2.4: persist lease + reclaim observability so a git card round-trips
+      // §2.4: persist lease + reclaim observability so a git card round-trips
       // them; default to null/0 for legacy cards.
       claim_expires_at: task.claim_expires_at ?? null,
       claim_lease_ms: task.claim_lease_ms ?? null,
       last_progress_at: task.last_progress_at ?? null,
       reclaim_count: task.reclaim_count ?? 0,
-       };
+    };
     if (task.archived_at) cardData.archived_at = task.archived_at;
     // Deep-review: keep soft-delete/restore provenance (was silently dropped,
     // which made git trash retention anchor on `updated` instead of
@@ -525,28 +621,45 @@ export class GitYamlStorage {
     await mkdir(archDir, { recursive: true });
     const filename = `${task.id}.yml`;
     const filePath = path.resolve(archDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in archive task id: ${task.id}`);
-    }
+    this._guard(filePath, task, 'archive ');
+    const livePath = path.resolve(this.dir, filename);
+    this._guard(livePath, task, 'archive ');
     const archived = Object.assign({}, task, { archived_at: task.archived_at || new Date().toISOString() });
     const ymlContent = yaml.stringify(this.serializeCard(archived, STATUSES.DONE));
+
+    // C7: snapshot both sides so a failed commit restores the live card and
+    // the previous archive entry (or removes a newly created one).
+    const snaps = this.autoCommit
+      ? [await this._snapshot(filePath), await this._snapshot(livePath)]
+      : null;
     await writeAtomic(filePath, ymlContent);
 
-    if (this.autoCommit) {
-      // git rm the live card if it is tracked; the archive entry replaces it.
-      try {
-        if (existsSync(path.join(this.dir, filename))) {
-          await execFileAsync('git', ['rm', '-f', '--ignore-unmatch', filename], { cwd: this.dir });
+    if (!this.autoCommit) {
+      // COR-10: the live card is removed whether or not commits are on; the
+      // archive entry written above replaces it.
+      await rm(livePath, { force: true });
+      return;
+    }
+
+    try {
+      if (existsSync(livePath)) {
+        try {
+          // git rm the live card if it is tracked; the archive entry replaces it.
+          await this._git(['rm', '-f', '-q', '--ignore-unmatch', '--', filename], this.dir);
+        } catch {
+          // Index unavailable for the rm: fall through, the commit below
+          // decides whether the archive move succeeds.
         }
-      } catch {
-        // Untracked / already removed: ignore, the archive write is authoritative.
+        // An untracked live card is not touched by `git rm --ignore-unmatch`.
+        await rm(livePath, { force: true });
       }
       const relativeArchive = path.join('archive', p, filename);
-      await execFileAsync('git', ['add', relativeArchive], { cwd: this.root });
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(archive): ${composite} DONE at ${archived.archived_at}`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.root });
+      await this._git(['add', '--', relativeArchive], this.root);
+      const commitMsg = `ops(archive): ${this._composite(task.id)} DONE at ${archived.archived_at}`;
+      await this._git(['commit', '-m', commitMsg], this.root);
+    } catch (err) {
+      await this._rollback(snaps);
+      throw err;
     }
   }
 
@@ -556,14 +669,80 @@ export class GitYamlStorage {
     }
   }
 
-  // B1 (v3.12.3) — batched persist for grouped sibling lease renewals. The git
-  // backend is per-card, so this loops `saveTask` over the CHANGED tasks only
-  // (`allTasks` is ignored — rewriting every card in the bucket would be a
-  // write regression). Per-card isolation (I-6) is preserved: a failing card
-  // aborts the batch and the caller's try/catch handles it, same as `save`.
+  /**
+   * True when `next` differs from the card currently on disk only in the
+   * lease fields a renewal touches (`claim_expires_at`, `updated`). Both
+   * sides are compared after a YAML round-trip so serialisation details
+   * (dropped undefined keys, number/string forms) cannot cause a mismatch.
+   * Any doubt (missing/unreadable card) answers false, which only means the
+   * card is committed as before.
+   */
+  _isLeaseOnly(snap, nextYaml) {
+    if (!snap || !snap.existed) return false;
+    try {
+      const prev = yaml.parse(snap.content);
+      const next = yaml.parse(nextYaml);
+      if (!prev || !next || prev.id !== next.id) return false;
+      for (const c of [prev, next]) {
+        delete c.claim_expires_at;
+        delete c.updated;
+      }
+      return JSON.stringify(prev) === JSON.stringify(next);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * B1 (v3.12.3) — batched persist for grouped sibling lease renewals. The git
+   * backend is per-card, so only the CHANGED tasks are written (`allTasks` is
+   * ignored — rewriting every card in the bucket would be a write regression).
+   *
+   * PERF-02: the batch writes every card file first, then makes at most ONE
+   * `git add` and ONE commit for the whole batch. Cards whose only change is
+   * the lease renewal itself (`claim_expires_at` / `updated`) are written to
+   * the working tree but not committed — a heartbeat is not history; the next
+   * real change to the card commits the current lease along with it, and
+   * loading reads the working tree, so restarts see the renewed lease.
+   *
+   * C7: if any write or the commit fails, every card in the batch is put back
+   * to its previous content before the error propagates (the caller then
+   * leaves memory unchanged, as before).
+   */
   async saveTasks(changed, allTasks) {
+    if (!changed || changed.length === 0) return;
+    await mkdir(this.dir, { recursive: true });
+    const plan = [];
     for (const task of changed) {
-      await this.saveTask(task);
+      const { filename, filePath } = this._cardTarget(task);
+      const content = yaml.stringify(this.serializeCard(task, task.status));
+      const snap = await this._snapshot(filePath);
+      const leaseOnly = this.autoCommit && this._isLeaseOnly(snap, content);
+      plan.push({ task, filename, filePath, content, snap, leaseOnly });
+    }
+
+    const written = [];
+    let committing = false;
+    try {
+      for (const item of plan) {
+        await writeAtomic(item.filePath, item.content);
+        written.push(item.snap);
+      }
+      if (!this.autoCommit) return;
+      const toCommit = plan.filter((item) => !item.leaseOnly);
+      if (toCommit.length === 0) return;
+      committing = true;
+      await this._git(['add', '--', ...toCommit.map((item) => item.filename)], this.dir);
+      const commitMsg = toCommit.length === 1
+        ? `ops(${this._composite(toCommit[0].task.id)}): kanban ${toCommit[0].task.status}`
+        : `ops(${this.ownedProject}): kanban batch update (${toCommit.length} cards: ${toCommit.map((i) => i.task.id).join(', ')})`;
+      await this._git(['commit', '-m', commitMsg], this.dir);
+    } catch (err) {
+      await this._rollback(written);
+      if (committing) {
+        throw new Error(`Git-backed persistence commit failed: ${err.message}`, { cause: err });
+      }
+      throw err;
     }
   }
 
@@ -577,10 +756,7 @@ export class GitYamlStorage {
     await mkdir(trashDir, { recursive: true });
     const filename = `${task.id}.yml`;
     const filePath = path.resolve(trashDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
-    }
+    this._guard(filePath, task, 'trash ');
     const trashed = Object.assign({}, task, {
       deleted_at: task.deleted_at || new Date().toISOString(),
     });
@@ -595,25 +771,8 @@ export class GitYamlStorage {
   async loadTrash() {
     const trashDir = path.join(this.root, 'trash', this.ownedProject);
     try {
-      const entries = await readdir(trashDir);
-      const files = entries.filter(
-        (f) => (f.endsWith('.yml') || f.endsWith('.yaml')) && !f.startsWith('.')
-      );
-      const tasks = [];
-      for (const file of files) {
-        try {
-          const raw = await readFile(path.join(trashDir, file), 'utf-8');
-          const parsed = yaml.parse(raw);
-          if (parsed && parsed.id) {
-            backfillLeaseFields([parsed]);
-            tasks.push(parsed);
-          }
-        } catch (err) {
-          console.warn(`[kanban GitYamlStorage] trash read ${file}: ${err.message}`);
-        }
-      }
-      return tasks;
-    } catch (err) {
+      return (await this._readCardDir(trashDir, 'trash read ')).map((e) => e.task);
+    } catch {
       return []; // absent trash dir is the normal first-boot case
     }
   }
@@ -623,10 +782,7 @@ export class GitYamlStorage {
     const filename = `${task.id}.yml`;
     const trashDir = path.join(this.root, 'trash', p);
     const trashPath = path.resolve(trashDir, filename);
-    const targetDir = path.resolve(this.root);
-    if (!trashPath.startsWith(targetDir + path.sep) && trashPath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in trash task id: ${task.id}`);
-    }
+    this._guard(trashPath, task, 'trash ');
     await rm(trashPath, { force: true });
   }
 
@@ -634,28 +790,33 @@ export class GitYamlStorage {
     await mkdir(this.dir, { recursive: true });
     const filename = `${task.id}.yml`;
     const filePath = path.resolve(this.dir, filename);
-    // Traversal guard, mirroring saveTask/saveArchiveTask: the resolved path
-    // must remain inside the git root.
-    const targetDir = path.resolve(this.root);
-    if (!filePath.startsWith(targetDir + path.sep) && filePath !== targetDir) {
-      throw new Error(`Path traversal attempt detected in task id: ${task.id}`);
+    // Traversal guard, mirroring saveTask/saveArchiveTask.
+    this._guard(filePath, task);
+    if (!existsSync(filePath)) return;
+    if (!this.autoCommit) {
+      // Commits off: a plain unlink (the directory need not be a git repo).
+      await rm(filePath, { force: true });
+      return;
     }
-    if (existsSync(filePath)) {
-      await execFileAsync('git', ['rm', '-f', '--ignore-unmatch', filename], { cwd: this.dir });
-    }
-    if (this.autoCommit) {
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(${composite}): kanban deleted`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.root });
+    // C7: keep the card so a failed commit can put it back.
+    const snap = await this._snapshot(filePath);
+    try {
+      await this._git(['rm', '-f', '-q', '--ignore-unmatch', '--', filename], this.dir);
+      // An untracked card is not touched by `git rm --ignore-unmatch`.
+      await rm(filePath, { force: true });
+      const commitMsg = `ops(${this._composite(task.id)}): kanban deleted`;
+      await this._git(['commit', '-m', commitMsg], this.root);
+    } catch (err) {
+      await this._rollback([snap]);
+      throw err;
     }
   }
 
   async _tryGitCommit(task, filename) {
     try {
-      await execFileAsync('git', ['add', filename], { cwd: this.dir });
-      const composite = this.isDefaultProject ? task.id : `${this.project}/${task.id}`;
-      const commitMsg = `ops(${composite}): kanban ${task.status}`;
-      await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: this.dir });
+      await this._git(['add', '--', filename], this.dir);
+      const commitMsg = `ops(${this._composite(task.id)}): kanban ${task.status}`;
+      await this._git(['commit', '-m', commitMsg], this.dir);
     } catch (err) {
       throw new Error(`Git-backed persistence commit failed: ${err.message}`, { cause: err });
     }
@@ -685,17 +846,15 @@ export class GitYamlStorage {
       updated_at: new Date().toISOString(),
       ...settings,
     };
+    const snap = this.autoCommit ? await this._snapshot(this.settingsPath()) : null;
     await writeAtomic(this.settingsPath(), yaml.stringify(payload));
     if (this.autoCommit) {
       try {
-        await execFileAsync('git', ['add', 'settings.yml'], { cwd: this.dir });
+        await this._git(['add', '--', 'settings.yml'], this.dir);
         const composite = this.isDefaultProject ? 'default' : this.ownedProject;
-        await execFileAsync(
-          'git',
-          ['commit', '-m', `ops(${composite}): kanban settings updated`],
-          { cwd: this.dir }
-        );
+        await this._git(['commit', '-m', `ops(${composite}): kanban settings updated`], this.dir);
       } catch (err) {
+        await this._rollback([snap]);
         throw new Error(`Git-backed settings commit failed: ${err.message}`, { cause: err });
       }
     }

@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.12.10
+**System:** Agent Kanban Board v3.13.0
 
 ---
 
@@ -68,7 +68,7 @@ flowchart TD
 ## 2. Quickstart & Installation
 
 ### 2.1 System Prerequisites
-- **Node.js:** v20.x or v22.x LTS
+- **Node.js:** v20.3+ (v20.x or v22.x LTS; declared in `engines`)
 - **npm:** v9.x or higher
 - **Git:** v2.30+ (required if using Git-backed YAML storage)
 - **Web Browser:** Modern evergreen browser with native ES Module and Server-Sent Events support (Chrome, Firefox, Safari, Edge).

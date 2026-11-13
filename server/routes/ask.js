@@ -1,44 +1,8 @@
-import dns from 'node:dns';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherTaskDetails, gatherBoardFacts, gatherSourceContext, gatherRecentCommits, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
 import { safeLogValue } from './bugReports.js';
 import * as storeModule from '../store.js';
-
-// Map of temporarily failed Tailscale Funnel ingress IPs -> timestamp
-const failedTunnelIps = new Map();
-// Pre-seed known dead Tailscale DERP edge node in Paris that terminates TLS handshakes with ECONNRESET
-failedTunnelIps.set('176.58.90.63', Date.now());
-
-function setupTailscaleDnsFallback() {
-  if (globalThis.__tailscaleDnsFallbackInstalled) return;
-  globalThis.__tailscaleDnsFallbackInstalled = true;
-  const originalLookup = dns.lookup;
-  dns.lookup = function (hostname, options, callback) {
-    if (typeof options === 'function') {
-      callback = options;
-      options = {};
-    }
-    if (typeof hostname === 'string' && hostname.endsWith('.ts.net')) {
-      return originalLookup(hostname, { all: true }, (err, addresses) => {
-        if (err || !Array.isArray(addresses) || addresses.length <= 1) {
-          return originalLookup(hostname, options, callback);
-        }
-        const now = Date.now();
-        for (const [ip, ts] of failedTunnelIps) {
-          if (now - ts > 600000) failedTunnelIps.delete(ip);
-        }
-        const healthy = addresses.filter((a) => !failedTunnelIps.has(a.address));
-        const pool = healthy.length > 0 ? healthy : addresses;
-        if (options && options.all) {
-          return callback(null, pool);
-        }
-        return callback(null, pool[0].address, pool[0].family);
-      });
-    }
-    return originalLookup(hostname, options, callback);
-  };
-}
 
 /**
  * Ask-the-Board (v3.4.0) — a read-only, password-gated Q&A endpoint.
@@ -258,6 +222,9 @@ export function snapshotProjects(env) {
   return list.length > 0 ? Array.from(new Set(list)) : null;
 }
 
+/** Errnos that mean the request never reached the provider (not billed). */
+const NOT_REACHED_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'EAI_AGAIN']);
+
 function ollamaHost(env) {
   if (isNonEmpty(env.KANBAN_ASK_OLLAMA_HOST)) {
     return env.KANBAN_ASK_OLLAMA_HOST.trim().replace(/\/+$/, '');
@@ -287,7 +254,6 @@ export function isLocalOllama(env) {
  * @param {object} [deps.env] injectable environment; defaults to process.env.
  */
 export function createAskRouter(deps = {}) {
-  setupTailscaleDnsFallback();
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
   const store = deps.store || storeModule;
@@ -356,9 +322,12 @@ export function createAskRouter(deps = {}) {
   // In-memory rate limiting — same proven peek/consume pattern as
   // routes/bugReports.js. Counters are process-local (reset on redeploy) and
   // bounded: they are pruned per request and by a periodic unref'd sweep.
-  // `checkLimits` is PEEK-only; `consume` runs ONLY after a successful answer,
-  // so a request that fails validation, auth, the upstream call, or a timeout
-  // never spends the budget.
+  // `checkLimits` is PEEK-only (in-flight reservations included). A slot is
+  // CHARGED (`consume`) once an upstream call was actually sent and the
+  // provider may have billed it: 2xx (even empty/unparseable), 5xx, timeout,
+  // client abort. It is REFUNDED when nothing billable happened: validation or
+  // auth failure, an exception before the fetch, a provider 4xx answer, or a
+  // connection failure where nothing reached the provider.
   // ---------------------------------------------------------------------
   const globalTimestamps = [];
   const ipTimestamps = new Map(); // ip -> number[]
@@ -419,10 +388,30 @@ export function createAskRouter(deps = {}) {
       return null;
     }
     pruneGlobal();
-    if (Number.isFinite(daily) && globalTimestamps.length >= daily) return 'daily_cap_reached';
+    // In-flight requests count against the caps so concurrent requests cannot
+    // all pass the peek before any of them spends a slot.
+    if (Number.isFinite(daily) && globalTimestamps.length + inflightGlobal >= daily) return 'daily_cap_reached';
     const list = pruneIp(ip);
-    if (Number.isFinite(hourly) && list.length >= hourly) return 'ip_limit_reached';
+    if (Number.isFinite(hourly) && list.length + (inflightByIp.get(ip) || 0) >= hourly) return 'ip_limit_reached';
     return null;
+  }
+
+  let inflightGlobal = 0;
+  const inflightByIp = new Map();
+
+  /** Reserve a slot synchronously (right after the peek); returns an idempotent release. */
+  function reserve(ip) {
+    inflightGlobal += 1;
+    inflightByIp.set(ip, (inflightByIp.get(ip) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inflightGlobal -= 1;
+      const n = (inflightByIp.get(ip) || 1) - 1;
+      if (n <= 0) inflightByIp.delete(ip);
+      else inflightByIp.set(ip, n);
+    };
   }
 
   function consume(ip) {
@@ -538,6 +527,33 @@ export function createAskRouter(deps = {}) {
       res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
       return res.status(429).json({ error: limitError, retry_after_ms: ms });
     }
+    // Reserve synchronously (no await since the peek). The slot is held until
+    // the HANDLER finishes (finally below), not until the client goes away.
+    // Charging rule: a call that was SENT and may have been billed is charged
+    // (success, provider 5xx, timeout, client abort: the provider may bill it,
+    // and a local model carries the load). A provider 4xx answer, a connection
+    // that never reached the provider, and a request that never left the process
+    // are refunded.
+    const releaseSlot = reserve(ip);
+    let sent = false;
+    let billable = false;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      releaseSlot();
+      if (sent && billable) consume(ip);
+    };
+    try {
+    // A disconnected client stops the upstream call for Ollama only: OpenRouter
+    // is non-streaming and bills the call regardless, so aborting saves nothing.
+    const clientAbort = new AbortController();
+    let clientGone = false;
+    res.once('close', () => {
+      if (res.writableFinished) return;
+      clientGone = true;
+      if (provider === 'ollama') clientAbort.abort();
+    });
 
     // 4. Build the prompt from the protocol pack + retrieved source + the cards
     //    the question names + a live read-only snapshot.
@@ -633,15 +649,25 @@ export function createAskRouter(deps = {}) {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       lastErr = null;
+      if (clientGone) return; // client left before (re)sending: nothing sent, no charge
       try {
+        sent = true;
         upstream = await fetchImpl(targetUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify(reqBody),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: isOllama
+            ? AbortSignal.any([AbortSignal.timeout(timeoutMs), clientAbort.signal])
+            : AbortSignal.timeout(timeoutMs),
         });
       } catch (err) {
         lastErr = err;
+        // undici surfaces a connect failure as TypeError('fetch failed') with
+        // the errno on err.cause.code; nothing reached the provider then.
+        const errCode = err?.cause?.code || err?.code;
+        const isAbort = err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
+        if (isAbort || !NOT_REACHED_CODES.has(errCode)) billable = true;
+        if (clientAbort.signal.aborted) return; // client is gone; nothing to answer
         const aborted =
           err && (err.name === 'AbortError' || err.name === 'TimeoutError' || err.code === 'ABORT_ERR');
         // The upstream BODY is still never logged — only the shape of the
@@ -664,6 +690,7 @@ export function createAskRouter(deps = {}) {
         // below reports the errno (do NOT clear it here).
         continue;
       }
+      if (upstream && !(upstream.status >= 400 && upstream.status < 500)) billable = true;
       // Deep-review: an HTTP 5xx (model loading / Ollama capacity) is also the
       // transient a local provider should retry — previously only thrown
       // transport errors did.
@@ -705,6 +732,7 @@ export function createAskRouter(deps = {}) {
     try {
       data = await upstream.json();
     } catch {
+      if (clientGone) return; // client aborted mid-read: not a provider fault, socket is closed
       logFailure('unparseable', `${providerLabel} returned a 2xx that was not JSON`);
       return res.status(502).json({ error: 'gateway_error' });
     }
@@ -718,10 +746,13 @@ export function createAskRouter(deps = {}) {
       return res.status(502).json({ error: 'gateway_error' });
     }
 
-    // Only a fully successful answer spends the cap/IP budget.
-    consume(ip);
+    // Charge before responding so the next request sees the spent slot.
+    settle();
 
     res.json(fallback ? { answer, model, provider, fallback: true } : { answer, model, provider });
+    } finally {
+      settle();
+    }
   });
 
   return router;

@@ -218,7 +218,7 @@ describe('§2.2 scoped + diff SSE', () => {
       const [createdEvt] = await stream.waitFor((e) => e.event === 'task.created');
       assert.equal(createdEvt.data.task.id, 'gamma-1');
       assert.equal(createdEvt.data.project, 'gamma');
-      assert.equal(createdEvt.data.prev, null, 'a creation has no previous revision');
+      assert.ok(!('prev' in createdEvt.data), 'PERF-01: prev is not carried on the wire');
 
       await jsonRequest(baseUrl, '/api/tasks/gamma-1?project=gamma', {
         method: 'PATCH', headers: headers(),
@@ -226,7 +226,7 @@ describe('§2.2 scoped + diff SSE', () => {
         });
       const [updatedEvt] = await stream.waitFor((e) => e.event === 'task.updated');
       assert.equal(updatedEvt.data.task.title, 'Gamma card v2');
-      assert.equal(updatedEvt.data.prev.title, 'Gamma card', 'carries the previous revision');
+      assert.ok(!('prev' in updatedEvt.data), 'PERF-01: prev is not carried on the wire');
       await jsonRequest(baseUrl, '/api/tasks/gamma-1?project=gamma', {
         method: 'PATCH', headers: headers('planner'),
         body: JSON.stringify({ status: 'READY' }),

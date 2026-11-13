@@ -17,7 +17,8 @@
  *
  * Never assign an imported binding from another module — call the setter below.
  */
-import { readdir } from 'node:fs/promises';
+import { readdir, rm, rename, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonStorage, GitYamlStorage } from '../storage.js';
@@ -37,6 +38,57 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function compositeKey(project, id) {
   return `${project}/${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// ENH-08 log/comment spill sidecar paths. Lived in store.js; moved here
+// (COR-12, v3.12.11) so the trash and archive modules can retire a card's
+// sidecar without importing the store facade back (a cycle).
+// ---------------------------------------------------------------------------
+
+export function spillDir(project) {
+  return path.join(jsonDataDir(), 'spill', project || defaultProjectName());
+}
+
+export function spillFile(project, taskId) {
+  return path.join(spillDir(project), `${taskId}.jsonl`);
+}
+
+/**
+ * COR-12: a card that leaves the live namespace (soft delete, archive) takes
+ * its sidecar with it, parked at `spill/<project>/<bucket>/<id>.<stamp>.jsonl`
+ * where `stamp` is the deleted_at / archived_at timestamp. A future live card
+ * that reuses the id therefore starts with no spilled history, and two trash
+ * rows sharing an id keep separate sidecars. Task ids never contain '.', so a
+ * bucket directory cannot collide with a live `<id>.jsonl` file.
+ */
+export function parkedSpillFile(project, taskId, bucket, stampIso) {
+  const stamp = String(stampIso || '').replace(/[^0-9A-Za-z]/g, '') || 'unstamped';
+  return path.join(spillDir(project), bucket, `${taskId}.${stamp}.jsonl`);
+}
+
+/** Best-effort move; a missing source is the common no-sidecar case. */
+export async function moveSpillFile(src, dest) {
+  if (!existsSync(src)) return;
+  try {
+    await mkdir(path.dirname(dest), { recursive: true });
+    await rename(src, dest);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return;
+    console.warn(`[kanban store] spill move ${src}: ${err.message}`);
+  }
+}
+
+/**
+ * Best-effort removal once a card is gone for good (hard delete, trash
+ * expiry). Logged, never thrown: the authoritative delete already persisted.
+ */
+export async function removeSpillFile(fp) {
+  try {
+    await rm(fp, { force: true });
+  } catch (err) {
+    console.warn(`[kanban store] spill remove ${fp}: ${err.message}`);
+  }
 }
 
 // ============================================================================

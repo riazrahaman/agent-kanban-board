@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
-import { resetRateLimits } from '../middleware/rateLimit.js';
+import { resetAuthLimits, resetRateLimits } from '../middleware/rateLimit.js';
 import { reportCredentialCoverage } from '../utils/credentialMap.js';
 import * as store from '../store.js';
 
@@ -221,8 +221,13 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     const claimed = await claim(id, CREDENTIALS.legacy, 'reviewer');
     assert.equal(claimed.response.status, 200, 'legacy token + header reviewer claims as reviewer');
     assert.equal(claimed.body.status, 'IN_PROGRESS');
+    // SEC-04 (v3.12.11): a privileged header role on an unbound project
+    // credential no longer bypasses the role matrix (the credential is not
+    // privileged); a functional header role keeps working.
     const walk = await patchStatus(id, CREDENTIALS.legacy, 'runner', 'IN_REVIEW');
-    assert.equal(walk.response.status, 200, 'legacy header role runner still bypasses transitions');
+    assert.equal(walk.response.status, 403, 'unbound project credential + header runner is not privileged');
+    const asBuilder = await patchStatus(id, CREDENTIALS.legacy, 'builder', 'IN_REVIEW');
+    assert.equal(asBuilder.response.status, 200, 'legacy header role builder still walks its own edge');
     });
 
   it('B1. patchTask rejects a body "role" field with 400 (the old side door is closed), even for admin callers', async () => {
@@ -389,6 +394,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
   it('E. bound-role usage is not an auth failure: role mismatches never trip the failed-auth rate limiter', async () => {
     process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '2';
     resetRateLimits();
+    resetAuthLimits(); // start E from an empty failed-auth budget (limiter is on by default)
     const id = await makeReadyTask('e-rl');
     await claim(id, CREDENTIALS.builder, 'reviewer'); // audited mismatch, served
     // Three more mismatched-gate attempts (403 from the state machine, not auth):
@@ -400,6 +406,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     assert.notEqual(last.response.status, 200); // still the state-machine 403
     delete process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN;
     resetRateLimits();
+    resetAuthLimits();
   });
 });
 

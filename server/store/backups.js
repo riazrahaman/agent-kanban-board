@@ -6,11 +6,12 @@
  * Extracted verbatim from store.js; __dirname moved from server/ to server/store/
  * so the default data-file fallback is re-anchored to server/tasks.json.
  */
-import { readdir, mkdir, copyFile, rm } from 'node:fs/promises';
+import { readdir, mkdir, copyFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsonDataDir } from '../task-identity.js';
+import { JsonStorage } from '../storage.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('backup');
@@ -46,49 +47,99 @@ function sanitizeTimestamp(iso) {
   return iso.replace(/[:.]/g, '-');
 }
 
+function defaultLiveFile() {
+  return process.env.KANBAN_DATA_FILE || path.join(__dirname, '..', 'tasks.json');
+}
+
 function backupSourceDir() {
   if (process.env.KANBAN_DATA_DIR) return process.env.KANBAN_DATA_DIR;
-  const defaultLive = process.env.KANBAN_DATA_FILE || path.join(__dirname, '..', 'tasks.json');
-  return path.dirname(defaultLive);
+  return path.dirname(defaultLiveFile());
 }
 
 function defaultBackupRoot() {
   return path.join(backupSourceDir(), 'backups');
 }
 
+/** Name of the layout manifest written at the root of every snapshot. */
+export const BACKUP_MANIFEST = 'backup-manifest.json';
+
+/**
+ * COR-11: the default project's files, taken from the same JsonStorage the
+ * store uses (live partition, journal, archive, trash, settings), as paths
+ * relative to the directory that holds the live file. Mirroring that layout
+ * at the snapshot root means a snapshot of a deployment whose default file
+ * sits inside the data dir is still a plain copy of the data dir.
+ */
+function defaultProjectFiles() {
+  const live = defaultLiveFile();
+  const storage = new JsonStorage(live, { isDefault: true });
+  const dir = path.dirname(live);
+  const files = [live, storage.journalFile, storage.archiveFile, storage.trashFile, storage.settingsFile];
+  return { dir, rel: files.map((f) => path.relative(dir, f)) };
+}
+
+// Named-project storage under the JSON data dir: `tasks/` holds every named
+// partition with its journal, `tasks/archive/` and `tasks/trash/`; per-project
+// settings live in `settings/` and log spill sidecars in `spill/`. `archive/`
+// is kept from the original backup set.
+const NAMED_PROJECT_TREES = ['tasks', 'archive', 'settings', 'spill'];
+
 async function runBackup() {
   const root = defaultBackupRoot();
   const stamp = sanitizeTimestamp(new Date().toISOString());
   const destDir = path.join(root, stamp);
   await mkdir(destDir, { recursive: true });
+  const skip = new Set([path.resolve(root)]);
 
-  const dataDir = process.env.KANBAN_DATA_DIR;
-  if (dataDir && existsSync(dataDir)) {
-    await copyDirTree(dataDir, destDir);
+  // 1. Named projects. With KANBAN_DATA_DIR set the whole tree is copied (as
+  //    before); otherwise every storage subtree of the JSON data dir.
+  const dataDir = process.env.KANBAN_DATA_DIR || jsonDataDir();
+  if (process.env.KANBAN_DATA_DIR) {
+    if (existsSync(dataDir)) await copyDirTree(dataDir, destDir, skip);
   } else {
-    const defaultLive = process.env.KANBAN_DATA_FILE || path.join(__dirname, '..', 'tasks.json');
-    if (existsSync(defaultLive)) {
-      await copyFile(defaultLive, path.join(destDir, path.basename(defaultLive)));
+    for (const sub of NAMED_PROJECT_TREES) {
+      const src = path.join(dataDir, sub);
+      if (existsSync(src)) await copyDirTree(src, path.join(destDir, sub), skip);
     }
-    const jsonDir = jsonDataDir();
-    const tasksDir = path.join(jsonDir, 'tasks');
-    const archiveDir = path.join(jsonDir, 'archive');
-    if (existsSync(tasksDir)) await copyDirTree(tasksDir, path.join(destDir, 'tasks'));
-    if (existsSync(archiveDir)) await copyDirTree(archiveDir, path.join(destDir, 'archive'));
   }
+
+  // 2. The default project, wherever KANBAN_DATA_FILE puts it (it may lie
+  //    outside the data dir, and its archive/trash/settings are siblings of
+  //    the live file, not of the data dir).
+  const def = defaultProjectFiles();
+  const copied = [];
+  for (const rel of def.rel) {
+    const src = path.join(def.dir, rel);
+    if (!existsSync(src)) continue;
+    const dest = path.join(destDir, rel);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(src, dest);
+    copied.push(rel);
+  }
+
+  // 3. Layout manifest, so the restore side knows where the default project's
+  //    files came from when they do not live inside the data dir.
+  const manifest = {
+    format: 1,
+    created_at: new Date().toISOString(),
+    data_dir: path.resolve(dataDir),
+    default_project: { dir: path.resolve(def.dir), files: copied, live_file: def.rel[0] },
+    split: path.resolve(def.dir) !== path.resolve(dataDir),
+  };
+  await writeFile(path.join(destDir, BACKUP_MANIFEST), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 
   await rotateBackups(root);
 }
 
-async function copyDirTree(src, dest) {
+async function copyDirTree(src, dest, skip = new Set()) {
   const entries = await readdir(src, { withFileTypes: true });
   await mkdir(dest, { recursive: true });
   for (const entry of entries) {
     const s = path.join(src, entry.name);
     const d = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'backups') continue;
-      await copyDirTree(s, d);
+      if (skip.has(path.resolve(s))) continue;
+      await copyDirTree(s, d, skip);
     } else {
       await copyFile(s, d);
     }
