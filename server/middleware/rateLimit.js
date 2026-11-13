@@ -116,10 +116,12 @@ export function createRateLimitMiddleware() {
 // the per-project mutation rate limit is not configured — the mutation limiter
 // only counts requests that PASS auth, so it never sees the failures.
 //
-// Disabled by default (no env => disabled) so existing tests and deployments
-// are unaffected. `KANBAN_AUTH_RATE_LIMIT_PER_MIN` sets the per-IP ceiling; when
-// unset it falls back to `KANBAN_RATE_LIMIT_PER_MIN`, and if BOTH are unset the
-// whole subsystem is inert.
+// On by default: when `KANBAN_AUTH_RATE_LIMIT_PER_MIN` is unset the per-IP
+// ceiling falls back to `KANBAN_RATE_LIMIT_PER_MIN` when that is set, and
+// otherwise to DEFAULT_AUTH_FAILURES_PER_WINDOW (60 per window), matching the
+// documented default. Only failures are counted, so a correctly configured
+// client never consumes this budget. An explicit `0` disables the subsystem.
+// (The per-project mutation limiter above stays disabled unless configured.)
 const authBuckets = new Map(); // ip -> { count, windowStartMs }
 
 export function resetAuthLimits() {
@@ -130,11 +132,15 @@ export function trackedAuthIpCount() {
   return authBuckets.size;
 }
 
+export const DEFAULT_AUTH_FAILURES_PER_WINDOW = 60;
+
 function authLimitPerWindow() {
   const raw = process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN;
   if (raw === undefined || raw === '') {
-    // Fall back to the mutation limit; if that is also unset, disabled.
-    return limitPerWindow();
+    // Unset: keep the historical fallback to a configured mutation limit, and
+    // otherwise use the documented default instead of switching the limiter off.
+    const mutationLimit = limitPerWindow();
+    return mutationLimit > 0 ? mutationLimit : DEFAULT_AUTH_FAILURES_PER_WINDOW;
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return 0;

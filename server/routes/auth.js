@@ -64,8 +64,9 @@ function resolveCredential(req) {
  * cannot set request headers (and the long-lived token must not go in a URL).
  *
  * v3.8.0 (M1): for bound credentials the role is DERIVED from the credential
- * (session role, admin token, or the credential's bound role) — `body.role` is
- * only honored by legacy UNBOUND credentials, exactly matching the mutation
+ * (session role, admin token, or the credential's bound role) — the asserted
+ * role (`body.role`, else the `X-Agent-Role` header) is only honored by legacy
+ * UNBOUND credentials, exactly matching the mutation
  * middleware. A privileged role can never be minted from a non-privileged
  * credential, mirroring §2.3b: per-project credentials never confer privileged
  * ops; the legacy global token keeps its historical superuser semantics.
@@ -88,7 +89,18 @@ router.post('/stream-ticket', (req, res) => {
   }
 
   const body = req.body ?? {};
-  const rawRole = typeof body.role === 'string' ? body.role.toLowerCase() : null;
+  // The body role wins; the `X-Agent-Role` header (which every client mutation
+  // already sends) is the fallback, so a client that only declares its role as a
+  // header can still mint for an unbound credential. Either way it is only an
+  // ASSERTION, subject to exactly the same checks below.
+  const headerRole = req.get('x-agent-role');
+  const assertedRole =
+    typeof body.role === 'string' && body.role !== ''
+      ? body.role
+      : typeof headerRole === 'string' && headerRole.trim() !== ''
+        ? headerRole.trim()
+        : null;
+  const rawRole = assertedRole ? assertedRole.toLowerCase() : null;
 
   // Derive the role the credential carries (M1): session role, admin token, or
   // the credential's bound role — body.role is only consulted for UNBOUND
@@ -109,8 +121,11 @@ router.post('/stream-ticket', (req, res) => {
   }
 
   if (derived) {
-    if (rawRole && rawRole !== role) {
-      emitRoleBindingMismatch(req, rawRole, role, defaultProjectName());
+    // Only an explicit body role is reported as a mismatch (unchanged); the
+    // header fallback exists for unbound credentials.
+    const bodyRole = typeof body.role === 'string' && body.role !== '' ? body.role.toLowerCase() : null;
+    if (bodyRole && bodyRole !== role) {
+      emitRoleBindingMismatch(req, bodyRole, role, defaultProjectName());
     }
     // Privileged roles cannot be bound into the map, and sessions carry their
     // own privilege — this is a defensive guard, not the policy seam.
@@ -119,7 +134,8 @@ router.post('/stream-ticket', (req, res) => {
     }
   } else {
     if (!rawRole || !VALID_ROLES.has(rawRole)) {
-      recordAuthFailure(req);
+      // Not counted as an auth failure: the credential already verified, so this
+      // is a malformed request, not a credential guess.
       return res.status(403).json({ error: 'A valid agent role is required' });
     }
     role = rawRole;

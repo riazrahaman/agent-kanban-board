@@ -1,6 +1,6 @@
 import type { Task, ProjectSummary, MetricsResponse, MilestoneSummary } from './types'
 import type { DeployDrift } from './lib/deployDrift'
-import { authHeaders, readStoredToken } from './lib/authToken'
+import { authHeaders, CLIENT_ROLE, readStoredToken } from './lib/authToken'
 
 // Same-origin `/api`: the deployed server serves the client bundle AND the API
 // on one origin, so a relative base works everywhere (local dev proxies it via
@@ -421,7 +421,10 @@ async function mintStreamTicket(project?: string): Promise<string | null> {
     const res = await fetch(`${API_BASE}/auth/stream-ticket`, {
       method: 'POST',
       headers: mutationHeaders({ project }),
-      body: JSON.stringify({ ...(project ? { project } : {}) }),
+      // The role travels in the body too (not just as X-Agent-Role): an unbound
+      // credential's ticket role comes from the request, and older servers read
+      // it from the body only. Bound credentials ignore it.
+      body: JSON.stringify({ role: CLIENT_ROLE, ...(project ? { project } : {}) }),
     })
     if (!res.ok) return null
     const body = (await res.json()) as { ticket?: string }

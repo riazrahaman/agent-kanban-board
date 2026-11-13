@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
-import { resetRateLimits } from '../middleware/rateLimit.js';
+import { resetAuthLimits, resetRateLimits } from '../middleware/rateLimit.js';
 import { reportCredentialCoverage } from '../utils/credentialMap.js';
 import * as store from '../store.js';
 
@@ -389,6 +389,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
   it('E. bound-role usage is not an auth failure: role mismatches never trip the failed-auth rate limiter', async () => {
     process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '2';
     resetRateLimits();
+    resetAuthLimits(); // start E from an empty failed-auth budget (limiter is on by default)
     const id = await makeReadyTask('e-rl');
     await claim(id, CREDENTIALS.builder, 'reviewer'); // audited mismatch, served
     // Three more mismatched-gate attempts (403 from the state machine, not auth):
@@ -400,6 +401,7 @@ describe('§2.3d — credential-bound roles (v3.8.0)', () => {
     assert.notEqual(last.response.status, 200); // still the state-machine 403
     delete process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN;
     resetRateLimits();
+    resetAuthLimits();
   });
 });
 
