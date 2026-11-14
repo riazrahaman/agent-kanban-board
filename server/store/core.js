@@ -22,6 +22,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonStorage, GitYamlStorage } from '../storage.js';
+import { onDiff } from './listeners.js';
 import {
   isValidProjectId,
   defaultProjectName,
@@ -65,6 +66,13 @@ export function spillFile(project, taskId) {
 export function parkedSpillFile(project, taskId, bucket, stampIso) {
   const stamp = String(stampIso || '').replace(/[^0-9A-Za-z]/g, '') || 'unstamped';
   return path.join(spillDir(project), bucket, `${taskId}.${stamp}.jsonl`);
+}
+
+/** Move that surfaces failures (used where losing the move would split history). */
+export async function moveSpillFileStrict(src, dest) {
+  if (!existsSync(src)) return;
+  await mkdir(path.dirname(dest), { recursive: true });
+  await rename(src, dest);
 }
 
 /** Best-effort move; a missing source is the common no-sidecar case. */
@@ -184,6 +192,13 @@ async function guardOutcomeUnknown(operation) {
   pendingOutcomeUnknown = null;
   appliedUnknownPending = false;
   appliedUnknownMeta = null;
+  // Consume recorded metadata for every card whose event was already
+  // dispatched, so the fallback broadcast only covers changes not yet sent.
+  const offDiff = onDiff((ev) => {
+    if (appliedUnknownMeta && ev && ev.task) {
+      appliedUnknownMeta.semantic.delete(compositeKey(ev.task.project, ev.task.id));
+    }
+  });
   try {
     const result = await operation();
     if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
@@ -203,6 +218,7 @@ async function guardOutcomeUnknown(operation) {
     }
     throw err;
   } finally {
+    offDiff();
     pendingOutcomeUnknown = null;
     appliedUnknownPending = false;
     appliedUnknownMeta = null;

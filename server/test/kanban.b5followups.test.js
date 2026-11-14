@@ -5,7 +5,7 @@
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, open } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -236,6 +236,92 @@ describe('applied-unknown follow-ups', () => {
       const logs = await store.getTaskLogs('W', 'default', { include_spilled: true });
       assert.ok(logs.spilled_count >= 3);
       assert.deepEqual(logs.entries.slice(0, 2).map((e) => e.message), ['old-1', 'old-2']);
+    } finally {
+      if (savedCap === undefined) delete process.env.KANBAN_INLINE_LOG_CAP; else process.env.KANBAN_INLINE_LOG_CAP = savedCap;
+    }
+  });
+
+  it('an already-broadcast card is not replayed by the fallback broadcast', async () => {
+    await boot('f9');
+    await create('D', 'DONE');
+    for (const id of ['B1', 'B2']) {
+      assert.equal((await store.createTask({ id, title: id, round: 1, status: 'BLOCKED', depends_on: ['D'] }, 'default', { caller })).status, 201);
+    }
+    const real = store.getStorage('default');
+    const fake = Object.create(real);
+    fake.saveTask = async (task) => {
+      const err = new Error('unknown outcome (test)');
+      err.outcomeUnknown = true;
+      err.changedTasks = task.id === 'B1' ? [task] : [];
+      throw err;
+    };
+    store.setStorage(fake, 'default');
+    const events = [];
+    const off = store.onDiff((e) => events.push(e));
+    let res;
+    try { res = await store.maybeUnlockDependents('D', { project: 'default' }); } finally { store.setStorage(real, 'default'); off(); }
+    assert.equal(res.status, 503);
+    assert.equal(events.filter((e) => e.task.id === 'B1' && e.kind === 'unblocked').length, 1, 'B1 unblocked exactly once');
+    assert.equal(events.filter((e) => e.task.id === 'B2').length, 0, 'B2 never applied');
+  });
+
+  /** Leaves an interrupted restore plus a separate live sidecar (both files exist). */
+  async function bothFiles(id) {
+    const live = await interruptedRestore(id);
+    await writeFile(live, JSON.stringify({ type: 'log', message: 'live-1' }) + '\n');
+    const logs = await store.getTaskLogs(id, 'default', { include_spilled: true });
+    assert.deepEqual(logs.entries.map((e) => e.message), ['old-1', 'old-2', 'live-1'], 'reads span both files');
+    return live;
+  }
+  const messages = async (live) => (await readFile(live, 'utf-8')).split('\n').filter(Boolean).map((l) => JSON.parse(l).message);
+
+  it('both-files case merges on hard-delete with no loss', async () => {
+    await boot('f10');
+    const live = await bothFiles('M1');
+    assert.equal((await store.hardDeleteFromTrash('M1', { caller })).status, 200);
+    assert.deepEqual(await messages(live), ['old-1', 'old-2', 'live-1']);
+  });
+
+  it('both-files case merges on the retention sweep with no loss', async () => {
+    await boot('f11');
+    const live = await bothFiles('M2');
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60 * 86400000;
+    try { await store.runTrashSweep(); } finally { Date.now = realNow; }
+    assert.deepEqual(await messages(live), ['old-1', 'old-2', 'live-1']);
+  });
+
+  it('a failed merge keeps the trash row and the parked history', async () => {
+    await boot('f12');
+    const live = await bothFiles('M3');
+    const fsp = await import('node:fs/promises');
+    const parkedBefore = store.getTrashedTasks('default').length;
+    // Block the temp merge target with a directory so the swap cannot happen.
+    await mkdir(`${live}.merge.tmp`);
+    const res = await store.hardDeleteFromTrash('M3', { caller });
+    assert.equal(res.status, 500);
+    assert.equal(store.getTrashedTasks('default').length, parkedBefore, 'row kept');
+    assert.equal((await store.getTaskLogs('M3', 'default', { include_spilled: true })).spilled_count, 3);
+    await fsp.rm(`${live}.merge.tmp`, { recursive: true });
+    assert.equal((await store.hardDeleteFromTrash('M3', { caller })).status, 200, 'retry works');
+    assert.deepEqual(await messages(live), ['old-1', 'old-2', 'live-1']);
+  });
+
+  it('a failed repair move fails the spill append instead of splitting history', async () => {
+    const savedCap = process.env.KANBAN_INLINE_LOG_CAP;
+    process.env.KANBAN_INLINE_LOG_CAP = '1';
+    try {
+      await boot('f13');
+      const live = await interruptedRestore('X');
+      // A directory where the live file is needed makes the rename fail.
+      await mkdir(live);
+      await assert.rejects(async () => {
+        await store.appendLog('X', 'agent-1', 'one', 'default');
+        await store.appendLog('X', 'agent-1', 'two', 'default');
+      });
+      await rm(live, { recursive: true });
+      const logs = await store.getTaskLogs('X', 'default', { include_spilled: true });
+      assert.deepEqual(logs.entries.map((e) => e.message), ['old-1', 'old-2'], 'history intact');
     } finally {
       if (savedCap === undefined) delete process.env.KANBAN_INLINE_LOG_CAP; else process.env.KANBAN_INLINE_LOG_CAP = savedCap;
     }

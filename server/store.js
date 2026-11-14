@@ -114,6 +114,7 @@ import {
   spillFile,
   parkedSpillFile,
   moveSpillFile,
+  moveSpillFileStrict,
   removeSpillFile,
   resetProjectSettings,
   markStoreLoaded,
@@ -1906,16 +1907,23 @@ function parkedSpillForLive(project, taskId) {
   return existsSync(parked) ? parked : null;
 }
 
-function spillReadPath(project, taskId) {
+// Files holding a card's history, oldest first: a still-parked copy of a
+// restored card (if any) precedes the live sidecar.
+function spillReadPaths(project, taskId) {
+  const paths = [];
+  const parked = parkedSpillForLive(project, taskId);
+  if (parked) paths.push(parked);
   const fp = spillFile(project, taskId);
-  if (existsSync(fp)) return fp;
-  return parkedSpillForLive(project, taskId) || fp;
+  if (existsSync(fp)) paths.push(fp);
+  return paths;
 }
 
+// Throws when the required move fails: appending to a fresh live file would
+// split the history, so the write is refused instead.
 async function repairParkedSpill(project, taskId) {
   if (existsSync(spillFile(project, taskId))) return;
   const parked = parkedSpillForLive(project, taskId);
-  if (parked) await moveSpillFile(parked, spillFile(project, taskId));
+  if (parked) await moveSpillFileStrict(parked, spillFile(project, taskId));
 }
 
 /**
@@ -1923,15 +1931,16 @@ async function repairParkedSpill(project, taskId) {
  * matching the order they were appended). Returns [] if no spill file exists.
  */
 async function readSpill(project, taskId) {
-  const fp = spillReadPath(project, taskId);
-  if (!existsSync(fp)) return [];
-  try {
-    const raw = await readFile(fp, 'utf-8');
-    return raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
-  } catch (err) {
-    log.warn('spill read error', { project, task_id: taskId, error: err.message });
-    return [];
+  const out = [];
+  for (const fp of spillReadPaths(project, taskId)) {
+    try {
+      const raw = await readFile(fp, 'utf-8');
+      out.push(...raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)));
+    } catch (err) {
+      log.warn('spill read error', { project, task_id: taskId, error: err.message });
+    }
   }
+  return out;
 }
 
 /**
@@ -1939,14 +1948,14 @@ async function readSpill(project, taskId) {
  * the full content (fast for paging). Returns 0 if no spill file exists.
  */
 async function countSpill(project, taskId) {
-  const fp = spillReadPath(project, taskId);
-  if (!existsSync(fp)) return 0;
-  try {
-    const raw = await readFile(fp, 'utf-8');
-    return raw.split('\n').filter((l) => l.trim()).length;
-  } catch {
-    return 0;
+  let n = 0;
+  for (const fp of spillReadPaths(project, taskId)) {
+    try {
+      const raw = await readFile(fp, 'utf-8');
+      n += raw.split('\n').filter((l) => l.trim()).length;
+    } catch { /* unreadable file counts as empty */ }
   }
+  return n;
 }
 
 /**

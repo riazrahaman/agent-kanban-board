@@ -20,7 +20,7 @@ import {
   removeSpillFile,
 } from './core.js';
 import { existsSync } from 'node:fs';
-import { mkdir, rename } from 'node:fs/promises';
+import { mkdir, rename, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { notify } from './listeners.js';
 import { GitYamlStorage } from '../storage.js';
@@ -88,10 +88,21 @@ async function rescueParkedSpill(project, row) {
   if (!live || !live.restored_at || live.created_at !== row.created_at) return true;
   const parked = parkedSpillFile(project, row.id, 'trash', row.deleted_at);
   const dest = spillFile(project, row.id);
-  if (!existsSync(parked) || existsSync(dest)) return true;
+  if (!existsSync(parked)) return true;
   try {
     await mkdir(path.dirname(dest), { recursive: true });
-    await rename(parked, dest);
+    if (existsSync(dest)) {
+      // Both exist: parked (older) entries first, then live, swapped in atomically.
+      const older = await readFile(parked, 'utf-8');
+      const newer = await readFile(dest, 'utf-8');
+      const joined = (older && !older.endsWith('\n') ? older + '\n' : older) + newer;
+      const tmp = `${dest}.merge.tmp`;
+      await writeFile(tmp, joined, 'utf-8');
+      await rename(tmp, dest);
+      await rm(parked, { force: true });
+    } else {
+      await rename(parked, dest);
+    }
     return true;
   } catch (err) {
     console.warn(`[kanban store] spill rescue ${parked}: ${err.message}`);
