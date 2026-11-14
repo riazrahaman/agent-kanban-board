@@ -1,7 +1,8 @@
 /**
  * C1 (v3.12.5) — §2.7 periodic backup: opt-in snapshot of the live JSON data
  * file(s) into a sibling backups/ directory, rotated to a bounded count. OFF
- * unless KANBAN_BACKUP_ENABLED is set. Read-only: never takes the mutation lock.
+ * unless KANBAN_BACKUP_ENABLED is set. Read-only on the data; the file copy runs
+ * under the mutation lock so each base/journal pair is captured consistently.
  *
  * Extracted verbatim from store.js; __dirname moved from server/ to server/store/
  * so the default data-file fallback is re-anchored to server/tasks.json.
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { jsonDataDir, gitRoot } from '../task-identity.js';
 import { JsonStorage } from '../storage.js';
 import { createLogger } from '../logger.js';
+import { withMutationLock } from './core.js';
 
 const log = createLogger('backup');
 
@@ -21,7 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 // §2.7 periodic backup — opt-in snapshot of the live JSON data file(s) into a
 // sibling `backups/` directory, rotated to a bounded count. OFF unless
-// KANBAN_BACKUP_ENABLED is set. Read-only: never takes the mutation lock.
+// KANBAN_BACKUP_ENABLED is set. The file copy runs under the mutation lock so
+// a snapshot sees a consistent base/journal/trash/archive set (COR-106).
 // ---------------------------------------------------------------------------
 function getBackupIntervalMs() {
   const raw = process.env.KANBAN_BACKUP_INTERVAL_MS;
@@ -107,10 +110,27 @@ function separateGitRoot() {
 }
 
 async function runBackup() {
+  // COR-106: copy under the mutation lock so partition, journal, trash and
+  // archive are captured at one moment (a fast local copy).
+  await withMutationLock(() => runBackupLocked());
+}
+
+async function runBackupLocked() {
   const root = defaultBackupRoot();
   const stamp = sanitizeTimestamp(new Date().toISOString());
   const destDir = path.join(root, stamp);
   await mkdir(destDir, { recursive: true });
+  try {
+    await snapshotInto(root, destDir);
+  } catch (err) {
+    // COR-105: never leave a partial snapshot behind to be counted or restored.
+    await rm(destDir, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+  await rotateBackups(root);
+}
+
+async function snapshotInto(root, destDir) {
   const skip = new Set([path.resolve(root)]);
 
   // 1. Named projects. With KANBAN_DATA_DIR set the whole tree is copied (as
@@ -164,7 +184,10 @@ async function runBackup() {
   };
   await writeFile(path.join(destDir, BACKUP_MANIFEST), JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 
-  await rotateBackups(root);
+}
+
+function isTransientTemp(name) {
+  return name.startsWith('.tmp_') || name.endsWith('.tmp');
 }
 
 async function copyDirTree(src, dest, skip = new Set()) {
@@ -177,6 +200,9 @@ async function copyDirTree(src, dest, skip = new Set()) {
       if (skip.has(path.resolve(s))) continue;
       await copyDirTree(s, d, skip);
     } else {
+      // COR-105: atomic-write temp files are transient; skip them. Any other
+      // file that vanishes mid-copy fails the whole snapshot.
+      if (isTransientTemp(entry.name)) continue;
       await copyFile(s, d);
     }
   }

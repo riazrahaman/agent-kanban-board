@@ -38,7 +38,7 @@ export async function fsyncDir(dir) {
  * the rename itself survives a power loss. On any failure before the rename
  * the temp file is removed, so a failed write never leaves `.tmp_*` litter.
  */
-export async function writeAtomic(filePath, content) {
+export async function writeAtomic(filePath, content, { durable = true } = {}) {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
   const tmpPath = path.join(
@@ -50,7 +50,11 @@ export async function writeAtomic(filePath, content) {
     const handle = await open(tmpPath, 'w');
     try {
       await handle.writeFile(content, 'utf-8');
-      await handle.sync();
+      // PERF-101: a pure lease renewal passes durable:false. The replace is
+      // still atomic (temp file + rename), so a crash leaves the previous or
+      // the new file whole; only the renewed expiry can be lost, which the
+      // lease protocol tolerates. Real data changes keep the full fsync pair.
+      if (durable) await handle.sync();
     } finally {
       await handle.close();
     }
@@ -59,7 +63,7 @@ export async function writeAtomic(filePath, content) {
   } finally {
     if (!renamed) await unlink(tmpPath).catch(() => {});
   }
-  await fsyncDir(dir);
+  if (durable) await fsyncDir(dir);
 }
 
 // ============================================================================

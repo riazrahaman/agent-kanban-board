@@ -132,7 +132,8 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
     const storage = getStorage(authorizedProject);
     if (storage instanceof GitYamlStorage) {
       await storage.saveTask(restored);
-      await storage.trashRemove(trashed);
+      // COR-101: shared identity-based removal updates memory as well as disk.
+      await trashPersistRemove(authorizedProject, trashed);
     } else {
       // BUGFIX (deep-review P0): persist the partition WITH the restored card.
       // The previous call persisted `getProjectBucket(authorizedProject)` — the
