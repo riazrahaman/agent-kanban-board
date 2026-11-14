@@ -43,6 +43,7 @@ const DESCRIPTIONS = {
   'KANBAN_JOURNAL_COMPACT_BYTES': 'Journal size that triggers compaction (default 1MB)',
   'KANBAN_MAX_SSE_STREAMS': 'Cap on concurrent SSE connections (default 100)',
   'KANBAN_MAX_SSE_STREAMS_PER_IP': 'Cap on concurrent SSE connections per client IP (default 20; negative disables; still bounded by the global cap). Keys on req.ip, so set KANBAN_TRUST_PROXY correctly behind a proxy',
+  'KANBAN_REQUIRE_BOUND_CREDENTIALS': 'Set to "1" to reject writes (403) from credentials with no agent_id binding (legacy string tokens, {token} entries, KANBAN_AUTH_TOKEN); admin and bound credentials are unaffected. Default off; a startup warning counts unbound credentials either way',
   'KANBAN_NOTIFY_EVENTS': 'Comma-separated reclaim reasons that trigger an alert',
   'KANBAN_NOTIFY_INCLUDE_DESC': 'Set falsy to omit the task description from alerts',
   'KANBAN_NOTIFY_MIN_INTERVAL_MS': 'Minimum gap between outbound notifications',

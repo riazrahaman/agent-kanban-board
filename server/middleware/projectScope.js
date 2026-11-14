@@ -49,6 +49,38 @@ export function normalizeBodyScope(req) {
  * Shared rather than per-router on purpose: a new router that forgets it
  * re-opens the bug on its own endpoints.
  */
+/** Valid `project:id` prefixes found in URL path segments. */
+export function compositePathProjects(path) {
+  const found = new Set();
+  // A composite `project:id` in the URL path is the fourth channel, and the
+  // sneakiest: `store.resolveProjectScope` lets that prefix OVERRIDE ?project=,
+  // so `PATCH /api/tasks/beta:victim?project=alpha` resolves to beta. Ignoring
+  // it let an alpha token rewrite a beta task on every task-scoped route, and
+  // let a flood at `/api/tasks/beta:t/claim` be charged to the wrong budget.
+  // This mirrors resolveProjectScope's rule exactly: a `:`-prefixed segment
+  // counts only when the prefix is a valid project id and something follows it.
+  for (const segment of String(path || '').split('/')) {
+    if (segment === '') continue;
+    // Decode BEFORE looking for the separator: req.path is still percent-
+    // encoded, so `beta%3Avictim` contains no literal ':' and a pre-decode
+    // check would wave the encoded form of the very same attack straight
+    // through. Express hands the route the decoded id, so decoding is what
+    // the store will actually see.
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // A malformed escape cannot be a valid composite id; fall back to raw.
+    }
+    if (!decoded.includes(':')) continue;
+    const idx = decoded.indexOf(':');
+    if (idx <= 0 || decoded.length <= idx + 1) continue;
+    const prefix = decoded.slice(0, idx);
+    if (store.isValidProjectId(prefix)) found.add(prefix);
+  }
+  return found;
+}
+
 /**
  * Every project id a request references, from any channel that can influence
  * which board is touched: the body (`project` / `workspace_id`), the query
@@ -77,39 +109,50 @@ export function referencedProjects(req) {
     if (typeof c === 'string' && !isBlank(c)) out.add(c);
   }
 
-  // A composite `project:id` in the URL path is the fourth channel, and the
-  // sneakiest: `store.resolveProjectScope` lets that prefix OVERRIDE ?project=,
-  // so `PATCH /api/tasks/beta:victim?project=alpha` resolves to beta. Ignoring
-  // it let an alpha token rewrite a beta task on every task-scoped route, and
-  // let a flood at `/api/tasks/beta:t/claim` be charged to the wrong budget.
-  // This mirrors resolveProjectScope's rule exactly: a `:`-prefixed segment
-  // counts only when the prefix is a valid project id and something follows it.
-  for (const segment of String(req.path || '').split('/')) {
-    if (segment === '') continue;
-    // Decode BEFORE looking for the separator: req.path is still percent-
-    // encoded, so `beta%3Avictim` contains no literal ':' and a pre-decode
-    // check would wave the encoded form of the very same attack straight
-    // through. Express hands the route the decoded id, so decoding is what
-    // the store will actually see.
-    let decoded = segment;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      // A malformed escape cannot be a valid composite id; fall back to raw.
-    }
-    if (!decoded.includes(':')) continue;
-    const idx = decoded.indexOf(':');
-    if (idx <= 0 || decoded.length <= idx + 1) continue;
-    const prefix = decoded.slice(0, idx);
-    if (store.isValidProjectId(prefix)) out.add(prefix);
-  }
+  for (const id of compositePathProjects(req.path)) out.add(id);
 
   return [...out];
+}
+
+/**
+ * SEC-101 follow-up: every non-blank string project channel (query project /
+ * workspace, X-Kanban-Project, body project / workspace_id) as trimmed values.
+ * Blank means absent, as everywhere else.
+ */
+function channelProjects(req) {
+  const out = [];
+  for (const v of [
+    req.query?.project,
+    req.query?.workspace,
+    req.headers?.['x-kanban-project'],
+    req.body?.project,
+    req.body?.workspace_id,
+  ]) {
+    if (typeof v === 'string' && !isBlank(v)) out.push(v.trim());
+  }
+  return out;
+}
+
+/**
+ * A request must name ONE project. Channels that disagree with each other, or
+ * with a composite `project:id` path prefix, are rejected rather than resolved
+ * by precedence. Returns the conflicting ids, or null when consistent.
+ */
+export function conflictingProjectChannels(req) {
+  const channels = channelProjects(req);
+  const all = new Set(channels);
+  for (const id of compositePathProjects(req.path)) all.add(id);
+  return all.size > 1 ? [...all] : null;
 }
 
 export function projectScopeGuard() {
   return (req, res, next) => {
     normalizeBodyScope(req);
+    if (conflictingProjectChannels(req)) {
+      return res.status(400).json({
+        error: 'Conflicting project scope: query, header, body and path must name the same project',
+      });
+    }
     const raw = rawProjectScope(req);
     if (raw === undefined || raw === null || raw === '') return next();
     if (typeof raw === 'string' && store.isValidProjectId(raw)) return next();

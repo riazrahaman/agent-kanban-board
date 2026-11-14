@@ -1,6 +1,7 @@
 import express from 'express';
 import compression from 'compression';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, getProjectSummaries, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
@@ -18,7 +19,7 @@ import agentsRouter from './routes/agents.js';
 import { onAudit } from './store.js';
 import { appendAudit } from './auditLog.js';
 import { configureCors } from './middleware/cors.js';
-import { createAuthMiddleware, parseProjectTokens } from './middleware/auth.js';
+import { createAuthMiddleware, parseProjectTokens, reportUnboundCredentials } from './middleware/auth.js';
 import { reportCredentialCoverage } from './utils/credentialMap.js';
 import { createRateLimitMiddleware, rateLimitConfig } from './middleware/rateLimit.js';
 import { createSecurityHeadersMiddleware } from './middleware/securityHeaders.js';
@@ -44,6 +45,11 @@ function maxSseStreams() {
   const n = Number(raw);
   if (!Number.isFinite(n)) return 100;
   return n; // negative => unlimited (checked at call site)
+}
+
+/** A9: global stream slots only credentialed callers may take (20%, at least 1; none for caps under 5, which stay exact). */
+export function sseReservedForCredentialed(cap) {
+  return cap >= 5 ? Math.max(1, Math.floor(cap * 0.2)) : 0;
 }
 
 export function liveSseStreamCount() {
@@ -127,6 +133,30 @@ function diffWireFrame(evt) {
  * it. A plain counter cannot do this; we need the responses themselves.
  */
 const openSseStreams = new Map(); // res -> { ip, ping, stall }
+const openSseStreamsEnd = new Map(); // res -> () => end the stream (compressed or not)
+
+/**
+ * B9: pick a content-coding for the SSE response from Accept-Encoding.
+ * Returns 'gzip', 'deflate' or null. q=0 means "not acceptable"; gzip wins ties.
+ */
+export function pickSseEncoding(header) {
+  if (typeof header !== 'string' || header === '') return null;
+  const q = {};
+  for (const part of header.split(',')) {
+    const [name, ...params] = part.trim().toLowerCase().split(';');
+    let weight = 1;
+    for (const prm of params) {
+      const m = /^\s*q\s*=\s*([0-9.]+)\s*$/.exec(prm);
+      if (m) weight = Number(m[1]);
+    }
+    if (name) q[name] = weight;
+  }
+  const gz = q.gzip ?? q['x-gzip'] ?? q['*'] ?? 0;
+  const df = q.deflate ?? q['*'] ?? 0;
+  if (gz > 0 && gz >= df) return 'gzip';
+  if (df > 0) return 'deflate';
+  return null;
+}
 
 /**
  * Ends every open SSE stream. Called on SIGTERM/SIGINT before `server.close()`.
@@ -143,7 +173,10 @@ export function drainSseStreams() {
   for (const res of streams) {
     releaseSseStream(res);
     try {
-      res.end();
+      // A compressed stream ends through its zlib stage so the final bytes are
+      // flushed; the pipe then ends the response.
+      const entry = openSseStreamsEnd.get(res);
+      if (entry) entry(); else res.end();
     } catch {
       // Already torn down by the peer — nothing to do, and a throw here must
       // never be allowed to abort the rest of the shutdown.
@@ -389,7 +422,12 @@ export function createApp(opts = {}) {
 
     // SEC-05: cap concurrent SSE streams BEFORE setting headers.
     const cap = maxSseStreams();
-    if (cap >= 0 && activeSseStreams >= cap) {
+    // A9: keep headroom for credentialed callers. Anonymous streams may fill
+    // the global cap only up to `cap - reserve`, so a handful of addresses
+    // cannot starve authenticated readers.
+    const credentialed = req.caller?.authorizedProjects != null;
+    const anonLimit = cap - sseReservedForCredentialed(cap);
+    if (cap >= 0 && activeSseStreams >= (credentialed ? cap : anonLimit)) {
       return res.status(503).json({ error: 'Too many concurrent event streams' });
     }
     const ip = req.ip || 'unknown';
@@ -423,6 +461,8 @@ export function createApp(opts = {}) {
       if (releaseSseStream(res)) {
         activeSseStreams = Math.max(0, activeSseStreams - 1);
       }
+      openSseStreamsEnd.delete(res);
+      zs?.destroy();
     });
 
     // PERF-01: diff is the default. Only an explicit ?mode=snapshot selects the
@@ -430,12 +470,29 @@ export function createApp(opts = {}) {
     const isDiffMode = req.query.mode !== 'snapshot';
     const wantPrime = req.query.prime === '1';
 
+    // B9: optional gzip/deflate for the stream (the full-board prime frame is
+    // the big one). Every frame is followed by Z_SYNC_FLUSH so events are never
+    // held back in the compressor; Cache-Control and X-Accel-Buffering: no are sent either way.
+    const encoding = pickSseEncoding(req.headers['accept-encoding']);
+    const zs = encoding
+      ? (encoding === 'gzip' ? zlib.createGzip : zlib.createDeflate)({ flush: zlib.constants.Z_SYNC_FLUSH })
+      : null;
     res.set({
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      ...(encoding ? { 'Content-Encoding': encoding, Vary: 'Accept-Encoding' } : {}),
       });
      res.flushHeaders();
+    if (zs) {
+      zs.pipe(res);
+      zs.on('error', () => { closed = true; unsubscribe(); res.destroy(); });
+      openSseStreamsEnd.set(res, () => zs.end());
+    }
+    // Bytes held in memory for this stream: the compressor's input buffer (if
+    // any) plus what is queued on the socket.
+    const pendingBytes = () => res.writableLength + (zs ? zs.writableLength : 0);
 
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
@@ -446,6 +503,8 @@ export function createApp(opts = {}) {
       closed = true;
       unsubscribe();
       if (releaseSseStream(res)) activeSseStreams = Math.max(0, activeSseStreams - 1);
+      openSseStreamsEnd.delete(res);
+      zs?.destroy();
       res.destroy();
     };
     // Backpressure (PERF-04): progress-based. A large priming/snapshot frame, or a
@@ -458,7 +517,7 @@ export function createApp(opts = {}) {
     // may not exceed SSE_MAX_BACKLOG_BYTES (64 MB). The prime itself is exempt
     // (a big board's prime is legitimately huge), so only post-prime backlog counts.
     let queuedBytes = 0;
-    const flushedBytes = () => queuedBytes - res.writableLength;
+    const flushedBytes = () => queuedBytes - pendingBytes();
     // Node completes (and decrements `writableLength` for) a whole batched write
     // at once, so a multi-MB prime shows no change there while the reader is
     // consuming it. The libuv write queue shrinks as bytes really leave, so it is
@@ -472,7 +531,7 @@ export function createApp(opts = {}) {
       const check = () => {
         streamEntry.stall = null;
         if (closed) return;
-        if (res.writableLength === 0) return;
+        if (pendingBytes() === 0) return;
         const now = flushedBytes();
         const q = handleQueue();
         const progressed = now > lastFlushed || (typeof q === 'number' && typeof lastQueue === 'number' && q < lastQueue);
@@ -484,16 +543,18 @@ export function createApp(opts = {}) {
           streamEntry.stall = t;
           return;
         }
-        endSlowStream('no-progress', res.writableLength);
+        endSlowStream('no-progress', pendingBytes());
       };
       const t = setTimeout(check, sseTestOverrides.stallMs ?? SSE_STALL_TIMEOUT_MS);
       t.unref();
       streamEntry.stall = t;
     };
-    res.on('drain', () => {
+    const onDrained = () => {
       clearTimeout(streamEntry.stall);
       streamEntry.stall = null;
-    });
+    };
+    res.on('drain', onDrained);
+    zs?.on('drain', onDrained);
     // Queue offset at the end of the latest priming/snapshot frame. Everything up
     // to it is exempt from the backlog limit (a big board's prime is legitimately
     // huge); only bytes queued after it count. `min(writableLength, ...)` is the
@@ -506,13 +567,20 @@ export function createApp(opts = {}) {
         const limit = sseTestOverrides.maxBacklogBytes ?? SSE_MAX_BACKLOG_BYTES;
         // A prime/snapshot frame is judged on the backlog already there before it
         // (never on its own size); other frames on the backlog past the exempt frame.
-        const backlog = exempt ? res.writableLength : Math.min(res.writableLength, queuedBytes - exemptEnd);
+        const backlog = exempt ? pendingBytes() : Math.min(pendingBytes(), queuedBytes - exemptEnd);
         if (backlog > limit) {
           endSlowStream('backlog-limit', backlog);
           return;
         }
         queuedBytes += Buffer.byteLength(frame);
-        const backpressured = res.write(frame) === false;
+        let backpressured;
+        if (zs) {
+          backpressured = zs.write(frame) === false;
+          zs.flush(zlib.constants.Z_SYNC_FLUSH);
+          if (res.writableNeedDrain) backpressured = true;
+        } else {
+          backpressured = res.write(frame) === false;
+        }
         if (exempt) exemptEnd = queuedBytes;
         if (backpressured && streamEntry.stall === null && openSseStreams.has(res)) {
           armStallCheck();
@@ -643,6 +711,7 @@ export async function startServer(
       getProjectSummaries().map((s) => s.project),
       parsed
     );
+    reportUnboundCredentials(console, parsed);
   } catch (err) {
     logWarn('auth', 'credential-map check skipped', { error: err.message });
   }

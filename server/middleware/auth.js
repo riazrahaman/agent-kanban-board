@@ -214,6 +214,53 @@ function parseProjectTokensUncached(raw) {
 let cachedRaw;
 let cachedResult;
 
+/** A7: opt-in strict mode — `KANBAN_REQUIRE_BOUND_CREDENTIALS=1` rejects writes from identity-unbound credentials. */
+export function requireBoundCredentials() {
+  return process.env.KANBAN_REQUIRE_BOUND_CREDENTIALS === '1';
+}
+
+/**
+ * A7: how many configured credentials take their identity from the caller's
+ * X-Agent-Id (no `agent_id` binding). Counts only — never token values. The
+ * legacy single `KANBAN_AUTH_TOKEN` counts as one unbound credential.
+ * @returns {{ total: number, unbound: number }}
+ */
+export function countUnboundCredentials(
+  parsed = parseProjectTokens(),
+  singleToken = process.env.KANBAN_AUTH_TOKEN
+) {
+  let total = 0;
+  let unbound = 0;
+  if (parsed && !parsed.malformed) {
+    for (const creds of parsed.map.values()) {
+      for (const cred of creds) {
+        total += 1;
+        if (!cred.agent_id) unbound += 1;
+      }
+    }
+  }
+  if (singleToken) {
+    total += 1;
+    unbound += 1;
+  }
+  return { total, unbound };
+}
+
+/** A7: one startup line (counts only) when unbound credentials exist. */
+export function reportUnboundCredentials(log = console, parsed = parseProjectTokens()) {
+  const { total, unbound } = countUnboundCredentials(parsed);
+  if (unbound === 0) return { total, unbound };
+  const strict = requireBoundCredentials();
+  log.warn(
+    `[kanban auth] ${unbound} of ${total} credential(s) have no agent_id binding; their writes take ` +
+    `identity from the caller-declared X-Agent-Id. ` +
+    (strict
+      ? 'KANBAN_REQUIRE_BOUND_CREDENTIALS=1: writes from them are rejected with 403.'
+      : 'Bind agent ids in KANBAN_PROJECT_TOKENS, or set KANBAN_REQUIRE_BOUND_CREDENTIALS=1 to reject them.')
+  );
+  return { total, unbound };
+}
+
 export function parseProjectTokens(raw = process.env.KANBAN_PROJECT_TOKENS) {
   if (raw === cachedRaw) return cachedResult;
   const result = parseProjectTokensUncached(raw);
@@ -598,6 +645,13 @@ function resolveReadCredential(req) {
   return { boundAgentId: null, privileged: false, source: 'header' };
 }
 
+function rejectUnboundCredential(req, res) {
+  logAuthFailure(req, 403, 'unbound-credential');
+  return res.status(403).json({
+    error: 'Forbidden: this deployment requires credentials bound to an agent_id for writes',
+  });
+}
+
 export function createAuthMiddleware() {
   return (req, res, next) => {
     // ENH-09: failed auth attempts are rate-limited per client IP at each
@@ -751,6 +805,9 @@ export function createAuthMiddleware() {
       }
       // A7: a session minted from an identity-bound credential carries that
       // identity; it outranks anything the caller declares now.
+      if (requireBoundCredentials() && !sessionPrivileged && !session.agent_id) {
+        return rejectUnboundCredential(req, res);
+      }
       bindCallerIdentity(req, {
         boundAgentId: session.agent_id || null,
         privileged: sessionPrivileged,
@@ -790,6 +847,9 @@ export function createAuthMiddleware() {
             binding = matched;
             bindingScope = scope;
           }
+        }
+        if (requireBoundCredentials() && !binding.agent_id) {
+          return rejectUnboundCredential(req, res);
         }
         // A per-project token is by-convention a worker credential: functional
         // roles (builder/reviewer/tester) stay assertable, privileged ops do not.
@@ -848,6 +908,7 @@ export function createAuthMiddleware() {
       // admin token or a privileged session — but it still drives stage
       // transitions and the other non-destructive role gates here.
       req.caller.adminCredential = false;
+      if (requireBoundCredentials()) return rejectUnboundCredential(req, res);
       const referenced = referencedProjects(req);
       bindCallerIdentity(req, {
         boundAgentId: null,
