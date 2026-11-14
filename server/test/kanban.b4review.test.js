@@ -257,6 +257,28 @@ describe('COR-103 unknown outcome reconciles memory to what a restart loads', ()
     assert.equal(store.getTask('h2', 'default').claim_expires_at, before2, 'sibling that never reached disk is not applied');
   });
 
+  it('a restore whose later trash removal fails still reports 503 and keeps memory equal to restart', async () => {
+    await boot('u5');
+    await create('A');
+    assert.equal((await store.deleteTask('A', { caller })).status, 200);
+    assert.equal(store.getTrashedTasks('default').length, 1);
+    let changes = 0;
+    const off = store.onChange(() => { changes++; });
+    const restore = await injectTotalFailure();
+    let res;
+    try { res = await store.restoreFromTrash('A', { caller }); } finally { restore(); off(); }
+    assert.equal(res.status, 503);
+    assert.equal(res.reason, 'outcome_unknown');
+    // The restored record reached the journal, so a restart loads it live...
+    assert.ok((await restartView()).has('A'));
+    assert.ok(store.getTask('A', 'default'), 'memory holds the restored card');
+    assert.ok(changes > 0, 'the applied state was broadcast');
+    // ...and the trash removal never persisted, so the row is still trashed in both.
+    const trashOnDisk = await new JsonStorage(file, { isDefault: true }).loadTrash();
+    assert.equal(store.getTrashedTasks('default').length, trashOnDisk.length);
+    assert.equal(trashOnDisk.length, 1);
+  });
+
   it('the reaper does not swallow an unknown outcome', async () => {
     await boot('u4');
     await create('r1', 'READY');

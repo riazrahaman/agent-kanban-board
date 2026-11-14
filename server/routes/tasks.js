@@ -308,7 +308,7 @@ router.post('/purge', asyncHandler(async (req, res) => {
   });
   if (result.error) {
     logWarn('rejection', `POST /api/tasks/purge: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(result.status).json({ deleted: result.deleted, count: result.count });
 }));
@@ -344,7 +344,7 @@ router.post('/trash/:id/restore', asyncHandler(async (req, res) => {
   });
   if (result.error) {
     logWarn('rejection', `POST /api/tasks/trash/${req.params.id}/restore: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json(result.task);
 }));
@@ -356,7 +356,7 @@ router.delete('/trash/:id', asyncHandler(async (req, res) => {
   });
   if (result.error) {
     logWarn('rejection', `DELETE /api/tasks/trash/${req.params.id}: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json(result.task);
 }));
@@ -456,7 +456,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   });
   if (result.error) {
     logWarn('rejection', `DELETE /api/tasks/${req.params.id}: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json(result.task);
 }));
@@ -497,7 +497,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
          status: 409,
           });
     }
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
       }
   res.status(200).json(result.task);
 }));
@@ -520,7 +520,7 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
        );
   if (result.error) {
     if (result.status === 400) {
-      return res.status(400).json({ error: result.error });
+      return res.status(400).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
     }
         // §2.6: distinguish a version-conflict 409 from contention 409. A stale
         // claim ("Version mismatch") carries the current version for retry; a
@@ -547,7 +547,7 @@ router.post('/:id/claim', asyncHandler(async (req, res) => {
           });
     }
     logWarn('rejection', `POST /api/tasks/${req.params.id}/claim: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
       }
   res.status(200).json(result.task);
 }));
@@ -583,7 +583,7 @@ router.post('/:id/assign', asyncHandler(async (req, res) => {
       });
     }
     logWarn('rejection', `POST /api/tasks/${req.params.id}/assign: ${result.status} ${result.error}`);
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json(result.task);
 }));
@@ -622,7 +622,7 @@ router.post('/:id/heartbeat', asyncHandler(async (req, res) => {
          });
        }
       logWarn('rejection', `POST /api/tasks/${req.params.id}/heartbeat: ${result.status} ${result.error}`);
-      return res.status(result.status).json({ error: result.error });
+      return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
       }
      return res.status(200).json(result.task);
       }));
@@ -646,7 +646,7 @@ router.get('/:id/logs', asyncHandler(async (req, res) => {
     include_spilled: includeSpilled,
   });
   if (result.error) {
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json({
     inline: result.inline,
@@ -679,7 +679,7 @@ router.post('/:id/logs', asyncHandler(async (req, res) => {
         status: 409,
          });
      }
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
        }
   res.status(200).json(result.task);
 }));
@@ -711,7 +711,7 @@ router.post('/:id/issues', asyncHandler(async (req, res) => {
         status: 409,
          });
      }
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
        }
   res.status(200).json(result);
 }));
@@ -742,7 +742,7 @@ router.post('/:id/comments', asyncHandler(async (req, res) => {
         status: 409,
          });
      }
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
        }
   res.status(200).json(result.task);
 }));

@@ -124,6 +124,17 @@ export function markOutcomeUnknown(err) {
   if (!pendingOutcomeUnknown) pendingOutcomeUnknown = err;
 }
 
+// Set once an applied-but-unknown outcome updated memory, so the wrapper can
+// still broadcast it if later work in the same mutation fails.
+let appliedUnknownPending = false;
+let appliedUnknownNotifier = null;
+export function noteAppliedUnknown() {
+  appliedUnknownPending = true;
+}
+export function setAppliedUnknownNotifier(fn) {
+  appliedUnknownNotifier = fn;
+}
+
 /**
  * Awaits a single-task persist. Resolves normally when it succeeded OR when
  * the outcome is unknown but a restart would load `candidate` (the caller then
@@ -136,7 +147,13 @@ export async function persistApplied(promise, candidate) {
   } catch (err) {
     if (err && err.outcomeUnknown) {
       markOutcomeUnknown(err);
-      if ((err.changedTasks || []).some((t) => t.id === candidate.id)) return;
+      if ((err.changedTasks || []).some((t) => t.id === candidate.id)) {
+        // A restart would load this task: memory follows immediately, so no
+        // later failure in the same mutation can leave memory behind the disk.
+        updateInMemoryTask(candidate);
+        appliedUnknownPending = true;
+        return;
+      }
     }
     throw err;
   }
@@ -147,15 +164,26 @@ function outcomeUnknownResult(err) {
 }
 async function guardOutcomeUnknown(operation) {
   pendingOutcomeUnknown = null;
+  appliedUnknownPending = false;
   try {
     const result = await operation();
     if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
     return result;
   } catch (err) {
-    if (err && err.outcomeUnknown) return outcomeUnknownResult(err);
+    // The response is the outcome-unknown 503 even when later work in the
+    // same mutation failed with an ordinary error. The normal notification
+    // may not have run, so broadcast the applied state here.
+    const unknown = (err && err.outcomeUnknown) ? err : pendingOutcomeUnknown;
+    if (unknown) {
+      if (appliedUnknownPending && appliedUnknownNotifier) {
+        try { appliedUnknownNotifier(); } catch { /* best effort */ }
+      }
+      return outcomeUnknownResult(unknown);
+    }
     throw err;
   } finally {
     pendingOutcomeUnknown = null;
+    appliedUnknownPending = false;
   }
 }
 export function withMutationLock(operation) {

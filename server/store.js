@@ -100,6 +100,8 @@ import {
   updateInMemoryTask,
   persistApplied,
   markOutcomeUnknown,
+  setAppliedUnknownNotifier,
+  noteAppliedUnknown,
   setTaskInMemory,
   removeFromMemory,
   getProjectBucket,
@@ -241,6 +243,10 @@ export {
 // ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
+
+// COR-103: broadcast an applied-but-unknown outcome when later work in the
+// same mutation failed before its normal notify ran.
+setAppliedUnknownNotifier(() => notify());
 
 export async function loadStore() {
   const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
@@ -1528,6 +1534,7 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
         // them as renewed, and let the lock wrapper turn the call into a 503.
         markOutcomeUnknown(err);
         const loaded = new Set((err.changedTasks || []).map((t) => t.id));
+        if (loaded.size > 0) noteAppliedUnknown();
         for (const candidate of candidates) {
           if (!loaded.has(candidate.id)) continue;
           updateInMemoryTask(candidate);
@@ -1586,6 +1593,7 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
         // primary itself would not be loaded.
         markOutcomeUnknown(err);
         const loaded = new Set((err.changedTasks || []).map((t) => t.id));
+        if (loaded.size > 0) noteAppliedUnknown();
         const appliedSiblings = siblings.filter((s) => loaded.has(s.id));
         for (const t of [candidate, ...siblings]) if (loaded.has(t.id)) updateInMemoryTask(t);
         if (!loaded.has(candidate.id)) {
