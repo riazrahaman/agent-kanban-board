@@ -28,8 +28,17 @@ import { tokensMatch } from './utils/constantTime.js';
 
 const DEFAULT_CHALLENGE_TTL_MS = 120 * 1000;
 
-/** nonce -> exp (epoch ms) for challenges already used by a valid proof. Insertion order = expiry order. */
+/**
+ * Challenges already used by a valid proof, grouped by ISSUE second (a
+ * property of the nonce itself, so a replay always finds its own bucket):
+ * bucket second -> Set of nonces. Consumption order need not match expiry
+ * order (a newer challenge can be consumed before an older one), so expiry is
+ * swept by bucket, never by insertion order.
+ */
 const consumed = new Map();
+let consumedSize = 0;
+/** Every bucket second below this has already been swept. */
+let sweepCursorSec = 0;
 
 /** Upper bound on replay-tracked nonces. A full set refuses proofs, never issuance. */
 export const MAX_CONSUMED_SESSION_CHALLENGES = 100000;
@@ -61,24 +70,39 @@ function macOf(key, body) {
   return crypto.createHmac('sha256', key).update(body).digest();
 }
 
-// Expiry times are non-decreasing in insertion order only approximately (the
-// TTL can change at runtime), so sweep from the head and stop at the first live entry.
+function dropBucket(sec) {
+  const set = consumed.get(sec);
+  if (!set) return;
+  consumedSize -= set.size;
+  consumed.delete(sec);
+}
+
+// Sweeps buckets whose whole second has passed. Walks the seconds elapsed since
+// the last sweep, or the (few) existing buckets when that is fewer, so the cost
+// is O(1) amortised and independent of consumption order.
 function prune(now = Date.now()) {
-  for (const [nonce, exp] of consumed) {
-    if (exp > now) break;
-    consumed.delete(nonce);
+  // A bucket (issue second s) is wholly expired once (s + 1) * 1000 + ttl <= now.
+  const nowSec = Math.floor((now - sessionChallengeTtlMs()) / 1000);
+  if (sweepCursorSec === 0) sweepCursorSec = nowSec;
+  if (nowSec - sweepCursorSec > consumed.size) {
+    for (const sec of consumed.keys()) if (sec < nowSec) dropBucket(sec);
+  } else {
+    for (let sec = sweepCursorSec; sec < nowSec; sec += 1) dropBucket(sec);
   }
+  if (nowSec > sweepCursorSec) sweepCursorSec = nowSec;
 }
 
 /** Test helper: forget every consumed nonce. */
 export function resetSessionChallenges() {
   consumed.clear();
+  consumedSize = 0;
+  sweepCursorSec = 0;
 }
 
 /** Number of replay-tracked (consumed, unexpired) nonces. Exists to test the bound. */
 export function consumedSessionChallengeCount() {
   prune();
-  return consumed.size;
+  return consumedSize;
 }
 
 /**
@@ -124,8 +148,13 @@ export function consumeSessionChallenge(challenge) {
   const exp = opened.issuedAt + sessionChallengeTtlMs();
   if (opened.issuedAt > now + 5000 || exp <= now) return false;
   prune(now);
-  if (consumed.has(challenge)) return false;
-  if (consumed.size >= MAX_CONSUMED_SESSION_CHALLENGES) return false;
-  consumed.set(challenge, exp);
+  const sec = Math.floor(opened.issuedAt / 1000);
+  // Duplicate check: a nonce lives only in the bucket of its own issue second.
+  if (consumed.get(sec)?.has(challenge)) return false;
+  if (consumedSize >= MAX_CONSUMED_SESSION_CHALLENGES) return false;
+  let set = consumed.get(sec);
+  if (!set) consumed.set(sec, (set = new Set()));
+  set.add(challenge);
+  consumedSize += 1;
   return true;
 }

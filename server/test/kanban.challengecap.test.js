@@ -106,3 +106,34 @@ describe('session challenge cap', () => {
     assert.equal(consumeSessionChallenge(challenge), true);
   });
 });
+
+describe('consumed-nonce pruning is independent of consumption order', () => {
+  it('an older expired entry behind a live newer one is pruned', () => {
+    process.env.KANBAN_AUTH_SECRET = 'cap-secret';
+    process.env.KANBAN_SESSION_CHALLENGE_TTL_MS = '10000';
+    resetSessionChallenges();
+    const realNow = Date.now;
+    const t0 = realNow();
+    try {
+      Date.now = () => t0;
+      const older = createSessionChallenge().challenge;
+      Date.now = () => t0 + 5000;
+      const newer = createSessionChallenge().challenge;
+      // Consume the NEWER challenge first, then the older one.
+      Date.now = () => t0 + 6000;
+      assert.equal(consumeSessionChallenge(newer), true);
+      assert.equal(consumeSessionChallenge(older), true);
+      assert.equal(consumedSessionChallengeCount(), 2);
+      // older expired (t0+10000), newer live until t0+15000.
+      Date.now = () => t0 + 12500;
+      assert.equal(consumedSessionChallengeCount(), 1, 'only the unexpired entry is retained');
+      assert.equal(consumeSessionChallenge(newer), false, 'live entry still blocks replay');
+      Date.now = () => t0 + 20000;
+      assert.equal(consumedSessionChallengeCount(), 0);
+    } finally {
+      Date.now = realNow;
+      delete process.env.KANBAN_SESSION_CHALLENGE_TTL_MS;
+      resetSessionChallenges();
+    }
+  });
+});
