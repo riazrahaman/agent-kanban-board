@@ -55,9 +55,10 @@ describe('failed-auth bucket bounds', () => {
     assert.notEqual(authFailuresExceeded(req('198.51.100.3')), null, 'a third new address is throttled');
     // A tracked address with one failure is still within its own budget.
     assert.equal(authFailuresExceeded(req(ipFor(5))), null);
-    // The hard cap also applies to the overflow bucket as a whole.
+    // The shared overflow bucket never triggers the outright refusal (it would
+    // hit unrelated addresses); it only throttles failures.
     for (let i = 0; i < 2 * AUTH_HARD_CAP_MULTIPLIER; i += 1) recordAuthFailure(req(`203.0.113.${i}`));
-    assert.notEqual(authHardCapExceeded(req('203.0.113.250')), null);
+    assert.equal(authHardCapExceeded(req('203.0.113.250')), null);
     assert.equal(authHardCapExceeded(req(ipFor(5))), null);
   });
 

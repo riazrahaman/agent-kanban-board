@@ -174,25 +174,39 @@ export function resolveHost(env = process.env) {
 /**
  * Resolves Express's `trust proxy` setting from `KANBAN_TRUST_PROXY`.
  *
- * Needed for `GET /api/bug-reports` (and anything else keyed off `req.ip`) to
- * see the REAL client address rather than a platform load balancer's: Railway
- * (and most PaaS front doors) put exactly one reverse proxy in front of the
- * app, so the default is `1` — trust one hop, i.e. use the rightmost
- * untrusted address in `X-Forwarded-For`. A caller cannot widen that by
- * sending a longer forged `X-Forwarded-For` chain; Express only reads as many
- * entries as there are trusted hops. Accepts the numeric hop count (default),
- * `false`/`"0"` to trust no proxy at all (raw socket address), `true` to
- * trust every hop (only correct if you know exactly how many proxies sit in
- * front — otherwise it reopens the spoof this exists to close), or one of
- * Express's named presets (`loopback`, `linklocal`, `uniquelocal`).
+ * Needed for `GET /api/bug-reports` (and the per-address limiters, which key
+ * off `req.ip`) to see the REAL client address rather than a platform load
+ * balancer's. When `KANBAN_TRUST_PROXY` is unset, forwarding headers are
+ * honoured only from a proxy peer in a private range (loopback, link-local,
+ * unique-local, and the 100.64.0.0/10 shared-address range PaaS edges use), so
+ * a directly exposed board cannot have its client address chosen by the
+ * caller, while a board behind a platform edge keeps per-client addresses.
+ * Explicit values: the numeric hop count (`1` trusts one hop), `false`/`"0"`
+ * to trust no proxy at all (raw socket address), `true` to trust every hop
+ * (only correct if you know exactly how many proxies sit in front), or one of
+ * Express's named presets / an IP or CIDR list.
  */
+export const DEFAULT_TRUST_PROXY = ['loopback', 'linklocal', 'uniquelocal', '100.64.0.0/10'];
+
 export function resolveTrustProxy(raw = process.env.KANBAN_TRUST_PROXY) {
-  if (raw === undefined || raw === '') return 1;
+  if (raw === undefined || raw === '') return [...DEFAULT_TRUST_PROXY];
   if (raw === 'false' || raw === '0') return false;
   if (raw === 'true') return true;
   const n = Number(raw);
   if (Number.isFinite(n)) return n;
   return raw; // named preset or proxyaddr-compatible IP/CIDR list
+}
+
+/** One-line, secret-free description of the trust-proxy mode in effect. */
+export function describeTrustProxy(raw = process.env.KANBAN_TRUST_PROXY) {
+  if (raw === undefined || raw === '') {
+    return `default (forwarding headers trusted only from private-range proxy peers: ${DEFAULT_TRUST_PROXY.join(', ')})`;
+  }
+  const v = resolveTrustProxy(raw);
+  if (v === false) return 'off (forwarding headers ignored, raw socket address used)';
+  if (v === true) return 'all hops trusted (KANBAN_TRUST_PROXY=true)';
+  if (typeof v === 'number') return `${v} hop(s) (KANBAN_TRUST_PROXY=${v})`;
+  return `custom (KANBAN_TRUST_PROXY=${v})`;
 }
 
 /**
@@ -833,6 +847,7 @@ if (isDirectRun) {
   const HOST = resolveHost();
   startServer(PORT, HOST).then(({ server }) => {
     console.log(`Agent Kanban server listening on http://${HOST}:${PORT}`);
+    console.log(`[kanban] trust proxy: ${describeTrustProxy()}`);
     registerShutdownHandlers(server);
   }).catch((err) => {
     console.error(err.message);

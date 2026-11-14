@@ -335,7 +335,8 @@ export function createAskRouter(deps = {}) {
   // Wrong-password attempts get their OWN fixed 60s-window counter per IP, so
   // a password-guessing burst cannot spend OpenRouter quota (it never reaches
   // the upstream call) and is retried more slowly after the limit.
-  const failedAuth = new Map(); // ip -> { count, windowStartMs }
+  const failedAuth = new Map(); // ip -> { count, windowStartMs }, oldest window first
+  const MAX_FAILED_AUTH_ENTRIES = 10000;
 
   function pruneGlobal() {
     const cutoff = now() - DAY_MS;
@@ -448,6 +449,15 @@ export function createAskRouter(deps = {}) {
     const ts = now();
     const rec = failedAuth.get(ip);
     if (!rec || ts - rec.windowStartMs >= MINUTE_MS) {
+      // Re-insert so the map stays ordered by window start (oldest first), and
+      // bound it: when full, drop expired entries from the head, then the oldest.
+      failedAuth.delete(ip);
+      if (failedAuth.size >= MAX_FAILED_AUTH_ENTRIES) {
+        for (const [k, r] of failedAuth) {
+          if (ts - r.windowStartMs < MINUTE_MS && failedAuth.size < MAX_FAILED_AUTH_ENTRIES) break;
+          failedAuth.delete(k);
+        }
+      }
       failedAuth.set(ip, { count: 1, windowStartMs: ts });
       return 1;
     }

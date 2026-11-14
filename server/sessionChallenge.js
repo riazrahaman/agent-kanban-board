@@ -29,6 +29,27 @@ const DEFAULT_CHALLENGE_TTL_MS = 120 * 1000;
 /** challenge -> exp (epoch ms) for challenges that are live, unconsumed. */
 const issued = new Map();
 
+/**
+ * Per-address cap on outstanding challenges: one address that floods the
+ * endpoint evicts only its own oldest challenges, never other clients'.
+ */
+export const MAX_LIVE_CHALLENGES_PER_ADDRESS = 50;
+/** challenge -> owner key, and owner key -> Set of its challenges (insertion order). */
+const owners = new Map();
+const byOwner = new Map();
+
+function forget(challenge) {
+  issued.delete(challenge);
+  const owner = owners.get(challenge);
+  if (owner === undefined) return;
+  owners.delete(challenge);
+  const set = byOwner.get(owner);
+  if (set) {
+    set.delete(challenge);
+    if (set.size === 0) byOwner.delete(owner);
+  }
+}
+
 export function sessionChallengeTtlMs() {
   const raw = process.env.KANBAN_SESSION_CHALLENGE_TTL_MS;
   if (raw === undefined || raw === null || raw === '') return DEFAULT_CHALLENGE_TTL_MS;
@@ -55,13 +76,15 @@ export const MAX_LIVE_SESSION_CHALLENGES = 10000;
 function prune(now = Date.now()) {
   for (const [challenge, exp] of issued) {
     if (Number.isInteger(exp) && exp > now) break;
-    issued.delete(challenge);
+    forget(challenge);
   }
 }
 
 /** Test helper: forget every issued challenge. */
 export function resetSessionChallenges() {
   issued.clear();
+  owners.clear();
+  byOwner.clear();
 }
 
 /** Number of live (issued, unconsumed) challenges. Exists to test the bound. */
@@ -75,17 +98,30 @@ export function liveSessionChallengeCount() {
  * client-supplied, so a captured proof cannot be bound to an attacker nonce
  * retroactively.
  */
-export function createSessionChallenge() {
+export function createSessionChallenge(address = null) {
   prune();
+  const owner = typeof address === 'string' && address !== '' ? address : null;
+  if (owner !== null) {
+    const mine = byOwner.get(owner);
+    if (mine && mine.size >= MAX_LIVE_CHALLENGES_PER_ADDRESS) {
+      forget(mine.values().next().value);
+    }
+  }
   // Full: evict the oldest (O(1)). A real client consumes its challenge within
   // milliseconds, and refusing instead would let anonymous traffic block every
   // new handshake.
   if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) {
-    issued.delete(issued.keys().next().value);
+    forget(issued.keys().next().value);
   }
   const challenge = crypto.randomBytes(32).toString('hex');
   const exp = Date.now() + sessionChallengeTtlMs();
   issued.set(challenge, exp);
+  if (owner !== null) {
+    owners.set(challenge, owner);
+    let set = byOwner.get(owner);
+    if (!set) byOwner.set(owner, (set = new Set()));
+    set.add(challenge);
+  }
   return { challenge, expiresAt: exp };
 }
 
@@ -99,7 +135,7 @@ export function consumeSessionChallenge(challenge) {
   if (!issued.has(challenge)) return false;
   const exp = issued.get(challenge);
   // Consume FIRST: a used challenge is inert even if it had not yet expired.
-  issued.delete(challenge);
+  forget(challenge);
   if (!Number.isInteger(exp) || exp <= Date.now()) return false;
   return true;
 }

@@ -47,11 +47,18 @@ function macHex(secret, payload) {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+// Map iteration order is insertion order and the TTL is constant, so expiry
+// times are non-decreasing: sweep from the head and stop at the first live
+// entry. Mint, redeem and expiry are all O(1) amortised.
 function prune(now = Date.now()) {
   for (const [jti, exp] of issued) {
-    if (!Number.isInteger(exp) || exp <= now) issued.delete(jti);
+    if (Number.isInteger(exp) && exp > now) break;
+    issued.delete(jti);
   }
 }
+
+/** Upper bound on outstanding tickets; the oldest is evicted when full. */
+export const MAX_LIVE_STREAM_TICKETS = 10000;
 
 /** Test helper: forget every issued ticket. */
 export function resetStreamTickets() {
@@ -78,6 +85,7 @@ export function createStreamTicket({ role, project, agentId = null } = {}) {
   const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
   const token = `${payload}.${macHex(secret, payload)}`;
   prune();
+  if (issued.size >= MAX_LIVE_STREAM_TICKETS) issued.delete(issued.keys().next().value);
   issued.set(jti, exp);
   return { ticket: token, expiresAt: exp };
 }

@@ -98,7 +98,7 @@ flowchart TD
 
     subgraph Layer2 ["2. Transport, Ingress & Security Pipeline"]
         CORS_Gate["CORS Allow-List Guard\n(middleware/cors.js)"]
-        BodyParser["Body Parser & Trust Proxy\n(express.json, trust proxy: 1 hop)"]
+        BodyParser["Body Parser & Trust Proxy\n(express.json, trust proxy: private-range peers)"]
         
         subgraph PreAuth ["Pre-Auth Routes (Mounted before Auth Guard)"]
             AuthRoute["/api/auth\n(HMAC Session Handshake, Tickets & Revocation)"]

@@ -242,7 +242,7 @@ router.post('/challenge', (req, res) => {
     });
   }
 
-  const { challenge, expiresAt } = createSessionChallenge();
+  const { challenge, expiresAt } = createSessionChallenge(req.ip || req.socket?.remoteAddress || null);
   return res.status(200).json({
     challenge,
     expires_at: expiresAt,

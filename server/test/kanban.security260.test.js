@@ -802,15 +802,15 @@ describe('ENH-09 auth failure rate limiting', () => {
     process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '2';
     resetAuthLimits();
 
-    // With trust proxy enabled, Express resolves req.ip from trusted hops.
-    // An attacker rotating spoofed leftmost entries cannot dodge the limiter.
+    // The edge appends the real (public) client address as the rightmost entry; forged
+    // leftmost entries are never read, so rotating them cannot dodge the limiter.
     for (let i = 0; i < 2; i += 1) {
       await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: authHeader('wrong'),
-          'X-Forwarded-For': `198.51.100.${i + 1}, 10.0.0.99`,
+          'X-Forwarded-For': `198.51.100.${i + 1}, 203.0.113.50`,
         },
         body: taskBody('x', 'x'),
       });
@@ -821,7 +821,7 @@ describe('ENH-09 auth failure rate limiting', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: authHeader('wrong'),
-        'X-Forwarded-For': '198.51.100.999, 10.0.0.99',
+        'X-Forwarded-For': '198.51.100.999, 203.0.113.50',
       },
       body: taskBody('x', 'x'),
     });
