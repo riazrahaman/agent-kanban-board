@@ -78,6 +78,8 @@ export const CONTENT_SECURITY_POLICY = [
 export const PERMISSIONS_POLICY =
   'camera=(), microphone=(), geolocation=(), payment=(), usb=()';
 
+export const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
+
 /** Headers that are identical on every response. */
 export const SECURITY_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
@@ -102,6 +104,11 @@ export function createSecurityHeadersMiddleware() {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
       res.setHeader(name, value);
     }
+    // A6: HSTS only on a secure request. `req.secure` follows Express's
+    // `trust proxy` setting (KANBAN_TRUST_PROXY), so a spoofed
+    // X-Forwarded-Proto is ignored unless the operator trusts the proxy.
+    // Never sent over plain http (browsers ignore it there anyway).
+    if (req.secure) res.setHeader('Strict-Transport-Security', HSTS_VALUE);
     next();
   };
 }
