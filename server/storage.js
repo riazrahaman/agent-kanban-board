@@ -11,7 +11,8 @@
  * store.js re-exports both so existing `../store.js` importers are unaffected.
  */
 import { readFile, rename, mkdir, readdir, rm, stat, open } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -34,18 +35,51 @@ const execFileAsync = promisify(execFile);
  * and closes it (a persistent handle would keep writing to a journal that
  * load moved aside); a newly created journal also fsyncs its directory.
  */
-async function appendDurable(file, data) {
+async function appendDurable(file, data, { syncDir = true } = {}) {
   const dir = path.dirname(file);
   await mkdir(dir, { recursive: true });
   const created = !existsSync(file);
-  const handle = await open(file, 'a');
+  const handle = await open(file, 'a+');
+  let before = 0;
   try {
-    await handle.writeFile(data, 'utf-8');
-    await handle.sync();
+    before = (await handle.stat()).size;
+    let payload = data;
+    if (before > 0) {
+      // COR-102: a crash can leave an unterminated last line; start the new
+      // record on its own line so it cannot merge with the torn fragment.
+      const last = Buffer.alloc(1);
+      await handle.read(last, 0, 1, before - 1);
+      if (last[0] !== 0x0a) payload = `\n${data}`;
+    }
+    try {
+      await handle.writeFile(payload, 'utf-8');
+      await handle.sync();
+    } catch (err) {
+      // COR-103: a failed append must not be replayed after a restart. Roll
+      // back by truncating; if that fails, replace the journal atomically
+      // with its pre-append prefix. If neither works the record may still be
+      // on disk, so flag the error and let the storage refuse journal appends
+      // until a canonical write supersedes the journal.
+      let rolledBack = false;
+      try { await handle.truncate(before); await handle.sync(); rolledBack = true; } catch { /* try the fallback */ }
+      if (!rolledBack) {
+        try {
+          const prefix = (await readFile(file)).subarray(0, before);
+          await writeAtomic(file, prefix);
+          rolledBack = true;
+        } catch { /* flagged below */ }
+      }
+      if (!rolledBack) {
+        err.journalRollbackFailed = true;
+        err.journalOffset = before;
+      }
+      throw err;
+    }
   } finally {
     await handle.close();
   }
-  if (created) await fsyncDir(dir);
+  if (created && syncDir) await fsyncDir(dir);
+  return before;
 }
 
 /** Truncates (or creates) the journal and fsyncs it. */
@@ -70,6 +104,25 @@ async function journalFoldStep(fn) {
     const err = new Error(`journal fold failed: ${cause && cause.message ? cause.message : String(cause)}`, { cause });
     err.journalFold = true;
     throw err;
+  }
+}
+
+/**
+ * Raised when a journal append failed, could not be rolled back and could not
+ * be superseded: the change may or may not survive a restart.
+ */
+export class StorageOutcomeUnknownError extends Error {
+  constructor(cause, changedTasks, diskReadable = true) {
+    super(
+      `Storage unavailable: the outcome of this change is unknown and it may have been applied. Re-read the task before retrying (expected_version will expose it). (${cause && cause.message ? cause.message : String(cause)})`,
+      { cause },
+    );
+    this.outcomeUnknown = true;
+    this.status = 503;
+    // Only the tasks a restart would actually load (empty when the disk state
+    // could not be read: fail closed, apply nothing).
+    this.changedTasks = changedTasks;
+    this.diskReadable = diskReadable;
   }
 }
 
@@ -122,6 +175,48 @@ export class JsonStorage {
   static generationOf(parsed) {
     const g = parsed && parsed.generation;
     return Number.isInteger(g) && g >= 0 ? g : 0;
+  }
+
+  /**
+   * The one replay rule, shared by load and by failure reconciliation: apply
+   * the journal entries of the base's generation (and untagged ones only when
+   * `applyUntagged`) over `baseList`, never letting an older version replace a
+   * newer one. Pure: returns the resulting map, the count of ignored (stale)
+   * lines and, per id, the entry that produced the final record.
+   */
+  static replayEntries(baseList, entries, baseGeneration, applyUntagged = false) {
+    const tagged = (e) => Number.isInteger(e && e.generation);
+    const byId = new Map(baseList.map((t) => [t.id, t]));
+    const winners = new Map();
+    let ignored = 0;
+    for (const entry of entries) {
+      if (tagged(entry) ? entry.generation !== baseGeneration : !applyUntagged) {
+        ignored += 1;
+        continue;
+      }
+      if (entry.op === 'upsert' && entry.task) {
+        // Never let an older version of a task overwrite a newer one.
+        const existing = byId.get(entry.task.id);
+        if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
+            && entry.task.version < existing.version) continue;
+        byId.set(entry.task.id, entry.task);
+        winners.set(entry.task.id, entry);
+      } else if (entry.op === 'remove' && entry.id) {
+        byId.delete(entry.id);
+        winners.delete(entry.id);
+      }
+    }
+    return { byId, ignored, winners };
+  }
+
+  /** Parses journal text the way load does: bad lines are skipped. */
+  static parseJournal(text) {
+    const entries = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line)); } catch { /* skipped, as on load */ }
+    }
+    return entries;
   }
 
   /** Generation of the base on disk (cached after load or the first lookup). */
@@ -259,23 +354,7 @@ export class JsonStorage {
       applyUntagged = entries.some((e) => !tagged(e)) ? await this._journalNewerThanBase() : false;
     }
 
-    const byId = new Map(baseList.map((t) => [t.id, t]));
-    let ignored = 0;
-    for (const entry of entries) {
-      if (tagged(entry) ? entry.generation !== baseGeneration : !applyUntagged) {
-        ignored += 1;
-        continue;
-      }
-      if (entry.op === 'upsert' && entry.task) {
-        // Never let an older version of a task overwrite a newer one.
-        const existing = byId.get(entry.task.id);
-        if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
-            && entry.task.version < existing.version) continue;
-        byId.set(entry.task.id, entry.task);
-      } else if (entry.op === 'remove' && entry.id) {
-        byId.delete(entry.id);
-      }
-    }
+    const { byId, ignored } = JsonStorage.replayEntries(baseList, entries, baseGeneration, applyUntagged);
     const replayed = [...byId.values()];
     backfillLeaseFields(replayed);
 
@@ -315,7 +394,7 @@ export class JsonStorage {
    * any journal line written against the previous base is superseded. Used by
    * both `save()` and journal compaction.
    */
-  async _writeCanonical(tasks) {
+  async _writeCanonical(tasks, opts) {
     const generation = (await this._baseGeneration()) + 1;
     const payload = this.isDefault
       ? { generation, tasks }
@@ -323,16 +402,93 @@ export class JsonStorage {
     // B1: compact JSON. The partition is rewritten on every mutation, so the
     // two-space indentation cost real bytes and stringify time; the loader is
     // a plain JSON.parse and reads either form.
-    await writeAtomic(this.filePath, JSON.stringify(payload));
+    await writeAtomic(this.filePath, JSON.stringify(payload), opts);
     this.generation = generation;
+    // A new generation supersedes every earlier journal line, rejected ones included.
+    this._journalPoison = null;
   }
 
   /** Appends journal entries tagged with the current base generation (fsynced). */
-  async _appendJournal(entries) {
+  async _appendJournal(entries, opts) {
+    if (this._journalPoison) {
+      throw new Error(
+        `journal unusable after an unrecoverable append failure (${this._journalPoison.message}); restart after freeing the disk problem`,
+        { cause: this._journalPoison },
+      );
+    }
     const generation = await this._baseGeneration();
     let payload = '';
     for (const e of entries) payload += JSON.stringify({ ...e, generation }) + '\n';
-    await appendDurable(this.journalFile, payload);
+    try {
+      return await appendDurable(this.journalFile, payload, opts);
+    } catch (err) {
+      if (err && err.journalRollbackFailed) {
+        this._journalPoison = err;
+        console.error(`[kanban JsonStorage] journal append failed and could not be rolled back: ${err.message}`);
+        // Memory must equal what a restart would load. First try to supersede
+        // the rejected record with a canonical rewrite of the state without it.
+        if (await this._supersedeRejectedTail(err.journalOffset)) throw err;
+        // That failed too: some of the rejected records may replay. Derive,
+        // with the same replay rule load uses, which of them reached the disk.
+        console.error('[kanban JsonStorage] could not supersede the rejected journal record; outcome unknown, journal appends refused until a full rewrite');
+        let applied = [];
+        let readable = false;
+        try {
+          const derived = this._deriveReplayState(await readFile(this.journalFile, 'utf-8'));
+          if (derived) {
+            readable = true;
+            applied = entries
+              .filter((e) => e.op === 'upsert' && e.task)
+              .map((e) => e.task)
+              .filter((t) => {
+                const w = derived.winners.get(t.id);
+                return w && isDeepStrictEqual(w.task, JSON.parse(JSON.stringify(t)));
+              });
+          }
+        } catch { /* unreadable: fail closed, apply nothing */ }
+        throw new StorageOutcomeUnknownError(err, applied, readable);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * State a restart would load from the on-disk base plus the given journal
+   * text, via the shared replay rule. Null when it cannot be derived reliably
+   * (unreadable base, or legacy untagged lines whose rule depends on mtimes).
+   */
+  _deriveReplayState(journalText) {
+    let list = [];
+    let generation = 0;
+    if (existsSync(this.filePath)) {
+      const parsed = JSON.parse(readFileSync(this.filePath, 'utf-8'));
+      list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      generation = JsonStorage.generationOf(parsed);
+    }
+    const entries = JsonStorage.parseJournal(journalText);
+    if (entries.some((e) => !Number.isInteger(e && e.generation))) return null;
+    const { byId, winners } = JsonStorage.replayEntries(list, entries, generation, false);
+    return { state: [...byId.values()], generation, winners };
+  }
+
+  /**
+   * Rewrites the base (full durability, next generation) from the state a
+   * restart would load WITHOUT the journal bytes after `offset`. The new
+   * generation supersedes every journal line, the rejected one included, and
+   * clears the append refusal. Returns false when it cannot be derived/written.
+   */
+  async _supersedeRejectedTail(offset) {
+    try {
+      const prefix = (await readFile(this.journalFile)).subarray(0, offset).toString('utf-8');
+      const derived = this._deriveReplayState(prefix);
+      if (!derived) return false;
+      backfillLeaseFields(derived.state);
+      this.generation = derived.generation;
+      await this._writeCanonical(derived.state);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** One compaction check after an append. */
@@ -344,12 +500,19 @@ export class JsonStorage {
       return; // stat failure: the journal is advisory, not authoritative.
     }
     if (size >= this._journalCompactBytes()) {
-      await this._writeCanonical(allTasks);
-      await truncateDurable(this.journalFile);
+      // COR-103: the append is already durable, so a failed compaction must
+      // not turn the (successful) write into an error. The journal stays
+      // authoritative and the next write retries the compaction.
+      try {
+        await this._writeCanonical(allTasks);
+        await truncateDurable(this.journalFile);
+      } catch (err) {
+        console.warn(`[kanban JsonStorage] journal compaction deferred: ${err.message}`);
+      }
     }
   }
 
-  async save(tasks) {
+  async save(tasks, opts) {
     // PERF-02: when journaling is ON, `save` is a full canonical rewrite
     // (used by archive sweep / delete / purge — the partition must reflect the
     // surviving set). The journal is truncated because the base file is now
@@ -363,10 +526,14 @@ export class JsonStorage {
     // Default project keeps the legacy `{ tasks: [...] }` shape (plus the
     // generation key). Named partitions embed the project name so the
     // partition is self-describing.
-    await this._writeCanonical(tasks);
+    // PERF-101: a journal about to be retired may hold acknowledged writes that
+    // only this base now carries, so that rewrite always gets the full fsync
+    // pair, whatever the caller asked for.
+    const retiring = existsSync(this.journalFile);
+    await this._writeCanonical(tasks, retiring ? undefined : opts);
     // A full base save supersedes any journal left by an earlier run with the
     // flag on, so it can never be replayed over this newer base.
-    if (existsSync(this.journalFile)) await rm(this.journalFile, { force: true });
+    if (retiring) await rm(this.journalFile, { force: true });
   }
 
   /**
@@ -379,13 +546,14 @@ export class JsonStorage {
    * With the journal OFF (default), this delegates to the whole-partition
    * rewrite.
    */
-  async saveTask(task, allTasks) {
+  async saveTask(task, allTasks, opts = {}) {
+    const durability = opts.syncDir === false ? { syncDir: false } : undefined;
     if (this._journalEnabled()) {
-      await this._appendJournal([{ op: 'upsert', id: task.id, task }]);
+      await this._appendJournal([{ op: 'upsert', id: task.id, task }], durability);
       await this._maybeCompact(allTasks);
       return;
     }
-    await this.save(allTasks);
+    await this.save(allTasks, durability);
   }
 
   /**
@@ -402,22 +570,29 @@ export class JsonStorage {
    *   - GitYamlStorage persists ONE card file per task and commits the batch
    *     at most once.
    */
-  async saveTasks(changed, allTasks) {
+  async saveTasks(changed, allTasks, opts = {}) {
+    // PERF-101: opts.syncDir === false marks a pure lease renewal (see writeAtomic).
+    const durability = opts.syncDir === false ? { syncDir: false } : undefined;
     if (this._journalEnabled()) {
-      await this._appendJournal(changed.map((task) => ({ op: 'upsert', id: task.id, task })));
+      await this._appendJournal(changed.map((task) => ({ op: 'upsert', id: task.id, task })), durability);
       await this._maybeCompact(allTasks);
       return;
     }
-    await this.save(allTasks);
+    await this.save(allTasks, durability);
   }
 
   async deleteTask(task, survivors) {
     if (this._journalEnabled()) {
-      // Record the removal in the journal, then rewrite the canonical file
-      // (a delete changes the partition set, so the base file must reflect it).
-      await this._appendJournal([{ op: 'remove', id: task.id }]);
+      // A delete changes the partition set, so the base file is rewritten.
+      // Nothing is journaled first (COR-103): if the rewrite fails the journal
+      // is untouched, and if it succeeds its new generation supersedes every
+      // earlier line, so no rejected removal can ever be replayed.
       await this._writeCanonical(survivors);
-      await truncateDurable(this.journalFile);
+      try {
+        await truncateDurable(this.journalFile);
+      } catch (err) {
+        console.warn(`[kanban JsonStorage] journal truncate deferred: ${err.message}`);
+      }
       return;
     }
     await this.save(survivors);
@@ -840,7 +1015,7 @@ export class GitYamlStorage {
    * to its previous content before the error propagates (the caller then
    * leaves memory unchanged, as before).
    */
-  async saveTasks(changed, allTasks) {
+  async saveTasks(changed, allTasks, opts = {}) {
     if (!changed || changed.length === 0) return;
     await mkdir(this.dir, { recursive: true });
     const plan = [];
@@ -856,7 +1031,7 @@ export class GitYamlStorage {
     let committing = false;
     try {
       for (const item of plan) {
-        await writeAtomic(item.filePath, item.content);
+        await writeAtomic(item.filePath, item.content, opts.syncDir === false ? { syncDir: false } : undefined);
         written.push(item.snap);
       }
       if (!this.autoCommit) return;
@@ -912,10 +1087,26 @@ export class GitYamlStorage {
     });
     const filePath = this._trashPath(task, trashed.deleted_at);
     await writeAtomic(filePath, yaml.stringify(this.serializeCard(trashed, task.status)));
-    // Remove the live card file (untracked removal — no commit; the trash
-    // write is authoritative and git status stays clean).
-    if (existsSync(path.join(this.dir, filename))) {
-      await rm(path.join(this.dir, filename), { force: true });
+    const livePath = path.join(this.dir, filename);
+    if (!existsSync(livePath)) return;
+    if (!this.autoCommit) {
+      await rm(livePath, { force: true });
+      return;
+    }
+    // COR-107: commit the removal like every other git mutation, so history
+    // and clones agree with the board. An untracked card has nothing to commit.
+    const snap = await this._snapshot(livePath);
+    try {
+      const tracked = (await this._git(['ls-files', '--', filename], this.dir)).stdout.trim() !== '';
+      await this._git(['rm', '-f', '-q', '--ignore-unmatch', '--', filename], this.dir);
+      await rm(livePath, { force: true });
+      if (tracked) {
+        await this._git(['commit', '-m', `ops(${this._composite(task.id)}): kanban trashed`], this.root);
+      }
+    } catch (err) {
+      await this._rollback([snap]);
+      await rm(filePath, { force: true });
+      throw err;
     }
   }
 

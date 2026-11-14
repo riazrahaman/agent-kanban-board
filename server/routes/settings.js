@@ -24,7 +24,7 @@ router.put('/', asyncHandler(async (req, res) => {
   const project = typeof raw === 'string' && raw !== '' ? raw : undefined;
   const result = await store.updateSettings(project, req.body ?? {}, { caller: req.caller || {} });
   if (result.error) {
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   res.status(200).json(result);
 }));
