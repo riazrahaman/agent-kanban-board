@@ -11,7 +11,8 @@
  * store.js re-exports both so existing `../store.js` importers are unaffected.
  */
 import { readFile, rename, mkdir, readdir, rm, stat, open } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -111,14 +112,17 @@ async function journalFoldStep(fn) {
  * be superseded: the change may or may not survive a restart.
  */
 export class StorageOutcomeUnknownError extends Error {
-  constructor(cause, changedTasks) {
+  constructor(cause, changedTasks, diskReadable = true) {
     super(
       `Storage unavailable: the outcome of this change is unknown and it may have been applied. Re-read the task before retrying (expected_version will expose it). (${cause && cause.message ? cause.message : String(cause)})`,
       { cause },
     );
     this.outcomeUnknown = true;
     this.status = 503;
+    // Only the tasks a restart would actually load (empty when the disk state
+    // could not be read: fail closed, apply nothing).
     this.changedTasks = changedTasks;
+    this.diskReadable = diskReadable;
   }
 }
 
@@ -171,6 +175,48 @@ export class JsonStorage {
   static generationOf(parsed) {
     const g = parsed && parsed.generation;
     return Number.isInteger(g) && g >= 0 ? g : 0;
+  }
+
+  /**
+   * The one replay rule, shared by load and by failure reconciliation: apply
+   * the journal entries of the base's generation (and untagged ones only when
+   * `applyUntagged`) over `baseList`, never letting an older version replace a
+   * newer one. Pure: returns the resulting map, the count of ignored (stale)
+   * lines and, per id, the entry that produced the final record.
+   */
+  static replayEntries(baseList, entries, baseGeneration, applyUntagged = false) {
+    const tagged = (e) => Number.isInteger(e && e.generation);
+    const byId = new Map(baseList.map((t) => [t.id, t]));
+    const winners = new Map();
+    let ignored = 0;
+    for (const entry of entries) {
+      if (tagged(entry) ? entry.generation !== baseGeneration : !applyUntagged) {
+        ignored += 1;
+        continue;
+      }
+      if (entry.op === 'upsert' && entry.task) {
+        // Never let an older version of a task overwrite a newer one.
+        const existing = byId.get(entry.task.id);
+        if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
+            && entry.task.version < existing.version) continue;
+        byId.set(entry.task.id, entry.task);
+        winners.set(entry.task.id, entry);
+      } else if (entry.op === 'remove' && entry.id) {
+        byId.delete(entry.id);
+        winners.delete(entry.id);
+      }
+    }
+    return { byId, ignored, winners };
+  }
+
+  /** Parses journal text the way load does: bad lines are skipped. */
+  static parseJournal(text) {
+    const entries = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line)); } catch { /* skipped, as on load */ }
+    }
+    return entries;
   }
 
   /** Generation of the base on disk (cached after load or the first lookup). */
@@ -308,23 +354,7 @@ export class JsonStorage {
       applyUntagged = entries.some((e) => !tagged(e)) ? await this._journalNewerThanBase() : false;
     }
 
-    const byId = new Map(baseList.map((t) => [t.id, t]));
-    let ignored = 0;
-    for (const entry of entries) {
-      if (tagged(entry) ? entry.generation !== baseGeneration : !applyUntagged) {
-        ignored += 1;
-        continue;
-      }
-      if (entry.op === 'upsert' && entry.task) {
-        // Never let an older version of a task overwrite a newer one.
-        const existing = byId.get(entry.task.id);
-        if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
-            && entry.task.version < existing.version) continue;
-        byId.set(entry.task.id, entry.task);
-      } else if (entry.op === 'remove' && entry.id) {
-        byId.delete(entry.id);
-      }
-    }
+    const { byId, ignored } = JsonStorage.replayEntries(baseList, entries, baseGeneration, applyUntagged);
     const replayed = [...byId.values()];
     backfillLeaseFields(replayed);
 
@@ -398,52 +428,63 @@ export class JsonStorage {
         // Memory must equal what a restart would load. First try to supersede
         // the rejected record with a canonical rewrite of the state without it.
         if (await this._supersedeRejectedTail(err.journalOffset)) throw err;
-        // That failed too: the rejected record may replay, so report the
-        // outcome as unknown and let the store apply the change in memory.
+        // That failed too: some of the rejected records may replay. Derive,
+        // with the same replay rule load uses, which of them reached the disk.
         console.error('[kanban JsonStorage] could not supersede the rejected journal record; outcome unknown, journal appends refused until a full rewrite');
-        throw new StorageOutcomeUnknownError(err, entries.filter((e) => e.op === 'upsert' && e.task).map((e) => e.task));
+        let applied = [];
+        let readable = false;
+        try {
+          const derived = this._deriveReplayState(await readFile(this.journalFile, 'utf-8'));
+          if (derived) {
+            readable = true;
+            applied = entries
+              .filter((e) => e.op === 'upsert' && e.task)
+              .map((e) => e.task)
+              .filter((t) => {
+                const w = derived.winners.get(t.id);
+                return w && isDeepStrictEqual(w.task, JSON.parse(JSON.stringify(t)));
+              });
+          }
+        } catch { /* unreadable: fail closed, apply nothing */ }
+        throw new StorageOutcomeUnknownError(err, applied, readable);
       }
       throw err;
     }
   }
 
   /**
+   * State a restart would load from the on-disk base plus the given journal
+   * text, via the shared replay rule. Null when it cannot be derived reliably
+   * (unreadable base, or legacy untagged lines whose rule depends on mtimes).
+   */
+  _deriveReplayState(journalText) {
+    let list = [];
+    let generation = 0;
+    if (existsSync(this.filePath)) {
+      const parsed = JSON.parse(readFileSync(this.filePath, 'utf-8'));
+      list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      generation = JsonStorage.generationOf(parsed);
+    }
+    const entries = JsonStorage.parseJournal(journalText);
+    if (entries.some((e) => !Number.isInteger(e && e.generation))) return null;
+    const { byId, winners } = JsonStorage.replayEntries(list, entries, generation, false);
+    return { state: [...byId.values()], generation, winners };
+  }
+
+  /**
    * Rewrites the base (full durability, next generation) from the state a
-   * restart would load WITHOUT the journal bytes after `offset`: the base plus
-   * the journal prefix. The new generation supersedes every journal line,
-   * the rejected one included, and clears the append refusal. Returns false
-   * when the state cannot be derived or written.
+   * restart would load WITHOUT the journal bytes after `offset`. The new
+   * generation supersedes every journal line, the rejected one included, and
+   * clears the append refusal. Returns false when it cannot be derived/written.
    */
   async _supersedeRejectedTail(offset) {
     try {
-      let list = [];
-      let generation = 0;
-      if (existsSync(this.filePath)) {
-        const parsed = JSON.parse(await readFile(this.filePath, 'utf-8'));
-        list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-        generation = JsonStorage.generationOf(parsed);
-      }
       const prefix = (await readFile(this.journalFile)).subarray(0, offset).toString('utf-8');
-      const byId = new Map(list.map((t) => [t.id, t]));
-      for (const line of prefix.split('\n')) {
-        if (!line.trim()) continue;
-        let entry;
-        try { entry = JSON.parse(line); } catch { continue; }
-        if (!Number.isInteger(entry && entry.generation)) return false; // legacy line: do not guess
-        if (entry.generation !== generation) continue;
-        if (entry.op === 'upsert' && entry.task) {
-          const existing = byId.get(entry.task.id);
-          if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
-              && entry.task.version < existing.version) continue;
-          byId.set(entry.task.id, entry.task);
-        } else if (entry.op === 'remove' && entry.id) {
-          byId.delete(entry.id);
-        }
-      }
-      const state = [...byId.values()];
-      backfillLeaseFields(state);
-      this.generation = generation;
-      await this._writeCanonical(state);
+      const derived = this._deriveReplayState(prefix);
+      if (!derived) return false;
+      backfillLeaseFields(derived.state);
+      this.generation = derived.generation;
+      await this._writeCanonical(derived.state);
       return true;
     } catch {
       return false;

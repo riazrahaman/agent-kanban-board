@@ -109,47 +109,6 @@ describe('COR-103 rollback failure', () => {
     assert.deepEqual(await ids(file), ['A', 'D']);
   });
 
-  it('canonical rewrite also fails: 503 outcome-unknown, memory holds the change, restart agrees', async () => {
-    process.env.KANBAN_STORAGE_JOURNAL = '1';
-    const dir = await fresh('rb5');
-    const file = path.join(dir, 'tasks.json');
-    const prev = { f: process.env.KANBAN_DATA_FILE, d: process.env.KANBAN_DATA_DIR, r: process.env.KANBAN_REAP_ENABLED };
-    Object.assign(process.env, { KANBAN_DATA_FILE: file, KANBAN_DATA_DIR: dir, KANBAN_REAP_ENABLED: 'false' });
-    store.setStorage(null);
-    await store.loadStore();
-    const caller = { agent_id: 'ops', role: 'admin' };
-    assert.equal((await store.createTask({ id: 'A', title: 'a', round: 1, status: 'BACKLOG' }, 'default', { caller })).status, 201);
-    let events = 0;
-    const unsub = store.subscribe ? store.subscribe(() => { events++; }) : null;
-    const FH = await fileHandleProto(dir);
-    const realSync = FH.sync; const realTrunc = FH.truncate;
-    FH.sync = async function () { throw new Error('EIO simulated'); };
-    FH.truncate = async function () { throw new Error('truncate failed'); };
-    let res;
-    try {
-      res = await store.createTask({ id: 'C', title: 'c', round: 1, status: 'BACKLOG' }, 'default', { caller });
-    } finally { FH.sync = realSync; FH.truncate = realTrunc; }
-    try {
-      assert.equal(res.status, 503);
-      assert.match(res.error, /may have been applied/);
-      assert.match(res.error, /Re-read the task/);
-      assert.ok(store.getTask('C', 'default'), 'memory holds the change a restart would load');
-      if (unsub) { assert.ok(events > 0, 'subscribers were notified of the applied state'); }
-      const memoryIds = store.getTasks().map((t) => t.id).sort();
-      assert.deepEqual(await ids(file), memoryIds, 'restart equals in-memory state');
-      // Further journal appends are refused until a full rewrite.
-      const again = await store.createTask({ id: 'E', title: 'e', round: 1, status: 'BACKLOG' }, 'default', { caller }).catch((e) => ({ threw: e }));
-      assert.ok(again.threw || again.status >= 400);
-    } finally {
-      if (typeof unsub === 'function') unsub();
-      store.stopReaper();
-      store.setStorage(null);
-      for (const [k, v] of [['KANBAN_DATA_FILE', prev.f], ['KANBAN_DATA_DIR', prev.d], ['KANBAN_REAP_ENABLED', prev.r]]) {
-        if (v === undefined) delete process.env[k]; else process.env[k] = v;
-      }
-    }
-  });
-
   it('delete rewrite fails and truncate fails: the rejected delete is not replayed', async () => {
     process.env.KANBAN_STORAGE_JOURNAL = '1';
     const dir = await fresh('rb3');
@@ -197,5 +156,122 @@ describe('PERF-101 journal retirement', () => {
     syncs = 0;
     try { await s2.saveTasks([loaded[0]], loaded, { syncDir: false }); } finally { FH.sync = realSync; }
     assert.equal(syncs, 1);
+  });
+});
+
+describe('COR-103 unknown outcome reconciles memory to what a restart loads', () => {
+  const caller = { agent_id: 'ops', role: 'admin' };
+  const holder = { agent_id: 'agent-1', role: 'builder' };
+  const envKeys = ['KANBAN_DATA_FILE', 'KANBAN_DATA_DIR', 'KANBAN_REAP_ENABLED', 'KANBAN_CLAIM_TTL_MS'];
+  const envSaved = {};
+  let file; let dir;
+
+  before(() => { for (const k of envKeys) envSaved[k] = process.env[k]; });
+  after(() => {
+    store.stopReaper();
+    store.setStorage(null);
+    for (const k of envKeys) { if (envSaved[k] === undefined) delete process.env[k]; else process.env[k] = envSaved[k]; }
+  });
+
+  async function boot(label) {
+    process.env.KANBAN_STORAGE_JOURNAL = '1';
+    dir = await fresh(label);
+    file = path.join(dir, 'tasks.json');
+    Object.assign(process.env, { KANBAN_DATA_FILE: file, KANBAN_DATA_DIR: dir, KANBAN_REAP_ENABLED: 'false', KANBAN_CLAIM_TTL_MS: '60000' });
+    store.setStorage(null);
+    await store.loadStore();
+  }
+  const create = (id, status = 'BACKLOG') => store.createTask({ id, title: id, round: 1, status }, 'default', { caller });
+  const restartView = async () => {
+    const list = await new JsonStorage(file, { isDefault: true }).load();
+    return new Map(list.map((t) => [t.id, t]));
+  };
+  /** Every sync and truncate fails, and so does every non-journal write. */
+  async function injectTotalFailure({ journalWrite } = {}) {
+    const FH = await fileHandleProto(dir);
+    const orig = { sync: FH.sync, truncate: FH.truncate, writeFile: FH.writeFile };
+    let journalWrites = 0;
+    FH.sync = async function () { throw new Error('EIO simulated'); };
+    FH.truncate = async function () { throw new Error('truncate failed'); };
+    FH.writeFile = async function (data, enc) {
+      journalWrites += 1;
+      if (journalWrites === 1 && journalWrite) {
+        const payload = Buffer.from(data, enc);
+        await orig.writeFile.call(this, payload.subarray(0, journalWrite(payload)));
+        throw new Error('ENOSPC simulated (partial write)');
+      }
+      if (journalWrites === 1) return orig.writeFile.call(this, data, enc); // the journal append reaches the disk
+      throw new Error('ENOSPC simulated');
+    };
+    return () => { FH.sync = orig.sync; FH.truncate = orig.truncate; FH.writeFile = orig.writeFile; };
+  }
+
+  it('a fully written record is applied: 503, memory, broadcast and restart agree', async () => {
+    await boot('u1');
+    await create('A');
+    let changes = 0;
+    const events = [];
+    const off1 = store.onChange(() => { changes++; });
+    const off2 = store.onDiff((e) => events.push(e));
+    const restore = await injectTotalFailure();
+    let res;
+    try { res = await create('C'); } finally { restore(); off1(); off2(); }
+    assert.equal(res.status, 503);
+    assert.match(res.error, /may have been applied/);
+    assert.match(res.error, /Re-read the task/);
+    assert.ok(store.getTask('C', 'default'));
+    assert.ok(changes > 0, 'subscribers were notified');
+    assert.ok(events.some((e) => e.kind === 'created' && e.task.id === 'C'), 'diff event for the applied task');
+    assert.deepEqual([...(await restartView()).keys()].sort(), store.getTasks().map((t) => t.id).sort());
+  });
+
+  it('a partially written record is NOT applied: memory still equals restart', async () => {
+    await boot('u2');
+    await create('A');
+    const restore = await injectTotalFailure({ journalWrite: () => 40 });
+    let res;
+    try { res = await create('C'); } finally { restore(); }
+    assert.equal(res.status, 503);
+    assert.equal(store.getTask('C', 'default') ?? null, null, 'C never reached the disk in replayable form');
+    assert.deepEqual([...(await restartView()).keys()].sort(), store.getTasks().map((t) => t.id).sort());
+  });
+
+  it('a partial batch applies only the records that reached the disk', async () => {
+    await boot('u3');
+    await create('h1', 'READY');
+    await create('h2', 'READY');
+    assert.equal((await store.claimTask('h1', 'agent-1', 'default', { caller: holder })).status, 200);
+    assert.equal((await store.claimTask('h2', 'agent-1', 'default', { caller: holder })).status, 200);
+    const before1 = store.getTask('h1', 'default').claim_expires_at;
+    const before2 = store.getTask('h2', 'default').claim_expires_at;
+    // First journal line (the primary) reaches the disk, the sibling's does not.
+    const restore = await injectTotalFailure({ journalWrite: (buf) => buf.indexOf(10) + 1 });
+    let res;
+    try { res = await store.renewLease('h1', 'agent-1', { caller: holder, project: 'default' }); } finally { restore(); }
+    assert.equal(res.status, 503);
+    const disk = await restartView();
+    for (const id of ['h1', 'h2']) {
+      assert.equal(store.getTask(id, 'default').claim_expires_at, disk.get(id).claim_expires_at, `${id}: memory equals restart`);
+    }
+    assert.notEqual(store.getTask('h1', 'default').claim_expires_at, before1, 'primary renewal applied');
+    assert.equal(store.getTask('h2', 'default').claim_expires_at, before2, 'sibling that never reached disk is not applied');
+  });
+
+  it('the reaper does not swallow an unknown outcome', async () => {
+    await boot('u4');
+    await create('r1', 'READY');
+    assert.equal((await store.claimTask('r1', 'agent-1', 'default', { caller: holder })).status, 200);
+    let changes = 0;
+    const off = store.onChange(() => { changes++; });
+    const restore = await injectTotalFailure();
+    let res;
+    try { res = await store.reapExpiredClaims({ now: Date.now() + 10 * 60_000 }); } finally { restore(); }
+    off();
+    assert.equal(res.status, 503, 'the sweep reports the unknown outcome');
+    const mem = store.getTask('r1', 'default');
+    const disk = (await restartView()).get('r1');
+    assert.equal(mem.status, disk.status, 'memory equals restart');
+    assert.equal(mem.status, 'READY');
+    assert.ok(changes > 0, 'the applied reclaim was broadcast');
   });
 });

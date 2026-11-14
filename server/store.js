@@ -98,7 +98,8 @@ import {
   listGitProjects,
   rebuildIndex,
   updateInMemoryTask,
-  setOutcomeUnknownHandler,
+  persistApplied,
+  markOutcomeUnknown,
   setTaskInMemory,
   removeFromMemory,
   getProjectBucket,
@@ -240,13 +241,6 @@ export {
 // ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
-
-// COR-103: a journal append that was rejected but may still replay is applied
-// to memory (and broadcast) so memory equals what a restart would load.
-setOutcomeUnknownHandler((changed) => {
-  for (const t of changed) updateInMemoryTask(t);
-  notify();
-});
 
 export async function loadStore() {
   const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
@@ -666,7 +660,7 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
     if (newTask.completed_at === undefined) delete newTask.completed_at;
 
     // KB-05: mutate in memory only after the partition write lands.
-    await getStorage(project).saveTask(newTask, projectBucket(project, newTask));
+    await persistApplied(getStorage(project).saveTask(newTask, projectBucket(project, newTask)), newTask);
     updateInMemoryTask(newTask);
     // COR-12: a brand-new card owns no spilled history. Retire a sidecar a
     // pre-v3.12.11 delete may have left behind under this id.
@@ -951,6 +945,8 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
       try {
         await maybeUnlockDependentsInner(candidate.id, Date.now(), candidate.project);
        } catch (err) {
+        // COR-103: an unknown persistence outcome must reach the lock wrapper.
+        if (err && err.outcomeUnknown) throw err;
         log.error('auto-promote unlock failed', { error: err && err.message });
       }
     }
@@ -1331,7 +1327,7 @@ async function unlockTaskInner(task, nowMs, completedRef) {
     agent_id: 'system',
     reason: 'unblocked',
   });
-  await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+  await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
   updateInMemoryTask(candidate);
     // §2.2/§2.9: unblocked event + audit for the auto-promote override.
   notify({
@@ -1527,7 +1523,18 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
         renewed.push(compositeKey(p, candidate.id));
       }
     } catch (err) {
-      if (err && err.outcomeUnknown) throw err;
+      if (err && err.outcomeUnknown) {
+        // COR-103: apply exactly the renewals a restart would load, report
+        // them as renewed, and let the lock wrapper turn the call into a 503.
+        markOutcomeUnknown(err);
+        const loaded = new Set((err.changedTasks || []).map((t) => t.id));
+        for (const candidate of candidates) {
+          if (!loaded.has(candidate.id)) continue;
+          updateInMemoryTask(candidate);
+          renewed.push(compositeKey(p, candidate.id));
+        }
+        continue;
+      }
       // I-6: never let a sibling's save failure fail the caller's real write.
       log.error('sibling lease renewal failed', {
         project: p,
@@ -1573,11 +1580,31 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
       for (const s of siblings) updateInMemoryTask(s);
       return siblings.map((s) => compositeKey(p, s.id));
     } catch (err) {
-      if (err && err.outcomeUnknown) throw err;
+      if (err && err.outcomeUnknown) {
+        // COR-103: apply exactly what a restart would load, with the normal
+        // semantic tags for renewed siblings; fail the call (503) when the
+        // primary itself would not be loaded.
+        markOutcomeUnknown(err);
+        const loaded = new Set((err.changedTasks || []).map((t) => t.id));
+        const appliedSiblings = siblings.filter((s) => loaded.has(s.id));
+        for (const t of [candidate, ...siblings]) if (loaded.has(t.id)) updateInMemoryTask(t);
+        if (!loaded.has(candidate.id)) {
+          if (appliedSiblings.length > 0) {
+            notify({
+              semantic: new Map(appliedSiblings.map((s) => [
+                compositeKey(p, s.id),
+                { kind: 'renewed', actor: renewFor, reason: 'lease_renewed_holder_write' },
+              ])),
+            });
+          }
+          throw err;
+        }
+        return appliedSiblings.map((s) => compositeKey(p, s.id));
+      }
       log.error('sibling lease renewal failed', { project: p, error: err && err.message });
     }
   }
-  await storage.saveTask(candidate, projectBucket(p, candidate), opts);
+  await persistApplied(storage.saveTask(candidate, projectBucket(p, candidate), opts), candidate);
   updateInMemoryTask(candidate);
   return [];
 }
@@ -1683,7 +1710,7 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       agent_id: escapeHtml(actor),
     });
 
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
     updateInMemoryTask(candidate);
     notify({
       actor: actor,
@@ -2049,7 +2076,7 @@ export async function addIssue(id, issueId, project, { expected_version: expecte
         // §2.6: a committed issue append advances version by exactly one.
     candidate.version = nextVersionFor(task);
 
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
     updateInMemoryTask(candidate);
     notify();
     return { issues: candidate.issues, status: 200 };
@@ -2103,7 +2130,7 @@ export async function addComment(id, agentId, message, project, { expected_versi
       'comment', candidate.project, candidate.id, candidate.comments, getInlineCommentCap(),
     );
 
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
     updateInMemoryTask(candidate);
     notify();
     return { task: candidate, status: 200 };

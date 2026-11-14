@@ -111,22 +111,51 @@ export let projectSettings = new Map();
 // v2.5.6 (ENH-03): trash sink. project -> Task[] (soft-deleted, not live).
 export let trash = {};
 // COR-103: when a journal append is rejected and neither rolled back nor
-// superseded, a restart may replay it. The store applies the change in memory
-// (so memory equals what a restart would load, and SSE reflects it) and the
-// caller gets a 503 "outcome unknown" instead of a plain failure.
-let outcomeUnknownHandler = null;
-export function setOutcomeUnknownHandler(fn) {
-  outcomeUnknownHandler = fn;
+// superseded, a restart may replay some of it. The storage reports which of
+// the attempted tasks a restart would actually load; the persist call sites
+// below continue their normal post-persistence flow for those (memory update,
+// semantic notify, hooks), and the lock wrapper turns the whole operation into
+// a 503 "outcome unknown" at the end. Nothing is applied when the disk state
+// could not be read (fail closed).
+let pendingOutcomeUnknown = null;
+
+/** Records that the running locked operation hit an unknown persistence outcome. */
+export function markOutcomeUnknown(err) {
+  if (!pendingOutcomeUnknown) pendingOutcomeUnknown = err;
 }
-async function guardOutcomeUnknown(operation) {
+
+/**
+ * Awaits a single-task persist. Resolves normally when it succeeded OR when
+ * the outcome is unknown but a restart would load `candidate` (the caller then
+ * proceeds as if it committed). Throws when it failed or the candidate would
+ * not be loaded.
+ */
+export async function persistApplied(promise, candidate) {
   try {
-    return await operation();
+    await promise;
   } catch (err) {
-    if (err && err.outcomeUnknown && outcomeUnknownHandler) {
-      outcomeUnknownHandler(err.changedTasks || []);
-      return { error: err.message, status: 503, reason: 'outcome_unknown' };
+    if (err && err.outcomeUnknown) {
+      markOutcomeUnknown(err);
+      if ((err.changedTasks || []).some((t) => t.id === candidate.id)) return;
     }
     throw err;
+  }
+}
+
+function outcomeUnknownResult(err) {
+  return { error: err.message, status: 503, reason: 'outcome_unknown' };
+}
+async function guardOutcomeUnknown(operation) {
+  pendingOutcomeUnknown = null;
+  try {
+    const result = await operation();
+    if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
+    return result;
+  } catch (err) {
+    if (err && err.outcomeUnknown) return outcomeUnknownResult(err);
+    throw err;
+  } finally {
+    pendingOutcomeUnknown = null;
   }
 }
 export function withMutationLock(operation) {
