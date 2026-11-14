@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`, `v3.14.0`, `v3.14.1`, `v3.15.0`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`, `v3.14.0`, `v3.14.1`, `v3.15.0`, `v3.16.0`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,72 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.16.0] — 2026-11-14
+
+Performance and hardening release. The JSON storage journal is now on by
+default, reads no longer wait behind writes, the event stream is compressed,
+and there is one new optional environment variable,
+`KANBAN_REQUIRE_BOUND_CREDENTIALS`. It changes a default, so it is a minor
+release: read the upgrade notes before deploying. `docs/CONFIGURATION.md` and
+`.env.example` describe both variables.
+
+### Upgrade notes
+
+- **The JSON storage journal is on by default.** With `KANBAN_STORAGE_JOURNAL`
+  unset, heartbeats, logs and comments append a small line to
+  `<partition>.journal.jsonl` instead of rewriting the whole project file; the
+  journal is folded into the base file once it passes
+  `KANBAN_JOURNAL_COMPACT_BYTES` (1 MB). Existing data loads unchanged and the
+  journal file appears on the first write. Backups already include it; any
+  external tooling that copies only `tasks.json` should copy the journal file
+  too. Set `KANBAN_STORAGE_JOURNAL=0` (or `false`) to keep the previous layout;
+  switching either way is safe.
+- **Requests with conflicting project channels get `400`.** The query
+  (`project`, `workspace`), `X-Kanban-Project`, the body (`project`,
+  `workspace_id`) and a composite `project:id` card id must name the same
+  project when more than one is given. A blank value still counts as absent.
+- **New optional `KANBAN_REQUIRE_BOUND_CREDENTIALS`.** Set it to `1` to refuse
+  writes (`403`) from credentials that have no `agent_id` binding. Off by
+  default; the server logs at startup how many credentials are unbound (counts
+  only).
+- **The event stream is compressed** (gzip or deflate) when the client accepts
+  it, and is sent with `Cache-Control: no-cache, no-transform`. Standard
+  `EventSource` clients need no change.
+
+### Security
+
+- `Strict-Transport-Security` is sent on secure requests only (it follows
+  `KANBAN_TRUST_PROXY`). The README documents keeping the board token in the
+  browser's local storage as a known trade-off.
+- Unbound credentials are counted at startup, and the opt-in strict mode
+  above refuses their writes.
+- A share of the global event-stream cap is reserved for credentialed callers,
+  so anonymous streams cannot take every slot.
+- Project scope is checked for consistency across every channel (see upgrade
+  notes); composite ids are read only from card routes, so agent ids that
+  contain `:` are unaffected.
+
+### Fixed
+
+- In the rare storage "outcome unknown" path, the recovery broadcast now
+  carries the same event kind and actor as a normal success, and each change
+  is broadcast exactly once.
+- After an interrupted trash restore, the card's log history stays readable,
+  is moved back on the next write, and is never lost when the trash entry is
+  purged, hard-deleted or expires; a crash mid-merge cannot duplicate entries.
+
+### Performance
+
+- **Journal on by default:** at 2,000 tasks a heartbeat takes about 5.5 ms
+  instead of 15 ms and writes 0.33 MB instead of 6.64 MB; 30 concurrent log
+  writes finish in 158 ms instead of 596 ms.
+- **Reads do not wait for writes:** list, archive, trash, projects and metrics
+  reads are served from memory while a write is in flight; the lazy archive
+  sweep runs once the write finishes.
+- **Compressed event stream:** the full-board first frame is about 40× smaller
+  (1.15 MB to 28 KB at 2,000 tasks), with stall and backlog protections intact
+  and about 77 KB of memory per stream.
 
 ## [3.15.0] — 2026-11-14
 
