@@ -4,12 +4,37 @@ import * as store from '../store.js';
  * §2.1 project resolution order:
  *   ?project= query > ?workspace= alias > X-Kanban-Project header
  */
+const isBlank = (v) => typeof v === 'string' && v.trim() === '';
+
+/**
+ * A blank (empty or whitespace-only) value in any channel means "absent" and
+ * is skipped, so a blank `?project=` can no longer shadow a real
+ * `?workspace=` / header value. `??` would not skip '' — hence the filter.
+ */
 export function rawProjectScope(req) {
-  return (
-    req.query?.project ??
-    req.query?.workspace ??
-    req.headers['x-kanban-project']
-  );
+  return [
+    req.query?.project,
+    req.query?.workspace,
+    req.headers?.['x-kanban-project'],
+    // Body channels are authorised too (referencedProjects), so they must also
+    // route; otherwise a body-only scope is authorised for one project while
+    // the route falls back to default.
+    req.body?.project,
+    req.body?.workspace_id,
+  ].find((v) => v !== undefined && v !== null && !isBlank(v));
+}
+
+/**
+ * Drops blank body `project` / `workspace_id` so the store's `??` chain
+ * (body.project ?? body.workspace_id ?? query) cannot stop on a blank and
+ * resolve a different project than the one authorisation checked.
+ */
+export function normalizeBodyScope(req) {
+  const b = req.body;
+  if (!b || typeof b !== 'object') return;
+  for (const k of ['project', 'workspace_id']) {
+    if (isBlank(b[k])) delete b[k];
+  }
 }
 
 /**
@@ -49,7 +74,7 @@ export function referencedProjects(req) {
   ];
   const out = new Set();
   for (const c of candidates) {
-    if (typeof c === 'string' && c !== '') out.add(c);
+    if (typeof c === 'string' && !isBlank(c)) out.add(c);
   }
 
   // A composite `project:id` in the URL path is the fourth channel, and the
@@ -84,6 +109,7 @@ export function referencedProjects(req) {
 
 export function projectScopeGuard() {
   return (req, res, next) => {
+    normalizeBodyScope(req);
     const raw = rawProjectScope(req);
     if (raw === undefined || raw === null || raw === '') return next();
     if (typeof raw === 'string' && store.isValidProjectId(raw)) return next();
