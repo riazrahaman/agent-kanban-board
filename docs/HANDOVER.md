@@ -302,7 +302,7 @@ Chosen by `KANBAN_STORAGE_BACKEND` (`json` default, `git`); one instance per
 project via `getStorage(project)`.
 
 - **`JsonStorage`** — one atomic `{tasks:[…]}` file per project. Writes go through
-  `writeAtomic` (temp file + `rename`). With **`KANBAN_STORAGE_JOURNAL=1`** a
+  `writeAtomic` (temp file + `rename`). By default (v3.16.0; **`KANBAN_STORAGE_JOURNAL=0`** opts out) a
   single task write appends to a `.journal.jsonl` sidecar (O(1) writes; replayed on
   load, compacted at `KANBAN_JOURNAL_COMPACT_BYTES`, default 1 MB). Archive,
   trash and settings live in sibling `archive/`, `trash/`, `settings/` paths.

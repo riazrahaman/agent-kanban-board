@@ -302,7 +302,7 @@ describe('B6 — compression (v3.12.4)', () => {
     assert.equal(typeof body.tasks_total, 'number');
   });
 
-  it('9. never compresses (or buffers) the SSE stream', async () => {
+  it('9. SSE stream is compressed only through its own sync-flushing encoder', async () => {
     const controller = new AbortController();
     const res = await fetch(`${baseUrl}/api/events`, {
       headers: { 'accept-encoding': 'gzip' },
@@ -311,12 +311,10 @@ describe('B6 — compression (v3.12.4)', () => {
     try {
       assert.equal(res.status, 200);
       assert.match(res.headers.get('content-type') || '', /text\/event-stream/);
-      assert.equal(
-        res.headers.get('content-encoding'),
-        null,
-        'SSE must stay uncompressed so frames flush per event'
-      );
-      assert.equal(res.headers.get('cache-control'), 'no-cache');
+      // B9: the SSE handler gzips with Z_SYNC_FLUSH per frame (the generic
+      // compression middleware still skips it), so frames are never buffered.
+      assert.equal(res.headers.get('content-encoding'), 'gzip');
+      assert.equal(res.headers.get('cache-control'), 'no-cache, no-transform');
       // The framing headers arrive immediately: proof the stream was not held
       // back inside the compression middleware's buffer.
       assert.equal(res.headers.get('connection'), 'keep-alive');
@@ -326,7 +324,7 @@ describe('B6 — compression (v3.12.4)', () => {
     }
   });
 
-  it('10. never compresses or buffers ANY spelling of the SSE path', async () => {
+  it('10. never buffers ANY spelling of the SSE path', async () => {
     // Express 5's default routing is BOTH non-strict (`/api/events/`) and
     // case-INsensitive (`/API/EVENTS`), so all four spellings below reach the
     // same SSE handler. If the compression filter compared the raw path, a
@@ -348,8 +346,8 @@ describe('B6 — compression (v3.12.4)', () => {
         assert.match(res.headers.get('content-type') || '', /text\/event-stream/, variant);
         assert.equal(
           res.headers.get('content-encoding'),
-          null,
-          `${variant} must stay uncompressed so frames flush per event`
+          'gzip',
+          `${variant} must use the sync-flushing SSE encoder, not the buffering middleware`
         );
         reader = res.body.getReader();
         // `?prime=1` makes the diff stream write one `tasks` snapshot on connect

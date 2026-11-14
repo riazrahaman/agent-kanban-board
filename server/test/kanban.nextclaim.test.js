@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
+
 const TOKEN = 'kanban-nextclaim-token';
 
 // Constructed without the literal "Bearer " prefix so the write-time secret
@@ -99,6 +100,7 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     // (loadStore() reads [] when the file is absent) and re-read.
     store.setStorage(null);
     await rm(path.join(tmpDir, 'tasks.json'), { force: true });
+    await rm(path.join(tmpDir, 'tasks.json.journal.jsonl'), { force: true });
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
       });

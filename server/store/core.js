@@ -17,11 +17,12 @@
  *
  * Never assign an imported binding from another module — call the setter below.
  */
-import { readdir, rm, rename, mkdir } from 'node:fs/promises';
+import { readdir, rm, rename, mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonStorage, GitYamlStorage } from '../storage.js';
+import { onDiff } from './listeners.js';
 import {
   isValidProjectId,
   defaultProjectName,
@@ -65,6 +66,29 @@ export function spillFile(project, taskId) {
 export function parkedSpillFile(project, taskId, bucket, stampIso) {
   const stamp = String(stampIso || '').replace(/[^0-9A-Za-z]/g, '') || 'unstamped';
   return path.join(spillDir(project), bucket, `${taskId}.${stamp}.jsonl`);
+}
+
+/**
+ * Completed-merge state: a crash between the atomic swap and removing the
+ * parked file leaves `dest` = parked + live with the parked file still present.
+ * True when `dest` already begins with the parked content.
+ */
+export async function parkedAlreadyMerged(parked, dest) {
+  try {
+    const older = await readFile(parked, 'utf-8');
+    const normalized = older && !older.endsWith('\n') ? older + '\n' : older;
+    const newer = await readFile(dest, 'utf-8');
+    return newer.startsWith(normalized);
+  } catch {
+    return false;
+  }
+}
+
+/** Move that surfaces failures (used where losing the move would split history). */
+export async function moveSpillFileStrict(src, dest) {
+  if (!existsSync(src)) return;
+  await mkdir(path.dirname(dest), { recursive: true });
+  await rename(src, dest);
 }
 
 /** Best-effort move; a missing source is the common no-sidecar case. */
@@ -128,8 +152,26 @@ export function markOutcomeUnknown(err) {
 // still broadcast it if later work in the same mutation fails.
 let appliedUnknownPending = false;
 let appliedUnknownNotifier = null;
-export function noteAppliedUnknown() {
+// Semantic kind + actor recorded when the applied state was folded into
+// memory, so the fallback broadcast carries the same tags a success would.
+let appliedUnknownMeta = null;
+function recordAppliedMeta(key, meta) {
+  if (!meta) return;
+  if (!appliedUnknownMeta) appliedUnknownMeta = { actor: undefined, reason: undefined, semantic: new Map() };
+  if (appliedUnknownMeta.actor === undefined) {
+    appliedUnknownMeta.actor = meta.actor;
+    appliedUnknownMeta.reason = meta.reason;
+  }
+  appliedUnknownMeta.semantic.set(key, meta);
+}
+/**
+ * Marks that an applied-but-unknown outcome updated memory. `entries` is an
+ * optional list of `[compositeKey, { kind, actor, reason, ... }]` pairs
+ * describing the semantic event each applied task would have produced.
+ */
+export function noteAppliedUnknown(entries) {
   appliedUnknownPending = true;
+  for (const [key, meta] of entries || []) recordAppliedMeta(key, meta);
 }
 export function setAppliedUnknownNotifier(fn) {
   appliedUnknownNotifier = fn;
@@ -141,7 +183,7 @@ export function setAppliedUnknownNotifier(fn) {
  * proceeds as if it committed). Throws when it failed or the candidate would
  * not be loaded.
  */
-export async function persistApplied(promise, candidate) {
+export async function persistApplied(promise, candidate, meta) {
   try {
     await promise;
   } catch (err) {
@@ -151,7 +193,7 @@ export async function persistApplied(promise, candidate) {
         // A restart would load this task: memory follows immediately, so no
         // later failure in the same mutation can leave memory behind the disk.
         updateInMemoryTask(candidate);
-        appliedUnknownPending = true;
+        noteAppliedUnknown(meta ? [[compositeKey(candidate.project, candidate.id), meta]] : null);
         return;
       }
     }
@@ -165,6 +207,14 @@ function outcomeUnknownResult(err) {
 async function guardOutcomeUnknown(operation) {
   pendingOutcomeUnknown = null;
   appliedUnknownPending = false;
+  appliedUnknownMeta = null;
+  // Consume recorded metadata for every card whose event was already
+  // dispatched, so the fallback broadcast only covers changes not yet sent.
+  const offDiff = onDiff((ev) => {
+    if (appliedUnknownMeta && ev && ev.task) {
+      appliedUnknownMeta.semantic.delete(compositeKey(ev.task.project, ev.task.id));
+    }
+  });
   try {
     const result = await operation();
     if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
@@ -176,19 +226,31 @@ async function guardOutcomeUnknown(operation) {
     const unknown = (err && err.outcomeUnknown) ? err : pendingOutcomeUnknown;
     if (unknown) {
       if (appliedUnknownPending && appliedUnknownNotifier) {
-        try { appliedUnknownNotifier(); } catch { /* best effort */ }
+        const m = appliedUnknownMeta;
+        const opts = m ? { actor: m.actor, reason: m.reason, semantic: new Map(m.semantic) } : undefined;
+        try { appliedUnknownNotifier(opts); } catch { /* best effort */ }
       }
       return outcomeUnknownResult(unknown);
     }
     throw err;
   } finally {
+    offDiff();
     pendingOutcomeUnknown = null;
     appliedUnknownPending = false;
+    appliedUnknownMeta = null;
   }
 }
+// B2: number of operations queued or running; lets read paths see whether the
+// lock is busy without joining the queue.
+let mutationLockDepth = 0;
+export function isMutationLockBusy() {
+  return mutationLockDepth > 0;
+}
 export function withMutationLock(operation) {
+  mutationLockDepth += 1;
   const run = mutationQueue.then(() => guardOutcomeUnknown(operation), () => guardOutcomeUnknown(operation));
   mutationQueue = run.catch(() => undefined);
+  mutationQueue.then(() => { mutationLockDepth -= 1; });
   return run;
 }
 

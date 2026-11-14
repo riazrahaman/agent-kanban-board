@@ -207,7 +207,7 @@ describe('PERF-02: journal-based append-only storage', () => {
   });
 
   after(async () => {
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     delete process.env.KANBAN_JOURNAL_COMPACT_BYTES;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
@@ -216,7 +216,7 @@ describe('PERF-02: journal-based append-only storage', () => {
   });
 
   it('2a. journal OFF (default): saveTask rewrites the whole file (byte-identical to pre-2.8)', async () => {
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     store.setStorage(new store.JsonStorage(dataFile));
     await store.loadStore();
     await store.createTask({ id: 'joff-1', title: 'Journal off', status: 'BACKLOG', round: 1 }, 'default');

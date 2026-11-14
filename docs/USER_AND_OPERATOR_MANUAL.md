@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.15.0
+**System:** Agent Kanban Board v3.16.0
 
 ---
 
@@ -110,7 +110,7 @@ The server and client are configured via environment variables.
 | `KANBAN_TRASH_DAYS` | `30` | Age after which soft-deleted tasks are permanently removed from the trash sink (`0` disables the sweep). |
 | `KANBAN_GIT_DIR` | `server/data` | Directory containing `.yml` cards when using `git` backend. Same in-repo default as `KANBAN_DATA_DIR` (ADR-001). |
 | `KANBAN_GIT_COMMIT` | `true` | Set `false` to disable auto-commits in git mode. |
-| `KANBAN_STORAGE_JOURNAL` | *(off)* | Set `1` to append each JSON mutation to `<partition>.journal.jsonl` instead of rewriting the whole partition (replayed on load; compacted past `KANBAN_JOURNAL_COMPACT_BYTES`). Off → on-disk layout unchanged. |
+| `KANBAN_STORAGE_JOURNAL` | *(on)* | Since v3.16.0 each JSON mutation is appended to `<partition>.journal.jsonl` instead of rewriting the whole partition (replayed on load; compacted past `KANBAN_JOURNAL_COMPACT_BYTES`). Set `0` or `false` to opt out. A pre-existing data directory loads unchanged; the journal appears on the first write. |
 | `KANBAN_JOURNAL_COMPACT_BYTES` | `1048576` | Journal size (bytes) that triggers a compaction into the canonical partition file. |
 | `KANBAN_INLINE_LOG_CAP` | `50` | Newest `agent_logs` entries kept inline per task; older ones spill to a sidecar JSONL under `spill/<project>/`. `0` = unbounded. |
 | `KANBAN_INLINE_COMMENT_CAP` | `50` | Newest `comments` kept inline per task; older ones spill to the sidecar. `0` = unbounded. |

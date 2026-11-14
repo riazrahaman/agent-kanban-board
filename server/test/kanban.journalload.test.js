@@ -25,7 +25,7 @@ describe('journal load path', () => {
   });
 
   beforeEach(async () => {
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     delete process.env.KANBAN_JOURNAL_COMPACT_BYTES;
     store.setStorage(null);
     await rm(tasksDir, { recursive: true, force: true });
@@ -33,7 +33,7 @@ describe('journal load path', () => {
   });
 
   after(async () => {
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
     store.setStorage(null);
@@ -68,7 +68,7 @@ describe('journal load path', () => {
     const on = storageFor();
     await on.save([task('a', 'a0')]);
     await on.saveTask(task('b', 'b0'), [task('a', 'a0'), task('b', 'b0')]);
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     const off = storageFor();
     const loaded = await off.load();
     assert.deepEqual(loaded.map((t) => t.id).sort(), ['a', 'b']);
@@ -81,7 +81,7 @@ describe('journal load path', () => {
     const s = storageFor();
     await s.save([task('a', 'old')]);
     await s.saveTask(task('a', 'stale-journaled'), [task('a', 'stale-journaled')]);
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     await s.save([task('a', 'newest'), task('c', 'c0')]);
     process.env.KANBAN_STORAGE_JOURNAL = '1';
     const loaded = await storageFor().load();

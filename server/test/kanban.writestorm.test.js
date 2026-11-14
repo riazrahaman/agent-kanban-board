@@ -75,7 +75,7 @@ describe('v3.12.3 B1 — sibling lease renewals grouped into one save per projec
 
   before(async () => {
     delete process.env.KANBAN_STORAGE_BACKEND;
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     delete process.env.KANBAN_DEFAULT_PROJECT;
     process.env.KANBAN_REAP_ENABLED = 'false';
     process.env.KANBAN_CLAIM_TTL_MS = String(TTL_MS);
@@ -100,7 +100,7 @@ describe('v3.12.3 B1 — sibling lease renewals grouped into one save per projec
     delete process.env.KANBAN_AUTH_TOKEN;
     delete process.env.KANBAN_CLAIM_TTL_MS;
     delete process.env.KANBAN_REAP_ENABLED;
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     store.setStorage(null);
   });
 
@@ -244,7 +244,7 @@ describe('v3.12.3 B1 — sibling lease renewals grouped into one save per projec
         assert.equal(store.getTask(id).claim_expires_at, new Date(NOW + TTL_MS).toISOString());
       }
     } finally {
-      delete process.env.KANBAN_STORAGE_JOURNAL;
+      process.env.KANBAN_STORAGE_JOURNAL = '0';
     }
   });
 
