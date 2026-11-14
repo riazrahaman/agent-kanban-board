@@ -97,6 +97,7 @@ describe('applied-unknown follow-ups', () => {
     let res;
     try { res = await store.restoreFromTrash('A', { caller }); } finally { restore(); off(); }
     assert.equal(res.status, 503);
+    assert.equal(events.filter((e) => e.task && e.task.id === 'A').length, 1, 'exactly one event');
     const ev = events.find((e) => e.task && e.task.id === 'A');
     assert.ok(ev, 'a diff event was broadcast');
     assert.equal(ev.kind, 'created');
@@ -113,6 +114,7 @@ describe('applied-unknown follow-ups', () => {
     let res;
     try { res = await store.claimTask('c1', 'agent-1', 'default', { caller: holder }); } finally { restore(); off(); }
     assert.equal(res.status, 503);
+    assert.equal(events.filter((e) => e.task && e.task.id === 'c1').length, 1, 'exactly one event');
     const ev = events.find((e) => e.task && e.task.id === 'c1');
     assert.ok(ev, 'a diff event was broadcast');
     assert.equal(ev.kind, 'claimed');
@@ -153,5 +155,89 @@ describe('applied-unknown follow-ups', () => {
     await create('R');
     const logs = await store.getTaskLogs('R', 'default', { include_spilled: true });
     assert.equal(logs.spilled_count, 0);
+  });
+
+  /** Make the storage report an unknown outcome in which only `appliedIds` reached the disk. */
+  function injectPartialUnknown(appliedIds) {
+    const real = store.getStorage('default');
+    const fake = Object.create(real);
+    fake.saveTasks = async (changed) => {
+      const err = new Error('unknown outcome (test)');
+      err.outcomeUnknown = true;
+      err.changedTasks = changed.filter((t) => appliedIds.includes(t.id));
+      throw err;
+    };
+    store.setStorage(fake, 'default');
+    return () => store.setStorage(real, 'default');
+  }
+
+  it('a sibling-only applied renewal is broadcast exactly once', async () => {
+    await boot('f5');
+    await create('h1', 'READY');
+    await create('h2', 'READY');
+    await store.claimTask('h1', 'agent-1', 'default', { caller: holder });
+    await store.claimTask('h2', 'agent-1', 'default', { caller: holder });
+    const events = [];
+    const off = store.onDiff((e) => events.push(e));
+    const restore = injectPartialUnknown(['h2']);
+    let res;
+    try { res = await store.renewLease('h1', 'agent-1', { caller: holder, project: 'default' }); } finally { restore(); off(); }
+    assert.equal(res.status, 503);
+    const renewed = events.filter((e) => e.task && e.task.id === 'h2');
+    assert.equal(renewed.length, 1, 'one event for the applied sibling');
+    assert.equal(renewed[0].kind, 'renewed');
+    assert.equal(renewed[0].actor, 'agent-1');
+    assert.equal(events.filter((e) => e.task && e.task.id === 'h1').length, 0);
+  });
+
+  async function interruptedRestore(id) {
+    await create(id);
+    const live = spillFile('default', id);
+    await mkdir(path.dirname(live), { recursive: true });
+    await writeFile(live, JSON.stringify({ type: 'log', message: 'old-1' }) + '\n' + JSON.stringify({ type: 'log', message: 'old-2' }) + '\n');
+    assert.equal((await store.deleteTask(id, { caller })).status, 200);
+    const restore = await injectTotalFailure();
+    try { assert.equal((await store.restoreFromTrash(id, { caller })).status, 503); } finally { restore(); }
+    store.setStorage(null); // the disk problem is gone: fresh storage instance
+    assert.ok(!existsSync(live));
+    assert.equal((await store.getTaskLogs(id, 'default', { include_spilled: true })).spilled_count, 2);
+    return live;
+  }
+
+  it('purging the stale trash row keeps the live restored card history', async () => {
+    await boot('f6');
+    const live = await interruptedRestore('P');
+    assert.equal((await store.hardDeleteFromTrash('P', { caller })).status, 200);
+    assert.ok(existsSync(live), 'history moved back to the live location');
+    assert.equal((await store.getTaskLogs('P', 'default', { include_spilled: true })).spilled_count, 2);
+  });
+
+  it('the retention sweep keeps the live restored card history', async () => {
+    await boot('f7');
+    const live = await interruptedRestore('S');
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60 * 86400000;
+    let out;
+    try { out = await store.runTrashSweep(); } finally { Date.now = realNow; }
+    assert.deepEqual(out.purged, ['default/S']);
+    assert.ok(existsSync(live));
+    assert.equal((await store.getTaskLogs('S', 'default', { include_spilled: true })).spilled_count, 2);
+  });
+
+  it('a spill write past the cap repairs the parked history', async () => {
+    const savedCap = process.env.KANBAN_INLINE_LOG_CAP;
+    process.env.KANBAN_INLINE_LOG_CAP = '1';
+    try {
+      await boot('f8');
+      const live = await interruptedRestore('W');
+      assert.equal((await store.appendLog('W', 'agent-1', 'one', 'default')).status ?? 200, 200);
+      assert.equal((await store.appendLog('W', 'agent-1', 'two', 'default')).status ?? 200, 200);
+      assert.ok(existsSync(live), 'parked history moved back before the new spill entry');
+      const logs = await store.getTaskLogs('W', 'default', { include_spilled: true });
+      assert.ok(logs.spilled_count >= 3);
+      assert.deepEqual(logs.entries.slice(0, 2).map((e) => e.message), ['old-1', 'old-2']);
+    } finally {
+      if (savedCap === undefined) delete process.env.KANBAN_INLINE_LOG_CAP; else process.env.KANBAN_INLINE_LOG_CAP = savedCap;
+    }
   });
 });

@@ -1609,14 +1609,7 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
         if (loaded.size > 0) noteAppliedUnknown(entries);
         for (const t of [candidate, ...siblings]) if (loaded.has(t.id)) updateInMemoryTask(t);
         if (!loaded.has(candidate.id)) {
-          if (appliedSiblings.length > 0) {
-            notify({
-              semantic: new Map(appliedSiblings.map((s) => [
-                compositeKey(p, s.id),
-                { kind: 'renewed', actor: renewFor, reason: 'lease_renewed_holder_write' },
-              ])),
-            });
-          }
+          // The lock wrapper broadcasts the recorded applied siblings once.
           throw err;
         }
         return appliedSiblings.map((s) => compositeKey(p, s.id));

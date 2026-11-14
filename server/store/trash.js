@@ -19,6 +19,9 @@ import {
   moveSpillFile,
   removeSpillFile,
 } from './core.js';
+import { existsSync } from 'node:fs';
+import { mkdir, rename } from 'node:fs/promises';
+import path from 'node:path';
 import { notify } from './listeners.js';
 import { GitYamlStorage } from '../storage.js';
 import { STATUSES } from '../state-machine.js';
@@ -72,6 +75,28 @@ async function trashPersistRemove(project, removedTask) {
   }
   if (remaining.length === 0) delete trash[project];
   else trash[project] = remaining;
+}
+
+/**
+ * Before a trash row (and its parked sidecar) is dropped for good: if a live
+ * card is the restored copy of that row (restored_at set, same created_at) and
+ * its sidecar is still parked, move the history back to the live name first.
+ * Returns false when that move fails, so the caller keeps row + sidecar.
+ */
+async function rescueParkedSpill(project, row) {
+  const live = index.get(compositeKey(project, row.id));
+  if (!live || !live.restored_at || live.created_at !== row.created_at) return true;
+  const parked = parkedSpillFile(project, row.id, 'trash', row.deleted_at);
+  const dest = spillFile(project, row.id);
+  if (!existsSync(parked) || existsSync(dest)) return true;
+  try {
+    await mkdir(path.dirname(dest), { recursive: true });
+    await rename(parked, dest);
+    return true;
+  } catch (err) {
+    console.warn(`[kanban store] spill rescue ${parked}: ${err.message}`);
+    return false;
+  }
 }
 
 /**
@@ -176,6 +201,9 @@ export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
         : project;
     const trashed = trashFind(authorizedProject, id);
     if (!trashed) return { error: 'Task not found in trash', status: 404 };
+    if (!(await rescueParkedSpill(authorizedProject, trashed))) {
+      return { error: 'Could not preserve the live card history; the trash row was kept. Retry.', status: 500 };
+    }
     await trashPersistRemove(authorizedProject, trashed);
     await removeSpillFile(parkedSpillFile(authorizedProject, id, 'trash', trashed.deleted_at));
     // COR-06: the semantic override is keyed by project/id, and the diff
@@ -230,6 +258,7 @@ export async function runTrashSweepInner(projects = null) {
       return !Number.isNaN(age) && age >= days * 86400000;
     });
     for (const t of expired) {
+      if (!(await rescueParkedSpill(project, t))) continue;
       await trashPersistRemove(project, t);
       await removeSpillFile(parkedSpillFile(project, t.id, 'trash', t.deleted_at));
       purged.push(compositeKey(project, t.id));
