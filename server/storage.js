@@ -34,7 +34,7 @@ const execFileAsync = promisify(execFile);
  * and closes it (a persistent handle would keep writing to a journal that
  * load moved aside); a newly created journal also fsyncs its directory.
  */
-async function appendDurable(file, data, { sync = true } = {}) {
+async function appendDurable(file, data, { syncDir = true } = {}) {
   const dir = path.dirname(file);
   await mkdir(dir, { recursive: true });
   const created = !existsSync(file);
@@ -52,7 +52,7 @@ async function appendDurable(file, data, { sync = true } = {}) {
     }
     try {
       await handle.writeFile(payload, 'utf-8');
-      if (sync) await handle.sync();
+      await handle.sync();
     } catch (err) {
       // COR-103: a failed append must not be replayed after a restart.
       try { await handle.truncate(before); await handle.sync(); } catch { /* best effort */ }
@@ -61,7 +61,7 @@ async function appendDurable(file, data, { sync = true } = {}) {
   } finally {
     await handle.close();
   }
-  if (created && sync) await fsyncDir(dir);
+  if (created && syncDir) await fsyncDir(dir);
   return before;
 }
 
@@ -417,7 +417,7 @@ export class JsonStorage {
    * rewrite.
    */
   async saveTask(task, allTasks, opts = {}) {
-    const durability = opts.durable === false ? { durable: false, sync: false } : undefined;
+    const durability = opts.syncDir === false ? { syncDir: false } : undefined;
     if (this._journalEnabled()) {
       await this._appendJournal([{ op: 'upsert', id: task.id, task }], durability);
       await this._maybeCompact(allTasks);
@@ -441,8 +441,8 @@ export class JsonStorage {
    *     at most once.
    */
   async saveTasks(changed, allTasks, opts = {}) {
-    // PERF-101: opts.durable === false marks a pure lease renewal (see writeAtomic).
-    const durability = opts.durable === false ? { durable: false, sync: false } : undefined;
+    // PERF-101: opts.syncDir === false marks a pure lease renewal (see writeAtomic).
+    const durability = opts.syncDir === false ? { syncDir: false } : undefined;
     if (this._journalEnabled()) {
       await this._appendJournal(changed.map((task) => ({ op: 'upsert', id: task.id, task })), durability);
       await this._maybeCompact(allTasks);
@@ -907,7 +907,7 @@ export class GitYamlStorage {
     let committing = false;
     try {
       for (const item of plan) {
-        await writeAtomic(item.filePath, item.content, opts.durable === false ? { durable: false } : undefined);
+        await writeAtomic(item.filePath, item.content, opts.syncDir === false ? { syncDir: false } : undefined);
         written.push(item.snap);
       }
       if (!this.autoCommit) return;

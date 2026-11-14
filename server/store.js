@@ -1513,7 +1513,7 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
     try {
       const storage = getStorage(p);
       const bucket = projectBucketFor(p, candidates);
-      await storage.saveTasks(candidates, bucket, { durable: false });
+      await storage.saveTasks(candidates, bucket, { syncDir: false });
       for (const candidate of candidates) {
         updateInMemoryTask(candidate);
         renewed.push(compositeKey(p, candidate.id));
@@ -1545,8 +1545,8 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
  * Returns the composite keys of the renewed siblings.
  */
 async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = false } = {}) {
-  // PERF-101: a pure lease renewal skips the fsync pair (loss is harmless).
-  const opts = leaseOnly ? { durable: false } : undefined;
+  // PERF-101: a pure lease renewal skips only the directory fsync (loss is harmless).
+  const opts = leaseOnly ? { syncDir: false } : undefined;
   const p = candidate.project;
   const storage = getStorage(p);
   const siblings = renewFor

@@ -187,16 +187,16 @@ describe('backups (COR-105 / COR-106)', () => {
 });
 
 describe('lease-only writes (PERF-101)', () => {
-  it('writeAtomic(durable:false) still replaces the file atomically', async () => {
+  it('writeAtomic(syncDir:false) still replaces the file atomically', async () => {
     const dir = await fresh('atomic');
     const f = path.join(dir, 'x.json');
     await writeAtomic(f, 'one');
-    await writeAtomic(f, 'two', { durable: false });
+    await writeAtomic(f, 'two', { syncDir: false });
     assert.equal(await readFile(f, 'utf-8'), 'two');
     assert.ok(!(await readdir(dir)).some((n) => n.startsWith('.tmp_')));
   });
 
-  it('a heartbeat skips fsync but a real change keeps it', async () => {
+  it('a heartbeat skips only the directory fsync but a real change keeps both', async () => {
     const dir = await fresh('hb');
     Object.assign(process.env, { KANBAN_DATA_DIR: dir, KANBAN_DATA_FILE: path.join(dir, 'tasks.json') });
     delete process.env.KANBAN_STORAGE_BACKEND;
@@ -214,9 +214,10 @@ describe('lease-only writes (PERF-101)', () => {
     try {
       const hb = await store.renewLease('h1', 'agent-1', { caller: { agent_id: 'agent-1', role: 'builder' } });
       assert.equal(hb.status, 200);
-      assert.equal(syncs, 0, 'lease renewal must not fsync');
+      assert.equal(syncs, 1, 'lease renewal fsyncs the temp file only, not the directory');
+      syncs = 0;
       await store.patchTask('h1', { title: 'changed' }, { caller: ADMIN });
-      assert.ok(syncs >= 2, 'a real change keeps the fsync pair');
+      assert.equal(syncs, 2, 'a real change keeps the file and directory fsync');
     } finally {
       FH.sync = real;
     }
