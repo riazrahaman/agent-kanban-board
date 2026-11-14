@@ -606,6 +606,7 @@ describe('ENH-09 auth failure rate limiting', () => {
     process.env.KANBAN_DATA_DIR = tmpDir;
     process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_TRUST_PROXY = '1';
     await store.loadStore();
     ({ server, baseUrl } = await startTestServer(createApp()));
   });
@@ -621,6 +622,7 @@ describe('ENH-09 auth failure rate limiting', () => {
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_TRUST_PROXY;
     delete process.env.KANBAN_AUTH_TOKEN;
     delete process.env.KANBAN_DATA_DIR;
     delete process.env.KANBAN_DATA_FILE;
@@ -802,15 +804,16 @@ describe('ENH-09 auth failure rate limiting', () => {
     process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '2';
     resetAuthLimits();
 
-    // The edge appends the real (public) client address as the rightmost entry; forged
-    // leftmost entries are never read, so rotating them cannot dodge the limiter.
+    // With an explicit one-hop trust (KANBAN_TRUST_PROXY=1, set before the app is
+    // built), Express reads only the rightmost entry; rotating spoofed leftmost
+    // entries cannot dodge the limiter.
     for (let i = 0; i < 2; i += 1) {
       await jsonRequest(baseUrl, '/api/tasks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: authHeader('wrong'),
-          'X-Forwarded-For': `198.51.100.${i + 1}, 203.0.113.50`,
+          'X-Forwarded-For': `198.51.100.${i + 1}, 10.0.0.99`,
         },
         body: taskBody('x', 'x'),
       });
@@ -821,7 +824,7 @@ describe('ENH-09 auth failure rate limiting', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: authHeader('wrong'),
-        'X-Forwarded-For': '198.51.100.999, 203.0.113.50',
+        'X-Forwarded-For': '198.51.100.999, 10.0.0.99',
       },
       body: taskBody('x', 'x'),
     });

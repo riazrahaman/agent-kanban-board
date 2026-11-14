@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { authSecret, createSessionToken, verifySessionToken, revokeSessionToken } from '../sessionAuth.js';
 import {
   createSessionChallenge,
+  sessionChallengeRetryAfterMs,
   consumeSessionChallenge,
   sessionNonceMode,
 } from '../sessionChallenge.js';
@@ -180,6 +181,10 @@ router.post('/stream-ticket', (req, res) => {
   if (cred.kind === 'session') boundAgentId = cred.session.agent_id ?? null;
   else if (cred.kind === 'project') boundAgentId = cred.credential.agent_id ?? null;
   const minted = createStreamTicket({ role, project, agentId: boundAgentId });
+  if (minted?.refused) {
+    res.set('Retry-After', String(Math.ceil(minted.retryAfterMs / 1000)));
+    return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: minted.retryAfterMs });
+  }
   if (!minted) {
     return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
   }
@@ -242,7 +247,13 @@ router.post('/challenge', (req, res) => {
     });
   }
 
-  const { challenge, expiresAt } = createSessionChallenge(req.ip || req.socket?.remoteAddress || null);
+  const issuedChallenge = createSessionChallenge(req.ip || req.socket?.remoteAddress || null);
+  if (!issuedChallenge) {
+    const retryMs = sessionChallengeRetryAfterMs();
+    res.set('Retry-After', String(Math.ceil(retryMs / 1000)));
+    return res.status(429).json({ error: 'Too many outstanding session challenges', retry_after_ms: retryMs });
+  }
+  const { challenge, expiresAt } = issuedChallenge;
   return res.status(200).json({
     challenge,
     expires_at: expiresAt,

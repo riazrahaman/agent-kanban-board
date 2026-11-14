@@ -94,25 +94,60 @@ export function liveSessionChallengeCount() {
 }
 
 /**
- * Issues a fresh challenge nonce, evicting the oldest pending one when the live set is full. Server-side random (32 hex bytes), never
- * client-supplied, so a captured proof cannot be bound to an attacker nonce
- * retroactively.
+ * Groups addresses into owners: IPv4 by full address (IPv4-mapped IPv6 is
+ * unwrapped to its IPv4 form), IPv6 by its /64 prefix, so one host cannot
+ * multiply its allowance by rotating addresses inside its own prefix.
+ */
+export function challengeOwnerKey(address) {
+  if (typeof address !== 'string' || address === '') return null;
+  let a = address.trim().toLowerCase();
+  const zone = a.indexOf('%');
+  if (zone !== -1) a = a.slice(0, zone);
+  const mapped = /^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a) || /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a);
+  if (mapped) return mapped[1];
+  if (!a.includes(':')) return a; // IPv4 (or an opaque token)
+  // Expand '::' and keep the first four hextets (the /64).
+  let head = a;
+  let tail = '';
+  const dbl = a.indexOf('::');
+  if (dbl !== -1) { head = a.slice(0, dbl); tail = a.slice(dbl + 2); }
+  const h = head === '' ? [] : head.split(':');
+  const t = tail === '' ? [] : tail.split(':');
+  const fill = dbl !== -1 ? Math.max(0, 8 - h.length - t.length) : 0;
+  const groups = [...h, ...Array(fill).fill('0'), ...t].slice(0, 4);
+  while (groups.length < 4) groups.push('0');
+  return `v6:${groups.map((g) => (g.replace(/^0+(?=.)/, '') || '0')).join(':')}`;
+}
+
+/**
+ * Milliseconds until the oldest live challenge expires (the earliest moment a
+ * full table can have room again), for Retry-After.
+ */
+export function sessionChallengeRetryAfterMs() {
+  prune();
+  const first = issued.values().next();
+  if (first.done) return 1000;
+  return Math.max(1000, first.value - Date.now());
+}
+
+/**
+ * Issues a fresh challenge nonce, or returns null when the live set is full of
+ * unexpired challenges (the caller answers 429 + Retry-After). One owner (see
+ * challengeOwnerKey) that exceeds its own cap evicts only ITS oldest challenge;
+ * a full global table never evicts another owner's live challenge. Server-side
+ * random (32 hex bytes), never client-supplied, so a captured proof cannot be
+ * bound to an attacker nonce retroactively.
  */
 export function createSessionChallenge(address = null) {
   prune();
-  const owner = typeof address === 'string' && address !== '' ? address : null;
+  const owner = challengeOwnerKey(address);
   if (owner !== null) {
     const mine = byOwner.get(owner);
     if (mine && mine.size >= MAX_LIVE_CHALLENGES_PER_ADDRESS) {
       forget(mine.values().next().value);
     }
   }
-  // Full: evict the oldest (O(1)). A real client consumes its challenge within
-  // milliseconds, and refusing instead would let anonymous traffic block every
-  // new handshake.
-  if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) {
-    forget(issued.keys().next().value);
-  }
+  if (issued.size >= MAX_LIVE_SESSION_CHALLENGES) return null;
   const challenge = crypto.randomBytes(32).toString('hex');
   const exp = Date.now() + sessionChallengeTtlMs();
   issued.set(challenge, exp);

@@ -50,16 +50,17 @@ describe('session challenge cap', () => {
     store.setStorage(null);
   });
 
-  it('holds at the cap by evicting the oldest, and always issues the newest', async () => {
+  it('holds at the cap by refusing new issuance (429 + Retry-After), never evicting a live challenge', async () => {
     const first = createSessionChallenge();
     for (let i = 1; i < MAX_LIVE_SESSION_CHALLENGES; i += 1) createSessionChallenge();
     assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
     const res = await fetch(`${baseUrl}/api/auth/challenge`, { method: 'POST' });
-    assert.equal(res.status, 200);
-    const { challenge } = await res.json();
+    assert.equal(res.status, 429);
+    assert.ok(Number(res.headers.get('retry-after')) >= 1);
     assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
-    assert.equal(consumeSessionChallenge(first.challenge), false, 'oldest was evicted');
-    assert.equal(consumeSessionChallenge(challenge), true, 'newest is live');
+    assert.equal(consumeSessionChallenge(first.challenge), true, 'oldest live challenge kept');
+    const retry = await fetch(`${baseUrl}/api/auth/challenge`, { method: 'POST' });
+    assert.equal(retry.status, 200, 'room frees once a challenge is consumed');
   });
 
   it('still drops expired entries so capacity frees up', async () => {

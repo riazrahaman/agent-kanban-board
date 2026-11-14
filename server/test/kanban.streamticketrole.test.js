@@ -60,6 +60,7 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
     process.env.KANBAN_DATA_DIR = tmpDir;
     process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_TRUST_PROXY = '1'; // explicit one-hop trust: the app reads X-Forwarded-For
     await store.loadStore();
     ({ server, baseUrl } = await startTestServer(createApp()));
   });
@@ -180,7 +181,7 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
       assert.equal(await badMutation(), 401);
     });
 
-    it('distinct X-Forwarded-For client addresses get separate buckets (default trust proxy)', async () => {
+    it('distinct X-Forwarded-For client addresses get separate buckets (explicit one-hop trust proxy)', async () => {
       for (let i = 0; i < 60; i += 1) await badMutation({ 'X-Forwarded-For': '203.0.113.1' });
       assert.equal(await badMutation({ 'X-Forwarded-For': '203.0.113.1' }), 429);
       assert.equal(await badMutation({ 'X-Forwarded-For': '203.0.113.2' }), 401);

@@ -337,6 +337,7 @@ export function createAskRouter(deps = {}) {
   // the upstream call) and is retried more slowly after the limit.
   const failedAuth = new Map(); // ip -> { count, windowStartMs }, oldest window first
   const MAX_FAILED_AUTH_ENTRIES = 10000;
+  const OVERFLOW_KEY = '\u0000overflow';
 
   function pruneGlobal() {
     const cutoff = now() - DAY_MS;
@@ -444,21 +445,36 @@ export function createAskRouter(deps = {}) {
     return intFrom(env.KANBAN_AUTH_RATE_LIMIT_PER_MIN, 10);
   }
 
+  /**
+   * The failure-counter key for an address: its own entry when it has one or
+   * there is room; otherwise the shared overflow entry. Live counters are never
+   * deleted to make room (that would let a flood reset a lockout): expired ones
+   * are swept from the head first, and if the table is still full new addresses
+   * share one overflow counter, which can lock the overflow group out but never
+   * resets a tracked address.
+   */
+  function failedAuthKey(ip, sweep) {
+    if (failedAuth.has(ip)) return ip;
+    const tracked = () => failedAuth.size - (failedAuth.has(OVERFLOW_KEY) ? 1 : 0);
+    if (tracked() >= MAX_FAILED_AUTH_ENTRIES && sweep) {
+      const ts = now();
+      for (const [k, r] of failedAuth) {
+        if (ts - r.windowStartMs < MINUTE_MS) break;
+        failedAuth.delete(k);
+      }
+    }
+    return tracked() < MAX_FAILED_AUTH_ENTRIES ? ip : OVERFLOW_KEY;
+  }
+
   /** Records a failed password attempt and returns the count in the current 60s window. */
   function recordFailedAuth(ip) {
     const ts = now();
-    const rec = failedAuth.get(ip);
+    const key = failedAuthKey(ip, true);
+    const rec = failedAuth.get(key);
     if (!rec || ts - rec.windowStartMs >= MINUTE_MS) {
-      // Re-insert so the map stays ordered by window start (oldest first), and
-      // bound it: when full, drop expired entries from the head, then the oldest.
-      failedAuth.delete(ip);
-      if (failedAuth.size >= MAX_FAILED_AUTH_ENTRIES) {
-        for (const [k, r] of failedAuth) {
-          if (ts - r.windowStartMs < MINUTE_MS && failedAuth.size < MAX_FAILED_AUTH_ENTRIES) break;
-          failedAuth.delete(k);
-        }
-      }
-      failedAuth.set(ip, { count: 1, windowStartMs: ts });
+      // Re-insert so the map stays ordered by window start (oldest first).
+      failedAuth.delete(key);
+      failedAuth.set(key, { count: 1, windowStartMs: ts });
       return 1;
     }
     rec.count += 1;
@@ -467,14 +483,14 @@ export function createAskRouter(deps = {}) {
 
   /** True while this IP has exceeded the failed-attempt limit in the live window. */
   function isLockedOut(ip) {
-    const rec = failedAuth.get(ip);
+    const rec = failedAuth.get(failedAuthKey(ip, false));
     if (!rec) return false;
     if (now() - rec.windowStartMs >= MINUTE_MS) return false;
     return rec.count > authLimit();
   }
 
   function failedAuthRetryAfterMs(ip) {
-    const rec = failedAuth.get(ip);
+    const rec = failedAuth.get(failedAuthKey(ip, false));
     if (!rec) return MINUTE_MS;
     return Math.max(0, rec.windowStartMs + MINUTE_MS - now());
   }
