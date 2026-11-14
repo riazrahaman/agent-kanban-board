@@ -92,6 +92,7 @@ import {
   index,
   projectSettings,
   withMutationLock,
+  isMutationLockBusy,
   getStorage,
   setStorage,
   listJsonProjects,
@@ -187,6 +188,7 @@ const log = createLogger(null);
 // byte-for-byte. Re-export (not re-wrap) preserves function identity.
 export {
   withMutationLock,
+  isMutationLockBusy,
   getStorage,
   setStorage,
   listGitProjects,

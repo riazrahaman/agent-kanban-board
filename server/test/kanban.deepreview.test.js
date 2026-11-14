@@ -5,7 +5,7 @@
  * clusters found by the five-reviewer deep audit. Every case is a behaviour
  * that was PROVABLY broken before the fix (each would fail on v3.9.x).
  */
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -20,6 +20,10 @@ import {
 } from '../deployDrift.js';
 import { revokeSessionToken, createSessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket, createStreamTicket } from '../streamTicket.js';
+
+// v3.16.0: the journal defaults on; only tests that read raw partition files opt out.
+beforeEach(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+
 
 const TOKEN = 'kanban-deepreview-token';
 const TOKEN_ALPHA = 'kdr-alpha-token';
@@ -88,6 +92,7 @@ describe('deep-review hardening', () => {
   });
 
   it('P0: restoreFromTrash persists the restored card to the live partition (JSON)', async () => {
+    process.env.KANBAN_STORAGE_JOURNAL = '0'; // raw partition-file assertions need whole-file saves (journal defaults on since v3.16.0)
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
     // A8: delete/restore need the admin credential in every auth mode.
     const ADMIN = 'kdr-admin-token';

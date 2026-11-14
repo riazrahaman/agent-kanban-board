@@ -138,7 +138,7 @@ describe('PERF-101 journal retirement', () => {
     await s1.load();
     await s1.save([T('A', 1, 'a')]);
     await s1.saveTask(T('B', 1, 'b'), [T('A', 1, 'a'), T('B', 1, 'b')]);
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     const s2 = new JsonStorage(file, { isDefault: true });
     const loaded = await s2.load();
     assert.deepEqual(loaded.map((t) => t.id).sort(), ['A', 'B']);

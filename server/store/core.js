@@ -240,9 +240,17 @@ async function guardOutcomeUnknown(operation) {
     appliedUnknownMeta = null;
   }
 }
+// B2: number of operations queued or running; lets read paths see whether the
+// lock is busy without joining the queue.
+let mutationLockDepth = 0;
+export function isMutationLockBusy() {
+  return mutationLockDepth > 0;
+}
 export function withMutationLock(operation) {
+  mutationLockDepth += 1;
   const run = mutationQueue.then(() => guardOutcomeUnknown(operation), () => guardOutcomeUnknown(operation));
   mutationQueue = run.catch(() => undefined);
+  mutationQueue.then(() => { mutationLockDepth -= 1; });
   return run;
 }
 

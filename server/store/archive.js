@@ -13,6 +13,7 @@ import {
   withMutationLock,
   getMutationSerial,
   getLastSweepSerial,
+  isMutationLockBusy,
   setLastSweepSerial,
   spillFile,
   parkedSpillFile,
@@ -57,8 +58,24 @@ function isEligibleForArchive(task, days, nowMs) {
 // written under the lock, so a serial bumped between this check and lock
 // acquisition simply means the sweep runs again on a later read — the same
 // eventual invariant, with no torn state and no correctness change.
-export async function runArchiveSweep({ lazy = false, projects = null } = {}) {
+// B2 (v3.16.0): when the lock is BUSY (writes in flight) a lazy sweep no longer
+// joins the queue: the read is served from the in-memory state and one
+// coalesced sweep is deferred behind the in-flight writes. An idle lock still
+// sweeps inline, so quiet boards keep the previous read-your-sweep behaviour.
+let deferredSweep = null;
+function deferLazySweep() {
+  if (deferredSweep) return;
+  deferredSweep = runArchiveSweep({ lazy: true, deferred: true })
+    .catch(() => undefined)
+    .finally(() => { deferredSweep = null; });
+}
+
+export async function runArchiveSweep({ lazy = false, projects = null, deferred = false } = {}) {
   if (lazy && getMutationSerial() === getLastSweepSerial()) return 0;
+  if (lazy && !deferred && isMutationLockBusy()) {
+    deferLazySweep();
+    return 0;
+  }
   return withMutationLock(async () => {
     // v2.5.6: the trash-retention sweep rides the same cadence (any read path
     // that sweeps the archive also ages out the trash sink). Called via the
