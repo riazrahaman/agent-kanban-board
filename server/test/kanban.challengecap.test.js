@@ -13,6 +13,7 @@ import {
   resetSessionChallenges,
   consumedSessionChallengeCount,
   sessionChallengeTtlMs,
+  MAX_CONSUMED_SESSION_CHALLENGES,
 } from '../sessionChallenge.js';
 import { challengeProofInput } from '../routes/auth.js';
 import crypto from 'node:crypto';
@@ -130,6 +131,41 @@ describe('consumed-nonce pruning is independent of consumption order', () => {
       assert.equal(consumeSessionChallenge(newer), false, 'live entry still blocks replay');
       Date.now = () => t0 + 20000;
       assert.equal(consumedSessionChallengeCount(), 0);
+    } finally {
+      Date.now = realNow;
+      delete process.env.KANBAN_SESSION_CHALLENGE_TTL_MS;
+      resetSessionChallenges();
+    }
+  });
+});
+
+describe('consumed-nonce pruning survives a wall-clock rollback', () => {
+  it('rebases after the clock moves backward, so expired entries never fill the replay set', () => {
+    process.env.KANBAN_AUTH_SECRET = 'cap-secret';
+    process.env.KANBAN_SESSION_CHALLENGE_TTL_MS = '10000';
+    resetSessionChallenges();
+    const realNow = Date.now;
+    const t0 = realNow();
+    try {
+      // The sweep cursor is pushed far ahead by a forward clock jump...
+      Date.now = () => t0 + 86_400_000;
+      consumedSessionChallengeCount();
+      // ...then the clock rolls back and the replay set is filled.
+      Date.now = () => t0;
+      for (let i = 0; i < MAX_CONSUMED_SESSION_CHALLENGES; i += 1) {
+        assert.equal(consumeSessionChallenge(createSessionChallenge().challenge), true);
+      }
+      assert.equal(consumedSessionChallengeCount(), MAX_CONSUMED_SESSION_CHALLENGES);
+      // Once they have expired, pruning must drop them (cursor sits a day ahead).
+      Date.now = () => t0 + 20_000;
+      assert.equal(consumedSessionChallengeCount(), 0, 'expired entries pruned despite the stale cursor');
+      assert.equal(consumeSessionChallenge(createSessionChallenge().challenge), true, 'fresh consume succeeds');
+      // A further rollback across expiry boundaries also prunes.
+      Date.now = () => t0 - 3_600_000;
+      consumedSessionChallengeCount();
+      Date.now = () => t0 + 40_000;
+      assert.equal(consumedSessionChallengeCount(), 0);
+      assert.equal(consumeSessionChallenge(createSessionChallenge().challenge), true);
     } finally {
       Date.now = realNow;
       delete process.env.KANBAN_SESSION_CHALLENGE_TTL_MS;

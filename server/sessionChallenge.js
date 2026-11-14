@@ -84,12 +84,19 @@ function prune(now = Date.now()) {
   // A bucket (issue second s) is wholly expired once (s + 1) * 1000 + ttl <= now.
   const nowSec = Math.floor((now - sessionChallengeTtlMs()) / 1000);
   if (sweepCursorSec === 0) sweepCursorSec = nowSec;
+  if (nowSec < sweepCursorSec) {
+    // Wall clock moved backward: the cursor can no longer be trusted. Rebase it
+    // and scan the existing buckets so nothing expired is retained behind it.
+    sweepCursorSec = nowSec;
+    for (const sec of consumed.keys()) if (sec < nowSec) dropBucket(sec);
+    return;
+  }
   if (nowSec - sweepCursorSec > consumed.size) {
     for (const sec of consumed.keys()) if (sec < nowSec) dropBucket(sec);
   } else {
     for (let sec = sweepCursorSec; sec < nowSec; sec += 1) dropBucket(sec);
   }
-  if (nowSec > sweepCursorSec) sweepCursorSec = nowSec;
+  sweepCursorSec = nowSec;
 }
 
 /** Test helper: forget every consumed nonce. */
