@@ -49,32 +49,39 @@ export function normalizeBodyScope(req) {
  * Shared rather than per-router on purpose: a new router that forgets it
  * re-opens the bug on its own endpoints.
  */
-/** Valid `project:id` prefixes found in URL path segments. */
-export function compositePathProjects(path) {
+/**
+ * The task-id path segment of a task route, or null. Only `/api/tasks/:id...`
+ * and `/api/tasks/trash/:id...` carry task ids; other routes (for example
+ * `/api/agents/:agent_id/heartbeat`, whose ids may legitimately contain a
+ * colon) never carry a composite project id.
+ */
+function taskIdSegment(fullPath) {
+  const parts = String(fullPath || '').split('/').filter(Boolean);
+  if (parts[0]?.toLowerCase() !== 'api' || parts[1]?.toLowerCase() !== 'tasks') return null;
+  const first = parts[2];
+  if (first === undefined) return null;
+  const lower = first.toLowerCase();
+  if (lower === 'trash') return parts[3] ?? null;
+  if (lower === 'archive' || lower === 'purge' || lower === 'next-claim') return null;
+  return first;
+}
+
+/** Valid `project:id` prefix of the task-id path segment (task routes only). */
+export function compositePathProjects(req) {
   const found = new Set();
-  // A composite `project:id` in the URL path is the fourth channel, and the
-  // sneakiest: `store.resolveProjectScope` lets that prefix OVERRIDE ?project=,
-  // so `PATCH /api/tasks/beta:victim?project=alpha` resolves to beta. Ignoring
-  // it let an alpha token rewrite a beta task on every task-scoped route, and
-  // let a flood at `/api/tasks/beta:t/claim` be charged to the wrong budget.
-  // This mirrors resolveProjectScope's rule exactly: a `:`-prefixed segment
-  // counts only when the prefix is a valid project id and something follows it.
-  for (const segment of String(path || '').split('/')) {
-    if (segment === '') continue;
-    // Decode BEFORE looking for the separator: req.path is still percent-
-    // encoded, so `beta%3Avictim` contains no literal ':' and a pre-decode
-    // check would wave the encoded form of the very same attack straight
-    // through. Express hands the route the decoded id, so decoding is what
-    // the store will actually see.
-    let decoded = segment;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      // A malformed escape cannot be a valid composite id; fall back to raw.
-    }
-    if (!decoded.includes(':')) continue;
-    const idx = decoded.indexOf(':');
-    if (idx <= 0 || decoded.length <= idx + 1) continue;
+  const segment = taskIdSegment(`${req.baseUrl || ''}${req.path || ''}`);
+  if (segment === null) return found;
+  // This mirrors resolveProjectScope's rule: a `:`-prefixed id counts only when
+  // the prefix is a valid project id and something follows it. Decode BEFORE
+  // looking for the separator (req.path is still percent-encoded).
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    // A malformed escape cannot be a valid composite id; fall back to raw.
+  }
+  const idx = decoded.indexOf(':');
+  if (idx > 0 && decoded.length > idx + 1) {
     const prefix = decoded.slice(0, idx);
     if (store.isValidProjectId(prefix)) found.add(prefix);
   }
@@ -109,7 +116,7 @@ export function referencedProjects(req) {
     if (typeof c === 'string' && !isBlank(c)) out.add(c);
   }
 
-  for (const id of compositePathProjects(req.path)) out.add(id);
+  for (const id of compositePathProjects(req)) out.add(id);
 
   return [...out];
 }
@@ -141,7 +148,7 @@ function channelProjects(req) {
 export function conflictingProjectChannels(req) {
   const channels = channelProjects(req);
   const all = new Set(channels);
-  for (const id of compositePathProjects(req.path)) all.add(id);
+  for (const id of compositePathProjects(req)) all.add(id);
   return all.size > 1 ? [...all] : null;
 }
 

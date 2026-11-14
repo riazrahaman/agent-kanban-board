@@ -314,7 +314,7 @@ describe('B6 — compression (v3.12.4)', () => {
       // B9: the SSE handler gzips with Z_SYNC_FLUSH per frame (the generic
       // compression middleware still skips it), so frames are never buffered.
       assert.equal(res.headers.get('content-encoding'), 'gzip');
-      assert.equal(res.headers.get('cache-control'), 'no-cache');
+      assert.equal(res.headers.get('cache-control'), 'no-cache, no-transform');
       // The framing headers arrive immediately: proof the stream was not held
       // back inside the compression middleware's buffer.
       assert.equal(res.headers.get('connection'), 'keep-alive');

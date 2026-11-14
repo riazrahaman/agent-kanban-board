@@ -61,6 +61,7 @@ export function resetSseStreams() {
   lastSseEndReason = null;
   for (const entry of openSseStreams.values()) { clearInterval(entry.ping); clearTimeout(entry.stall); }
   openSseStreams.clear();
+  openSseStreamsEnd.clear();
   sseStreamsByIp.clear();
 }
 
@@ -176,6 +177,7 @@ export function drainSseStreams() {
       // A compressed stream ends through its zlib stage so the final bytes are
       // flushed; the pipe then ends the response.
       const entry = openSseStreamsEnd.get(res);
+      openSseStreamsEnd.delete(res);
       if (entry) entry(); else res.end();
     } catch {
       // Already torn down by the peer — nothing to do, and a throw here must
@@ -470,29 +472,34 @@ export function createApp(opts = {}) {
     const isDiffMode = req.query.mode !== 'snapshot';
     const wantPrime = req.query.prime === '1';
 
+    // Bytes handed to the response (compressed bytes when compressing).
+    let queuedBytes = 0;
     // B9: optional gzip/deflate for the stream (the full-board prime frame is
     // the big one). Every frame is followed by Z_SYNC_FLUSH so events are never
     // held back in the compressor; Cache-Control and X-Accel-Buffering: no are sent either way.
     const encoding = pickSseEncoding(req.headers['accept-encoding']);
     const zs = encoding
-      ? (encoding === 'gzip' ? zlib.createGzip : zlib.createDeflate)({ flush: zlib.constants.Z_SYNC_FLUSH })
+      ? (encoding === 'gzip' ? zlib.createGzip : zlib.createDeflate)({ flush: zlib.constants.Z_SYNC_FLUSH, memLevel: 3, windowBits: 13 })
       : null;
     res.set({
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
       ...(encoding ? { 'Content-Encoding': encoding, Vary: 'Accept-Encoding' } : {}),
       });
      res.flushHeaders();
     if (zs) {
+      // Count COMPRESSED bytes as they enter the response, so queued/pending/
+      // flushed all live in one unit (what is actually on the socket).
+      zs.on('data', (chunk) => { queuedBytes += chunk.length; });
       zs.pipe(res);
       zs.on('error', () => { closed = true; unsubscribe(); res.destroy(); });
       openSseStreamsEnd.set(res, () => zs.end());
     }
     // Bytes held in memory for this stream: the compressor's input buffer (if
     // any) plus what is queued on the socket.
-    const pendingBytes = () => res.writableLength + (zs ? zs.writableLength : 0);
+    const pendingBytes = () => res.writableLength;
 
     // Store listeners fire outside the request tick, so a throw here can reach
     // no error middleware. A write to an already-destroyed socket is the real
@@ -516,7 +523,6 @@ export function createApp(opts = {}) {
     // re-arming that timer: bytes queued AFTER the latest priming/snapshot frame
     // may not exceed SSE_MAX_BACKLOG_BYTES (64 MB). The prime itself is exempt
     // (a big board's prime is legitimately huge), so only post-prime backlog counts.
-    let queuedBytes = 0;
     const flushedBytes = () => queuedBytes - pendingBytes();
     // Node completes (and decrements `writableLength` for) a whole batched write
     // at once, so a multi-MB prime shows no change there while the reader is
@@ -567,21 +573,26 @@ export function createApp(opts = {}) {
         const limit = sseTestOverrides.maxBacklogBytes ?? SSE_MAX_BACKLOG_BYTES;
         // A prime/snapshot frame is judged on the backlog already there before it
         // (never on its own size); other frames on the backlog past the exempt frame.
-        const backlog = exempt ? pendingBytes() : Math.min(pendingBytes(), queuedBytes - exemptEnd);
+        const held = zs ? zs.writableLength : 0; // input the compressor has not consumed yet
+        const backlog = exempt
+          ? pendingBytes() + held
+          : Math.min(pendingBytes(), queuedBytes - exemptEnd) + held;
         if (backlog > limit) {
           endSlowStream('backlog-limit', backlog);
           return;
         }
-        queuedBytes += Buffer.byteLength(frame);
+        if (!zs) queuedBytes += Buffer.byteLength(frame);
         let backpressured;
         if (zs) {
           backpressured = zs.write(frame) === false;
-          zs.flush(zlib.constants.Z_SYNC_FLUSH);
+          // The compressed size of this frame is only known once the flush has
+          // emitted it, so the exempt offset is set in the flush callback.
+          zs.flush(zlib.constants.Z_SYNC_FLUSH, () => { if (exempt) exemptEnd = queuedBytes; });
           if (res.writableNeedDrain) backpressured = true;
         } else {
           backpressured = res.write(frame) === false;
         }
-        if (exempt) exemptEnd = queuedBytes;
+        if (exempt && !zs) exemptEnd = queuedBytes;
         if (backpressured && streamEntry.stall === null && openSseStreams.has(res)) {
           armStallCheck();
         }

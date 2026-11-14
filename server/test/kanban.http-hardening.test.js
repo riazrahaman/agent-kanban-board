@@ -142,6 +142,15 @@ describe('batch 5 HTTP hardening', () => {
     assert.equal(res.status, 403);
   });
 
+  it('SEC-101: agent ids containing a colon are not read as a project prefix', async () => {
+    process.env.KANBAN_ADMIN_TOKEN = 'adm';
+    await start();
+    const res = await fetch(`${baseUrl}/api/agents/worker:1/heartbeat?project=main`, {
+      method: 'POST', headers: H('adm', { 'X-Agent-Role': 'orchestrator' }), body: '{}',
+    });
+    assert.notEqual(res.status, 400);
+  });
+
   it('B9: encoding negotiation', () => {
     assert.equal(pickSseEncoding(undefined), null);
     assert.equal(pickSseEncoding('gzip, deflate, br'), 'gzip');
