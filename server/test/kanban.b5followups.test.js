@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { JsonStorage } from '../storage.js';
 import * as store from '../store.js';
-import { spillFile } from '../store/core.js';
+import { spillFile, parkedSpillFile } from '../store/core.js';
 
 let tmpRoot;
 let seq = 0;
@@ -325,5 +325,42 @@ describe('applied-unknown follow-ups', () => {
     } finally {
       if (savedCap === undefined) delete process.env.KANBAN_INLINE_LOG_CAP; else process.env.KANBAN_INLINE_LOG_CAP = savedCap;
     }
+  });
+
+  /** Crash state: dest already holds parked + live, parked file still present. */
+  async function crashedMerge(id) {
+    const live = await bothFiles(id);
+    const parked = parkedSpillFile('default', id, 'trash', store.getTrashedTasks('default').find((t) => t.id === id).deleted_at);
+    const merged = (await readFile(parked, 'utf-8')) + (await readFile(live, 'utf-8'));
+    await writeFile(live, merged);
+    assert.ok(existsSync(parked));
+    return { live, parked };
+  }
+  const EXPECT = ['old-1', 'old-2', 'live-1'];
+
+  it('completed-merge crash state shows no duplicates on read', async () => {
+    await boot('f14');
+    await crashedMerge('C1');
+    const logs = await store.getTaskLogs('C1', 'default', { include_spilled: true });
+    assert.deepEqual(logs.entries.map((e) => e.message), EXPECT);
+    assert.equal(logs.spilled_count, 3);
+  });
+
+  it('completed-merge crash state is not merged twice by hard-delete', async () => {
+    await boot('f15');
+    const { live, parked } = await crashedMerge('C2');
+    assert.equal((await store.hardDeleteFromTrash('C2', { caller })).status, 200);
+    assert.deepEqual(await messages(live), EXPECT);
+    assert.ok(!existsSync(parked));
+  });
+
+  it('completed-merge crash state is not merged twice by the sweep', async () => {
+    await boot('f16');
+    const { live, parked } = await crashedMerge('C3');
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60 * 86400000;
+    try { await store.runTrashSweep(); } finally { Date.now = realNow; }
+    assert.deepEqual(await messages(live), EXPECT);
+    assert.ok(!existsSync(parked));
   });
 });

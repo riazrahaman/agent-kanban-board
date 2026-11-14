@@ -115,6 +115,7 @@ import {
   parkedSpillFile,
   moveSpillFile,
   moveSpillFileStrict,
+  parkedAlreadyMerged,
   removeSpillFile,
   resetProjectSettings,
   markStoreLoaded,
@@ -1909,12 +1910,14 @@ function parkedSpillForLive(project, taskId) {
 
 // Files holding a card's history, oldest first: a still-parked copy of a
 // restored card (if any) precedes the live sidecar.
-function spillReadPaths(project, taskId) {
+async function spillReadPaths(project, taskId) {
   const paths = [];
-  const parked = parkedSpillForLive(project, taskId);
-  if (parked) paths.push(parked);
   const fp = spillFile(project, taskId);
-  if (existsSync(fp)) paths.push(fp);
+  const live = existsSync(fp);
+  const parked = parkedSpillForLive(project, taskId);
+  // Skip a parked copy that a completed merge already folded into the live file.
+  if (parked && !(live && await parkedAlreadyMerged(parked, fp))) paths.push(parked);
+  if (live) paths.push(fp);
   return paths;
 }
 
@@ -1932,7 +1935,7 @@ async function repairParkedSpill(project, taskId) {
  */
 async function readSpill(project, taskId) {
   const out = [];
-  for (const fp of spillReadPaths(project, taskId)) {
+  for (const fp of await spillReadPaths(project, taskId)) {
     try {
       const raw = await readFile(fp, 'utf-8');
       out.push(...raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)));
@@ -1949,7 +1952,7 @@ async function readSpill(project, taskId) {
  */
 async function countSpill(project, taskId) {
   let n = 0;
-  for (const fp of spillReadPaths(project, taskId)) {
+  for (const fp of await spillReadPaths(project, taskId)) {
     try {
       const raw = await readFile(fp, 'utf-8');
       n += raw.split('\n').filter((l) => l.trim()).length;

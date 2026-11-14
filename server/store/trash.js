@@ -15,6 +15,7 @@ import {
   versionConflict,
   nextVersionFor,
   spillFile,
+  parkedAlreadyMerged,
   parkedSpillFile,
   moveSpillFile,
   removeSpillFile,
@@ -91,7 +92,10 @@ async function rescueParkedSpill(project, row) {
   if (!existsSync(parked)) return true;
   try {
     await mkdir(path.dirname(dest), { recursive: true });
-    if (existsSync(dest)) {
+    if (existsSync(dest) && (await parkedAlreadyMerged(parked, dest))) {
+      // A previous merge completed but the parked file survived a crash.
+      await rm(parked, { force: true });
+    } else if (existsSync(dest)) {
       // Both exist: parked (older) entries first, then live, swapped in atomically.
       const older = await readFile(parked, 'utf-8');
       const newer = await readFile(dest, 'utf-8');

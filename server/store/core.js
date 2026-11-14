@@ -17,7 +17,7 @@
  *
  * Never assign an imported binding from another module — call the setter below.
  */
-import { readdir, rm, rename, mkdir } from 'node:fs/promises';
+import { readdir, rm, rename, mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,6 +66,22 @@ export function spillFile(project, taskId) {
 export function parkedSpillFile(project, taskId, bucket, stampIso) {
   const stamp = String(stampIso || '').replace(/[^0-9A-Za-z]/g, '') || 'unstamped';
   return path.join(spillDir(project), bucket, `${taskId}.${stamp}.jsonl`);
+}
+
+/**
+ * Completed-merge state: a crash between the atomic swap and removing the
+ * parked file leaves `dest` = parked + live with the parked file still present.
+ * True when `dest` already begins with the parked content.
+ */
+export async function parkedAlreadyMerged(parked, dest) {
+  try {
+    const older = await readFile(parked, 'utf-8');
+    const normalized = older && !older.endsWith('\n') ? older + '\n' : older;
+    const newer = await readFile(dest, 'utf-8');
+    return newer.startsWith(normalized);
+  } catch {
+    return false;
+  }
 }
 
 /** Move that surfaces failures (used where losing the move would split history). */
