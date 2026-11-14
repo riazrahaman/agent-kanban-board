@@ -54,8 +54,21 @@ async function appendDurable(file, data, { syncDir = true } = {}) {
       await handle.writeFile(payload, 'utf-8');
       await handle.sync();
     } catch (err) {
-      // COR-103: a failed append must not be replayed after a restart.
-      try { await handle.truncate(before); await handle.sync(); } catch { /* best effort */ }
+      // COR-103: a failed append must not be replayed after a restart. Roll
+      // back by truncating; if that fails, replace the journal atomically
+      // with its pre-append prefix. If neither works the record may still be
+      // on disk, so flag the error and let the storage refuse journal appends
+      // until a canonical write supersedes the journal.
+      let rolledBack = false;
+      try { await handle.truncate(before); await handle.sync(); rolledBack = true; } catch { /* try the fallback */ }
+      if (!rolledBack) {
+        try {
+          const prefix = (await readFile(file)).subarray(0, before);
+          await writeAtomic(file, prefix);
+          rolledBack = true;
+        } catch { /* flagged below */ }
+      }
+      if (!rolledBack) err.journalRollbackFailed = true;
       throw err;
     }
   } finally {
@@ -63,19 +76,6 @@ async function appendDurable(file, data, { syncDir = true } = {}) {
   }
   if (created && syncDir) await fsyncDir(dir);
   return before;
-}
-
-/** Best-effort rollback of an append to its pre-append length. */
-async function truncateJournalTo(file, length) {
-  try {
-    const handle = await open(file, 'r+');
-    try {
-      await handle.truncate(length);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  } catch { /* best effort */ }
 }
 
 /** Truncates (or creates) the journal and fsyncs it. */
@@ -355,14 +355,30 @@ export class JsonStorage {
     // a plain JSON.parse and reads either form.
     await writeAtomic(this.filePath, JSON.stringify(payload), opts);
     this.generation = generation;
+    // A new generation supersedes every earlier journal line, rejected ones included.
+    this._journalPoison = null;
   }
 
   /** Appends journal entries tagged with the current base generation (fsynced). */
   async _appendJournal(entries, opts) {
+    if (this._journalPoison) {
+      throw new Error(
+        `journal unusable after an unrecoverable append failure (${this._journalPoison.message}); restart after freeing the disk problem`,
+        { cause: this._journalPoison },
+      );
+    }
     const generation = await this._baseGeneration();
     let payload = '';
     for (const e of entries) payload += JSON.stringify({ ...e, generation }) + '\n';
-    return appendDurable(this.journalFile, payload, opts);
+    try {
+      return await appendDurable(this.journalFile, payload, opts);
+    } catch (err) {
+      if (err && err.journalRollbackFailed) {
+        this._journalPoison = err;
+        console.error(`[kanban JsonStorage] journal append failed and could not be rolled back: ${err.message}; refusing further journal appends until a full rewrite`);
+      }
+      throw err;
+    }
   }
 
   /** One compaction check after an append. */
@@ -400,10 +416,14 @@ export class JsonStorage {
     // Default project keeps the legacy `{ tasks: [...] }` shape (plus the
     // generation key). Named partitions embed the project name so the
     // partition is self-describing.
-    await this._writeCanonical(tasks, opts);
+    // PERF-101: a journal about to be retired may hold acknowledged writes that
+    // only this base now carries, so that rewrite always gets the full fsync
+    // pair, whatever the caller asked for.
+    const retiring = existsSync(this.journalFile);
+    await this._writeCanonical(tasks, retiring ? undefined : opts);
     // A full base save supersedes any journal left by an earlier run with the
     // flag on, so it can never be replayed over this newer base.
-    if (existsSync(this.journalFile)) await rm(this.journalFile, { force: true });
+    if (retiring) await rm(this.journalFile, { force: true });
   }
 
   /**
@@ -453,17 +473,11 @@ export class JsonStorage {
 
   async deleteTask(task, survivors) {
     if (this._journalEnabled()) {
-      // Record the removal in the journal, then rewrite the canonical file
-      // (a delete changes the partition set, so the base file must reflect it).
-      const before = await this._appendJournal([{ op: 'remove', id: task.id }]);
-      try {
-        await this._writeCanonical(survivors);
-      } catch (err) {
-        // COR-103: the caller sees this error, so the removal line must not
-        // survive to be replayed.
-        await truncateJournalTo(this.journalFile, before);
-        throw err;
-      }
+      // A delete changes the partition set, so the base file is rewritten.
+      // Nothing is journaled first (COR-103): if the rewrite fails the journal
+      // is untouched, and if it succeeds its new generation supersedes every
+      // earlier line, so no rejected removal can ever be replayed.
+      await this._writeCanonical(survivors);
       try {
         await truncateDurable(this.journalFile);
       } catch (err) {
