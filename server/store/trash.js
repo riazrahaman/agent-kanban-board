@@ -15,10 +15,14 @@ import {
   versionConflict,
   nextVersionFor,
   spillFile,
+  parkedAlreadyMerged,
   parkedSpillFile,
   moveSpillFile,
   removeSpillFile,
 } from './core.js';
+import { existsSync } from 'node:fs';
+import { mkdir, rename, readFile, writeFile, rm } from 'node:fs/promises';
+import path from 'node:path';
 import { notify } from './listeners.js';
 import { GitYamlStorage } from '../storage.js';
 import { STATUSES } from '../state-machine.js';
@@ -72,6 +76,42 @@ async function trashPersistRemove(project, removedTask) {
   }
   if (remaining.length === 0) delete trash[project];
   else trash[project] = remaining;
+}
+
+/**
+ * Before a trash row (and its parked sidecar) is dropped for good: if a live
+ * card is the restored copy of that row (restored_at set, same created_at) and
+ * its sidecar is still parked, move the history back to the live name first.
+ * Returns false when that move fails, so the caller keeps row + sidecar.
+ */
+async function rescueParkedSpill(project, row) {
+  const live = index.get(compositeKey(project, row.id));
+  if (!live || !live.restored_at || live.created_at !== row.created_at) return true;
+  const parked = parkedSpillFile(project, row.id, 'trash', row.deleted_at);
+  const dest = spillFile(project, row.id);
+  if (!existsSync(parked)) return true;
+  try {
+    await mkdir(path.dirname(dest), { recursive: true });
+    if (existsSync(dest) && (await parkedAlreadyMerged(parked, dest))) {
+      // A previous merge completed but the parked file survived a crash.
+      await rm(parked, { force: true });
+    } else if (existsSync(dest)) {
+      // Both exist: parked (older) entries first, then live, swapped in atomically.
+      const older = await readFile(parked, 'utf-8');
+      const newer = await readFile(dest, 'utf-8');
+      const joined = (older && !older.endsWith('\n') ? older + '\n' : older) + newer;
+      const tmp = `${dest}.merge.tmp`;
+      await writeFile(tmp, joined, 'utf-8');
+      await rename(tmp, dest);
+      await rm(parked, { force: true });
+    } else {
+      await rename(parked, dest);
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[kanban store] spill rescue ${parked}: ${err.message}`);
+    return false;
+  }
 }
 
 /**
@@ -132,7 +172,7 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
     // Persist FIRST: live partition + trash sink, then memory.
     const storage = getStorage(authorizedProject);
     if (storage instanceof GitYamlStorage) {
-      await persistApplied(storage.saveTask(restored), restored);
+      await persistApplied(storage.saveTask(restored), restored, { kind: 'created', actor: caller.agent_id || 'admin', reason: 'restored', prevTask: null, task: restored });
       // COR-101: shared identity-based removal updates memory as well as disk.
       await trashPersistRemove(authorizedProject, trashed);
     } else {
@@ -140,7 +180,7 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
       // The previous call persisted `getProjectBucket(authorizedProject)` — the
       // live bucket WITHOUT `restored` — so the card existed only in memory and
       // any restart silently lost it while the trash copy was already gone.
-      await persistApplied(storage.saveTask(restored, projectBucket(authorizedProject, restored)), restored);
+      await persistApplied(storage.saveTask(restored, projectBucket(authorizedProject, restored)), restored, { kind: 'created', actor: caller.agent_id || 'admin', reason: 'restored', prevTask: null, task: restored });
       await trashPersistRemove(authorizedProject, trashed);
     }
 
@@ -176,6 +216,9 @@ export async function hardDeleteFromTrash(id, { caller = {}, project } = {}) {
         : project;
     const trashed = trashFind(authorizedProject, id);
     if (!trashed) return { error: 'Task not found in trash', status: 404 };
+    if (!(await rescueParkedSpill(authorizedProject, trashed))) {
+      return { error: 'Could not preserve the live card history; the trash row was kept. Retry.', status: 500 };
+    }
     await trashPersistRemove(authorizedProject, trashed);
     await removeSpillFile(parkedSpillFile(authorizedProject, id, 'trash', trashed.deleted_at));
     // COR-06: the semantic override is keyed by project/id, and the diff
@@ -230,6 +273,7 @@ export async function runTrashSweepInner(projects = null) {
       return !Number.isNaN(age) && age >= days * 86400000;
     });
     for (const t of expired) {
+      if (!(await rescueParkedSpill(project, t))) continue;
       await trashPersistRemove(project, t);
       await removeSpillFile(parkedSpillFile(project, t.id, 'trash', t.deleted_at));
       purged.push(compositeKey(project, t.id));

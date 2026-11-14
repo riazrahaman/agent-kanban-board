@@ -114,6 +114,8 @@ import {
   spillFile,
   parkedSpillFile,
   moveSpillFile,
+  moveSpillFileStrict,
+  parkedAlreadyMerged,
   removeSpillFile,
   resetProjectSettings,
   markStoreLoaded,
@@ -246,7 +248,7 @@ export {
 
 // COR-103: broadcast an applied-but-unknown outcome when later work in the
 // same mutation failed before its normal notify ran.
-setAppliedUnknownNotifier(() => notify());
+setAppliedUnknownNotifier((opts) => notify(opts));
 
 export async function loadStore() {
   const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
@@ -1256,7 +1258,10 @@ async function applyClaim(task, agentId, caller, nowMs, { renew = false, leaseMs
 
   // KB-05: persist first, then mutate memory, then notify.
   // Batch 3: the primary and the renewed siblings (below) persist in ONE save.
-  const siblingKeys = await persistHolderWrite(candidate, holderWriteRenewsAll() ? agentId : null, nowMs, { leaseOnly: renew });
+  const siblingKeys = await persistHolderWrite(candidate, holderWriteRenewsAll() ? agentId : null, nowMs, {
+    leaseOnly: renew,
+    primaryMeta: { kind: renew ? 'renewed' : 'claimed', actor: (renew ? caller?.agent_id : null) || agentId || 'system', reason: renew ? 'lease_renewed' : 'claimed' },
+  });
    // §2.2/§2.9: surface a semantic event (claimed / renewed) + audit who/why.
    // The auth middleware populates req.caller as { agent_id, role } — reading
    // `caller.agentId` was always undefined, which attributed every renewal by a
@@ -1333,7 +1338,8 @@ async function unlockTaskInner(task, nowMs, completedRef) {
     agent_id: 'system',
     reason: 'unblocked',
   });
-  await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
+  await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate,
+    { kind: 'unblocked', actor: 'system', reason: 'unblocked' });
   updateInMemoryTask(candidate);
     // §2.2/§2.9: unblocked event + audit for the auto-promote override.
   notify({
@@ -1534,7 +1540,10 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
         // them as renewed, and let the lock wrapper turn the call into a 503.
         markOutcomeUnknown(err);
         const loaded = new Set((err.changedTasks || []).map((t) => t.id));
-        if (loaded.size > 0) noteAppliedUnknown();
+        noteAppliedUnknown(candidates.filter((c) => loaded.has(c.id)).map((c) => [
+          compositeKey(p, c.id),
+          { kind: 'renewed', actor: agentId, reason: 'lease_renewed_bulk' },
+        ]));
         for (const candidate of candidates) {
           if (!loaded.has(candidate.id)) continue;
           updateInMemoryTask(candidate);
@@ -1567,7 +1576,7 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
  *     the primary itself throws, exactly as the plain `saveTask` did.
  * Returns the composite keys of the renewed siblings.
  */
-async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = false } = {}) {
+async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = false, primaryMeta = null } = {}) {
   // PERF-101: a pure lease renewal skips only the directory fsync (loss is harmless).
   const opts = leaseOnly ? { syncDir: false } : undefined;
   const p = candidate.project;
@@ -1593,18 +1602,16 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
         // primary itself would not be loaded.
         markOutcomeUnknown(err);
         const loaded = new Set((err.changedTasks || []).map((t) => t.id));
-        if (loaded.size > 0) noteAppliedUnknown();
         const appliedSiblings = siblings.filter((s) => loaded.has(s.id));
+        const entries = [];
+        if (loaded.has(candidate.id) && primaryMeta) entries.push([compositeKey(p, candidate.id), primaryMeta]);
+        for (const s of appliedSiblings) {
+          entries.push([compositeKey(p, s.id), { kind: 'renewed', actor: renewFor, reason: 'lease_renewed_holder_write' }]);
+        }
+        if (loaded.size > 0) noteAppliedUnknown(entries);
         for (const t of [candidate, ...siblings]) if (loaded.has(t.id)) updateInMemoryTask(t);
         if (!loaded.has(candidate.id)) {
-          if (appliedSiblings.length > 0) {
-            notify({
-              semantic: new Map(appliedSiblings.map((s) => [
-                compositeKey(p, s.id),
-                { kind: 'renewed', actor: renewFor, reason: 'lease_renewed_holder_write' },
-              ])),
-            });
-          }
+          // The lock wrapper broadcasts the recorded applied siblings once.
           throw err;
         }
         return appliedSiblings.map((s) => compositeKey(p, s.id));
@@ -1612,7 +1619,7 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
       log.error('sibling lease renewal failed', { project: p, error: err && err.message });
     }
   }
-  await persistApplied(storage.saveTask(candidate, projectBucket(p, candidate), opts), candidate);
+  await persistApplied(storage.saveTask(candidate, projectBucket(p, candidate), opts), candidate, primaryMeta);
   updateInMemoryTask(candidate);
   return [];
 }
@@ -1718,7 +1725,8 @@ export async function assignTask(id, agentId, { caller = {}, project: projectArg
       agent_id: escapeHtml(actor),
     });
 
-    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate,
+      { kind: release ? 'updated' : 'claimed', actor, reason: release ? 'unassigned' : 'assigned', prevTask: task });
     updateInMemoryTask(candidate);
     notify({
       actor: actor,
@@ -1873,6 +1881,9 @@ function getInlineCommentCap() {
  * if needed. One JSON object per line: `{type:'log'|'comment', ...entry}`.
  */
 async function appendSpill(project, taskId, type, entry) {
+  // Repair a history left parked under trash by an interrupted restore before
+  // the live file starts a new, disjoint one.
+  await repairParkedSpill(project, taskId);
   const dir = spillDir(project);
   await mkdir(dir, { recursive: true });
   const line = JSON.stringify({ type, ...entry }) + '\n';
@@ -1880,19 +1891,59 @@ async function appendSpill(project, taskId, type, entry) {
 }
 
 /**
+ * A restore whose trash removal / sidecar move failed after the card went live
+ * leaves its history parked under trash. Returns that parked path only when the
+ * live card is provably the restored copy of that trash row (restored_at set,
+ * same created_at) and no live sidecar exists; otherwise null. Never matches a
+ * different card that merely reuses the id.
+ */
+function parkedSpillForLive(project, taskId) {
+  const live = index.get(compositeKey(project, taskId));
+  if (!live || !live.restored_at) return null;
+  const row = (trash[project] || []).find(
+    (t) => t.id === taskId && t.deleted_at && t.created_at === live.created_at,
+  );
+  if (!row) return null;
+  const parked = parkedSpillFile(project, taskId, 'trash', row.deleted_at);
+  return existsSync(parked) ? parked : null;
+}
+
+// Files holding a card's history, oldest first: a still-parked copy of a
+// restored card (if any) precedes the live sidecar.
+async function spillReadPaths(project, taskId) {
+  const paths = [];
+  const fp = spillFile(project, taskId);
+  const live = existsSync(fp);
+  const parked = parkedSpillForLive(project, taskId);
+  // Skip a parked copy that a completed merge already folded into the live file.
+  if (parked && !(live && await parkedAlreadyMerged(parked, fp))) paths.push(parked);
+  if (live) paths.push(fp);
+  return paths;
+}
+
+// Throws when the required move fails: appending to a fresh live file would
+// split the history, so the write is refused instead.
+async function repairParkedSpill(project, taskId) {
+  if (existsSync(spillFile(project, taskId))) return;
+  const parked = parkedSpillForLive(project, taskId);
+  if (parked) await moveSpillFileStrict(parked, spillFile(project, taskId));
+}
+
+/**
  * Reads the spill file for a task, returning an array of entries (oldest-first,
  * matching the order they were appended). Returns [] if no spill file exists.
  */
 async function readSpill(project, taskId) {
-  const fp = spillFile(project, taskId);
-  if (!existsSync(fp)) return [];
-  try {
-    const raw = await readFile(fp, 'utf-8');
-    return raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
-  } catch (err) {
-    log.warn('spill read error', { project, task_id: taskId, error: err.message });
-    return [];
+  const out = [];
+  for (const fp of await spillReadPaths(project, taskId)) {
+    try {
+      const raw = await readFile(fp, 'utf-8');
+      out.push(...raw.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)));
+    } catch (err) {
+      log.warn('spill read error', { project, task_id: taskId, error: err.message });
+    }
   }
+  return out;
 }
 
 /**
@@ -1900,14 +1951,14 @@ async function readSpill(project, taskId) {
  * the full content (fast for paging). Returns 0 if no spill file exists.
  */
 async function countSpill(project, taskId) {
-  const fp = spillFile(project, taskId);
-  if (!existsSync(fp)) return 0;
-  try {
-    const raw = await readFile(fp, 'utf-8');
-    return raw.split('\n').filter((l) => l.trim()).length;
-  } catch {
-    return 0;
+  let n = 0;
+  for (const fp of await spillReadPaths(project, taskId)) {
+    try {
+      const raw = await readFile(fp, 'utf-8');
+      n += raw.split('\n').filter((l) => l.trim()).length;
+    } catch { /* unreadable file counts as empty */ }
   }
+  return n;
 }
 
 /**
