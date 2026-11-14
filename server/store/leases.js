@@ -251,7 +251,8 @@ export function isoFromMs(ms) {
     });
 
     // KB-05: persist first, then mutate memory, then notify.
-    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate,
+      { kind: 'reclaimed', actor: 'system', reason, prevTask: task });
     updateInMemoryTask(candidate);
     // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
     notify({

@@ -128,8 +128,26 @@ export function markOutcomeUnknown(err) {
 // still broadcast it if later work in the same mutation fails.
 let appliedUnknownPending = false;
 let appliedUnknownNotifier = null;
-export function noteAppliedUnknown() {
+// Semantic kind + actor recorded when the applied state was folded into
+// memory, so the fallback broadcast carries the same tags a success would.
+let appliedUnknownMeta = null;
+function recordAppliedMeta(key, meta) {
+  if (!meta) return;
+  if (!appliedUnknownMeta) appliedUnknownMeta = { actor: undefined, reason: undefined, semantic: new Map() };
+  if (appliedUnknownMeta.actor === undefined) {
+    appliedUnknownMeta.actor = meta.actor;
+    appliedUnknownMeta.reason = meta.reason;
+  }
+  appliedUnknownMeta.semantic.set(key, meta);
+}
+/**
+ * Marks that an applied-but-unknown outcome updated memory. `entries` is an
+ * optional list of `[compositeKey, { kind, actor, reason, ... }]` pairs
+ * describing the semantic event each applied task would have produced.
+ */
+export function noteAppliedUnknown(entries) {
   appliedUnknownPending = true;
+  for (const [key, meta] of entries || []) recordAppliedMeta(key, meta);
 }
 export function setAppliedUnknownNotifier(fn) {
   appliedUnknownNotifier = fn;
@@ -141,7 +159,7 @@ export function setAppliedUnknownNotifier(fn) {
  * proceeds as if it committed). Throws when it failed or the candidate would
  * not be loaded.
  */
-export async function persistApplied(promise, candidate) {
+export async function persistApplied(promise, candidate, meta) {
   try {
     await promise;
   } catch (err) {
@@ -151,7 +169,7 @@ export async function persistApplied(promise, candidate) {
         // A restart would load this task: memory follows immediately, so no
         // later failure in the same mutation can leave memory behind the disk.
         updateInMemoryTask(candidate);
-        appliedUnknownPending = true;
+        noteAppliedUnknown(meta ? [[compositeKey(candidate.project, candidate.id), meta]] : null);
         return;
       }
     }
@@ -165,6 +183,7 @@ function outcomeUnknownResult(err) {
 async function guardOutcomeUnknown(operation) {
   pendingOutcomeUnknown = null;
   appliedUnknownPending = false;
+  appliedUnknownMeta = null;
   try {
     const result = await operation();
     if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
@@ -176,7 +195,9 @@ async function guardOutcomeUnknown(operation) {
     const unknown = (err && err.outcomeUnknown) ? err : pendingOutcomeUnknown;
     if (unknown) {
       if (appliedUnknownPending && appliedUnknownNotifier) {
-        try { appliedUnknownNotifier(); } catch { /* best effort */ }
+        const m = appliedUnknownMeta;
+        const opts = m ? { actor: m.actor, reason: m.reason, semantic: new Map(m.semantic) } : undefined;
+        try { appliedUnknownNotifier(opts); } catch { /* best effort */ }
       }
       return outcomeUnknownResult(unknown);
     }
@@ -184,6 +205,7 @@ async function guardOutcomeUnknown(operation) {
   } finally {
     pendingOutcomeUnknown = null;
     appliedUnknownPending = false;
+    appliedUnknownMeta = null;
   }
 }
 export function withMutationLock(operation) {
