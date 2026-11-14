@@ -173,7 +173,10 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
     });
 
     it('successful requests are not counted', async () => {
-      for (let i = 0; i < 70; i += 1) {
+      // 45 successful mints exceed this limit of 20 yet stay under the
+      // per-credential outstanding-ticket cap (50).
+      process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '20';
+      for (let i = 0; i < 45; i += 1) {
         const r = await mint(baseUrl, { body: { role: 'builder' } });
         assert.equal(r.status, 200, `mint ${i + 1}`);
       }

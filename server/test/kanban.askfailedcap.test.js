@@ -32,6 +32,12 @@ describe('ask failed-auth map bound', () => {
         await post(baseUrl, `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`);
       }
       assert.equal((await post(baseUrl, '198.51.100.1')).status, 429, 'tracked lockout survives the flood');
+      // A new, untracked address with the CORRECT password is never refused by
+      // the shared overflow counter...
+      const good = await post(baseUrl, '192.0.2.77', PASS);
+      assert.notEqual(good.status, 429);
+      assert.notEqual(good.status, 401);
+      // ...while wrong passwords from overflow addresses are still throttled.
       assert.equal((await post(baseUrl, '192.0.2.250')).status, 429, 'overflow group shares one counter');
     } finally {
       delete process.env.KANBAN_TRUST_PROXY;

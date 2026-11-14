@@ -21,7 +21,7 @@ import { proofInput, challengeProofInput } from '../routes/auth.js';
 import { verifySessionToken } from '../sessionAuth.js';
 import {
   resetSessionChallenges,
-  liveSessionChallengeCount,
+  consumedSessionChallengeCount,
 } from '../sessionChallenge.js';
 import * as store from '../store.js';
 
@@ -118,7 +118,6 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
     process.env.KANBAN_AUTH_SECRET = SECRET;
     process.env.KANBAN_SESSION_NONCE_MODE = 'required';
     const { challenge } = await fetchChallenge();
-    assert.equal(liveSessionChallengeCount(), 1, 'the challenge is tracked while live');
 
     const proof = hmac(challengeProofInput(challenge, 'cn-2', 'builder', 'alpha'));
     const r = await session({ clientNonce: 'cn-2', proof, server_nonce: challenge });
@@ -127,7 +126,7 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
     assert.ok(r.body.server_nonce, 'the token still carries its own server_nonce');
     assert.equal(r.body.role, 'builder');
     assert.equal(r.body.project, 'alpha');
-    assert.equal(liveSessionChallengeCount(), 0, 'the challenge was consumed');
+    assert.equal(consumedSessionChallengeCount(), 1, 'the challenge was recorded as consumed');
 
     const recovered = verifySessionToken(r.body.token);
     assert.ok(recovered, 'the minted token passes verifySessionToken');
@@ -149,7 +148,7 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
 
     const replay = await session(body);
     assert.equal(replay.response.status, 401, 'the consumed challenge is single-use');
-    assert.equal(liveSessionChallengeCount(), 0);
+    assert.equal(consumedSessionChallengeCount(), 1);
   });
 
   it('(4) required mode: an expired challenge is rejected', async () => {
@@ -162,7 +161,6 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
     assert.equal(minted.response.status, 200);
     const challenge = minted.body.challenge;
     await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(liveSessionChallengeCount(), 0, 'expired challenges are pruned');
 
     const r = await session({
       clientNonce: 'cn-4',
@@ -207,7 +205,7 @@ describe('session handshake challenge (A5, v3.12.2)', () => {
     const r = await session({ clientNonce: 'cn-7', proof: hmac(proofInput('cn-7', 'builder', 'alpha')) });
     assert.equal(r.response.status, 200);
     assert.ok(verifySessionToken(r.body.token), 'the legacy flow still mints a valid token');
-    assert.equal(liveSessionChallengeCount(), 0, 'legacy flow consumes no challenge');
+    assert.equal(consumedSessionChallengeCount(), 0, 'legacy flow consumes no challenge');
   });
 
   it('(8) legacy mode: a caller MAY still opt into the challenge flow, and it is enforced', async () => {

@@ -11,9 +11,11 @@ import {
   createSessionChallenge,
   consumeSessionChallenge,
   resetSessionChallenges,
-  liveSessionChallengeCount,
-  MAX_LIVE_SESSION_CHALLENGES,
+  consumedSessionChallengeCount,
+  sessionChallengeTtlMs,
 } from '../sessionChallenge.js';
+import { challengeProofInput } from '../routes/auth.js';
+import crypto from 'node:crypto';
 import * as store from '../store.js';
 
 describe('session challenge cap', () => {
@@ -50,26 +52,57 @@ describe('session challenge cap', () => {
     store.setStorage(null);
   });
 
-  it('holds at the cap by refusing new issuance (429 + Retry-After), never evicting a live challenge', async () => {
-    const first = createSessionChallenge();
-    for (let i = 1; i < MAX_LIVE_SESSION_CHALLENGES; i += 1) createSessionChallenge();
-    assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
-    const res = await fetch(`${baseUrl}/api/auth/challenge`, { method: 'POST' });
-    assert.equal(res.status, 429);
-    assert.ok(Number(res.headers.get('retry-after')) >= 1);
-    assert.equal(liveSessionChallengeCount(), MAX_LIVE_SESSION_CHALLENGES);
-    assert.equal(consumeSessionChallenge(first.challenge), true, 'oldest live challenge kept');
-    const retry = await fetch(`${baseUrl}/api/auth/challenge`, { method: 'POST' });
-    assert.equal(retry.status, 200, 'room frees once a challenge is consumed');
+  const SECRET = 'cap-secret';
+  const post = (p, body) => fetch(`${baseUrl}${p}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}),
+  });
+  const handshakeBody = (challenge, cn = 'cn') => ({
+    server_nonce: challenge, client_nonce: cn, role: 'builder', project: 'alpha',
+    proof: crypto.createHmac('sha256', SECRET).update(challengeProofInput(challenge, cn, 'builder', 'alpha')).digest('hex'),
   });
 
-  it('still drops expired entries so capacity frees up', async () => {
+  it('20,000 anonymous challenges do not prevent a new client handshake, and hold no state', async () => {
+    const first = await (await post('/api/auth/challenge')).json();
+    for (let i = 0; i < 20000; i += 1) assert.ok(createSessionChallenge().challenge);
+    assert.equal(consumedSessionChallengeCount(), 0, 'issuance writes no server state');
+    const res = await post('/api/auth/session', handshakeBody(first.challenge));
+    assert.equal(res.status, 200, 'an early challenge survives the flood');
+    const fresh = await (await post('/api/auth/challenge')).json();
+    assert.equal((await post('/api/auth/session', handshakeBody(fresh.challenge))).status, 200);
+  });
+
+  it('a replayed valid proof is refused', async () => {
+    const { challenge } = await (await post('/api/auth/challenge')).json();
+    assert.equal((await post('/api/auth/session', handshakeBody(challenge))).status, 200);
+    assert.equal((await post('/api/auth/session', handshakeBody(challenge))).status, 401);
+    assert.equal(consumedSessionChallengeCount(), 1);
+  });
+
+  it('forged, tampered and malformed nonces are refused and never recorded', async () => {
+    const { challenge } = createSessionChallenge();
+    const raw = Buffer.from(challenge, 'base64url');
+    raw[30] ^= 1; // flip a MAC bit
+    const forged = raw.toString('base64url');
+    assert.equal(consumeSessionChallenge(forged), false);
+    assert.equal(consumeSessionChallenge('x'.repeat(64)), false);
+    assert.equal(consumeSessionChallenge(''), false);
+    assert.equal((await post('/api/auth/session', handshakeBody(forged))).status, 401);
+    assert.equal(consumedSessionChallengeCount(), 0);
+  });
+
+  it('an expired nonce is refused', async () => {
     process.env.KANBAN_SESSION_CHALLENGE_TTL_MS = '20';
-    for (let i = 0; i < 50; i += 1) createSessionChallenge();
+    const { challenge } = createSessionChallenge();
     await new Promise((r) => setTimeout(r, 40));
-    process.env.KANBAN_SESSION_CHALLENGE_TTL_MS = '60000';
-    const fresh = createSessionChallenge();
-    assert.ok(fresh);
-    assert.equal(liveSessionChallengeCount(), 1);
+    assert.equal(consumeSessionChallenge(challenge), false);
+    assert.ok(sessionChallengeTtlMs() === 20);
+  });
+
+  it('the nonce is bound to the server secret', () => {
+    const { challenge } = createSessionChallenge();
+    process.env.KANBAN_AUTH_SECRET = 'a-different-secret';
+    assert.equal(consumeSessionChallenge(challenge), false);
+    process.env.KANBAN_AUTH_SECRET = SECRET;
+    assert.equal(consumeSessionChallenge(challenge), true);
   });
 });

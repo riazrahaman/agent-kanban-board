@@ -11,13 +11,9 @@ import {
 import {
   resolveTrustProxy, describeTrustProxy, forwardedHeaderWarning, resetForwardedHeaderWarning,
 } from '../server.js';
+import { addressOwnerKey } from '../utils/addressKey.js';
 import {
-  MAX_LIVE_CHALLENGES_PER_ADDRESS, MAX_LIVE_SESSION_CHALLENGES, challengeOwnerKey, consumeSessionChallenge,
-  sessionChallengeRetryAfterMs, createSessionChallenge,
-  resetSessionChallenges,
-} from '../sessionChallenge.js';
-import {
-  MAX_LIVE_STREAM_TICKETS, MAX_LIVE_STREAM_TICKETS_PER_OWNER, createStreamTicket, liveStreamTicketCount, resetStreamTickets, verifyStreamTicket,
+  MAX_LIVE_STREAM_TICKETS, MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL, createStreamTicket, liveStreamTicketCount, resetStreamTickets, verifyStreamTicket,
 } from '../streamTicket.js';
 import { getAuthorizedProjects } from '../middleware/auth.js';
 
@@ -131,38 +127,12 @@ describe('SEC-104 ticket scope', () => {
   });
 });
 
-describe('SEC-105 per-owner challenge cap and no cross-owner eviction', () => {
-  beforeEach(() => resetSessionChallenges());
-  it('a flooding address evicts only its own challenges', () => {
-    const victim = createSessionChallenge('198.51.100.1').challenge;
-    const first = createSessionChallenge('203.0.113.9').challenge;
-    for (let i = 0; i < MAX_LIVE_CHALLENGES_PER_ADDRESS + 20; i += 1) createSessionChallenge('203.0.113.9');
-    assert.equal(consumeSessionChallenge(first), false, 'flooder own oldest evicted');
-    assert.equal(consumeSessionChallenge(victim), true, 'other address unaffected');
-  });
-  it('owner keys group IPv6 by /64 and unwrap IPv4-mapped addresses', () => {
-    assert.equal(challengeOwnerKey('2001:db8:1:2:aaaa::1'), challengeOwnerKey('2001:db8:1:2:bbbb:cccc:dddd:eeee'));
-    assert.notEqual(challengeOwnerKey('2001:db8:1:2::1'), challengeOwnerKey('2001:db8:1:3::1'));
-    assert.equal(challengeOwnerKey('::ffff:192.0.2.5'), '192.0.2.5');
-    assert.equal(challengeOwnerKey('192.0.2.5'), '192.0.2.5');
-  });
-  it('rotating addresses inside one /64 shares one allowance', () => {
-    const first = createSessionChallenge('2001:db8:1:2::1').challenge;
-    for (let i = 0; i < MAX_LIVE_CHALLENGES_PER_ADDRESS; i += 1) createSessionChallenge(`2001:db8:1:2::${i + 2}`);
-    assert.equal(consumeSessionChallenge(first), false);
-  });
-  it('at global capacity new issuance is refused and no live challenge is evicted', () => {
-    const victim = createSessionChallenge('198.51.100.1').challenge;
-    const owners = Math.ceil(MAX_LIVE_SESSION_CHALLENGES / MAX_LIVE_CHALLENGES_PER_ADDRESS) + 1;
-    let refused = 0;
-    for (let o = 0; o < owners; o += 1) {
-      for (let i = 0; i < MAX_LIVE_CHALLENGES_PER_ADDRESS; i += 1) {
-        if (createSessionChallenge(`10.${o >> 8}.${o & 255}.1`) === null) refused += 1;
-      }
-    }
-    assert.ok(refused > 0, 'issuance refused once the table is full');
-    assert.equal(consumeSessionChallenge(victim), true, 'victim challenge survived');
-    assert.ok(sessionChallengeRetryAfterMs() >= 1000);
+describe('SEC-105 address owner keys', () => {
+  it('group IPv6 by /64 and unwrap IPv4-mapped addresses', () => {
+    assert.equal(addressOwnerKey('2001:db8:1:2:aaaa::1'), addressOwnerKey('2001:db8:1:2:bbbb:cccc:dddd:eeee'));
+    assert.notEqual(addressOwnerKey('2001:db8:1:2::1'), addressOwnerKey('2001:db8:1:3::1'));
+    assert.equal(addressOwnerKey('::ffff:192.0.2.5'), '192.0.2.5');
+    assert.equal(addressOwnerKey('192.0.2.5'), '192.0.2.5');
   });
 });
 
@@ -172,7 +142,7 @@ describe('PERF-102 stream ticket mint/redeem', () => {
     resetStreamTickets();
   });
   afterEach(() => { delete process.env.KANBAN_AUTH_TOKEN; resetStreamTickets(); });
-  it('single-use and expiry still hold, and mint cost does not grow with outstanding tickets', () => {
+  it('single-use and expiry still hold', () => {
     const a = createStreamTicket({ role: 'builder', project: 'p' });
     assert.ok(verifyStreamTicket(a.ticket));
     assert.equal(verifyStreamTicket(a.ticket), null);
@@ -183,35 +153,48 @@ describe('PERF-102 stream ticket mint/redeem', () => {
       Date.now = () => t0 + 61000;
       assert.equal(liveStreamTicketCount(), 0);
     } finally { Date.now = realNow; }
-    for (let i = 0; i < 5000; i += 1) createStreamTicket({ role: 'builder', project: 'p' });
-    const s = process.hrtime.bigint();
-    for (let i = 0; i < 200; i += 1) createStreamTicket({ role: 'builder', project: 'p' });
-    const ms = Number(process.hrtime.bigint() - s) / 1e6;
-    assert.ok(ms < 500, `200 mints with 5000 outstanding took ${ms}ms`);
   });
 
-  it('a full table refuses mints and never invalidates a live ticket of another project', () => {
-    const alpha = createStreamTicket({ role: 'builder', project: 'alpha' });
+  it('a full table refuses mints and never invalidates another credential\'s live ticket', () => {
+    const alpha = createStreamTicket({ role: 'builder', project: 'alpha', credentialId: 'cred-alpha' });
     let refused = null;
     for (let i = 0; i < MAX_LIVE_STREAM_TICKETS + 5 && !refused; i += 1) {
-      const r = createStreamTicket({ role: 'builder', project: `beta-${i % 30}` });
+      const r = createStreamTicket({ role: 'builder', project: 'beta', credentialId: `cred-${i % 400}` });
       if (r?.refused) refused = r;
     }
     assert.ok(refused, 'global cap refuses');
     assert.ok(refused.retryAfterMs >= 1000);
     assert.ok(verifyStreamTicket(alpha.ticket), 'alpha ticket still redeemable');
   });
-  it('one project cannot fill the table past its per-owner cap', () => {
-    for (let i = 0; i < MAX_LIVE_STREAM_TICKETS_PER_OWNER; i += 1) {
-      assert.ok(createStreamTicket({ role: 'builder', project: 'greedy' }).ticket);
+  it('one credential at its cap is refused while another credential and the admin still mint', () => {
+    for (let i = 0; i < MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL; i += 1) {
+      assert.ok(createStreamTicket({ role: 'builder', project: 'p', credentialId: 'A' }).ticket);
     }
-    assert.equal(createStreamTicket({ role: 'builder', project: 'greedy' }).refused, true);
-    assert.ok(createStreamTicket({ role: 'builder', project: 'other' }).ticket);
+    assert.equal(createStreamTicket({ role: 'builder', project: 'p', credentialId: 'A' }).refused, true);
+    assert.ok(createStreamTicket({ role: 'builder', project: 'p', credentialId: 'B' }).ticket, 'same project, other credential');
+    assert.ok(createStreamTicket({ role: 'admin', project: 'p', credentialId: 'ADMIN' }).ticket);
+    assert.ok(createStreamTicket({ role: 'builder', project: 'p' }).ticket, 'unscoped callers share one bucket');
   });
-  it('redeeming frees owner capacity', () => {
+  it('redeeming frees credential capacity', () => {
     const tickets = [];
-    for (let i = 0; i < MAX_LIVE_STREAM_TICKETS_PER_OWNER; i += 1) tickets.push(createStreamTicket({ role: 'builder', project: 'p' }));
+    for (let i = 0; i < MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL; i += 1) tickets.push(createStreamTicket({ role: 'builder', project: 'p', credentialId: 'A' }));
     assert.ok(verifyStreamTicket(tickets[0].ticket));
-    assert.ok(createStreamTicket({ role: 'builder', project: 'p' }).ticket);
+    assert.ok(createStreamTicket({ role: 'builder', project: 'p', credentialId: 'A' }).ticket);
+  });
+  it('mint cost stays flat with thousands of outstanding tickets spread across credentials', () => {
+    const mintBatch = (n, base) => {
+      const s = process.hrtime.bigint();
+      for (let i = 0; i < n; i += 1) {
+        const r = createStreamTicket({ role: 'builder', project: 'p', credentialId: `c-${(base + i) % 200}` });
+        assert.ok(r.ticket, 'mint accepted');
+      }
+      return Number(process.hrtime.bigint() - s) / 1e6;
+    };
+    const cold = mintBatch(200, 0);
+    for (let i = 0; i < 6000; i += 1) createStreamTicket({ role: 'builder', project: 'p', credentialId: `c-${i % 200}` });
+    assert.equal(liveStreamTicketCount(), 6200);
+    const warm = mintBatch(200, 6000);
+    // O(n) scanning would make the 6,200-outstanding batch ~30x slower; allow generous noise.
+    assert.ok(warm < Math.max(cold * 8, 50), `cold ${cold}ms vs warm ${warm}ms`);
   });
 });

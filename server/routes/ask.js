@@ -1,3 +1,4 @@
+import { addressOwnerKey } from '../utils/addressKey.js';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherTaskDetails, gatherBoardFacts, gatherSourceContext, gatherRecentCommits, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
@@ -483,7 +484,10 @@ export function createAskRouter(deps = {}) {
 
   /** True while this IP has exceeded the failed-attempt limit in the live window. */
   function isLockedOut(ip) {
-    const rec = failedAuth.get(failedAuthKey(ip, false));
+    // Only an address's OWN counter locks it out before the password is compared.
+    // The shared overflow counter is consulted only after a failed comparison, so
+    // a correct password from an untracked address always gets through.
+    const rec = failedAuth.get(ip);
     if (!rec) return false;
     if (now() - rec.windowStartMs >= MINUTE_MS) return false;
     return rec.count > authLimit();
@@ -496,7 +500,9 @@ export function createAskRouter(deps = {}) {
   }
 
   function clientIp(req) {
-    return req.ip || req.socket?.remoteAddress || 'unknown';
+    const raw = req.ip || req.socket?.remoteAddress || 'unknown';
+    // IPv6 groups by /64, IPv4-mapped IPv6 unwraps to IPv4.
+    return addressOwnerKey(raw) ?? raw;
   }
 
   // Unauthenticated callers (and anyone without a valid password) get only the

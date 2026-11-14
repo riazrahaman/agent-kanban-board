@@ -29,7 +29,7 @@ const TICKET_TTL_MS = 60 * 1000;
 
 /** jti -> { exp (epoch ms), owner } for tickets that have been issued but not yet used. */
 const issued = new Map();
-/** owner (project scope) -> number of outstanding tickets. */
+/** credential id (truncated hash, never the token) -> number of outstanding tickets. */
 const perOwner = new Map();
 
 export function streamTicketTtlMs() {
@@ -70,8 +70,12 @@ function prune(now = Date.now()) {
 
 /** Upper bound on outstanding tickets. A full table refuses new mints. */
 export const MAX_LIVE_STREAM_TICKETS = 10000;
-/** Upper bound on outstanding tickets per project scope (credential group). */
-export const MAX_LIVE_STREAM_TICKETS_PER_OWNER = 500;
+/**
+ * Upper bound on outstanding tickets per credential. Keyed by a stable,
+ * non-secret credential id, so one credential cannot starve others (including
+ * ones in the same project); the global bound still applies.
+ */
+export const MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL = 50;
 
 /** Milliseconds until the oldest outstanding ticket expires (for Retry-After). */
 export function streamTicketRetryAfterMs() {
@@ -97,14 +101,15 @@ export function liveStreamTicketCount() {
  * Mints a stream ticket bound to a role + project. Returns null when no signing
  * key is configured, so a deployment without any secret cannot hand out tickets.
  */
-export function createStreamTicket({ role, project, agentId = null } = {}) {
+export function createStreamTicket({ role, project, agentId = null, credentialId = null } = {}) {
   const secret = ticketSecret();
   if (!secret) return null;
   prune();
-  // Never evict a live ticket: a full table, or an owner at its own cap,
-  // refuses the mint instead (the caller answers 429 + Retry-After).
-  const owner = project ?? '*';
-  if (issued.size >= MAX_LIVE_STREAM_TICKETS || (perOwner.get(owner) ?? 0) >= MAX_LIVE_STREAM_TICKETS_PER_OWNER) {
+  // Never evict a live ticket: a credential at its own cap, or a full table,
+  // refuses the mint instead (the caller answers 429 + Retry-After). Callers
+  // without a credential id share the '*' bucket.
+  const owner = typeof credentialId === 'string' && credentialId !== '' ? credentialId : '*';
+  if ((perOwner.get(owner) ?? 0) >= MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL || issued.size >= MAX_LIVE_STREAM_TICKETS) {
     return { refused: true, retryAfterMs: streamTicketRetryAfterMs() };
   }
   const jti = crypto.randomBytes(16).toString('hex');
