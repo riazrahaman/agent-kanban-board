@@ -27,8 +27,10 @@ import { tokensMatch } from './utils/constantTime.js';
 
 const TICKET_TTL_MS = 60 * 1000;
 
-/** jti -> exp (epoch ms) for tickets that have been issued but not yet used. */
+/** jti -> { exp (epoch ms), owner } for tickets that have been issued but not yet used. */
 const issued = new Map();
+/** credential id (truncated hash, never the token) -> number of outstanding tickets. */
+const perOwner = new Map();
 
 export function streamTicketTtlMs() {
   return TICKET_TTL_MS;
@@ -47,15 +49,46 @@ function macHex(secret, payload) {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+function drop(jti) {
+  const entry = issued.get(jti);
+  if (!entry) return;
+  issued.delete(jti);
+  const n = (perOwner.get(entry.owner) ?? 1) - 1;
+  if (n <= 0) perOwner.delete(entry.owner);
+  else perOwner.set(entry.owner, n);
+}
+
+// Map iteration order is insertion order and the TTL is constant, so expiry
+// times are non-decreasing: sweep from the head and stop at the first live
+// entry. Mint, redeem and expiry are all O(1) amortised.
 function prune(now = Date.now()) {
-  for (const [jti, exp] of issued) {
-    if (!Number.isInteger(exp) || exp <= now) issued.delete(jti);
+  for (const [jti, entry] of issued) {
+    if (Number.isInteger(entry.exp) && entry.exp > now) break;
+    drop(jti);
   }
+}
+
+/** Upper bound on outstanding tickets. A full table refuses new mints. */
+export const MAX_LIVE_STREAM_TICKETS = 10000;
+/**
+ * Upper bound on outstanding tickets per credential. Keyed by a stable,
+ * non-secret credential id, so one credential cannot starve others (including
+ * ones in the same project); the global bound still applies.
+ */
+export const MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL = 50;
+
+/** Milliseconds until the oldest outstanding ticket expires (for Retry-After). */
+export function streamTicketRetryAfterMs() {
+  prune();
+  const first = issued.values().next();
+  if (first.done) return 1000;
+  return Math.max(1000, first.value.exp - Date.now());
 }
 
 /** Test helper: forget every issued ticket. */
 export function resetStreamTickets() {
   issued.clear();
+  perOwner.clear();
 }
 
 /** Number of live (issued, unused) tickets. Exists to test the bound. */
@@ -68,17 +101,25 @@ export function liveStreamTicketCount() {
  * Mints a stream ticket bound to a role + project. Returns null when no signing
  * key is configured, so a deployment without any secret cannot hand out tickets.
  */
-export function createStreamTicket({ role, project, agentId = null } = {}) {
+export function createStreamTicket({ role, project, agentId = null, credentialId = null } = {}) {
   const secret = ticketSecret();
   if (!secret) return null;
+  prune();
+  // Never evict a live ticket: a credential at its own cap, or a full table,
+  // refuses the mint instead (the caller answers 429 + Retry-After). Callers
+  // without a credential id share the '*' bucket.
+  const owner = typeof credentialId === 'string' && credentialId !== '' ? credentialId : '*';
+  if ((perOwner.get(owner) ?? 0) >= MAX_LIVE_STREAM_TICKETS_PER_CREDENTIAL || issued.size >= MAX_LIVE_STREAM_TICKETS) {
+    return { refused: true, retryAfterMs: streamTicketRetryAfterMs() };
+  }
   const jti = crypto.randomBytes(16).toString('hex');
   const exp = Date.now() + TICKET_TTL_MS;
   const claims = { typ: 'stream', jti, exp, role: role ?? null, project: project ?? null };
   if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
   const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
   const token = `${payload}.${macHex(secret, payload)}`;
-  prune();
-  issued.set(jti, exp);
+  issued.set(jti, { exp, owner });
+  perOwner.set(owner, (perOwner.get(owner) ?? 0) + 1);
   return { ticket: token, expiresAt: exp };
 }
 
@@ -112,7 +153,7 @@ export function verifyStreamTicket(ticket) {
   if (typeof jti !== 'string' || !issued.has(jti)) return null;
 
   // Single-use: consume on first successful verification.
-  issued.delete(jti);
+  drop(jti);
   return {
     role,
     project,

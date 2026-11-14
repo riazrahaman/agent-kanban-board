@@ -1,3 +1,4 @@
+import { addressOwnerKey } from '../utils/addressKey.js';
 import express from 'express';
 import { tokensMatch } from '../utils/constantTime.js';
 import { buildSystemPrompt, gatherSnapshot, gatherTaskDetails, gatherBoardFacts, gatherSourceContext, gatherRecentCommits, DEFAULT_MAX_PROMPT_TOKENS } from '../askKnowledge.js';
@@ -335,7 +336,9 @@ export function createAskRouter(deps = {}) {
   // Wrong-password attempts get their OWN fixed 60s-window counter per IP, so
   // a password-guessing burst cannot spend OpenRouter quota (it never reaches
   // the upstream call) and is retried more slowly after the limit.
-  const failedAuth = new Map(); // ip -> { count, windowStartMs }
+  const failedAuth = new Map(); // ip -> { count, windowStartMs }, oldest window first
+  const MAX_FAILED_AUTH_ENTRIES = 10000;
+  const OVERFLOW_KEY = '\u0000overflow';
 
   function pruneGlobal() {
     const cutoff = now() - DAY_MS;
@@ -443,12 +446,36 @@ export function createAskRouter(deps = {}) {
     return intFrom(env.KANBAN_AUTH_RATE_LIMIT_PER_MIN, 10);
   }
 
+  /**
+   * The failure-counter key for an address: its own entry when it has one or
+   * there is room; otherwise the shared overflow entry. Live counters are never
+   * deleted to make room (that would let a flood reset a lockout): expired ones
+   * are swept from the head first, and if the table is still full new addresses
+   * share one overflow counter, which can lock the overflow group out but never
+   * resets a tracked address.
+   */
+  function failedAuthKey(ip, sweep) {
+    if (failedAuth.has(ip)) return ip;
+    const tracked = () => failedAuth.size - (failedAuth.has(OVERFLOW_KEY) ? 1 : 0);
+    if (tracked() >= MAX_FAILED_AUTH_ENTRIES && sweep) {
+      const ts = now();
+      for (const [k, r] of failedAuth) {
+        if (ts - r.windowStartMs < MINUTE_MS) break;
+        failedAuth.delete(k);
+      }
+    }
+    return tracked() < MAX_FAILED_AUTH_ENTRIES ? ip : OVERFLOW_KEY;
+  }
+
   /** Records a failed password attempt and returns the count in the current 60s window. */
   function recordFailedAuth(ip) {
     const ts = now();
-    const rec = failedAuth.get(ip);
+    const key = failedAuthKey(ip, true);
+    const rec = failedAuth.get(key);
     if (!rec || ts - rec.windowStartMs >= MINUTE_MS) {
-      failedAuth.set(ip, { count: 1, windowStartMs: ts });
+      // Re-insert so the map stays ordered by window start (oldest first).
+      failedAuth.delete(key);
+      failedAuth.set(key, { count: 1, windowStartMs: ts });
       return 1;
     }
     rec.count += 1;
@@ -457,6 +484,9 @@ export function createAskRouter(deps = {}) {
 
   /** True while this IP has exceeded the failed-attempt limit in the live window. */
   function isLockedOut(ip) {
+    // Only an address's OWN counter locks it out before the password is compared.
+    // The shared overflow counter is consulted only after a failed comparison, so
+    // a correct password from an untracked address always gets through.
     const rec = failedAuth.get(ip);
     if (!rec) return false;
     if (now() - rec.windowStartMs >= MINUTE_MS) return false;
@@ -464,13 +494,15 @@ export function createAskRouter(deps = {}) {
   }
 
   function failedAuthRetryAfterMs(ip) {
-    const rec = failedAuth.get(ip);
+    const rec = failedAuth.get(failedAuthKey(ip, false));
     if (!rec) return MINUTE_MS;
     return Math.max(0, rec.windowStartMs + MINUTE_MS - now());
   }
 
   function clientIp(req) {
-    return req.ip || req.socket?.remoteAddress || 'unknown';
+    const raw = req.ip || req.socket?.remoteAddress || 'unknown';
+    // IPv6 groups by /64, IPv4-mapped IPv6 unwraps to IPv4.
+    return addressOwnerKey(raw) ?? raw;
   }
 
   // Unauthenticated callers (and anyone without a valid password) get only the

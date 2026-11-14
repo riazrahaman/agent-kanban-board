@@ -187,9 +187,14 @@ function authBucketKey(ip) {
 
 /** Live bucket for the request's address, or null (no bucket / window over). */
 function liveAuthBucket(req, now, span) {
-  const bucket = authBuckets.get(authBucketKey(clientIp(req)));
+  return liveAuthBucketAndKey(req, now, span)?.bucket ?? null;
+}
+
+function liveAuthBucketAndKey(req, now, span) {
+  const key = authBucketKey(clientIp(req));
+  const bucket = authBuckets.get(key);
   if (!bucket || now - bucket.windowStartMs >= span) return null;
-  return bucket;
+  return { key, bucket };
 }
 
 /**
@@ -232,7 +237,9 @@ export function recordAuthFailure(req) {
     authBuckets.set(key, bucket);
   }
   bucket.count += 1;
-  if (bucket.count === limit * AUTH_HARD_CAP_MULTIPLIER + 1) {
+  // The shared overflow bucket never trips the outright refusal (see
+  // authHardCapExceeded), so it is not reported as a hard-cap event either.
+  if (key !== AUTH_OVERFLOW_KEY && bucket.count === limit * AUTH_HARD_CAP_MULTIPLIER + 1) {
     noteHardCapTripped(key, bucket.count, limit, span);
   }
 }
@@ -276,8 +283,12 @@ export function authHardCapExceeded(req) {
   const span = windowMs();
   const now = Date.now();
   // O(1): runs on every credential-checked request, so no pruning here.
-  const bucket = liveAuthBucket(req, now, span);
-  if (!bucket) return null;
+  const live = liveAuthBucketAndKey(req, now, span);
+  if (!live) return null;
+  // The overflow bucket is shared by unrelated addresses, so it only throttles
+  // failed attempts (authFailuresExceeded); it never refuses valid credentials.
+  if (live.key === AUTH_OVERFLOW_KEY) return null;
+  const { bucket } = live;
   if (bucket.count > limit * AUTH_HARD_CAP_MULTIPLIER) {
     return Math.max(0, bucket.windowStartMs + span - now);
   }

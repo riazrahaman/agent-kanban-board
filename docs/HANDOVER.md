@@ -638,7 +638,7 @@ by default**; set `KANBAN_ROLE_CROSSING_AUDIT` to enable it).
 - **`HOST` may arrive bracketed** (Railway injects `HOST=[::]`). `resolveHost()`
   strips the brackets; passing `[::]` through otherwise fails DNS with `ENOTFOUND`
   and restart-loops.
-- **`KANBAN_TRUST_PROXY` defaults to `1`** (one trusted hop). Setting it to `true`
+- **`KANBAN_TRUST_PROXY` unset trusts no proxy**; a deployment behind one reverse proxy (Railway) must set it to `1`. Setting it to `true`
   with no real proxy re-opens `X-Forwarded-For` spoofing against the per-IP
   bug-report and auth-failure limiters.
 - **A long-lived response blocks `server.close()`.** `GET /api/events` holds a

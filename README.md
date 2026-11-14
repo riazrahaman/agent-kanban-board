@@ -188,7 +188,7 @@ The board features pluggable persistence:
    | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET/SSE). `EventSource` cannot set headers, so browsers exchange their token for a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Tickets are typed and verified separately from session tokens (v3.12.10), so neither can stand in for the other, and a ticket carries the credential's bound `agent_id`. Unset/`off`/`0` keeps reads open. Health probes stay open; the absolute backup directory in the health `backup` block is shown only to callers authorised for all projects. |
    | `KANBAN_MAX_SSE_STREAMS` | `100` | Cap on concurrent `/api/events` streams. Over-cap requests get a 503 (before any SSE headers). A negative value disables the cap. |
    | `KANBAN_MAX_SSE_STREAMS_PER_IP` | `20` | Cap on concurrent `/api/events` streams per client IP (same 503). A negative value disables the per-IP cap; the global cap still applies. Keys on `req.ip`, so it depends on `KANBAN_TRUST_PROXY` being set correctly for your deployment. |
-   | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | `60` *(or `KANBAN_RATE_LIMIT_PER_MIN` when that is set)* | Failed auth attempts (401/403) per client address per window on mutations, gated reads and the session/ticket handshakes. Failures over the limit are answered 429 (`retry_after_ms`, `Retry-After`) while valid credentials are still served; an address over 10× the limit is refused outright until the window ends. `0` disables it. Set `KANBAN_TRUST_PROXY=0` when the board is exposed directly without a reverse proxy, otherwise `X-Forwarded-For` is trusted. |
+   | `KANBAN_AUTH_RATE_LIMIT_PER_MIN` | `60` *(or `KANBAN_RATE_LIMIT_PER_MIN` when that is set)* | Failed auth attempts (401/403) per client address per window on mutations, gated reads and the session/ticket handshakes. Failures over the limit are answered 429 (`retry_after_ms`, `Retry-After`) while valid credentials are still served; an address over 10× the limit is refused outright until the window ends. `0` disables it. Forwarding headers are ignored unless `KANBAN_TRUST_PROXY` is set. |
    | `KANBAN_SESSION_NONCE_MODE` | `required` | Session handshake proof mode (`required` is the default since v3.14.0). By default `POST /api/auth/session` needs a fresh single-use `server_nonce` from `POST /api/auth/challenge`. Only the exact value `legacy` accepts the old challenge-less proof (logged as a startup warning); any other value means `required`. |
    | `KANBAN_ADMIN_TOKEN` | *(unset)* | Admin credential spanning every project. Destructive operations (delete, purge, trash restore/hard-delete) need it, or a privileged session, in every auth mode; a declared `X-Agent-Role: admin` is not enough. With only `KANBAN_AUTH_TOKEN` set and no admin token, those operations return 403 (startup warning). Must differ from `KANBAN_AUTH_TOKEN` and every token in `KANBAN_PROJECT_TOKENS`; the server refuses to start otherwise (the error names the variables, not the values). |
 
@@ -248,14 +248,16 @@ Set the first four of these (server-side; see `.env.example` /
 | `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports per UTC day. Default `50`. Resets on restart (in-memory). |
 | `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap per hour. Default `3`. Resets on restart (in-memory). |
 | `KANBAN_REPORT_GITHUB_API_URL` | public | optional | Overrides the GitHub API base (default `https://api.github.com`) — points the local demo/test stub (`scripts/stub-github-issues.mjs`) instead of the real API. |
-| `KANBAN_TRUST_PROXY` | public | optional | Express `trust proxy` hop count behind a reverse proxy (default `1`, correct for Railway). Needed for the per-IP cap to see the real client address instead of the proxy's. |
+| `KANBAN_TRUST_PROXY` | public | optional | Express `trust proxy` setting. Unset (default): no proxy is trusted, forwarding headers are ignored and per-address limits key on the connecting peer. Behind a reverse proxy set a hop count (`1` for a single proxy such as Railway's edge), or an address/CIDR list; `0`/`false` is explicit no-proxy. Needed for the per-IP caps to see the real client address. |
 
-**`KANBAN_TRUST_PROXY` must match your actual deployment topology.** The
-default of `1` is correct only when exactly one trusted reverse proxy sits in
-front of the app (Railway's edge, or an equivalent single-hop load balancer).
-If the app is exposed directly — no proxy at all — set it to `0`; otherwise
-a client can send its own `X-Forwarded-For` header and spoof the address the
-per-IP rate limit is keyed on, defeating it entirely.
+**`KANBAN_TRUST_PROXY` must match your deployment topology.** Unset, the
+server trusts no proxy: `X-Forwarded-For` is ignored and every per-address limit
+keys on the connecting peer, which is correct for a board exposed directly. A
+deployment behind a reverse proxy (including a hosted one behind Railway's edge)
+must set `KANBAN_TRUST_PROXY=1` (one hop), otherwise all clients share the
+proxy's address; the server logs a one-time warning when it sees
+`X-Forwarded-For` while the setting is unset. Use `true` only if you know how
+many proxies sit in front. The startup log prints the mode in effect.
 
 **Never commit a real token or secret.** `.env.example` ships only
 placeholders; `.gitignore` already excludes a real `.env`. If you paste a

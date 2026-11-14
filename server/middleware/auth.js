@@ -305,7 +305,11 @@ export function getAuthorizedProjects(req) {
 }
 
 function computeAuthorizedProjects(req) {
-  const ticket = typeof req.query?.ticket === 'string' ? req.query.ticket : null;
+  // A stream ticket only authorises the SSE read it was minted for: ignore it
+  // on any other method or route, so it can never override a credential's role.
+  const ticketRoute = (req.path || '').replace(/\/+$/, '').toLowerCase() === '/api/events';
+  const ticketAllowed = ticketRoute && (req.method === 'GET' || req.method === 'HEAD');
+  const ticket = ticketAllowed && typeof req.query?.ticket === 'string' ? req.query.ticket : null;
   if (ticket) {
     const scope = verifyStreamTicket(ticket);
     if (scope) {

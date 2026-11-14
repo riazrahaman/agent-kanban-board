@@ -13,6 +13,12 @@ import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from '../mid
 
 const router = Router();
 
+/** Stable, non-secret id for the presented credential: a truncated SHA-256, never the token. */
+function credentialIdFor(req) {
+  const t = extractToken(req);
+  return t ? crypto.createHash('sha256').update(t).digest('hex').slice(0, 16) : null;
+}
+
 function extractToken(req) {
   const authHeader = req.headers['authorization'];
   const apiTokenHeader = req.headers['x-api-token'];
@@ -179,7 +185,11 @@ router.post('/stream-ticket', (req, res) => {
   let boundAgentId = null;
   if (cred.kind === 'session') boundAgentId = cred.session.agent_id ?? null;
   else if (cred.kind === 'project') boundAgentId = cred.credential.agent_id ?? null;
-  const minted = createStreamTicket({ role, project, agentId: boundAgentId });
+  const minted = createStreamTicket({ role, project, agentId: boundAgentId, credentialId: credentialIdFor(req) });
+  if (minted?.refused) {
+    res.set('Retry-After', String(Math.ceil(minted.retryAfterMs / 1000)));
+    return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: minted.retryAfterMs });
+  }
   if (!minted) {
     return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
   }
@@ -231,7 +241,7 @@ router.post('/challenge', (req, res) => {
   // single misconfigured client pushed over the limit. So it follows the same
   // rule as the credential-checked routes: refused only past the hard cap.
   // Guessing is still throttled where it happens (/session failures), and the
-  // live-challenge set is bounded (MAX_LIVE_SESSION_CHALLENGES).
+  // challenge itself is stateless (issuance holds no server state).
   const hardCapRetry = authHardCapExceeded(req);
   if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
 
@@ -242,7 +252,8 @@ router.post('/challenge', (req, res) => {
     });
   }
 
-  const { challenge, expiresAt } = createSessionChallenge();
+  const issuedChallenge = createSessionChallenge();
+  const { challenge, expiresAt } = issuedChallenge;
   return res.status(200).json({
     challenge,
     expires_at: expiresAt,
