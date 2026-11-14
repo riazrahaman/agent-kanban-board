@@ -21,6 +21,9 @@ import {
 import { revokeSessionToken, createSessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket, createStreamTicket } from '../streamTicket.js';
 
+// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
+process.env.KANBAN_STORAGE_JOURNAL = '0';
+
 const TOKEN = 'kanban-deepreview-token';
 const TOKEN_ALPHA = 'kdr-alpha-token';
 const TOKEN_BETA = 'kdr-beta-token';

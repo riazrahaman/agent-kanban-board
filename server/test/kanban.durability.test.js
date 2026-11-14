@@ -33,6 +33,7 @@ const ADMIN = { agent_id: 'ops', role: 'admin' };
 
 before(async () => {
   for (const k of ENV) { savedEnv[k] = process.env[k]; delete process.env[k]; }
+  process.env.KANBAN_STORAGE_JOURNAL = '0'; // v3.16.0: journal defaults on; these suites cover whole-partition saves
   tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'kanban-durability-'));
   process.env.KANBAN_DATA_DIR = path.join(tmpRoot, 'default-data');
   process.env.KANBAN_DATA_FILE = path.join(tmpRoot, 'default-data', 'tasks.json');
@@ -249,7 +250,7 @@ describe('git trash rows keyed by id and deletion time', { concurrency: 1 }, () 
 // ---------------------------------------------------------------------------
 describe('journal generations', { concurrency: 1 }, () => {
   before(() => { process.env.KANBAN_STORAGE_JOURNAL = '1'; });
-  after(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+  after(() => { process.env.KANBAN_STORAGE_JOURNAL = '0'; });
 
   const task = (id, version) => ({ id, title: `${id} v${version}`, status: 'READY', round: 1, version });
   const pastBase = async (journal, base) => {

@@ -29,6 +29,9 @@ import { createApp } from '../server.js';
 import * as store from '../store.js';
 import { formatReclaimMessage, notifierConfig } from '../notifier.js';
 
+// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
+process.env.KANBAN_STORAGE_JOURNAL = '0';
+
 const TOKEN = 'kanban-branch-token';
 
 // Constructed without the literal "Bearer " prefix so the write-time secret

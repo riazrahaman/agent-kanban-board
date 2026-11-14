@@ -66,7 +66,7 @@ const DESCRIPTIONS = {
   'KANBAN_WEBHOOK_BACKOFF_MS': 'Base webhook retry backoff in ms (default 250; 0 disables waiting)',
   'KANBAN_WEBHOOK_MAX_QUEUE': 'Per-URL webhook queue cap; exceeding it drops the oldest event (default 100)',
   'KANBAN_WEBHOOK_DEAD_LETTER_MAX': 'Per-URL in-memory dead-letter ring size (default 50)',
-  'KANBAN_STORAGE_JOURNAL': 'Set to "1" to enable the append-only JSON journal',
+  'KANBAN_STORAGE_JOURNAL': 'Append-only JSON journal; on by default, set "0" or "false" to opt out',
   'KANBAN_TELEGRAM_BOT_TOKEN': 'Telegram bot token for reclaim alerts',
   'KANBAN_TELEGRAM_CHAT_ID': 'Telegram chat id that receives reclaim alerts',
   'KANBAN_TRASH_DAYS': 'Days a soft-deleted task stays in the trash sink (default 30)',

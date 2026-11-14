@@ -11,6 +11,9 @@ import yaml from 'yaml';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
+// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
+process.env.KANBAN_STORAGE_JOURNAL = '0';
+
 const execFileAsync = promisify(execFile);
 const TOKEN = 'pi03-test-token';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');

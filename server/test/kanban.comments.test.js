@@ -6,6 +6,9 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
+// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
+process.env.KANBAN_STORAGE_JOURNAL = '0';
+
 const TOKEN = 'kanban-comments-token';
 
 function authHeader(token) {

@@ -53,7 +53,7 @@ async function gitEnv(label) {
     KANBAN_STORAGE_BACKEND: 'git', KANBAN_GIT_DIR: gitDir, KANBAN_DATA_DIR: dataDir,
     KANBAN_DATA_FILE: path.join(dataDir, 'tasks.json'),
   });
-  delete process.env.KANBAN_STORAGE_JOURNAL;
+  process.env.KANBAN_STORAGE_JOURNAL = '0';
   store.setStorage(null);
   await store.loadStore();
   return { gitDir, dataDir };
@@ -94,7 +94,7 @@ describe('journal (COR-102 / COR-103)', () => {
     const ids = (await s2.load()).map((t) => t.id).sort();
     assert.deepEqual(ids, ['A', 'B'], 'B was acknowledged; the failed delete of A must not replay');
     delete process.env.KANBAN_JOURNAL_COMPACT_BYTES;
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
   });
 });
 
@@ -144,7 +144,7 @@ describe('backups (COR-105 / COR-106)', () => {
       KANBAN_BACKUP_ENABLED: '1', KANBAN_BACKUP_DIR: backups,
     });
     delete process.env.KANBAN_STORAGE_BACKEND;
-    delete process.env.KANBAN_STORAGE_JOURNAL;
+    process.env.KANBAN_STORAGE_JOURNAL = '0';
     store.setStorage(null);
     await store.loadStore();
     await store.createTask({ id: 'b1', title: 'b', round: 1, status: 'BACKLOG' }, 'default', { caller: ADMIN });

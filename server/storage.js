@@ -5,7 +5,7 @@
  * Two interchangeable backends implement the same surface:
  *   - JsonStorage     : a single atomic JSON file per project (+ archive,
  *                       trash, settings siblings, and an optional append-only
- *                       journal under KANBAN_STORAGE_JOURNAL=1).
+ *                       journal, on by default; KANBAN_STORAGE_JOURNAL=0 opts out).
  *   - GitYamlStorage  : one YAML card per task, one real git commit per write.
  *
  * store.js re-exports both so existing `../store.js` importers are unaffected.
@@ -146,10 +146,15 @@ export class JsonStorage {
     this.journalFile = `${filePath}.journal.jsonl`;
   }
 
-  // PERF-02: journal env-var helpers. When KANBAN_STORAGE_JOURNAL is not '1',
-  // the journal is OFF and behavior is byte-identical to the pre-2.8 path.
+  // PERF-02: journal env-var helpers. Since v3.16.0 the journal is ON by
+  // default: unset (or '1') enables it, '0'/'false' (any case) opts out and
+  // restores whole-partition rewrites. An existing journal is replayed/folded
+  // on load whatever the flag says, so toggling never loses writes.
   _journalEnabled() {
-    return process.env.KANBAN_STORAGE_JOURNAL === '1';
+    const raw = process.env.KANBAN_STORAGE_JOURNAL;
+    if (raw === undefined) return true;
+    const v = String(raw).trim().toLowerCase();
+    return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
   }
   _journalCompactBytes() {
     const raw = process.env.KANBAN_JOURNAL_COMPACT_BYTES;
