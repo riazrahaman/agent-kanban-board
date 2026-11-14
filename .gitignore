@@ -5,6 +5,7 @@ dist/
 .DS_Store
 *.log
 tasks.json
+tasks.json.journal.jsonl
 
 # Local board state. KANBAN_DATA_DIR defaults to an in-repo server/data
 # (ADR-001), so running the server or the tests here writes real per-project
