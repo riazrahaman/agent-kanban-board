@@ -10,7 +10,7 @@ import {
   hashCreateBody,
 } from '../idempotency.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
-import { projectScopeGuard } from '../middleware/projectScope.js';
+import { projectScopeGuard, rawProjectScope } from '../middleware/projectScope.js';
 
 const router = Router();
 
@@ -25,10 +25,7 @@ function asyncHandler(handler) {
  * task's own project or the default.
  */
 function resolveProjectFromReq(req) {
-  const raw =
-    req.query?.project ??
-    req.query?.workspace ??
-    req.headers['x-kanban-project'];
+  const raw = rawProjectScope(req);
   if (raw === undefined || raw === null || raw === '') return undefined;
   if (typeof raw === 'string' && store.isValidProjectId(raw)) return raw;
   return undefined;
