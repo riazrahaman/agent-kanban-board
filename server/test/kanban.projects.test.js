@@ -1,4 +1,4 @@
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
@@ -7,8 +7,24 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
-// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
-process.env.KANBAN_STORAGE_JOURNAL = '0';
+// v3.16.0: the journal defaults on; only tests that read raw partition files opt out.
+beforeEach(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+
+// v3.16.0: the journal defaults on, so a raw partition file may lag the live
+// state. Fold journal into the canonical file (a journal-aware load + full
+// save) before asserting on raw file contents.
+async function foldPartition(_file, project) {
+  const prev = process.env.KANBAN_STORAGE_JOURNAL;
+  process.env.KANBAN_STORAGE_JOURNAL = '0';
+  try {
+    // Through the LIVE storage instance so its journal generation stays in sync.
+    const proj = project || 'default';
+    await store.getStorage(proj).save(store.getTasks(proj));
+  } finally {
+    if (prev === undefined) delete process.env.KANBAN_STORAGE_JOURNAL; else process.env.KANBAN_STORAGE_JOURNAL = prev;
+  }
+}
+
 
 const TOKEN = 'pi03-projects-token';
 
@@ -162,6 +178,7 @@ describe('§2.1 multi-project namespacing', () => {
 
   it('7. partitioned storage writes only its project', async () => {
     const atlasFile = path.join(tmpDir, 'tasks', 'atlas.json');
+    await foldPartition(atlasFile, 'atlas');
     assert.ok(existsSync(atlasFile), 'atlas partition file exists');
     const parsed = JSON.parse(await readFile(atlasFile, 'utf8'));
     assert.equal(parsed.project, 'atlas');
@@ -187,6 +204,7 @@ describe('§2.1 multi-project namespacing', () => {
 
   it('10. partition-scoped save isolation: patching atlas does not rewrite alpha.json', async () => {
     const alphaFile = path.join(tmpDir, 'tasks', 'alpha.json');
+    await foldPartition(alphaFile, 'alpha');
     assert.ok(existsSync(alphaFile));
     const before = (await stat(alphaFile)).mtimeMs;
     // small delay so mtime is observable

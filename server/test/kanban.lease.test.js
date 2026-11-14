@@ -10,6 +10,17 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
+// v3.16.0: the journal defaults on; keep default-path sidecars out of the source tree.
+import { mkdtempSync as __mk } from 'node:fs';
+import __os from 'node:os';
+import __path from 'node:path';
+{
+  const __d = __mk(__path.join(__os.tmpdir(), 'kanban-default-path-'));
+  process.env.KANBAN_DATA_DIR ??= __d;
+  process.env.KANBAN_DATA_FILE ??= __path.join(__d, 'tasks.json');
+}
+
+
 const execFileAsync = promisify(execFile);
 
 const TOKEN = 'kanban-lease-token';

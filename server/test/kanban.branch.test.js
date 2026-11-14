@@ -19,7 +19,7 @@
  * false`), so this suite stays hermetic on a machine where the system git is
  * unusable.
  */
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -29,8 +29,24 @@ import { createApp } from '../server.js';
 import * as store from '../store.js';
 import { formatReclaimMessage, notifierConfig } from '../notifier.js';
 
-// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
-process.env.KANBAN_STORAGE_JOURNAL = '0';
+// v3.16.0: the journal defaults on; only tests that read raw partition files opt out.
+beforeEach(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+
+// v3.16.0: the journal defaults on, so a raw partition file may lag the live
+// state. Fold journal into the canonical file (a journal-aware load + full
+// save) before asserting on raw file contents.
+async function foldPartition(_file, project) {
+  const prev = process.env.KANBAN_STORAGE_JOURNAL;
+  process.env.KANBAN_STORAGE_JOURNAL = '0';
+  try {
+    // Through the LIVE storage instance so its journal generation stays in sync.
+    const proj = project || 'default';
+    await store.getStorage(proj).save(store.getTasks(proj));
+  } finally {
+    if (prev === undefined) delete process.env.KANBAN_STORAGE_JOURNAL; else process.env.KANBAN_STORAGE_JOURNAL = prev;
+  }
+}
+
 
 const TOKEN = 'kanban-branch-token';
 
@@ -207,6 +223,7 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
   // --- the fabrication is gone from the persisted sink --------------------
 
   it('7. the persisted JSON sink never contains a fabricated ref', async () => {
+    await foldPartition(dataFile);
     const raw = await readFile(dataFile, 'utf8');
     assert.doesNotMatch(raw, /"branch":\s*"task\//, 'no `task/<id>` value on disk');
     const parsed = JSON.parse(raw);
@@ -295,6 +312,7 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
     assert.equal(read.response.status, 200);
     assert.equal(read.body.branch, expected, `${label}: GET response`);
 
+    await foldPartition(dataFile);
     const raw = await readFile(dataFile, 'utf8');
     const persisted = JSON.parse(raw).tasks.find((t) => t.id === id);
     assert.equal(persisted.branch, expected, `${label}: tasks.json on disk`);
@@ -411,6 +429,7 @@ describe('KB-branch: task.branch has a source of truth (no fabrication)', () => 
 
     const memoryValue = store.getTask('br-agree').branch;
     const get = await jsonRequest(baseUrl, '/api/tasks/br-agree', { headers: headers() });
+    await foldPartition(dataFile);
     const jsonValue = JSON.parse(await readFile(dataFile, 'utf8'))
       .tasks.find((t) => t.id === 'br-agree').branch;
 

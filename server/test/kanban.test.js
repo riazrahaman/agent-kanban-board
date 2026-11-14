@@ -1,4 +1,4 @@
-import test, { after, before, describe, it } from 'node:test';
+import test, { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -11,8 +11,9 @@ import yaml from 'yaml';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
-// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
-process.env.KANBAN_STORAGE_JOURNAL = '0';
+// v3.16.0: the journal defaults on; only tests that read raw partition files opt out.
+beforeEach(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+
 
 const execFileAsync = promisify(execFile);
 const TOKEN = 'pi03-test-token';
@@ -584,6 +585,7 @@ describe('§2.1/§2.8 back-compat regression', () => {
     });
 
   it('22. default project keeps the legacy file; no stray tasks/default.json', async () => {
+    process.env.KANBAN_STORAGE_JOURNAL = '0'; // raw partition-file assertions need whole-file saves (journal defaults on since v3.16.0)
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
     process.env.KANBAN_DEFAULT_PROJECT = 'default';
     delete process.env.KANBAN_STORAGE_BACKEND;

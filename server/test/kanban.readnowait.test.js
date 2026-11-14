@@ -9,7 +9,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as store from '../store.js';
-import { withMutationLock, isMutationLockBusy } from '../store/core.js';
+const { withMutationLock, isMutationLockBusy } = store;
 
 describe('reads do not wait for the mutation lock', () => {
   let tmpDir;

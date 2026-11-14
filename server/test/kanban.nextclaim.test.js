@@ -6,8 +6,6 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
-// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
-process.env.KANBAN_STORAGE_JOURNAL = '0';
 
 const TOKEN = 'kanban-nextclaim-token';
 
@@ -102,6 +100,7 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     // (loadStore() reads [] when the file is absent) and re-read.
     store.setStorage(null);
     await rm(path.join(tmpDir, 'tasks.json'), { force: true });
+    await rm(path.join(tmpDir, 'tasks.json.journal.jsonl'), { force: true });
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
       });

@@ -1,4 +1,4 @@
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -6,8 +6,24 @@ import path from 'node:path';
 import { createApp } from '../server.js';
 import * as store from '../store.js';
 
-// v3.16.0: the journal defaults on; this suite asserts whole-partition file contents.
-process.env.KANBAN_STORAGE_JOURNAL = '0';
+// v3.16.0: the journal defaults on; only tests that read raw partition files opt out.
+beforeEach(() => { delete process.env.KANBAN_STORAGE_JOURNAL; });
+
+// v3.16.0: the journal defaults on, so a raw partition file may lag the live
+// state. Fold journal into the canonical file (a journal-aware load + full
+// save) before asserting on raw file contents.
+async function foldPartition(_file, project) {
+  const prev = process.env.KANBAN_STORAGE_JOURNAL;
+  process.env.KANBAN_STORAGE_JOURNAL = '0';
+  try {
+    // Through the LIVE storage instance so its journal generation stays in sync.
+    const proj = project || 'default';
+    await store.getStorage(proj).save(store.getTasks(proj));
+  } finally {
+    if (prev === undefined) delete process.env.KANBAN_STORAGE_JOURNAL; else process.env.KANBAN_STORAGE_JOURNAL = prev;
+  }
+}
+
 
 const TOKEN = 'kanban-comments-token';
 
@@ -164,6 +180,7 @@ describe('v2.5.0 comments: discussion thread on each card', () => {
   });
 
   it('comments round-trip through persistence (reload reads them back)', async () => {
+    await foldPartition(dataFile);
     const raw = JSON.parse(await readFile(dataFile, 'utf-8'));
     const seeded = raw.tasks.find((t) => t.id === 'cm-seed');
     assert.equal(Array.isArray(seeded.comments), true);
@@ -179,6 +196,7 @@ describe('v2.5.0 comments: discussion thread on each card', () => {
   });
 
   it('legacy record without a comments key is defaulted to [] on read', async () => {
+    await foldPartition(dataFile);
     const raw = JSON.parse(await readFile(dataFile, 'utf-8'));
     const legacy = raw.tasks.find((t) => t.id === 'cm-seed');
     delete legacy.comments;
