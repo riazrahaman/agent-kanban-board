@@ -60,6 +60,7 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
     process.env.KANBAN_DATA_DIR = tmpDir;
     process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
+    process.env.KANBAN_TRUST_PROXY = '1'; // explicit one-hop trust: the app reads X-Forwarded-For
     await store.loadStore();
     ({ server, baseUrl } = await startTestServer(createApp()));
   });
@@ -172,7 +173,10 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
     });
 
     it('successful requests are not counted', async () => {
-      for (let i = 0; i < 70; i += 1) {
+      // 45 successful mints exceed this limit of 20 yet stay under the
+      // per-credential outstanding-ticket cap (50).
+      process.env.KANBAN_AUTH_RATE_LIMIT_PER_MIN = '20';
+      for (let i = 0; i < 45; i += 1) {
         const r = await mint(baseUrl, { body: { role: 'builder' } });
         assert.equal(r.status, 200, `mint ${i + 1}`);
       }
@@ -180,7 +184,7 @@ describe('stream ticket role + failed-auth limiter defaults', () => {
       assert.equal(await badMutation(), 401);
     });
 
-    it('distinct X-Forwarded-For client addresses get separate buckets (default trust proxy)', async () => {
+    it('distinct X-Forwarded-For client addresses get separate buckets (explicit one-hop trust proxy)', async () => {
       for (let i = 0; i < 60; i += 1) await badMutation({ 'X-Forwarded-For': '203.0.113.1' });
       assert.equal(await badMutation({ 'X-Forwarded-For': '203.0.113.1' }), 429);
       assert.equal(await badMutation({ 'X-Forwarded-For': '203.0.113.2' }), 401);

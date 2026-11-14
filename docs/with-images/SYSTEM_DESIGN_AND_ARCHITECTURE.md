@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.14.1        
+**System Version:** 3.15.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -103,7 +103,7 @@ flowchart TD
 
     subgraph Layer2 ["2. Transport, Ingress & Security Pipeline"]
         CORS_Gate["CORS Allow-List Guard\n(middleware/cors.js)"]
-        BodyParser["Body Parser & Trust Proxy\n(express.json, trust proxy: 1 hop)"]
+        BodyParser["Body Parser & Trust Proxy\n(express.json, trust proxy: off unless KANBAN_TRUST_PROXY)"]
         
         subgraph PreAuth ["Pre-Auth Routes (Mounted before Auth Guard)"]
             AuthRoute["/api/auth\n(HMAC Session Handshake, Tickets & Revocation)"]

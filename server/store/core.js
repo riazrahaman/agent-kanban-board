@@ -110,8 +110,84 @@ export let projectSettings = new Map();
 
 // v2.5.6 (ENH-03): trash sink. project -> Task[] (soft-deleted, not live).
 export let trash = {};
+// COR-103: when a journal append is rejected and neither rolled back nor
+// superseded, a restart may replay some of it. The storage reports which of
+// the attempted tasks a restart would actually load; the persist call sites
+// below continue their normal post-persistence flow for those (memory update,
+// semantic notify, hooks), and the lock wrapper turns the whole operation into
+// a 503 "outcome unknown" at the end. Nothing is applied when the disk state
+// could not be read (fail closed).
+let pendingOutcomeUnknown = null;
+
+/** Records that the running locked operation hit an unknown persistence outcome. */
+export function markOutcomeUnknown(err) {
+  if (!pendingOutcomeUnknown) pendingOutcomeUnknown = err;
+}
+
+// Set once an applied-but-unknown outcome updated memory, so the wrapper can
+// still broadcast it if later work in the same mutation fails.
+let appliedUnknownPending = false;
+let appliedUnknownNotifier = null;
+export function noteAppliedUnknown() {
+  appliedUnknownPending = true;
+}
+export function setAppliedUnknownNotifier(fn) {
+  appliedUnknownNotifier = fn;
+}
+
+/**
+ * Awaits a single-task persist. Resolves normally when it succeeded OR when
+ * the outcome is unknown but a restart would load `candidate` (the caller then
+ * proceeds as if it committed). Throws when it failed or the candidate would
+ * not be loaded.
+ */
+export async function persistApplied(promise, candidate) {
+  try {
+    await promise;
+  } catch (err) {
+    if (err && err.outcomeUnknown) {
+      markOutcomeUnknown(err);
+      if ((err.changedTasks || []).some((t) => t.id === candidate.id)) {
+        // A restart would load this task: memory follows immediately, so no
+        // later failure in the same mutation can leave memory behind the disk.
+        updateInMemoryTask(candidate);
+        appliedUnknownPending = true;
+        return;
+      }
+    }
+    throw err;
+  }
+}
+
+function outcomeUnknownResult(err) {
+  return { error: err.message, status: 503, reason: 'outcome_unknown' };
+}
+async function guardOutcomeUnknown(operation) {
+  pendingOutcomeUnknown = null;
+  appliedUnknownPending = false;
+  try {
+    const result = await operation();
+    if (pendingOutcomeUnknown) return outcomeUnknownResult(pendingOutcomeUnknown);
+    return result;
+  } catch (err) {
+    // The response is the outcome-unknown 503 even when later work in the
+    // same mutation failed with an ordinary error. The normal notification
+    // may not have run, so broadcast the applied state here.
+    const unknown = (err && err.outcomeUnknown) ? err : pendingOutcomeUnknown;
+    if (unknown) {
+      if (appliedUnknownPending && appliedUnknownNotifier) {
+        try { appliedUnknownNotifier(); } catch { /* best effort */ }
+      }
+      return outcomeUnknownResult(unknown);
+    }
+    throw err;
+  } finally {
+    pendingOutcomeUnknown = null;
+    appliedUnknownPending = false;
+  }
+}
 export function withMutationLock(operation) {
-  const run = mutationQueue.then(() => operation(), () => operation());
+  const run = mutationQueue.then(() => guardOutcomeUnknown(operation), () => guardOutcomeUnknown(operation));
   mutationQueue = run.catch(() => undefined);
   return run;
 }

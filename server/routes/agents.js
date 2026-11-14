@@ -46,7 +46,7 @@ router.post('/:agent_id/heartbeat', asyncHandler(async (req, res) => {
   }
   const result = await store.renewAllLeases(agentId, { project, caller });
   if (result.error) {
-    return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({ error: result.error, ...(result.reason === 'outcome_unknown' ? { reason: result.reason } : {}) });
   }
   return res.status(200).json({ renewed: result.renewed, count: result.count });
 }));

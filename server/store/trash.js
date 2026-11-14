@@ -11,6 +11,7 @@ import {
   updateInMemoryTask,
   compositeKey,
   withMutationLock,
+  persistApplied,
   versionConflict,
   nextVersionFor,
   spillFile,
@@ -131,14 +132,15 @@ export async function restoreFromTrash(id, { caller = {}, project, expected_vers
     // Persist FIRST: live partition + trash sink, then memory.
     const storage = getStorage(authorizedProject);
     if (storage instanceof GitYamlStorage) {
-      await storage.saveTask(restored);
-      await storage.trashRemove(trashed);
+      await persistApplied(storage.saveTask(restored), restored);
+      // COR-101: shared identity-based removal updates memory as well as disk.
+      await trashPersistRemove(authorizedProject, trashed);
     } else {
       // BUGFIX (deep-review P0): persist the partition WITH the restored card.
       // The previous call persisted `getProjectBucket(authorizedProject)` — the
       // live bucket WITHOUT `restored` — so the card existed only in memory and
       // any restart silently lost it while the trash copy was already gone.
-      await storage.saveTask(restored, projectBucket(authorizedProject, restored));
+      await persistApplied(storage.saveTask(restored, projectBucket(authorizedProject, restored)), restored);
       await trashPersistRemove(authorizedProject, trashed);
     }
 

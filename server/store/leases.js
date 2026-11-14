@@ -17,6 +17,7 @@ import {
   updateInMemoryTask,
   compositeKey,
   withMutationLock,
+  persistApplied,
   nextVersionFor,
 } from './core.js';
 import { notify } from './listeners.js';
@@ -250,7 +251,7 @@ export function isoFromMs(ms) {
     });
 
     // KB-05: persist first, then mutate memory, then notify.
-    await getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate));
+    await persistApplied(getStorage(candidate.project).saveTask(candidate, projectBucket(candidate.project, candidate)), candidate);
     updateInMemoryTask(candidate);
     // §2.2/§2.9: surface a semantic 'reclaimed' event + audit who/why.
     notify({
@@ -373,6 +374,8 @@ export function isoFromMs(ms) {
         try {
           r = await reclaimTaskInner(task, { reason, nowMs });
         } catch (err) {
+          // COR-103: an unknown persistence outcome must reach the lock wrapper.
+          if (err && err.outcomeUnknown) throw err;
           log.error('sweep item failed', { project: t.project, task_id: t.id, error: err && err.message });
           continue;
         }
