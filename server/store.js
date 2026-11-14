@@ -98,6 +98,7 @@ import {
   listGitProjects,
   rebuildIndex,
   updateInMemoryTask,
+  setOutcomeUnknownHandler,
   setTaskInMemory,
   removeFromMemory,
   getProjectBucket,
@@ -239,6 +240,13 @@ export {
 // ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
+
+// COR-103: a journal append that was rejected but may still replay is applied
+// to memory (and broadcast) so memory equals what a restart would load.
+setOutcomeUnknownHandler((changed) => {
+  for (const t of changed) updateInMemoryTask(t);
+  notify();
+});
 
 export async function loadStore() {
   const backend = process.env.KANBAN_STORAGE_BACKEND || 'json';
@@ -1519,6 +1527,7 @@ async function renewAllLeasesInner(agentId, nowMs, { excludeKey = null, project 
         renewed.push(compositeKey(p, candidate.id));
       }
     } catch (err) {
+      if (err && err.outcomeUnknown) throw err;
       // I-6: never let a sibling's save failure fail the caller's real write.
       log.error('sibling lease renewal failed', {
         project: p,
@@ -1564,6 +1573,7 @@ async function persistHolderWrite(candidate, renewFor, nowMs, { leaseOnly = fals
       for (const s of siblings) updateInMemoryTask(s);
       return siblings.map((s) => compositeKey(p, s.id));
     } catch (err) {
+      if (err && err.outcomeUnknown) throw err;
       log.error('sibling lease renewal failed', { project: p, error: err && err.message });
     }
   }

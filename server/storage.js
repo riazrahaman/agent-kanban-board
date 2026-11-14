@@ -68,7 +68,10 @@ async function appendDurable(file, data, { syncDir = true } = {}) {
           rolledBack = true;
         } catch { /* flagged below */ }
       }
-      if (!rolledBack) err.journalRollbackFailed = true;
+      if (!rolledBack) {
+        err.journalRollbackFailed = true;
+        err.journalOffset = before;
+      }
       throw err;
     }
   } finally {
@@ -100,6 +103,22 @@ async function journalFoldStep(fn) {
     const err = new Error(`journal fold failed: ${cause && cause.message ? cause.message : String(cause)}`, { cause });
     err.journalFold = true;
     throw err;
+  }
+}
+
+/**
+ * Raised when a journal append failed, could not be rolled back and could not
+ * be superseded: the change may or may not survive a restart.
+ */
+export class StorageOutcomeUnknownError extends Error {
+  constructor(cause, changedTasks) {
+    super(
+      `Storage unavailable: the outcome of this change is unknown and it may have been applied. Re-read the task before retrying (expected_version will expose it). (${cause && cause.message ? cause.message : String(cause)})`,
+      { cause },
+    );
+    this.outcomeUnknown = true;
+    this.status = 503;
+    this.changedTasks = changedTasks;
   }
 }
 
@@ -375,9 +394,59 @@ export class JsonStorage {
     } catch (err) {
       if (err && err.journalRollbackFailed) {
         this._journalPoison = err;
-        console.error(`[kanban JsonStorage] journal append failed and could not be rolled back: ${err.message}; refusing further journal appends until a full rewrite`);
+        console.error(`[kanban JsonStorage] journal append failed and could not be rolled back: ${err.message}`);
+        // Memory must equal what a restart would load. First try to supersede
+        // the rejected record with a canonical rewrite of the state without it.
+        if (await this._supersedeRejectedTail(err.journalOffset)) throw err;
+        // That failed too: the rejected record may replay, so report the
+        // outcome as unknown and let the store apply the change in memory.
+        console.error('[kanban JsonStorage] could not supersede the rejected journal record; outcome unknown, journal appends refused until a full rewrite');
+        throw new StorageOutcomeUnknownError(err, entries.filter((e) => e.op === 'upsert' && e.task).map((e) => e.task));
       }
       throw err;
+    }
+  }
+
+  /**
+   * Rewrites the base (full durability, next generation) from the state a
+   * restart would load WITHOUT the journal bytes after `offset`: the base plus
+   * the journal prefix. The new generation supersedes every journal line,
+   * the rejected one included, and clears the append refusal. Returns false
+   * when the state cannot be derived or written.
+   */
+  async _supersedeRejectedTail(offset) {
+    try {
+      let list = [];
+      let generation = 0;
+      if (existsSync(this.filePath)) {
+        const parsed = JSON.parse(await readFile(this.filePath, 'utf-8'));
+        list = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+        generation = JsonStorage.generationOf(parsed);
+      }
+      const prefix = (await readFile(this.journalFile)).subarray(0, offset).toString('utf-8');
+      const byId = new Map(list.map((t) => [t.id, t]));
+      for (const line of prefix.split('\n')) {
+        if (!line.trim()) continue;
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (!Number.isInteger(entry && entry.generation)) return false; // legacy line: do not guess
+        if (entry.generation !== generation) continue;
+        if (entry.op === 'upsert' && entry.task) {
+          const existing = byId.get(entry.task.id);
+          if (existing && Number.isInteger(existing.version) && Number.isInteger(entry.task.version)
+              && entry.task.version < existing.version) continue;
+          byId.set(entry.task.id, entry.task);
+        } else if (entry.op === 'remove' && entry.id) {
+          byId.delete(entry.id);
+        }
+      }
+      const state = [...byId.values()];
+      backfillLeaseFields(state);
+      this.generation = generation;
+      await this._writeCanonical(state);
+      return true;
+    } catch {
+      return false;
     }
   }
 

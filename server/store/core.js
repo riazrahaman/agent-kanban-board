@@ -110,8 +110,27 @@ export let projectSettings = new Map();
 
 // v2.5.6 (ENH-03): trash sink. project -> Task[] (soft-deleted, not live).
 export let trash = {};
+// COR-103: when a journal append is rejected and neither rolled back nor
+// superseded, a restart may replay it. The store applies the change in memory
+// (so memory equals what a restart would load, and SSE reflects it) and the
+// caller gets a 503 "outcome unknown" instead of a plain failure.
+let outcomeUnknownHandler = null;
+export function setOutcomeUnknownHandler(fn) {
+  outcomeUnknownHandler = fn;
+}
+async function guardOutcomeUnknown(operation) {
+  try {
+    return await operation();
+  } catch (err) {
+    if (err && err.outcomeUnknown && outcomeUnknownHandler) {
+      outcomeUnknownHandler(err.changedTasks || []);
+      return { error: err.message, status: 503, reason: 'outcome_unknown' };
+    }
+    throw err;
+  }
+}
 export function withMutationLock(operation) {
-  const run = mutationQueue.then(() => operation(), () => operation());
+  const run = mutationQueue.then(() => guardOutcomeUnknown(operation), () => guardOutcomeUnknown(operation));
   mutationQueue = run.catch(() => undefined);
   return run;
 }
