@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!--
+    Favicon: "Three-Column Ledger"
+
+    Source design: Agent Kanban Favicon Studio
+    (agent-kanban-favicon-studio.ai.studio, concept 01 — Recommended).
+
+    Distills the 8-column board down to three high-contrast vertical lanes
+    inside a crisp 1px architectural frame, with an active live-agent block
+    in the center lane and a completed pass block on the right. Matches the
+    sharp border-line card geometry, the warm parchment / deep obsidian
+    canvas, and the --live / --pass accents.
+
+    Adaptive: the light palette applies by default and the dark palette
+    applies under prefers-color-scheme: dark (the favicon cannot see the
+    app's explicit theme toggle, so it follows the OS preference).
+  -->
+  <style>
+    .bg{fill:#f6f2e8}
+    .frame{stroke:#211f1a}
+    .rail{fill:#e6dfd0}
+    .card-ink{fill:#211f1a}
+    .card-live{fill:#1f5673}
+    .card-pass{fill:#346538}
+    @media (prefers-color-scheme: dark) {
+      .bg{fill:#0c1726}
+      .frame{stroke:#26405f}
+      .rail{fill:#26405f}
+      .card-ink{fill:#e7edf6}
+      .card-live{fill:#6aa8ff}
+      .card-pass{fill:#3dd6a8}
+    }
+  </style>
+  <rect class="bg" x="1" y="1" width="30" height="30" rx="6"/>
+  <rect class="frame" x="1.5" y="1.5" width="29" height="29" rx="5.5" fill="none" stroke-width="1.5"/>
+  <rect class="rail" x="11" y="5" width="1.2" height="22" rx="0.6"/>
+  <rect class="rail" x="20" y="5" width="1.2" height="22" rx="0.6"/>
+  <rect class="card-ink" x="5" y="7" width="4.5" height="5" rx="1"/>
+  <rect class="card-ink" x="5" y="14" width="4.5" height="7" rx="1"/>
+  <rect class="card-live" x="13.7" y="7" width="4.6" height="9" rx="1"/>
+  <rect class="card-ink" x="13.7" y="18" width="4.6" height="5" rx="1"/>
+  <rect class="card-pass" x="22.5" y="7" width="4.5" height="6" rx="1"/>
+  <rect class="card-ink" x="22.5" y="15" width="4.5" height="4" rx="1"/>
+</svg>
