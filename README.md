@@ -682,6 +682,15 @@ behaviour. `kanban.version.test.js` cannot catch a missing bump (it only asserts
 that the current version is internally consistent), which is why the rule lives
 in the workflow.
 
+The `Audit Dependencies` CI step runs `scripts/npm-audit-gate.mjs` rather than a
+bare `npm audit --audit-level=high`, so an advisory with **no upstream fix**
+(any published version of the package is affected) does not block every commit
+indefinitely. The bar is unchanged for everything else; the only exemptions are
+dated, reasoned entries in `scripts/audit-allowlist.json` (currently the
+unpatched picomatch ReDoS, GHSA-fc5q-39xc-vjpf — build-time toolchain only in
+this repo). Entries expire fail-closed: past the expiry date the advisory
+blocks the gate again, so remove an entry as soon as a patched release ships.
+
 Run it locally against your base branch:
 
 ```sh

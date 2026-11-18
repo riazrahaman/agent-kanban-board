@@ -42,9 +42,15 @@ jobs:
           npm --prefix client ci
 
       - name: Audit Dependencies
+        # Dated-allowlist gate instead of a bare `npm audit --audit-level=high`:
+        # advisories with NO upstream fix (GHSA-fc5q-39xc-vjpf, picomatch ReDoS)
+        # would otherwise block every commit indefinitely. The bar is unchanged
+        # for everything else; exemptions live in scripts/audit-allowlist.json
+        # with a written reason and an expiry date, and expire fail-closed.
         run: |
-          npm --prefix server audit --audit-level=high
-          npm --prefix client audit --audit-level=high
+          node scripts/npm-audit-gate.mjs --self-test
+          node scripts/npm-audit-gate.mjs --prefix server --level high
+          node scripts/npm-audit-gate.mjs --prefix client --level high
 
       - name: Security Checks
         run: make sec

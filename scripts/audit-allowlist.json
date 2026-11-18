@@ -1,0 +1,10 @@
+{
+  "$schema": "Dated, fail-closed audit allowlist. An entry only exempts its advisory while today <= expires; after the expiry the advisory blocks the gate again. Remove an entry as soon as a patched release ships.",
+  "entries": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "reason": "picomatch ReDoS via single-branch repeated extglobs (CVE-2026-112366). No patched release exists (affects <=4.0.7; fix PR micromatch/picomatch#194 still open). Build-time dev toolchain only here (vite/tinyglobby globbing trusted repo files), not runtime code.",
+      "expires": "2026-12-17"
+    }
+  ]
+}
