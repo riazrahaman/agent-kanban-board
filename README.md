@@ -524,6 +524,7 @@ enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
 - **Theming**: A warm-cream light palette and a midnight-navy blueprint dark palette (adopted from the Stack Field Guide), controlled by a single header button cycling Auto -> Light -> Dark (v2.17.0; Auto follows the OS preference live, no reload needed, and is the default with no stored choice); an explicit Light/Dark choice wins over the OS preference and native controls follow via `color-scheme`.
 - **Responsive**: The shell wraps instead of overflowing, board columns snap-scroll at `85vw` on mobile (`w-72` from `md` up), and the Signal Rail collapses into a slide-over drawer below `md`. On touch devices (`pointer: coarse`) header and filter-row controls grow to 44px tap targets and form controls to 16px text (no iOS focus-zoom); mouse/trackpad layouts are unchanged.
+- **Favicon (v3.16.3)**: The primary icon is the adaptive SVG (`favicon.svg`, dark-mode aware via `prefers-color-scheme`), served first where the browser supports it. Raster fallbacks ship alongside — a 32×32 `favicon.png` and a 180×180 `apple-touch-icon.png` — because Safari only renders SVG favicons from Safari 17 onward; `client/scripts/render-favicon-png.mjs` re-renders the PNGs from the SVG if the design changes.
 
 ---
 

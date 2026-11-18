@@ -76,6 +76,12 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     delete process.env.KANBAN_DEFAULT_PROJECT;
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-nextclaim-'));
+    // Belt and braces: while the storage pointer is null, a lazy getStorage()
+    // (e.g. an in-flight write from a previous test racing our beforeEach)
+    // falls back to the factory default — the real shared server/tasks.json —
+    // and its READY cards then win the fair queue. Point the fallback at the
+    // tmp file so that window can never touch the real data.
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
     store.setStorage(null);
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
@@ -88,6 +94,7 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     await rm(tmpDir, { recursive: true, force: true });
     delete process.env.KANBAN_AUTH_TOKEN;
     delete process.env.KANBAN_REAP_ENABLED;
+    delete process.env.KANBAN_DATA_FILE;
     store.setStorage(null);
      });
 
@@ -97,8 +104,9 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
   beforeEach(async () => {
     // Isolate every test on a clean task store. A POST /api/tasks persists to
     // the on-disk file, so to start each test empty we clear that file first
-    // (loadStore() reads [] when the file is absent) and re-read.
-    store.setStorage(null);
+    // (loadStore() reads [] when the file is absent) and re-read. The fresh
+    // storage is installed in ONE step — no setStorage(null) window for an
+    // in-flight write to fall through to the default (real) tasks.json.
     await rm(path.join(tmpDir, 'tasks.json'), { force: true });
     await rm(path.join(tmpDir, 'tasks.json.journal.jsonl'), { force: true });
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
