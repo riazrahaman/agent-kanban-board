@@ -68,6 +68,12 @@ describe('v2.5.0 comments: discussion thread on each card', () => {
     process.env.KANBAN_REAP_ENABLED = 'false';
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-comments-'));
     dataFile = path.join(tmpDir, 'tasks.json');
+    // Hermetic on both roots (see kanban.nextclaim.test.js): loadStore()
+    // enumerates jsonDataDir()/tasks (named projects) into the live array, so
+    // without the dir pin real checkout data can leak in — and writes can leak
+    // out — of this suite.
+    process.env.KANBAN_DATA_FILE = dataFile;
+    process.env.KANBAN_DATA_DIR = tmpDir;
     store.setStorage(null);
     store.setStorage(new store.JsonStorage(dataFile));
     await store.loadStore();
@@ -80,6 +86,8 @@ describe('v2.5.0 comments: discussion thread on each card', () => {
   after(async () => {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(tmpDir, { recursive: true, force: true });
+    delete process.env.KANBAN_DATA_FILE;
+    delete process.env.KANBAN_DATA_DIR;
     store.setStorage(null);
   });
 

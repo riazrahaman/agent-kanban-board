@@ -76,12 +76,16 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     delete process.env.KANBAN_DEFAULT_PROJECT;
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-nextclaim-'));
-    // Belt and braces: while the storage pointer is null, a lazy getStorage()
-    // (e.g. an in-flight write from a previous test racing our beforeEach)
-    // falls back to the factory default — the real shared server/tasks.json —
-    // and its READY cards then win the fair queue. Point the fallback at the
-    // tmp file so that window can never touch the real data.
+    // Hermetic on BOTH roots. loadStore() reads the default file AND enumerates
+    // jsonDataDir()/tasks (every named project) into the live `tasks` array, and
+    // an unscoped next-claim does NOT filter by project — so without the dir pin
+    // the real checkout data (server/data/tasks/pitlane.json) entered the live
+    // array, won the FIFO (loaded first), got claimed by this test, and the
+    // claim was persisted back into the real file. Pinning KANBAN_DATA_DIR sends
+    // that enumeration to the (absent) tmp dir; the KANBAN_DATA_FILE pin keeps
+    // the default project off the real server/tasks.json as well.
     process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    process.env.KANBAN_DATA_DIR = tmpDir;
     store.setStorage(null);
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
@@ -95,6 +99,7 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
     delete process.env.KANBAN_AUTH_TOKEN;
     delete process.env.KANBAN_REAP_ENABLED;
     delete process.env.KANBAN_DATA_FILE;
+    delete process.env.KANBAN_DATA_DIR;
     store.setStorage(null);
      });
 
@@ -102,11 +107,12 @@ describe('KB-12 fair claim queue (§2.7 next-claim)', () => {
   // deterministic. loadStore() re-reads from disk (empty tmp file), which
   // rebuilds the live `tasks` array from nothing — no cross-test leakage.
   beforeEach(async () => {
-    // Isolate every test on a clean task store. A POST /api/tasks persists to
-    // the on-disk file, so to start each test empty we clear that file first
-    // (loadStore() reads [] when the file is absent) and re-read. The fresh
-    // storage is installed in ONE step — no setStorage(null) window for an
-    // in-flight write to fall through to the default (real) tasks.json.
+    // Isolate every test on a clean task store: clear the default tmp file and
+    // journal, install the fresh storage in ONE step (no setStorage(null)
+    // window), and re-read. The KANBAN_DATA_DIR pin from before() keeps the
+    // named-project enumeration inside the tmp dir, so loadStore() rebuilds
+    // the live `tasks` array from nothing — no real-data leakage in either
+    // direction.
     await rm(path.join(tmpDir, 'tasks.json'), { force: true });
     await rm(path.join(tmpDir, 'tasks.json.journal.jsonl'), { force: true });
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));

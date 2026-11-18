@@ -69,6 +69,12 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
     delete process.env.KANBAN_DEFAULT_PROJECT;
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-deps-'));
+    // Hermetic on both roots (see kanban.nextclaim.test.js): loadStore()
+    // enumerates jsonDataDir()/tasks (named projects) into the live array, so
+    // without the dir pin real checkout data can leak in — and writes can leak
+    // out — of this suite.
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    process.env.KANBAN_DATA_DIR = tmpDir;
     store.setStorage(null);
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
@@ -82,6 +88,8 @@ describe('KB-11 dependency-gated claiming (§2.5)', () => {
      delete process.env.KANBAN_AUTH_TOKEN;
       delete process.env.KANBAN_AUTO_PROMOTE;
       delete process.env.KANBAN_REAP_ENABLED;
+     delete process.env.KANBAN_DATA_FILE;
+     delete process.env.KANBAN_DATA_DIR;
      store.setStorage(null);
          });
 
@@ -275,6 +283,9 @@ describe('KB-11b dependency-gated PATCH (§2.5) — PATCH is not a side door aro
     delete process.env.KANBAN_DEFAULT_PROJECT;
     delete process.env.KANBAN_ARCHIVE_AFTER_DAYS;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), 'kanban-deps-patch-'));
+    // Hermetic on both roots (see kanban.nextclaim.test.js).
+    process.env.KANBAN_DATA_FILE = path.join(tmpDir, 'tasks.json');
+    process.env.KANBAN_DATA_DIR = tmpDir;
     store.setStorage(null);
     store.setStorage(new store.JsonStorage(path.join(tmpDir, 'tasks.json')));
     await store.loadStore();
@@ -288,6 +299,8 @@ describe('KB-11b dependency-gated PATCH (§2.5) — PATCH is not a side door aro
      delete process.env.KANBAN_AUTH_TOKEN;
       delete process.env.KANBAN_AUTO_PROMOTE;
       delete process.env.KANBAN_REAP_ENABLED;
+     delete process.env.KANBAN_DATA_FILE;
+     delete process.env.KANBAN_DATA_DIR;
      store.setStorage(null);
          });
 
