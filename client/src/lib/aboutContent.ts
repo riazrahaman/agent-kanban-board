@@ -229,6 +229,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Real-time push over SSE', code: 'server.js · GET /api/events' },
   { name: 'Periodic data backups', code: 'store.js · runBackup, backupStatus' },
   { name: 'Telegram alerts on reclaim', code: 'notifier.js · onDiff, formatReclaimMessage' },
+  { name: 'Daily full backup to Telegram (v3.17.0)', code: 'telegramBackup.js · runTelegramBackupNow, msUntilNextRun' },
   { name: 'Per-project token & project-name isolation', code: 'middleware/auth.js, routes/projects.js, routes/health.js' },
   { name: 'Credential-map coverage in health', code: 'utils/credentialMap.js · checkCredentialCoverage, GET /api/health' },
   { name: 'Rate limiting + auth-failure lockout', code: 'middleware/rateLimit.js · createRateLimitMiddleware' },
@@ -724,11 +725,11 @@ KANBAN_DATA_DIR=/data         # named projects, archives and settings live here`
     emoji: '📣',
     title: 'Reporting & Alerts',
     eli5:
-      'Three optional channels let the humans find out what happened: file a bug, get a reclaim alert, or stream every change to another system.',
+      'Four optional channels let the humans find out what happened: file a bug, get a reclaim alert, receive a daily backup of the whole board, or stream every change to another system.',
     underTheHood:
-      'server/routes/bugReports.js turns an anonymous in-app report into a labelled GitHub issue, guarded by Cloudflare Turnstile, a honeypot field and peek-and-consume rate limits (a request that fails validation or the captcha never spends the budget). server/notifier.js posts a full-detail Telegram alert whenever the reaper returns a card to READY. server/webhooks.js POSTs a signed, machine-readable envelope for every committed mutation to one or more subscriber URLs.',
+      'server/routes/bugReports.js turns an anonymous in-app report into a labelled GitHub issue, guarded by Cloudflare Turnstile, a honeypot field and peek-and-consume rate limits (a request that fails validation or the captcha never spends the budget). server/notifier.js posts a full-detail Telegram alert whenever the reaper returns a card to READY. server/telegramBackup.js (v3.17.0) snapshots ALL board data under the mutation lock, packs it as a .tar.gz and sends it to the same Telegram chat once a day (03:00 Abu Dhabi time by default; hour and IANA zone are configurable), with retries, a failure alert, a 50 MB guard and a marker file so a restart never re-sends within 24 h. server/webhooks.js POSTs a signed, machine-readable envelope for every committed mutation to one or more subscriber URLs.',
     snippet: {
-      label: 'the three channels',
+      label: 'the four channels',
       code: `# 1. bug reports -> one GitHub issue (routes/bugReports.js)
 POST /api/bug-reports   # Turnstile + honeypot + peek-and-consume caps
 
@@ -736,13 +737,18 @@ POST /api/bug-reports   # Turnstile + honeypot + peek-and-consume caps
 KANBAN_TELEGRAM_BOT_TOKEN=...
 KANBAN_TELEGRAM_CHAT_ID=...
 
-# 3. signed outbound hooks (webhooks.js)
+# 3. daily full backup (telegramBackup.js, v3.17.0) — needs the two above
+KANBAN_TELEGRAM_BACKUP_ENABLED=1
+KANBAN_TELEGRAM_BACKUP_HOUR=3          # default
+KANBAN_TELEGRAM_BACKUP_TZ=Asia/Dubai   # default (Abu Dhabi, UTC+4)
+
+# 4. signed outbound hooks (webhooks.js)
 KANBAN_WEBHOOK_URLS=https://example.test/hook
 KANBAN_WEBHOOK_SECRET=...`,
     },
     gotcha:
-      'All three are off by default and fail-silent: a Telegram or webhook outage is logged and swallowed so it can never break the mutation or reclaim that triggered it.',
-    files: ['server/routes/bugReports.js', 'server/notifier.js', 'server/webhooks.js'],
+      'All four are off by default and fail-silent: a Telegram or webhook outage is logged and swallowed so it can never break the mutation or reclaim that triggered it. The daily backup holds every task\'s text and Telegram bot chats are not end-to-end encrypted, so point it at a private chat only.',
+    files: ['server/routes/bugReports.js', 'server/notifier.js', 'server/telegramBackup.js', 'server/webhooks.js'],
   },
   {
     id: 'client',

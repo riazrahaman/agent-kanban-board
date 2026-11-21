@@ -226,3 +226,8 @@ and the bot token is never logged or sent to clients. See **§3.1.1 Telegram Rec
 in `docs/USER_AND_OPERATOR_MANUAL.md` for the full setup walkthrough (creating the bot, reading the
 group id) and the optional filters (`KANBAN_NOTIFY_EVENTS`, `KANBAN_NOTIFY_PROJECTS`,
 `KANBAN_NOTIFY_INCLUDE_DESC`, `KANBAN_NOTIFY_MIN_INTERVAL_MS`, `KANBAN_BOARD_URL`).
+
+The same bot can also send a **full backup of the board once a day** (v3.17.0): set
+`KANBAN_TELEGRAM_BACKUP_ENABLED=1` (defaults: 03:00, `Asia/Dubai`; tune with
+`KANBAN_TELEGRAM_BACKUP_HOUR` / `KANBAN_TELEGRAM_BACKUP_TZ`). Use a private chat: the
+archive contains every task's text. See **§3.1.1.1** in `docs/USER_AND_OPERATOR_MANUAL.md`.
