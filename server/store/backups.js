@@ -112,7 +112,7 @@ function separateGitRoot() {
 async function runBackup() {
   // COR-106: copy under the mutation lock so partition, journal, trash and
   // archive are captured at one moment (a fast local copy).
-  await withMutationLock(() => runBackupLocked());
+  return withMutationLock(() => runBackupLocked());
 }
 
 async function runBackupLocked() {
@@ -128,6 +128,7 @@ async function runBackupLocked() {
     throw err;
   }
   await rotateBackups(root);
+  return destDir;
 }
 
 async function snapshotInto(root, destDir) {
@@ -254,8 +255,14 @@ export function isBackupRunning() {
   return backupTimer !== null;
 }
 
+/** Takes a snapshot now and resolves to the new snapshot directory. */
 export async function runBackupNow() {
-  await runBackup();
+  return runBackup();
+}
+
+/** Root directory snapshots are written under (also holds the Telegram marker). */
+export function backupRootDir() {
+  return defaultBackupRoot();
 }
 
 /**

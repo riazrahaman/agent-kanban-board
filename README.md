@@ -178,6 +178,8 @@ The board features pluggable persistence:
    | `KANBAN_NOTIFY_PROJECTS` | *(all)* | Optional project allow-list for alerts. |
    | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated task description in the alert. |
    | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between Telegram alerts. |
+   | `KANBAN_TELEGRAM_BACKUP_ENABLED` | *(unset)* | v3.17.0 — set truthy to send a full `.tar.gz` backup of ALL board data (every project, archive, trash, settings, journal; nothing stripped) to the Telegram chat once a day. Needs the bot token + chat id above. Use a private chat. |
+   | `KANBAN_TELEGRAM_BACKUP_HOUR` / `KANBAN_TELEGRAM_BACKUP_TZ` | `3` / `Asia/Dubai` | When the daily backup is sent: 03:00 Abu Dhabi time (UTC+4, no DST) by default. Any IANA zone works. |
    | `KANBAN_CLAIM_TTL_MS` | `600000` | Default lease window (10 min) used when a claim passes no `lease_ms`. |
    | `KANBAN_MIN_LEASE_MS` | `60000` | Lower bound a requested `lease_ms` is clamped to (1 min). |
    | `KANBAN_MAX_LEASE_MS` | `7200000` | Upper bound a requested `lease_ms` is clamped to (2 h). |
@@ -524,6 +526,7 @@ enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
 - **Theming**: A warm-cream light palette and a midnight-navy blueprint dark palette (adopted from the Stack Field Guide), controlled by a single header button cycling Auto -> Light -> Dark (v2.17.0; Auto follows the OS preference live, no reload needed, and is the default with no stored choice); an explicit Light/Dark choice wins over the OS preference and native controls follow via `color-scheme`.
 - **Responsive**: The shell wraps instead of overflowing, board columns snap-scroll at `85vw` on mobile (`w-72` from `md` up), and the Signal Rail collapses into a slide-over drawer below `md`. On touch devices (`pointer: coarse`) header and filter-row controls grow to 44px tap targets and form controls to 16px text (no iOS focus-zoom); mouse/trackpad layouts are unchanged.
+- **Header logo + daily Telegram backup (v3.17.0)**: The header now carries the favicon "Three-Column Ledger" as an inline brand mark (it follows the app theme), and its blue live-agent card is the pulsing live-connection signal that replaced the old blue square. Separately, with `KANBAN_TELEGRAM_BACKUP_ENABLED` and the existing Telegram bot configured, the server sends a full compressed backup of all board data to Telegram every day at 03:00 Abu Dhabi time (`docs/RESTORE.md`).
 - **Favicon (v3.16.4)**: The primary icon is the adaptive SVG (`favicon.svg`, dark-mode aware via `prefers-color-scheme`), declared last and used by Chrome, Firefox and Safari 26+. Legacy targets are covered by a 32×32 `favicon.ico` at the site root (Safari < 26 ignores SVG icon links and probes `/favicon.ico` directly) and a 32×32 `favicon.png` with a 180×180 `apple-touch-icon.png` for iOS "Add to Home Screen". All icon URLs carry a `?v=` release parameter because Safari keeps a per-host favicon cache that survives the icon files changing — a URL change forces stale entries to refresh. `client/scripts/render-favicon-png.mjs` re-renders the PNGs and the ICO from the SVG if the design changes.
 
 ---

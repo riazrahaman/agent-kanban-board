@@ -30,6 +30,17 @@ protect against corruption and bad writes, not against volume loss. For
 volume-loss protection, copy snapshots off the volume on a schedule (step 3
 below).
 
+## Daily Telegram copy (v3.17.0)
+
+Snapshots on the volume do not survive losing the volume. Set
+`KANBAN_TELEGRAM_BACKUP_ENABLED=1` (with the Telegram bot token and chat id) and
+the server sends a full `.tar.gz` of the newest snapshot to that chat every day
+at `KANBAN_TELEGRAM_BACKUP_HOUR` (default 03:00) in `KANBAN_TELEGRAM_BACKUP_TZ`
+(default `Asia/Dubai`, i.e. Abu Dhabi time). Nothing is stripped, so use a
+private chat. To restore from one: download it from Telegram, `tar -xzf
+kanban-backup-<date>.tar.gz`, then run `scripts/restore-backup.mjs` on the
+extracted `<timestamp>/` directory exactly as in the procedure below.
+
 ## Deploy configuration
 
 - **Render** (`render.yaml`): `KANBAN_BACKUP_ENABLED=1`,

@@ -30,6 +30,7 @@ import {
   type ThemeMode,
 } from './lib/theme'
 import Board from './components/Board'
+import BrandMark from './components/BrandMark'
 import BoardFilters from './components/BoardFilters'
 import About from './components/About'
 import Portfolio from './components/Portfolio'
@@ -564,7 +565,7 @@ export default function App() {
           data-controls-open={headerOpen ? 'true' : 'false'}
           className="app-header flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
           <div className="flex shrink-0 items-center gap-3">
-            <span className="h-2 w-2 bg-live animate-pulse" aria-label="Live connection" />
+            <BrandMark />
             <div className="flex items-baseline gap-2">
              <h1 className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
                Agent Kanban Board
