@@ -326,6 +326,12 @@ mirror under `archive/`; inline overflow spills to `spill/<project>/<id>.jsonl`.
 `KANBAN_BACKUP_INTERVAL_MS` (600000), rotate `KANBAN_BACKUP_KEEP` (10) snapshots
 under `<data>/backups/<timestamp>/`. `scripts/restore-backup.mjs` restores one.
 
+**Daily Telegram backup** (`telegramBackup.js`, v3.17.0): with
+`KANBAN_TELEGRAM_BACKUP_ENABLED` plus the bot token/chat id, a full `.tar.gz` of
+all board data is sent to Telegram daily at `KANBAN_TELEGRAM_BACKUP_HOUR`
+(default 3) in `KANBAN_TELEGRAM_BACKUP_TZ` (default `Asia/Dubai`). It is the only
+copy that leaves the volume. Marker file `<backup root>/.telegram-last-sent`.
+
 ---
 
 ## 7. Subsystems

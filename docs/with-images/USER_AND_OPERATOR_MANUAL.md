@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.17.0
+**System:** Agent Kanban Board v3.17.1
 
 ---
 
@@ -154,6 +154,21 @@ When the lease reaper returns a task to `READY` (an idle lease expired, a held t
 | `KANBAN_NOTIFY_INCLUDE_DESC` | `true` | Include a truncated (300-char) task description. `false` omits it. |
 | `KANBAN_NOTIFY_MIN_INTERVAL_MS` | `1000` | Minimum gap between alerts; the send queue is serialized so a multi-task sweep cannot trip Telegram's rate limit. |
 | `KANBAN_BOARD_URL` | `https://agent-kanban.riazrahaman.com` | Base URL for the alert's deep link. |
+
+### 3.1.1.1 Daily Telegram Backup (v3.17.1)
+
+The same bot can also send you a **full backup of the board once a day**, an off-volume copy that survives losing the hosting volume. It is off until you opt in:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KANBAN_TELEGRAM_BACKUP_ENABLED` | *(unset)* | Set truthy to enable. Also needs `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` (§3.1.1). |
+| `KANBAN_TELEGRAM_BACKUP_HOUR` | `3` | Hour of day (0-23) to send, in the zone below. |
+| `KANBAN_TELEGRAM_BACKUP_TZ` | `Asia/Dubai` | IANA time zone. `Asia/Dubai` is Abu Dhabi time (UTC+4, no DST); an invalid value falls back to it. |
+
+- **What is sent.** A `kanban-backup-YYYY-MM-DD-HHMM.tar.gz` of a consistent snapshot (taken under the mutation lock) of **all** data: every project, archive, trash, settings, journal, spill and audit file, plus `backup-manifest.json`. Nothing is stripped. It is a few hundred KB to a few MB compressed (Telegram bots accept up to 50 MB; a larger archive is refused with a text alert instead).
+- **Privacy.** The archive contains every task's text and Telegram bot chats are not end-to-end encrypted: use a private chat that only you can read. Credentials are env vars, not data, so they are not in the archive.
+- **Reliability.** A failed send retries twice, then posts a short failure alert; the bot token is redacted from every error. A marker file (`<backup root>/.telegram-last-sent`) stops a restart or deploy from re-sending within 24 h, and a missed run (or the first boot) is caught up about a minute after startup. It never affects a request.
+- **Restore.** Download the file, `tar -xzf kanban-backup-<date>.tar.gz`, then run `scripts/restore-backup.mjs` on the extracted `<timestamp>/` directory (`docs/RESTORE.md`).
 
 ### 3.1.2 Ask the Board (v3.4.0 backend · v3.5.0 console · v3.7.0 Ollama provider · v3.11.0 card history · v3.12.0 source index)
 
@@ -816,7 +831,7 @@ Every remote/untrusted value that reaches one of these lines — GitHub's `messa
 
 ### 8.1 Standalone JSON Mode
 - All data resides in `server/tasks.json` (default project) or `KANBAN_DATA_DIR/tasks/<project>.json` (named projects).
-- **Automatic backup (recommended):** set `KANBAN_BACKUP_ENABLED=1` (with `KANBAN_BACKUP_INTERVAL_MS` and `KANBAN_BACKUP_KEEP`) to snapshot task data into a `backups/` directory, rotated to a bounded count. The `backup` block on `GET /api/health` shows freshness at a glance; `docs/RESTORE.md` has the restore runbook.
+- **Automatic backup (recommended):** set `KANBAN_BACKUP_ENABLED=1` (with `KANBAN_BACKUP_INTERVAL_MS` and `KANBAN_BACKUP_KEEP`) to snapshot task data into a `backups/` directory, rotated to a bounded count. The `backup` block on `GET /api/health` shows freshness at a glance; `docs/RESTORE.md` has the restore runbook. For an **off-volume** copy, `KANBAN_TELEGRAM_BACKUP_ENABLED=1` also sends a full compressed backup to Telegram every day (§3.1.1.1, v3.17.1).
 - **Manual backup:** copy the JSON file(s):
   ```bash
   cp server/tasks.json server/tasks.backup.$(date +%Y%m%d_%H%M%S).json

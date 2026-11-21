@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.17.0
+version: 3.17.1
 ---
 
 # Kanban Orchestrator Protocol
@@ -229,6 +229,10 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
 ### Reclaim Alerts (optional)
 
 When the reaper resets a card — an expired lease (`lease_expired`), a progress stall (`progress_stalled`), or an active card with no owner (`orphan_normalized`) — the server can POST a Telegram alert to the operator: the out-of-band companion to the lease-loss recovery path above. It is **off unless configured** (`KANBAN_TELEGRAM_BOT_TOKEN` + `KANBAN_TELEGRAM_CHAT_ID`); optional filters are `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, and `KANBAN_BOARD_URL`. The notifier is a pure subscriber — it never affects the board — so do not poll for it; treat an alert as a prompt to inspect the card and re-claim.
+
+### Daily Backup to Telegram (optional, operator-owned)
+
+The board can also send a full compressed backup of ALL its data to the same Telegram chat once a day (`KANBAN_TELEGRAM_BACKUP_ENABLED`, `KANBAN_TELEGRAM_BACKUP_HOUR` default `3`, `KANBAN_TELEGRAM_BACKUP_TZ` default `Asia/Dubai`; needs the bot token + chat id above). It runs inside the server, changes no board state and has no HTTP surface, so agents never call or trigger it. Do not poll for it. If an operator asks for a restore, point them at `docs/RESTORE.md` in the board repo (`tar -xzf`, then `scripts/restore-backup.mjs`).
 
 ## 5. Data Integrity Notes
 

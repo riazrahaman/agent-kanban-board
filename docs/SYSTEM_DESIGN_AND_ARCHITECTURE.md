@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.17.0        
+**System Version:** 3.17.1        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -71,6 +71,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. **Diff events are the default** (one `task.<kind>` per changed task); `?mode=snapshot` restores whole-board snapshots and `?prime=1` sends an initial `event: tasks` snapshot. A single client stream carries both diffs and `event: settings` (v2.8.0). |
 | **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `READY` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
+| **Daily Backup (v3.17.1)** | Telegram Bot API `sendDocument`, system `tar` | Node 20/22 native `fetch` + `FormData` | `server/telegramBackup.js` snapshots all board data under the mutation lock (`runBackupNow`), packs a `.tar.gz` and sends it to the Telegram chat once a day at `KANBAN_TELEGRAM_BACKUP_HOUR` in `KANBAN_TELEGRAM_BACKUP_TZ` (default 03:00 `Asia/Dubai`). Off by default; DST-safe scheduler; retries, failure alert, 50 MB guard, 24 h marker file. |
 | **Bundling for Tests** | `esbuild` | ^0.25.0 | On-the-fly TS bundling in `.mjs` test runner across Node 20.x & 22.x. |
 
 ### 2.3 Typography & Design System
