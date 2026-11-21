@@ -5,6 +5,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { loadStore, onChange, onDiff, onSettings, getSettings, getTasks, getProjectSummaries, startReaper, stopReaper, isReaperEnabled, startBackup, stopBackup } from './store.js';
 import { startNotifier, stopNotifier, notifierConfig } from './notifier.js';
+import { startTelegramBackup, stopTelegramBackup } from './telegramBackup.js';
 import { startDeployDrift, stopDeployDrift } from './deployDrift.js';
 import { startWebhooks, stopWebhooks } from './webhooks.js';
 import tasksRouter from './routes/tasks.js';
@@ -769,6 +770,11 @@ export async function startServer(
       server.on('close', () => unsubAudit());
       startBackup();
       server.on('close', () => stopBackup());
+      // §2.12 (v3.17.0): daily backup to Telegram. Off unless
+      // KANBAN_TELEGRAM_BACKUP_ENABLED + bot token + chat id are set; started
+      // only here (never in createApp) so tests make no network call.
+      startTelegramBackup();
+      server.on('close', () => stopTelegramBackup());
       // §2.10 (v3.9.5): deploy-drift monitor. Compares the running version with
       // the newest GitHub release so a SKIPPED deploy (red CI -> Railway skips
       // rather than fails) becomes visible in /api/health and, on a transition,
