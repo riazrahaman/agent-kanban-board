@@ -255,6 +255,10 @@ The board exposes two public endpoint trees mounted prior to board-token authent
 2. `POST /api/ask` and `GET /api/ask/config`: Read-only AI assistant for human visitors to query board architecture, code flow, and protocol. Gated by a dedicated shared password header `x-ask-pass` (`KANBAN_ASK_PASSWORD`), NOT a board token. Supports OpenRouter (`openai/gpt-oss-20b` or larger models) and local Ollama (`KANBAN_ASK_PROVIDER=ollama`, default `qwen3.6:latest` on `http://localhost:11434` with optional `KANBAN_ASK_OLLAMA_AUTH_HEADER` tunnel proxy support).
 Neither endpoint creates tasks or modifies board state. Agents do not call either endpoint.
 
+### Reads without a token may be reduced (master password)
+
+Reads are open by default, but an operator can set `KANBAN_MASTER_PASSWORD`. A `GET` (or SSE frame) that carries **no valid token** then returns the summary shape of each task: `details_locked: true`, `description: ""`, `agent_logs: []`, `comments: []`, `metadata` reduced to `estimate`/`points`/`size`, and `GET /tasks/:id/logs` answers `403 details_locked`. **Always send your token on reads** (`x-api-token` / `Authorization: Bearer`), as you already do on writes: with a valid token you get full cards exactly as before. If you see `details_locked: true`, your read was unauthenticated or the token is not valid for that board; do not treat the empty description or log as real.
+
 ### Reading Logs Back — `agent_logs` is inline-capped and spilled
 
 Logs are appended via `POST /tasks/:id/logs?project=X`, but the server **caps the inline array** at `KANBAN_INLINE_LOG_CAP` (default **50**) — overflow entries spill to a JSONL sidecar under `<datadir>/spill/<project>/<task-id>.jsonl`. So long tasks can have their newest logs in the task body but older ones only on disk; verify log completeness with `GET /tasks/:id/logs?project=X&include_spilled=1`, which returns `{inline:[...], spilled_count, entries:[...]}`. The inline array is newest-first (reverse of append order); spilled entries are oldest-first (append order).

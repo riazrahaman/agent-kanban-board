@@ -92,11 +92,24 @@ test('App header inputs expand on tablet/desktop viewports (sm:w-64 agentDraft, 
   // "token" (round 4 — shortened from "api token" so it is never clipped
   // once the clawback above shrinks this input on a coarse pointer; see
   // the test below for the dedicated regression guard).
+  // Master password: the lock mark sits INSIDE the box, so the input is now
+  // wrapped in a positioned <span> that is the flex item and carries the
+  // width classes (the input itself is `w-full`). The footprint contract is
+  // therefore on the wrapper.
+  const tokenWrap = appSource.match(
+    /<span className=\{`(relative [^`]*)`\}>\s*<input\s+type="password"/,
+  )?.[1]
+  assert.ok(tokenWrap, 'App.tsx must wrap the tokenDraft input in its width-carrying span')
+  assert.match(tokenWrap, /\$\{tokenInputBugIconClawback\}/, 'the wrapper must carry the bug-icon clawback')
+  assert.match(tokenWrap, /(?:^|\s)w-28(?:\s|$)/, 'the wrapper keeps the phone width')
   const tokenInputMatch = appSource.match(
     /placeholder="token"[\s\S]*?className=(?:"([^"]*)"|\{`([^`]*)`\})/,
   )
-  const tokenInput = tokenInputMatch?.[1] ?? tokenInputMatch?.[2]
-  assert.ok(tokenInput, 'App.tsx must render tokenDraft input')
+  const tokenInputOwn = tokenInputMatch?.[1] ?? tokenInputMatch?.[2]
+  assert.ok(tokenInputOwn, 'App.tsx must render tokenDraft input')
+  assert.match(tokenInputOwn, /(?:^|\s)w-full(?:\s|$)/, 'the input fills its wrapper')
+  assert.match(tokenInputOwn, /(?:^|\s)pr-6(?:\s|$)/, 'the input reserves room for the lock mark')
+  const tokenInput = tokenWrap
   assert.match(
     tokenInput,
     /\bsm:w-36\b/,

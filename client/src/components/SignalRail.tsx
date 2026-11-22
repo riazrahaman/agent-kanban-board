@@ -2,19 +2,11 @@ import { useMemo } from 'react'
 import type { Task } from '../types'
 import { computeSignalStats } from '../lib/signalStats'
 import { decodeStored } from '../sanitize'
+import { LOCKED_HINT, railActivity } from '../lib/detailLock'
 
 type Props = {
   tasks: Task[]
   onOpen: (project: string, id: string) => void
-}
-
-type ActivityItem = {
-  taskId: string,
-  project: string
-  taskTitle: string
-  agentId: string
-  message: string
-  timestamp: string
 }
 
 function formatRelative(ts: string): string {
@@ -35,24 +27,9 @@ function formatRelative(ts: string): string {
 export default function SignalRail({ tasks, onOpen }: Props) {
   const { active, blocked, done } = useMemo(() => computeSignalStats(tasks), [tasks])
 
-   const activities = useMemo<ActivityItem[]>(() => {
-     const items: ActivityItem[] = []
-     for (const task of tasks) {
-       for (const log of Array.isArray(task.agent_logs) ? task.agent_logs : []) {
-        items.push({
-          project: task.project,
-          taskId: task.id,
-          taskTitle: decodeStored(task.title),
-          agentId: log.agent_id,
-          message: decodeStored(log.message),
-          timestamp: log.timestamp,
-        })
-      }
-    }
-    return items
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 20)
-  }, [tasks])
+  // Master password: a locked task contributes who/when only (see
+  // lib/detailLock.ts); its row shows the card title in place of the log text.
+  const activities = useMemo(() => railActivity(tasks), [tasks])
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface/40">
@@ -127,13 +104,15 @@ export default function SignalRail({ tasks, onOpen }: Props) {
                 onClick={() => onOpen(item.project, item.taskId)}
                 type="button"
                 className="group flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted-bg/50 transition-colors pointer-coarse:min-h-11"
-                title={`${item.taskTitle}: ${item.message}`}
+                data-details-locked={item.locked ? 'true' : undefined}
+                aria-disabled={item.locked ? true : undefined}
+                title={item.locked ? LOCKED_HINT : `${decodeStored(item.taskTitle)}: ${decodeStored(item.message)}`}
               >
                 <span className="shrink-0 border border-line bg-muted-bg px-1 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink max-w-[70px] truncate">
                   {item.agentId}
                 </span>
                 <span className="flex-1 truncate text-xs text-ink/90 group-hover:text-ink">
-                  {item.message}
+                  {decodeStored(item.locked ? item.taskTitle : item.message)}
                 </span>
                 <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
                   {formatRelative(item.timestamp)}

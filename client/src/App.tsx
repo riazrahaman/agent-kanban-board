@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProjectSummary, Task } from './types'
-import { getBugReportConfig, getHealth, getProjects, getSettings, saveSettings, subscribeToBoard } from './api'
+import { getBugReportConfig, getHealth, getProjects, getSettings, requestUnlock, saveSettings, SettingsSaveError, subscribeToBoard } from './api'
 import { driftChip } from './lib/deployDrift'
 import type { DeployDrift } from './lib/deployDrift'
 import type { DiffEvent } from './api'
 import type { ColumnColors } from './lib/columnColors'
-import { isStockPalette, readStoredColumnColors, writeStoredColumnColors } from './lib/columnColors'
+import { readStoredColumnColors, writeStoredColumnColors } from './lib/columnColors'
 import {
   readStoredFilters,
   writeStoredFilters,
@@ -48,6 +48,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
+import { boardDetailsLocked, isDetailsLocked, openKeyFor, readStoredUnlock, writeStoredUnlock, type StoredUnlock } from './lib/detailLock'
 import { filterTasks, isFilterActive } from './lib/filterTasks'
 import type { SeverityFilter } from './lib/ownership'
 import { useDocumentScrollLock } from './lib/scrollLock'
@@ -138,10 +139,73 @@ export default function App() {
     // published bundle, which would ship the shared write secret to every visitor.
     const [tokenDraft, setTokenDraft] = useState<string>(() => readStoredToken())
     const [tokenSaved, setTokenSaved] = useState<boolean>(() => readStoredToken() !== '')
-    const commitToken = () => {
-      writeStoredToken(tokenDraft)
-      setTokenSaved(tokenDraft.trim() !== '')
-       }
+    // Master password. The same box takes either an API token or the master
+    // password, and the browser does not guess which: on commit it asks the
+    // server once (POST /api/auth/unlock). The master password is exchanged for
+    // a 12-hour unlock token, which is all this browser keeps (localStorage,
+    // `kanban.unlock`); the password itself is never stored and the box goes
+    // back to showing the API token. Anything else is an API token, as before.
+    const [unlock, setUnlock] = useState<StoredUnlock | null>(() => readStoredUnlock())
+    // Bumped whenever the stored credentials change, so the board stream is
+    // re-opened (and re-primed) with them: details appear on unlock and go
+    // away on lock without a reload.
+    const [authEpoch, setAuthEpoch] = useState(0)
+    // A short note on the box when the value could not be classified (too many
+    // attempts, network). Nothing is stored in that case.
+    const [tokenNote, setTokenNote] = useState<string | null>(null)
+    const tokenCommitting = useRef(false)
+    const commitToken = async () => {
+      const value = tokenDraft.trim()
+      if (tokenCommitting.current) return
+      // Unchanged (blur after Enter, or a click away without typing): nothing
+      // to verify, and no reason to spend an unlock attempt.
+      if (value === readStoredToken()) return
+      if (value === '') {
+        writeStoredToken('')
+        setTokenSaved(false)
+        setTokenNote(null)
+        setAuthEpoch((n) => n + 1)
+        return
+      }
+      tokenCommitting.current = true
+      try {
+        const outcome = await requestUnlock(value)
+        if (outcome.kind === 'unlocked') {
+          writeStoredUnlock(outcome.unlock)
+          setUnlock(outcome.unlock)
+          setTokenDraft(readStoredToken())
+          setTokenNote(null)
+          setAuthEpoch((n) => n + 1)
+        } else if (outcome.kind === 'token') {
+          writeStoredToken(value)
+          setTokenSaved(true)
+          setTokenNote(null)
+          setAuthEpoch((n) => n + 1)
+        } else {
+          // Not stored: the value may be the master password, which must never
+          // be kept in this browser or sent as a bearer token.
+          setTokenNote(
+            outcome.kind === 'throttled'
+              ? `Too many attempts. Try again in ${Math.max(1, Math.ceil(outcome.retryAfterMs / 1000))}s; nothing was saved.`
+              : 'Could not check this value with the server; nothing was saved. Try again.',
+          )
+        }
+      } finally {
+        tokenCommitting.current = false
+      }
+    }
+    const lockDetails = useCallback(() => {
+      writeStoredUnlock(null)
+      setUnlock(null)
+      setOpenTaskId(null)
+      setAuthEpoch((n) => n + 1)
+    }, [])
+    // The unlock is short-lived: when it expires this browser locks itself.
+    useEffect(() => {
+      if (!unlock) return
+      const timer = setTimeout(lockDetails, Math.min(Math.max(0, unlock.exp - Date.now()), 2 ** 31 - 1))
+      return () => clearTimeout(timer)
+    }, [unlock, lockDetails])
     const commitAgent = () => {
       const next = agentDraft.trim()
       if (next === agentId) return
@@ -241,11 +305,7 @@ export default function App() {
     }
 
     const applySettings = (s: { column_colors: Record<string, string> }) => {
-      if (!cancelled && s?.column_colors) {
-        const colors = s.column_colors as ColumnColors
-        setColumnColors(colors)
-        writeStoredColumnColors(project || undefined, colors)
-      }
+      if (!cancelled && s?.column_colors) applyServerColors(s.column_colors as ColumnColors)
     }
 
     const unsubscribe = subscribeToBoard(applyDiff, applySettings, {
@@ -259,7 +319,8 @@ export default function App() {
       cancelled = true
       unsubscribe()
       }
-     }, [project])
+     // authEpoch: re-open the stream when the stored token or unlock changes.
+     }, [project, authEpoch])
 
      // The switcher needs every project, so this stays unscoped. Refreshed off
     // the live task stream rather than a timer.
@@ -424,10 +485,16 @@ export default function App() {
     downloadAnchor.remove()
   }, [tasks, project])
 
-  const openTask = useMemo(
-     () => tasks.find((t) => `${t.project}/${t.id}` === openTaskId) ?? null,
-     [tasks, openTaskId],
-  )
+  // Master password: a task whose details the server withheld never opens,
+  // and an open sheet closes if its task becomes locked (the unlock expired).
+  const openTask = useMemo(() => {
+    const found = tasks.find((t) => `${t.project}/${t.id}` === openTaskId) ?? null
+    return found && !isDetailsLocked(found) ? found : null
+  }, [tasks, openTaskId])
+  const detailsLocked = useMemo(() => boardDetailsLocked(tasks), [tasks])
+  // "Unlocked" is what the DATA says, not just what is stored: an unlock the
+  // server no longer honours (password rotated) still leaves the cards locked.
+  const unlocked = unlock !== null && !detailsLocked
 
   // v3.2.4 phone layout: the document scrolls, so freeze it (preserving the
   // scroll position) while a full-height overlay is open — TaskSheet,
@@ -516,56 +583,78 @@ export default function App() {
     writeStoredShowMetrics(false)
   }, [])
 
-  // v2.5.0: per-project column colors, resolved server-side. The initial fetch
-  // loads the current palette on project change; live updates now arrive via
-  // the combined diff+settings SSE stream (PERF-01) wired in the task effect
-  // above, so no separate settings EventSource is opened. Saved optimistically
-  // through PUT /api/settings and cached locally in localStorage (v2.14.4).
+  // Column colours. The SERVER is the source of truth: a project's own palette,
+  // or (all-projects view) the board-wide one, both stored through
+  // PUT /api/settings and pushed live on the combined SSE stream. localStorage
+  // only caches the server's last answer so the first paint has colours; it is
+  // never written back to the server, and a pick the server refuses is reverted
+  // and reported in the Columns popover instead of living on in this browser.
   const [columnColors, setColumnColors] = useState<ColumnColors | null>(() =>
     readStoredColumnColors(initialProject()),
   )
+  const [columnColorsSaveError, setColumnColorsSaveError] = useState<string | null>(null)
+  // The palette the server last confirmed for the current scope (what a
+  // refused save reverts to), and a counter so a slow answer to an older pick
+  // never overrides a newer one.
+  const serverColors = useRef<ColumnColors | null>(null)
+  const colorSaveSeq = useRef(0)
+  const applyServerColors = useCallback((colors: ColumnColors) => {
+    serverColors.current = colors
+    setColumnColors(colors)
+    writeStoredColumnColors(project || undefined, colors)
+  }, [project])
   useEffect(() => {
     let cancelled = false
-    const local = readStoredColumnColors(project || undefined)
-    if (local) setColumnColors(local)
+    serverColors.current = null
+    setColumnColorsSaveError(null)
+    setColumnColors(readStoredColumnColors(project || undefined))
 
     getSettings(project || undefined)
       .then((s) => {
-        if (!cancelled && s?.column_colors) {
-          const colors = s.column_colors as ColumnColors
-          if (!isStockPalette(colors)) {
-            setColumnColors(colors)
-            writeStoredColumnColors(project || undefined, colors)
-          } else if (local) {
-            setColumnColors(local)
-            saveSettings(project || undefined, local).catch(() => {})
-          } else {
-            setColumnColors(colors)
-          }
-        }
+        if (!cancelled && s?.column_colors) applyServerColors(s.column_colors as ColumnColors)
       })
       .catch(() => {
-        // Display-only: leave the stock palette on failure.
+        // Display-only: keep the cached palette (or stock) on failure.
       })
     return () => {
       cancelled = true
     }
+  }, [project, applyServerColors])
+  const saveColumnColors = useCallback((colors: ColumnColors, payload: ColumnColors) => {
+    const seq = ++colorSaveSeq.current
+    setColumnColors(colors) // optimistic
+    setColumnColorsSaveError(null)
+    saveSettings(project || undefined, payload)
+      .then(() => {
+        // The server's own `settings` event carries the resolved palette back
+        // (and to every other open browser); nothing more to do here.
+      })
+      .catch((err: unknown) => {
+        if (seq !== colorSaveSeq.current) return
+        setColumnColors(serverColors.current)
+        setColumnColorsSaveError(
+          err instanceof SettingsSaveError && err.rejected
+            ? 'Not saved. Enter the master password in the header token box to save column colours.'
+            : 'Not saved: the server could not be reached. Try again.',
+        )
+      })
   }, [project])
   const handleColumnColorsChange = useCallback((colors: ColumnColors) => {
-    setColumnColors(colors)
-    writeStoredColumnColors(project || undefined, colors)
-    saveSettings(project || undefined, colors).catch(() => {
-      // Revert silently is safest visually-neutral option: keep the optimistic
-      // value but let the next SSE/fetch re-sync.
-    })
-  }, [project])
+    saveColumnColors(colors, colors)
+  }, [saveColumnColors])
   const handleColumnColorsReset = useCallback(() => {
-    setColumnColors(null)
-    writeStoredColumnColors(project || undefined, null)
-    saveSettings(project || undefined, {}).catch(() => {})
-  }, [project])
+    saveColumnColors({}, {})
+  }, [saveColumnColors])
 
-  const handleOpen = useCallback((id: string) => setOpenTaskId(id), [])
+  // Cards and the signal rail call onOpen(project, id). The sheet is keyed by
+  // "project/id" because ids repeat across projects; a locked task (details
+  // withheld by the server) does not open.
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
+  const handleOpen = useCallback((taskProject: string, id: string) => {
+    const key = openKeyFor(tasksRef.current, taskProject, id)
+    if (key) setOpenTaskId(key)
+  }, [])
 
   // v2.17.0 round 3 (tester-caught WebKit header-wrap defect — see the
   // icon+theme wrapper's JSX comment below for the full mechanism): the bug
@@ -625,6 +714,7 @@ export default function App() {
       columnColors={columnColors}
       onColumnColorsChange={handleColumnColorsChange}
       onColumnColorsReset={handleColumnColorsReset}
+      columnColorsSaveError={columnColorsSaveError}
       severity={severityFilter}
       onSeverityChange={handleSeverityChange}
     />
@@ -687,7 +777,9 @@ export default function App() {
           <div className="flex shrink-0 items-center gap-3">
             <BrandMark />
             <div className="flex items-baseline gap-2">
-             <h1 className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
+             {/* The title is one self-contained element (`data-testid="app-title"`):
+                 restyle it here; nothing else in the header reads its classes. */}
+             <h1 data-testid="app-title" className="whitespace-nowrap font-serif text-base font-normal tracking-tight text-ink sm:text-lg">
                Agent Kanban Board
              </h1>
              {version && (
@@ -787,13 +879,20 @@ export default function App() {
              // the filters are showing or row 1 would shift between views.
              className="w-36 min-w-0 flex-initial border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 md:w-36 sm:py-1 pointer-coarse:min-h-11"
             />
+            {/* The wrapper is the flex item and carries the width (so the header
+                footprint is exactly the input's own, as before); the lock mark
+                sits INSIDE the box and costs no width in any state. */}
+            <span className={`relative w-28 min-w-0 sm:w-36 ${tokenInputBugIconClawback}`}>
             <input
              type="password"
              value={tokenDraft}
-             onChange={(e) => setTokenDraft(e.target.value)}
-             onBlur={commitToken}
+             onChange={(e) => {
+               setTokenDraft(e.target.value)
+               if (tokenNote) setTokenNote(null)
+             }}
+             onBlur={() => { void commitToken() }}
              onKeyDown={(e) => {
-               if (e.key === 'Enter') commitToken()
+               if (e.key === 'Enter') void commitToken()
                }}
              // v2.17.0 round 4 (tester-caught clip, coarse pointer, 768-1100px,
              // feature ON): "api token" (16px mono, needs ~86-89px) was
@@ -807,13 +906,46 @@ export default function App() {
              // descriptive name) is unchanged.
              placeholder="token"
              data-token-saved={tokenSaved ? 'true' : 'false'}
+             data-detail-state={tokenNote ? 'unverified' : unlocked ? 'unlocked' : detailsLocked ? 'locked' : 'open'}
              aria-label="API token for mutating requests"
-             title="Required for claim, heartbeat and log writes. Stored in this browser only; sent as an Authorization header, never in a URL. With per-project tokens configured, use the token for the project you are working in."
+             aria-description="Also accepts the master password, which unlocks card details"
+             title={tokenNote ?? (unlocked
+               ? 'Card details are unlocked in this browser (12 hours; lock again from the "i" help). An API token can still be entered here for claim, heartbeat and log writes.'
+               : 'API token: required for claim, heartbeat and log writes; stored in this browser only and sent as an Authorization header, never in a URL. Master password: type it here to view card details; it is checked by the server and never stored.')}
              autoComplete="off"
              spellCheck={false}
-             className={`w-28 min-w-0 border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-36 sm:py-1 pointer-coarse:min-h-11 ${tokenInputBugIconClawback}`}
+             className="w-full min-w-0 border border-line bg-surface py-1.5 pl-2 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11"
             />
-            <HeaderHelp />
+            {(unlocked || detailsLocked || tokenNote) && (
+              <span
+                data-testid="detail-lock-mark"
+                role="img"
+                aria-label={tokenNote ? 'Not checked' : unlocked ? 'Card details unlocked' : 'Card details locked'}
+                title={tokenNote ?? (unlocked ? 'Card details unlocked' : 'Card details locked: enter the master password')}
+                className={`pointer-events-none absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center ${
+                  tokenNote ? 'text-warn' : unlocked ? 'text-pass' : 'text-muted'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="7.2" width="10" height="6.6" />
+                  {unlocked && !tokenNote
+                    ? <path d="M5.4 7.2V5a2.6 2.6 0 0 1 5-1" />
+                    : <path d="M5.4 7.2V5a2.6 2.6 0 0 1 5.2 0v2.2" />}
+                </svg>
+              </span>
+            )}
+            </span>
+            <HeaderHelp unlocked={unlocked} detailsLocked={detailsLocked} onLock={lockDetails} />
             {/* "read-only" chip hidden at the owner's request ("do we need
                 to mention READ-ONLY"). Kept, not deleted: un-comment to
                 restore. The help popover still explains read-only mode.

@@ -93,12 +93,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '1123',
+    value: '1150',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '351',
+    value: '364',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -243,11 +243,11 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Live Metrics Dashboard summary (toggle currently hidden)', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export (button currently hidden)', code: 'App.tsx, BoardFilters.tsx' },
   { name: 'Anonymous visit counter', code: 'App.tsx · lib/useVisitCount.ts' },
-  { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
+  { name: 'Custom column colors (board-wide or per project)', code: 'routes/settings.js, lib/columnColors.ts' },
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
   { name: 'In-column sorting (persisted)', code: 'lib/boardSort.ts · priority | updated | id' },
   { name: 'DONE lane completion-recency sort', code: 'board-model.js · groupTasks (completed_at descending)' },
-  { name: 'Inline title editing with optimistic CAS', code: 'TaskCard.tsx, api.ts · patchTask' },
+  { name: 'Master password for card details', code: 'masterUnlock.js · KANBAN_MASTER_PASSWORD, POST /api/auth/unlock' },
   { name: 'Persisted audit stream', code: 'auditLog.js · appendAudit, GET /api/audit' },
   { name: 'Optional read auth + stream tickets', code: 'middleware/auth.js · KANBAN_READ_AUTH, streamTicket.js' },
   { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph; task-fields.js · validateMetadata' },
@@ -914,6 +914,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'KANBAN_AUTH_TOKEN', purpose: 'Legacy global shared token gating every mutating request (opens every project — prefer per-project tokens).' },
   { name: 'KANBAN_AUTH_SECRET', purpose: 'HMAC secret that enables stateless, revocable session tokens.' },
   { name: 'KANBAN_READ_AUTH', purpose: 'Set to "token" to require auth on reads and SSE (single-use stream tickets).' },
+  { name: 'KANBAN_MASTER_PASSWORD', purpose: 'Optional master password: the board stays public, card details need a board token or this unlock (typed into the header token box).' },
   { name: 'KANBAN_CLAIM_TTL_MS', purpose: 'Default lease window for a claimed task, in ms (default 600000 = 10 min).' },
   { name: 'KANBAN_MIN_LEASE_MS', purpose: 'Lower bound a per-task lease request is clamped to (default 60000).' },
   { name: 'KANBAN_MAX_LEASE_MS', purpose: 'Upper bound a per-task lease request is clamped to (default 7200000).' },

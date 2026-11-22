@@ -1,6 +1,7 @@
 import type { Task, ProjectSummary, MetricsResponse, MilestoneSummary } from './types'
 import type { DeployDrift } from './lib/deployDrift'
 import { authHeaders, CLIENT_ROLE, readStoredToken } from './lib/authToken'
+import { classifyUnlockResponse, readStoredUnlock, unlockHeaders, type UnlockOutcome } from './lib/detailLock'
 
 // Same-origin `/api`: the deployed server serves the client bundle AND the API
 // on one origin, so a relative base works everywhere (local dev proxies it via
@@ -66,7 +67,9 @@ function withProject(base: string, project?: string): string {
  * the same header set is used whether or not the deployment gates reads.
  */
 function readHeaders(): Record<string, string> {
-  return { ...authHeaders(readStoredToken()) }
+  // Master password: an unlocked browser also presents its unlock token, which
+  // is what lets a token-less reader receive card details.
+  return { ...authHeaders(readStoredToken()), ...unlockHeaders() }
 }
 
 /**
@@ -396,17 +399,64 @@ export async function submitBugReport(
   return { ok: true, issue_number: body.issue_number, issue_url: body.issue_url }
 }
 
-/** Persist a project's column_colors override. Any authenticated token may. */
+/** A settings save the server refused; `status` tells "not allowed" from "broken". */
+export class SettingsSaveError extends Error {
+  readonly status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'SettingsSaveError'
+    this.status = status
+  }
+  /** 401/403: this browser holds no credential that may save here. */
+  get rejected(): boolean {
+    return this.status === 401 || this.status === 403
+  }
+}
+
+/**
+ * Persist column colours: a project's override, or (no project) the board-wide
+ * palette. Authorised by a token for that project, the admin/shared token, or
+ * the master unlock, which is sent alongside whatever token is stored.
+ */
 export async function saveSettings(
   project: string | undefined,
   columnColors: Record<string, string>,
 ): Promise<SettingsResponse> {
   const res = await fetch(withProject(`${API_BASE}/settings`, project), {
     method: 'PUT',
-    headers: mutationHeaders({ project }),
+    headers: { ...mutationHeaders({ project }), ...unlockHeaders() },
     body: JSON.stringify({ column_colors: columnColors }),
   })
-  return handleResponse<SettingsResponse>(res)
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new SettingsSaveError(res.status, `Request failed (${res.status}): ${text}`)
+  }
+  return res.json() as Promise<SettingsResponse>
+}
+
+/**
+ * Master password: ask the server whether `value` (what the operator typed
+ * into the header box) is the master password. The value travels once, in a
+ * POST body, never in a URL or a header. See `classifyUnlockResponse` for what
+ * each answer means; a network failure is `unverified`.
+ */
+export async function requestUnlock(value: string): Promise<UnlockOutcome> {
+  try {
+    const res = await fetch(`${API_BASE}/auth/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: value }),
+    })
+    let body: unknown = null
+    try {
+      body = await res.json()
+    } catch {
+      body = null
+    }
+    return classifyUnlockResponse(res.status, body)
+  } catch {
+    return { kind: 'unverified' }
+  }
 }
 
 /**
@@ -416,11 +466,20 @@ export async function saveSettings(
  * open and this resolves null.
  */
 async function mintStreamTicket(project?: string): Promise<string | null> {
-  if (!readStoredToken()) return null
+  const viaToken = readStoredToken() ? await mintTicketWith(mutationHeaders({ project }), project) : null
+  if (viaToken) return viaToken
+  // Master password: no usable token, but this browser is unlocked. The unlock
+  // token is exchanged for a details-only ticket the same way (header in, a
+  // single-use ticket out), so the unlock itself never appears in a URL.
+  if (!readStoredUnlock()) return null
+  return mintTicketWith({ 'Content-Type': 'application/json', ...unlockHeaders() }, project)
+}
+
+async function mintTicketWith(headers: Record<string, string>, project?: string): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/auth/stream-ticket`, {
       method: 'POST',
-      headers: mutationHeaders({ project }),
+      headers,
       // The role travels in the body too (not just as X-Agent-Role): an unbound
       // credential's ticket role comes from the request, and older servers read
       // it from the body only. Bound credentials ignore it.

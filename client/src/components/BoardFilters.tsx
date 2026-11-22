@@ -39,6 +39,8 @@ type Props = {
   columnColors?: import('../lib/columnColors').ColumnColors | null
   onColumnColorsChange?: (colors: import('../lib/columnColors').ColumnColors) => void
   onColumnColorsReset?: () => void
+  /** Why the last colour save was not stored on the server, or null. */
+  columnColorsSaveError?: string | null
   /** v2.18.0: active solo-run severity filter (multi-select; empty = show all). */
   severity: SeverityFilter[]
   onSeverityChange: (severity: SeverityFilter[]) => void
@@ -130,6 +132,7 @@ export default function BoardFilters({
   columnColors,
   onColumnColorsChange,
   onColumnColorsReset,
+  columnColorsSaveError,
   severity,
   onSeverityChange,
   docked = false,
@@ -284,6 +287,7 @@ export default function BoardFilters({
             colors={columnColors ?? null}
             onChange={onColumnColorsChange}
             onReset={onColumnColorsReset}
+            saveError={columnColorsSaveError ?? null}
           />
         )}
 

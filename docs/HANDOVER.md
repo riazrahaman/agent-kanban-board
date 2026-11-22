@@ -289,6 +289,8 @@ needs its own token.
 `KANBAN_PROJECT_TOKENS` → `503`; `/api/auth/session` with no secret → `503`;
 `/api/auth/stream-ticket` with no signing key → `503`.
 
+**Master password (`KANBAN_MASTER_PASSWORD`).** Unset → no effect. Set → a reader with neither a board credential nor the master unlock gets the summary shape of every task (allow-list in `server/masterUnlock.js`: `redactTaskDetails`) on the task GETs and on every SSE frame, and `403 details_locked` from `GET /api/tasks/:id/logs`. A browser exchanges the password at `POST /api/auth/unlock` for a 12-hour unlock token (`X-Kanban-Unlock`, HMAC key derived from the password, so rotation revokes), with its own 10-per-minute failed-attempt lockout. The unlock is read-only except `PUT /api/settings` (column colours, board-wide or per project). `startupAuthErrors` refuses a password under 12 characters or equal to any token / `KANBAN_AUTH_SECRET`.
+
 **Read auth (`KANBAN_READ_AUTH`).** Unset/`off`/`0`/`false` → reads and SSE are
 open (the board is a public viewport). Any other value → every read requires a
 bearer credential or a stream ticket; `/api/health` and `/healthz` stay exempt

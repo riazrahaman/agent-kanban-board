@@ -68,6 +68,13 @@ export type Task = {
   claim_lease_ms?: number | null    // v2.12.0: this card's lease window (ms); null = server default
   last_progress_at?: string | null  // v2.12.1: last claim/log/PATCH on THIS card (distinct from lease renewal)
   reclaim_count?: number        // §2.4: reaper reclaim count, seeds 0
+  /**
+   * Master password: true when the server withheld this card's details
+   * (description, agent log, comments, metadata) from this reader. `activity`
+   * then carries the who/when of the latest log entries, without their text.
+   */
+  details_locked?: boolean
+  activity?: Array<{ timestamp: string | null; agent_id: string | null }>
 }
 
 export type ProjectSummary = {

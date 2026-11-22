@@ -6,7 +6,17 @@ import {
   consumeSessionChallenge,
   sessionNonceMode,
 } from '../sessionChallenge.js';
-import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch } from '../middleware/auth.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch, isKnownCredential } from '../middleware/auth.js';
+import {
+  MASTER_PASSWORD_MAX_LENGTH,
+  createUnlockToken,
+  masterPasswordMatches,
+  recordUnlockFailure,
+  requestUnlock,
+  unlockClientKey,
+  unlockLockedOut,
+  unlockRetryAfterMs,
+} from '../masterUnlock.js';
 import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
 import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
@@ -85,6 +95,31 @@ router.post('/stream-ticket', (req, res) => {
   if (hardCapRetry !== null) return sendAuthThrottled(res, hardCapRetry);
   const cred = resolveCredential(req);
   if (!cred) {
+    // Master password: an unlocked browser holds no board credential, only its
+    // unlock token (X-Kanban-Unlock). It gets a MASTER ticket: no role, no
+    // project, good for card details on one stream and nothing else. Checked
+    // only after the credential path, so a real credential always wins.
+    const unlock = requestUnlock(req);
+    if (unlock) {
+      const owner = unlock.jti
+        ? `unlock:${crypto.createHash('sha256').update(unlock.jti).digest('hex').slice(0, 16)}`
+        : 'unlock';
+      const mintedMaster = createStreamTicket({ role: null, project: null, credentialId: owner, masterUntil: unlock.exp });
+      if (mintedMaster?.refused) {
+        res.set('Retry-After', String(Math.ceil(mintedMaster.retryAfterMs / 1000)));
+        return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: mintedMaster.retryAfterMs });
+      }
+      if (!mintedMaster) {
+        return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
+      }
+      return res.status(200).json({
+        ticket: mintedMaster.ticket,
+        expires_at: mintedMaster.expiresAt,
+        role: null,
+        project: null,
+        scope: 'details',
+      });
+    }
     return rejectFailedAuth(req, res, 401, { error: 'Unauthorized: valid token required' });
   }
 
@@ -199,6 +234,47 @@ router.post('/stream-ticket', (req, res) => {
     role,
     project,
   });
+});
+
+/**
+ * POST /api/auth/unlock — exchange the master password for an unlock token.
+ *
+ * This is also the header box's ONE classification call: the browser cannot
+ * tell an API token from the master password by looking at it, so it asks.
+ * The answer is `{ unlocked: true, token, expires_at }` for the master
+ * password and `{ unlocked: false }` for everything else — the same body
+ * whether the value was a valid API token, a wrong guess, or the feature is
+ * not configured at all, so the endpoint says nothing about the configuration
+ * that an anonymous read does not already show.
+ *
+ * Throttling is its own per-address counter (see masterUnlock.js), checked
+ * BEFORE any comparison. A value that is a valid board credential is not a
+ * guess and is not counted; nothing here touches the board's failed-auth
+ * limiter, so typing a token into the box can never lock out an agent that
+ * shares the address. The password travels only in the POST body and is never
+ * logged, audited or echoed.
+ */
+router.post('/unlock', (req, res) => {
+  const ip = unlockClientKey(req);
+  if (unlockLockedOut(ip)) {
+    const ms = unlockRetryAfterMs(ip);
+    res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
+    return res.status(429).json({ error: 'too_many_attempts', retry_after_ms: ms });
+  }
+  const raw = req.body?.password;
+  const provided = typeof raw === 'string' ? raw.trim() : '';
+  if (provided === '' || provided.length > MASTER_PASSWORD_MAX_LENGTH) {
+    return res.status(400).json({ error: 'password_required' });
+  }
+  if (masterPasswordMatches(provided)) {
+    const minted = createUnlockToken();
+    if (minted) {
+      res.set('Cache-Control', 'no-store');
+      return res.status(200).json({ unlocked: true, token: minted.token, expires_at: minted.expiresAt });
+    }
+  }
+  if (!isKnownCredential(provided)) recordUnlockFailure(ip);
+  return res.status(200).json({ unlocked: false });
 });
 
 /**

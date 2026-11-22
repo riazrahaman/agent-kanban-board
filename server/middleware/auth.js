@@ -16,6 +16,7 @@ import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
 import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
 import { noteRolePresentation } from '../utils/roleCrossing.js';
+import { masterPasswordConfigured, requestUnlock } from '../masterUnlock.js';
 
 export const VALID_ROLES = new Set([
   'planner',
@@ -359,6 +360,12 @@ function computeAuthorizedProjects(req) {
   const ticket = ticketAllowed && typeof req.query?.ticket === 'string' ? req.query.ticket : null;
   if (ticket) {
     const scope = verifyStreamTicket(ticket);
+    if (scope && scope.master_until !== null) {
+      // A master ticket proves the unlock, not a board credential: it opens
+      // card details on this one stream and confers no project scope or role.
+      req._masterTicket = { exp: scope.master_until };
+      return null;
+    }
     if (scope) {
       req.caller = {
         ...req.caller,
@@ -430,6 +437,48 @@ function authorizeRead(req) {
  */
 export function hasReadCredential(req) {
   return authorizeRead(req);
+}
+
+/**
+ * Is `token` a credential this board accepts (session, per-project, admin or
+ * shared)? Identifies only: never rejects, never records an auth failure. The
+ * unlock endpoint uses it to tell "an API token typed into the header box"
+ * from "a wrong master password", so the former is not counted as a guess.
+ */
+export function isKnownCredential(token) {
+  if (typeof token !== 'string' || token === '') return false;
+  const adminToken = process.env.KANBAN_ADMIN_TOKEN;
+  if (adminToken && tokensMatch(token, adminToken)) return true;
+  if (verifySessionToken(token)) return true;
+  const projectTokens = parseProjectTokens();
+  if (projectTokens?.map) {
+    for (const creds of projectTokens.map.values()) {
+      if (creds.some((cred) => tokensMatch(token, cred.token))) return true;
+    }
+  }
+  const requiredToken = process.env.KANBAN_AUTH_TOKEN;
+  return Boolean(requiredToken) && tokensMatch(token, requiredToken);
+}
+
+/**
+ * Card-detail access for a READ. With no master password configured, details
+ * are open to every reader, exactly as before. With one, a reader needs either
+ * a board credential (which already authorises full reads) or the master
+ * unlock. Returns `{ access, until }`; `until` is the epoch-ms at which a
+ * master-only access lapses (null when it does not), for long-lived streams.
+ */
+export function resolveDetailAccess(req) {
+  if (!masterPasswordConfigured()) return { access: true, until: null };
+  if (getAuthorizedProjects(req) !== null) return { access: true, until: null };
+  const unlock = requestUnlock(req);
+  if (unlock) return { access: true, until: unlock.exp };
+  return { access: false, until: null };
+}
+
+/** PUT /api/settings (any casing, trailing slashes): the one master write. */
+function isColourSaveRoute(req) {
+  if (req.method !== 'PUT') return false;
+  return (req.path || '').replace(/\/+$/, '').toLowerCase() === '/api/settings';
 }
 
 /** Upper bound on a caller-declared value echoed into a log/audit line. */
@@ -686,17 +735,41 @@ export function createAuthMiddleware() {
       // audit and SSE clamp against it. getAuthorizedProjects returns null for
       // anonymous/admin/global/unscoped credentials (reads stay open).
       req.caller.authorizedProjects = getAuthorizedProjects(req);
+      // Master password: decide ONCE per read whether this caller may see card
+      // details. Routes and the SSE stream only consult these two fields.
+      const detail = resolveDetailAccess(req);
+      req.caller.detailAccess = detail.access;
+      req.caller.detailUntil = detail.until;
       // A7: identify the reader from the credential too (silently — a read has
       // no attribution consequence, and auditing every poll would flood).
       const readCred = resolveReadCredential(req);
       if (readCred) bindCallerIdentity(req, { ...readCred, audit: false });
       if (!readAuthEnabled() || isProbePath(req)) return next();
-      if (!authorizeRead(req)) {
+      // The master unlock is a read credential in its own right: on a board
+      // that gates reads, the owner's password still opens the (read-only) view.
+      if (!authorizeRead(req) && requestUnlock(req) === null) {
         logAuthFailure(req, 401, 'read-auth-required');
         return rejectFailedAuth(req, res, 401, {
           error: 'Unauthorized: read access requires a valid token or stream ticket',
         });
       }
+      return next();
+    }
+
+    // The ONE write the master unlock may perform: saving column colours. The
+    // match is on method + exact route, so the unlock can never reach a task
+    // mutation, a claim, a delete/purge or an admin operation. The caller gets
+    // no functional or privileged role and no agent identity; the payload is
+    // still validated by the store's colour validation.
+    if (isColourSaveRoute(req) && requestUnlock(req) !== null) {
+      req.caller = {
+        agent_id: null,
+        role: 'master',
+        roleSource: 'master_unlock',
+        privileged: false,
+        adminCredential: false,
+        masterUnlock: true,
+      };
       return next();
     }
 

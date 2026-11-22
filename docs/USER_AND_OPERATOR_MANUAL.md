@@ -127,6 +127,7 @@ The server and client are configured via environment variables.
 | `KANBAN_RATE_LIMIT_PER_MIN` / `KANBAN_RATE_LIMIT_WINDOW_MS` | `off` / `60000` | Per-project fixed-window rate limit on mutations. |
 | `KANBAN_DEPLOY_DRIFT_INTERVAL_MS` / `KANBAN_DEPLOY_DRIFT_GRACE_MS` / `KANBAN_DEPLOY_DRIFT_API_URL` / `KANBAN_DEPLOY_DRIFT_TAGS_API_URL` | `1800000` / `2700000` / GitHub releases URL / GitHub tags URL of the same repo | v3.9.5 — deploy-drift monitor: compares the running version with the newest published version once after boot and then every 30 min, and reports `in_sync`/`drift`/`unknown` (plus `reason` and `source`) in the `deploy_drift` block of `GET /api/health`. **Drift means only that the running build is behind**: the comparison is semver since v3.12.7, a build that is ahead of the newest release is `in_sync`, and a mismatch only becomes `drift` after the 45-min grace. The tags endpoint is derived from the release URL (`/releases/latest` -> `/tags?per_page=100`) and is used when the release is missing or older than the highest semver tag. Public feeds — no GitHub token. An interval `<= 0` disables it. |
 | `KANBAN_READ_AUTH` | `off` | Set to `token` to require a credential on every read (GET + SSE). `EventSource` cannot set headers, so browsers mint a 60 s single-use ticket via `POST /api/auth/stream-ticket` and append `?ticket=`. Unset/`off`/`0` keeps reads open; `/api/health` and `/healthz` stay open for healthchecks. |
+| `KANBAN_MASTER_PASSWORD` | *(unset)* | Optional master password for card details (§5.3.1). Unset: details are open to every reader. Set (12+ characters, different from every token and from `KANBAN_AUTH_SECRET`, or startup refuses): anonymous readers get the summary shape of each task; details need a board token or the master unlock. Read-only apart from saving column colours. |
 | `KANBAN_WEBHOOK_URLS` | *(unset)* | v2.11.0 — comma-separated URLs that receive signed outbound JSON webhooks on every task diff event. Off when unset. v3.12.6: delivery retries transient failures, dead-letters terminal ones, and never blocks a board write. |
 | `KANBAN_WEBHOOK_SECRET` | *(unset)* | v2.11.0 — optional HMAC-SHA256 key; when set each webhook carries `x-kanban-signature: sha256=<hex>` over `${timestamp}.${body}`. |
 | `KANBAN_WEBHOOK_EVENTS` | *(all)* | v2.11.0 — optional comma-separated diff-kind allow-list (`created`, `updated`, `removed`, `claimed`, `renewed`, `unblocked`, `reclaimed`, `archived`). |
@@ -402,6 +403,7 @@ A toolbar (`BoardFilters.tsx`) operates the board view. On desktop it is docked 
 - **Assignee filter:** `All Assignees` / `Unassigned` / one entry per agent currently holding work.
 - **Sort selector:** orders cards inside every column — `Sort: Priority` (default: high → medium → low, server recency within a rank), `Sort: Updated` (most recently updated first), or `Sort: Task ID` (lexical). The choice is persisted in this browser (`localStorage kanban.sort`) and re-applied on every live update.
 - **Reset:** appears only while a filter is active and clears all of them.
+- **Columns (column colours):** pick an accent per column. Every pick is saved to the server: in a project view it is that project's palette, in the **all projects** view it is the board-wide palette that every project without its own palette inherits. Saved colours come back on reload, in other browsers, and live in every open tab. Saving needs the master unlock (§5.3.1), or a token that is authorised for the project (the admin or shared token for the board-wide palette). A pick the server refuses is put back at once and the popover says "Not saved. Enter the master password in the header token box to save column colours."; nothing is kept only in the browser.
 - **Export:** currently hidden (owner decision: anyone who could open the board could export its contents). The button is commented out in `BoardFilters.tsx`, not removed; when shown it downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
 - **Metrics:** currently hidden (the button is commented out in `BoardFilters.tsx`, and the dashboard is treated as closed while it is). When shown it toggles the summary dashboard (§5.1.2), which always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
 
@@ -426,10 +428,10 @@ The Metrics toggle is currently hidden, so this banner is not reachable from the
 - **Project Chip:** Shown on the unscoped **all projects** board so cards from different projects are distinguishable (hidden when a single project is selected).
 - **Assigned Agent:** Indicates which autonomous agent holds the card claim.
 - **Issues Pill:** Displayed when active issues exist on the card.
-- **Inline Title Editing:** Double-click a card's title to edit it in place — Enter or blur saves (optimistic, version-checked), Escape cancels.
+- **Title:** display-only. A card's title is changed through the API (`PATCH /api/tasks/:id`); double-clicking a card does nothing more than clicking it.
 
 ### 5.3 Task Inspector Sheet (Slide-Over Drawer)
-Clicking any card opens the Inspector Sheet:
+Clicking any card opens the Inspector Sheet (when a master password is configured, only in an unlocked browser: see §5.3.1):
 - View complete title, priority, status badge, and assigned agent.
 - Read comprehensive task descriptions and structured JSON metadata.
 - **Comments (v2.5.0):** A discussion thread beside the activity log, stored
@@ -454,6 +456,15 @@ audit trail records only real transitions and real log/comment calls.
 
 > [!NOTE]
 > The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials; the browser holds a server-issued session whose role comes from the server, never a header. For operator log appends outside the browser, use authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token — under role-bound `KANBAN_PROJECT_TOKENS` that means the admin token (which derives `admin`) or an unbound credential, since `human` cannot be bound to a project credential.
+
+### 5.3.1 Master Password: Locked and Unlocked Card Details
+The board is always publicly viewable. Whether a visitor can open a card depends on `KANBAN_MASTER_PASSWORD`:
+
+- **Not configured:** every visitor can click a card and read its details. Nothing else about the board changes.
+- **Configured, locked (the default for a visitor):** the board renders as usual (titles, badges, assignee, counts, signal rail), but a card click opens nothing; the pointer stays an arrow and the tooltip reads "Enter the master password to view details". A small closed-lock mark sits inside the header's token box. The signal rail's activity feed shows who touched which card and when, with the card title in place of the log text. The server does not send the details at all (see README, Security & Authentication), so nothing is merely hidden in the page.
+- **Unlocking:** type the master password into the token box (right corner of the header) and press Enter. The lock mark turns into an open lock, and clicking a card (on the board or in the signal rail) opens the Inspector Sheet with description, metadata, comments and agent log. The password is checked once by the server and is never stored; the browser keeps a 12-hour unlock in `localStorage` (`kanban.unlock`), so a reload stays unlocked until it expires. To lock again, open the "i" help beside the box and press **Lock**.
+- **The same box still takes an API token.** The browser does not guess which one was typed: it asks the server, and a value that is not the master password is stored as the API token exactly as before. An API token that is valid for the board also opens card details (for the projects it covers). If the server cannot be asked (network error, or too many wrong attempts: 10 per minute per address), nothing is saved and the box says so in its tooltip.
+- **What the unlock cannot do:** it is read-only. Writing a log or comment, assigning or claiming still needs an API token. The one exception is saving column colours (§5.1.1).
 
 ### 5.4 Signal Overview & Live Activity Feed
 - Located on the right-hand sidebar.

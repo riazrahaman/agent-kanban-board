@@ -28,6 +28,7 @@ import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
 import { formatLine, log as emitLog, logError, logWarn } from './logger.js';
+import { MASTER_PASSWORD_MIN_LENGTH, redactTaskDetails } from './masterUnlock.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -120,6 +121,19 @@ function diffWireFrame(evt) {
     const { prev: _prev, ...wire } = evt;
     frame = `event: task.${evt.kind}\ndata: ${JSON.stringify(wire)}\n\n`;
     diffFrameCache.set(evt, frame);
+  }
+  return frame;
+}
+
+// Master password: the same event for a stream that may not see card details.
+// Serialised once per dispatch as well, and shared by every locked stream.
+const redactedDiffFrameCache = new WeakMap();
+function redactedDiffWireFrame(evt) {
+  let frame = redactedDiffFrameCache.get(evt);
+  if (frame === undefined) {
+    const { prev: _prev, task, ...wire } = evt;
+    frame = `event: task.${evt.kind}\ndata: ${JSON.stringify({ ...wire, task: redactTaskDetails(task) })}\n\n`;
+    redactedDiffFrameCache.set(evt, frame);
   }
   return frame;
 }
@@ -307,16 +321,39 @@ export function startupAuthWarnings(env = process.env) {
 export function startupAuthErrors(env = process.env) {
   const out = [];
   const admin = typeof env.KANBAN_ADMIN_TOKEN === 'string' ? env.KANBAN_ADMIN_TOKEN.trim() : '';
-  if (!admin) return out;
   const shared = typeof env.KANBAN_AUTH_TOKEN === 'string' ? env.KANBAN_AUTH_TOKEN.trim() : '';
-  if (shared && shared === admin) {
-    out.push('KANBAN_ADMIN_TOKEN must differ from KANBAN_AUTH_TOKEN (an identical value would make every shared-token request an admin request).');
-  }
   const parsed = env.KANBAN_PROJECT_TOKENS ? parseProjectTokens(env.KANBAN_PROJECT_TOKENS) : null;
-  if (parsed?.map) {
-    const clash = [...parsed.map.values()].some((creds) => creds.some((c) => c.token === admin));
-    if (clash) {
+  const inProjectTokens = (value) =>
+    Boolean(parsed?.map) && [...parsed.map.values()].some((creds) => creds.some((c) => c.token === value));
+  if (admin) {
+    if (shared && shared === admin) {
+      out.push('KANBAN_ADMIN_TOKEN must differ from KANBAN_AUTH_TOKEN (an identical value would make every shared-token request an admin request).');
+    }
+    if (inProjectTokens(admin)) {
       out.push('KANBAN_ADMIN_TOKEN must differ from every credential token in KANBAN_PROJECT_TOKENS (an identical value would make that credential an admin credential).');
+    }
+  }
+  // KANBAN_MASTER_PASSWORD is a read-only unlock typed into the same header
+  // box as an API token. If it equalled a board credential, the browser could
+  // not tell which of the two the owner meant, and a "view details" secret
+  // would silently be a write (or admin) credential.
+  const master = typeof env.KANBAN_MASTER_PASSWORD === 'string' ? env.KANBAN_MASTER_PASSWORD.trim() : '';
+  if (master) {
+    if (master.length < MASTER_PASSWORD_MIN_LENGTH) {
+      out.push(`KANBAN_MASTER_PASSWORD must be at least ${MASTER_PASSWORD_MIN_LENGTH} characters.`);
+    }
+    if (admin && master === admin) {
+      out.push('KANBAN_MASTER_PASSWORD must differ from KANBAN_ADMIN_TOKEN (the master password only unlocks card details; it must never be an admin credential).');
+    }
+    if (shared && master === shared) {
+      out.push('KANBAN_MASTER_PASSWORD must differ from KANBAN_AUTH_TOKEN (the master password only unlocks card details; it must never be a write credential).');
+    }
+    if (inProjectTokens(master)) {
+      out.push('KANBAN_MASTER_PASSWORD must differ from every credential token in KANBAN_PROJECT_TOKENS (the master password only unlocks card details; it must never be a write credential).');
+    }
+    const secret = typeof env.KANBAN_AUTH_SECRET === 'string' ? env.KANBAN_AUTH_SECRET.trim() : '';
+    if (secret && master === secret) {
+      out.push('KANBAN_MASTER_PASSWORD must differ from KANBAN_AUTH_SECRET (the session signing secret must never be typed into a browser).');
     }
   }
   return out;
@@ -422,6 +459,13 @@ export function createApp(opts = {}) {
       }
     }
     const passesScope = (taskProject) => !(allowed instanceof Set) || allowed.has(taskProject);
+    // Master password: decided at connect by the auth middleware. A stream that
+    // is open on the master unlock alone loses details when that unlock expires
+    // (checked per frame), so a long-lived stream cannot outlive it.
+    const detailAccess = req.caller?.detailAccess !== false;
+    const detailUntil = Number.isInteger(req.caller?.detailUntil) ? req.caller.detailUntil : null;
+    const detailsOpen = () => detailAccess && (detailUntil === null || Date.now() < detailUntil);
+    const shapeTasks = (list) => (detailsOpen() ? list : list.map(redactTaskDetails));
 
     // SEC-05: cap concurrent SSE streams BEFORE setting headers.
     const cap = maxSseStreams();
@@ -611,18 +655,18 @@ export function createApp(opts = {}) {
       // PERF-01b: emit a priming `tasks` snapshot ONLY when ?prime=1 is passed.
       // The client relies on its own GET /api/tasks fetch for initial state.
       if (wantPrime) {
-        send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
+        send('tasks', shapeTasks(getTasks(project ?? undefined).filter((t) => passesScope(t.project))));
       }
       unsubscribe = onDiff((evt) => {
         if (project && evt.project !== project) return;
         if (!passesScope(evt.project)) return;
-        writeFrame(diffWireFrame(evt));
+        writeFrame(detailsOpen() ? diffWireFrame(evt) : redactedDiffWireFrame(evt));
       });
     } else {
-      send('tasks', getTasks(project ?? undefined).filter((t) => passesScope(t.project)));
+      send('tasks', shapeTasks(getTasks(project ?? undefined).filter((t) => passesScope(t.project))));
       if (!closed) {
         unsubscribe = onChange((tasks) => {
-          send('tasks', tasks.filter((t) => (project ? t.project === project : true) && passesScope(t.project)));
+          send('tasks', shapeTasks(tasks.filter((t) => (project ? t.project === project : true) && passesScope(t.project))));
         });
       }
     }

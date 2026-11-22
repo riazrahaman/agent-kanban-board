@@ -9,7 +9,7 @@ import { PHONE_CARD_LIMIT, columnAlignTarget, snappedColumnIndex } from '../lib/
 
 type Props = {
   tasks: Task[]
-  onOpen: (id: string) => void
+  onOpen: (project: string, id: string) => void
   /** Show each card's owning project — useful on the unscoped "all projects" board. */
   showProject?: boolean
   /** v2.5.0: resolved per-project column colors (accent overrides). */

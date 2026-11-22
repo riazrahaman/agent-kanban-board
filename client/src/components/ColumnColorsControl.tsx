@@ -19,14 +19,21 @@ type Props = {
   colors: ColumnColors | null
   onChange: (colors: ColumnColors) => void
   onReset: () => void
+  /**
+   * Why the last save did not reach the server, or null. App has already put
+   * the previous palette back; this is the cue that says so.
+   */
+  saveError?: string | null
 }
 
 /**
- * v2.5.0 — per-project column colors. A small popover: one row per swimlane,
- * each with a swatch palette. Saves are optimistic (App persists via PUT
- * /api/settings); this component only manages the open/close + pick state.
+ * v2.5.0 — column colors: a project's own palette, or (all-projects view) the
+ * board-wide one. A small popover: one row per swimlane, each with a swatch
+ * palette. App saves each pick through PUT /api/settings and reverts it when
+ * the server refuses; this component manages the open/close + pick state and
+ * shows the "not saved" cue.
  */
-export default function ColumnColorsControl({ colors, onChange, onReset }: Props) {
+export default function ColumnColorsControl({ colors, onChange, onReset, saveError = null }: Props) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -69,7 +76,7 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label="Customize column colors"
-        title="Per-column accent colors (saved for this project)"
+        title="Per-column accent colors (saved to the server: for this project, or board-wide in the all-projects view)"
         className="border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11"
       >
         Columns
@@ -85,6 +92,15 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
           }
           className="z-50 border-2 border-ink/70 bg-surface p-2 text-left sm:fixed sm:overflow-y-auto sm:overscroll-contain sm:w-64 sm:pointer-coarse:w-72 max-sm:fixed max-sm:inset-x-2 max-sm:top-auto max-sm:bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] max-sm:w-auto max-sm:max-h-[calc(100dvh-2rem)] max-sm:overflow-y-auto max-w-[calc(100vw-1rem)]"
         >
+          {saveError && (
+            <p
+              role="alert"
+              data-testid="column-colors-save-error"
+              className="mb-1 border border-fail bg-fail-bg px-2 py-1.5 font-mono text-[10px] leading-snug text-fail"
+            >
+              {saveError}
+            </p>
+          )}
           {COLUMN_ORDER.map((column) => {
             const current = colors?.[column] ?? DEFAULT_COLUMN_COLORS[column]
             return (
@@ -119,8 +135,8 @@ export default function ColumnColorsControl({ colors, onChange, onReset }: Props
             <button
               type="button"
               onClick={() => {
+                // Stays open: a refused reset has to be able to say so here.
                 onReset()
-                setOpen(false)
               }}
               disabled={isStockPalette(colors)}
               className="w-full border border-line px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted transition-colors hover:bg-muted-bg hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 sm:py-1 pointer-coarse:min-h-11"

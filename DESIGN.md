@@ -301,8 +301,8 @@ unmapped priority falls back to `medium` so a render can never throw.
   full value in `title`) then a badge group pinned to the right. On phones the
   badge group takes its own full-width line (`w-full sm:w-auto`) so the id owns
   the row.
-- Title: `text-sm font-medium leading-snug text-ink break-words`; double-click to
-  edit in place. On a real iPhone this rendered visibly larger than the
+- Title: `text-sm font-medium leading-snug text-ink break-words`; display-only (no
+  inline editing). On a real iPhone this rendered visibly larger than the
   `text-[10px]`/`text-[11px]` mono badges beside it despite both being fixed
   sizes — iOS Safari's WebKit text autosizer inflates multi-line prose in
   narrow columns independently of any explicit `text-*` class. Fixed

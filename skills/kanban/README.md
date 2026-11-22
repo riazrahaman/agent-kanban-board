@@ -200,6 +200,10 @@ Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOAR
 - **`POST /api/bug-reports`**: Public bug reporting directly to GitHub issues (labelled `user-report`). Unauthenticated, takes no board token, creates no card.
 - **`POST /api/ask` & `GET /api/ask/config`**: Public read-only Q&A over board protocol and repository source context. Gated by password header `x-ask-pass` (`KANBAN_ASK_PASSWORD`). Supports OpenRouter and local Ollama (`KANBAN_ASK_PROVIDER=ollama`). Strictly read-only; agents do not use it for task operations.
 
+## Reads without a token (master password)
+
+If the operator sets `KANBAN_MASTER_PASSWORD`, a read that carries no valid token returns reduced tasks (`details_locked: true`, empty `description` / `agent_logs` / `comments`) and `GET /tasks/:id/logs` answers `403 details_locked`. Send the token on every read as well as on writes; with it, responses are unchanged.
+
 ## Data notes
 
 - Branch values are normalized on write: blank, whitespace-only or non-string values become `null`; real refs like `feat/x` are kept verbatim.

@@ -92,7 +92,13 @@ describe('v2.5.0 column colors', () => {
     const app = readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8')
     assert.match(app, /subscribeToBoard/)
     assert.match(app, /getSettings\(project \|\| undefined\)/)
-    assert.match(app, /saveSettings\(project \|\| undefined, colors\)/)
+    assert.match(app, /saveSettings\(project \|\| undefined, payload\)/)
+    // The server is the source of truth: no local palette is pushed back to it
+    // on load, and a refused save is reverted and reported, never swallowed.
+    assert.doesNotMatch(app, /saveSettings\([^)]*\)\.catch\(\(\) => \{\}\)/)
+    assert.doesNotMatch(app, /isStockPalette/)
+    assert.match(app, /setColumnColors\(serverColors\.current\)/)
+    assert.match(app, /columnColorsSaveError=\{columnColorsSaveError\}/)
     assert.match(app, /columnColors=\{columnColors\}/)
     assert.match(app, /onColumnColorsChange=\{handleColumnColorsChange\}/)
   })
