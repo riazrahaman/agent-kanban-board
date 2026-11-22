@@ -32,6 +32,15 @@
  * — verified by hand against a feature-OFF build before these numbers were
  * committed; this script re-verifies the feature-ON side on every CI run.
  *
+ * READ THIS FIRST (v3.17.2 follow-up): the non-coarse expectations are no
+ * longer a pixel table. They are rules (`judgeHeader`, below) keyed on what
+ * the PAGE reports — whether its own dock media query matches — because
+ * headless Linux Chrome has no pointer (`pointer: none`) and so, correctly,
+ * does not dock the filters under 1024px, and because the row count below
+ * ~1100px depends on the platform's fonts. The history below still explains
+ * why each pass exists; where it quotes 84/120/49px it describes the header
+ * before the filters were docked into it.
+ *
  * TWO baselines, because TWO real pointer environments produce two
  * genuinely different (and both correct) header heights:
  *
@@ -85,6 +94,9 @@
  *
  * Usage:
  *   node scripts/check-header-layout.mjs <base-url> [cdp-port] [off-base-url]
+ *   node scripts/check-header-layout.mjs --self-test   (no browser: replays
+ *     recorded macOS and Linux measurements, and known regressions, through
+ *     the same rules — see selfTest())
  *
  * BOTH servers must hold the SAME seeded tasks, including one task assigned
  * to a very long agent id. Since the board filter row docks into the header
@@ -122,42 +134,128 @@ import {
 const readSafe = (f) => { try { return readRaw(f, 'utf8'); } catch { return ''; } };
 const WS = globalThis.WebSocket;
 
+const SELF_TEST = process.argv[2] === '--self-test';
 const BASE = process.argv[2] || 'http://127.0.0.1:4100';
+
+// The header's own "use the desktop arrangement and dock the filters" media
+// query, read from the client source so the guard cannot drift from it.
+const DOCK_QUERY = (() => {
+  const src = readSafe(new URL('../client/src/lib/uiSettings.ts', import.meta.url));
+  const m = src.match(/export const DESKTOP_HEADER_QUERY = '([^']+)'/);
+  if (!m) {
+    console.error('header layout guard: DESKTOP_HEADER_QUERY not found in client/src/lib/uiSettings.ts');
+    process.exit(1);
+  }
+  return m[1];
+})();
 const PORT_ARG = process.argv[3] || process.env.CDP_PORT;
 
-// width -> expected header height (px), NON-COARSE pointer (desktop window
-// resize). Real-Chromium ground truth — see the file header comment.
-// Identical with the bug-report feature on or off, in both themes.
+// ---------------------------------------------------------------------------
+// NON-COARSE expectations: RULES, not one platform's pixel table.
 //
-// Re-baselined when the board filter row was DOCKED INTO THE HEADER on
-// desktop and the header was regrouped (brand + tabs + project picker | the
-// filters | count + identity + theme). Against a board that has tasks (both
-// CI servers are seeded alike, see ci.yml) the desktop header is:
-//   - row 1 (brand, tabs, picker, identity) + a filter row below 1880px;
-//   - ONE row from 1880px (`min-[117.5rem]`), where the filters sit inline.
-// That switch is a breakpoint, not a content-driven wrap. The only wrap
-// point left is the identity group dropping under the brand row below 993px
-// (three rows: brand row, identity row, filter row). Phone widths are
-// unchanged (the filters stay in the board pane).
-const EXPECTATIONS = {
-  320: 84, 360: 84, 390: 84,
-  768: 115, 820: 115, 824: 115, 900: 115,
-  1024: 83, 1100: 83,
-  1280: 83, 1440: 83, 1728: 83,
-  1920: 49, 2048: 49,
-};
-// The same header with NO filters docked (the About view; a loading or empty
-// board looks the same): just row 1, which must not depend on the filters.
-const UNDOCKED_EXPECTATIONS = {
-  768: 82, 900: 82,
-  1024: 49, 1280: 49, 1440: 49, 1728: 49, 1920: 49, 2048: 49,
-};
+// The first version of this section pinned the header height at every width
+// to what macOS Chrome measured. It went red on the first Linux CI run, for
+// two reasons that have nothing to do with a layout regression:
+//
+//  1. HEADLESS LINUX CHROME HAS NO POINTER. It reports `(pointer: none)`
+//     (macOS headless reports `fine`). The header docks the filters when
+//     DESKTOP_HEADER_QUERY matches — "md and up with a FINE pointer, or lg
+//     and up" — so between 768 and 1023px a pointer-less browser correctly
+//     keeps the UNDOCKED header. Confirmed in a Linux container: at 768px
+//     innerWidth is 768, `(min-width: 48rem)` matches, `(pointer: fine)` does
+//     not, the dock query is false and the filters are not docked. Not a
+//     viewport/scrollbar artifact and not a product bug: a real desktop has a
+//     mouse. The guard therefore asks THE PAGE whether its own dock query
+//     matches and expects docking exactly then.
+//
+//  2. BELOW ~1100px THE ROW COUNT IS FONT-DEPENDENT. Whether the identity
+//     group still fits beside the brand (macOS: from 993px) depends on glyph
+//     widths, and the mono stack resolves to different fonts per platform.
+//
+// So expectations come in two kinds:
+//
+//   EXACT, where the layout is decided by a breakpoint and by nothing else:
+//     - under 768px (phone header)                          84px
+//     - docked, 1100-1879px: row 1 + the filter row         83px (2 rows)
+//     - docked, from 1880px (`min-[117.5rem]`): one row     49px
+//     - the About view (no filters) from 1100px: one row    49px
+//
+//   BAND, 768-1099px, where a content-driven wrap is within reach: the
+//   header must be a WHOLE number of rows (height = 49 + 33 per extra row)
+//   and no more than the arrangement can legitimately need — 4 with the
+//   filters docked (brand row, identity row, up to two filter rows), 3
+//   without. The row count is derived from the height, not from the DOM:
+//   counting control positions miscounts the undocked arrangement, where
+//   the tab group is centred beside a two-line block of controls.
+//
+// What this does NOT loosen: from 1100px a docked header taller than two
+// rows is still an error (that is where the long-assignee regression showed:
+// 1440px 82 -> 115, 1920px 49 -> 82), the select-width cap is still checked
+// at every width, and row 1 must still be identical on Board and About.
+// ---------------------------------------------------------------------------
+const ROW1_PX = 49;        // one header row including the header's padding
+const ROW_PITCH_PX = 33;   // each further row: 27px control + 6px row gap
+const BAND_FROM = 768;     // md: below this it is the phone header
+const BAND_TO = 1100;      // from here no content-driven wrap is in reach
+const ONE_ROW_FROM = 1880; // `min-[117.5rem]`: the filters move into row 1
+const PHONE_HEADER_PX = 84;
+const BAND_TOLERANCE_PX = 8; // the pre-dock arrangement's 3 rows are 120, not 115
+const MAX_ROWS_DOCKED = 4;
+const MAX_ROWS_UNDOCKED = 3;
+const heightForRows = (rows) => ROW1_PX + (rows - 1) * ROW_PITCH_PX;
+const rowsForHeight = (height) => Math.max(1, Math.round((height - ROW1_PX) / ROW_PITCH_PX) + 1);
+
+/**
+ * Judge one non-coarse observation. Pure, so `--self-test` can replay known
+ * macOS and Linux measurements (and known regressions) through the SAME code
+ * the browser passes use.
+ *   obs = { view: 'board'|'about', width, height, dockMatches, docked }
+ * Returns null when the observation is legitimate, else the reason.
+ */
+function judgeHeader(obs) {
+  const { view, width, height, dockMatches, docked } = obs;
+  if (typeof height !== 'number') return 'header missing';
+  // Docking follows the page's own media query, exactly.
+  if (view === 'board' && docked !== dockMatches) {
+    return dockMatches
+      ? 'the dock query matches but the filters are not docked into the header (is the board seeded?)'
+      : 'the filters are docked although the dock query does not match';
+  }
+  if (view === 'about' && docked) return 'the filters are still docked on the About view';
+  if (width >= 1024 && !dockMatches) return 'the dock query must match from 64rem regardless of pointer type';
+
+  const exact = (expected) => (Math.abs(height - expected) > TOLERANCE_PX
+    ? `expected ${expected}±${TOLERANCE_PX}px, got ${height}px (${height > expected ? `+${height - expected} over` : `-${expected - height} under`})`
+    : null);
+
+  if (width < BAND_FROM) return view === 'board' ? exact(PHONE_HEADER_PX) : null;
+  if (width >= BAND_TO) {
+    if (view === 'about') return exact(heightForRows(1));
+    return exact(heightForRows(width >= ONE_ROW_FROM ? 1 : 2));
+  }
+  // The font-dependent band.
+  const maxRows = view === 'board' && docked ? MAX_ROWS_DOCKED : MAX_ROWS_UNDOCKED;
+  const minRows = view === 'board' && docked ? 2 : 1;
+  const rows = rowsForHeight(height);
+  const whole = heightForRows(rows);
+  if (Math.abs(height - whole) > BAND_TOLERANCE_PX) {
+    return `${height}px is not a whole number of header rows (nearest: ${rows} row(s) = ${whole}±${BAND_TOLERANCE_PX}px): something wrapped or overflowed inside a row`;
+  }
+  if (rows < minRows || rows > maxRows) {
+    return `${height}px is ${rows} header row(s) at ${width}px, allowed ${minRows}-${maxRows} for the ${docked ? 'docked' : 'undocked'} header`;
+  }
+  return null;
+}
+
+// Widths sampled by the first (Board) pass and by the About pass.
+const BOARD_WIDTHS = [320, 360, 390, 768, 820, 824, 900, 1024, 1100, 1280, 1440, 1728, 1920, 2048];
+const ABOUT_WIDTHS = [768, 900, 1024, 1100, 1280, 1440, 1728, 1920, 2048];
 // Widths at which the Board/About tabs, the project picker, the task count
 // and the theme toggle must sit at the SAME x/y on Board (filters docked) as
 // on About (no filters): a reviewer measured the tabs jumping from (729,45)
 // to (572,12) under the pointer at 1440px when the filters used to push them
 // onto a second row.
-const STABLE_ROW_WIDTHS = [768, 1024, 1280, 1440, 1728, 1920, 2048];
+const STABLE_ROW_WIDTHS = [768, 900, 1024, 1280, 1440, 1728, 1920, 2048];
 // A docked <select> may not grow with its longest option: one task claimed
 // by a 70-character agent id once made the assignee select 496px wide and
 // added a header row at every desktop width. Docked selects are capped at
@@ -169,11 +267,14 @@ const LONG_ASSIGNEE_MIN_CHARS = 40;
 // controls). Same real-Chromium measurement, `Emulation.setTouchEmulationEnabled`
 // forcing `pointer: coarse` to match. Checked at a subset of widths — the
 // same ones CONTAINMENT_WIDTHS below already covers.
-// Re-baselined with the docked filter row (see EXPECTATIONS). A coarse
+// Re-baselined with the docked filter row (see the rules above). A coarse
 // pointer under 1024px does NOT dock (DESKTOP_HEADER_QUERY in
 // client/src/lib/uiSettings.ts), so 768px keeps the undocked header.
 // Measured, coarse: 155 (768-789) -> 101 -> 67 (1011-1023, undocked) ->
-// 117 (docked, from 1024) -> 67 (one row, from 1880).
+// 117 (docked, from 1024) -> 67 (one row, from 1880). Touch emulation makes
+// the pointer `coarse` on every platform, and these six values came out
+// identical on macOS and on the Linux CI runner, so they stay exact. 768px
+// is the one sample near a font-dependent wrap point (790px on macOS).
 const COARSE_EXPECTATIONS = {
   320: 113, 768: 155, 1100: 117, 1280: 117, 1920: 67, 2048: 67,
 };
@@ -194,7 +295,7 @@ const range = (from, to, step) => {
   return out;
 };
 // 8px steps across the two wrap thresholds the first two passes already
-// know about (1024<->1100 and 1100<->1280 — see EXPECTATIONS) plus a margin
+// know about (1024<->1100 and 1100<->1280) plus a margin
 // either side, non-coarse and coarse pointer respectively. This is exactly
 // the grid fine enough to have caught the round-3 defect (an 8-40px band)
 // in Chromium, not just the WebKit repro it was first found in.
@@ -208,10 +309,14 @@ const FINE_WIDTHS = [...range(768, 1264, 8), ...range(1840, 1920, 8)];
 const FINE_COARSE_WIDTHS = [...range(768, 1272, 8), ...range(1840, 1920, 8)];
 // Fallback tables, used only when OFF_BASE is not supplied. Captured with a
 // live ON-vs-OFF diff (both empty, i.e. equal, at the time this pass was
-// written) against the same real-Chromium ground truth as EXPECTATIONS/
+// written) against the same real-Chromium ground truth as
 // COARSE_EXPECTATIONS above.
-const fineNonCoarseExpected = (w) => (w < 993 ? 115 : w < 1880 ? 83 : 49);
-const fineCoarseExpected = (w) => (w < 790 ? 155 : w < 1011 ? 101 : w < 1024 ? 67 : w < 1880 ? 117 : 67);
+// Below BAND_TO the height is font- and pointer-dependent (see the rules
+// above), so the fallback has no single expected value there: `null` means
+// "only require that a header rendered". The live ON-vs-OFF diff, which CI
+// uses, compares like with like and needs no table at any width.
+const fineNonCoarseExpected = (w) => (w < BAND_TO ? null : w < ONE_ROW_FROM ? 83 : 49);
+const fineCoarseExpected = (w) => (w < BAND_TO ? null : w < ONE_ROW_FROM ? 117 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
@@ -337,8 +442,12 @@ const ROW_PROBE = `(() => {
     width: Math.round(sel.getBoundingClientRect().width),
     longestOption: Math.max(0, ...[...sel.options].map((o) => o.textContent.length)),
   })) : [];
+  const mq = (q) => window.matchMedia(q).matches;
   return {
     height: Math.round(header.getBoundingClientRect().height),
+    innerWidth: window.innerWidth,
+    dockMatches: mq(${JSON.stringify(DOCK_QUERY)}),
+    pointer: mq('(pointer: fine)') ? 'fine' : mq('(pointer: coarse)') ? 'coarse' : 'none',
     docked: !!slot && slot.childElementCount > 0,
     tabs: rect(header.querySelector('[role="group"][aria-label^="Switch between"]')),
     picker: rect(header.querySelector('[aria-haspopup="listbox"]')),
@@ -348,6 +457,8 @@ const ROW_PROBE = `(() => {
     pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
   };
 })()`;
+// One compact, self-explaining token per measurement for the CI log.
+const describe = (o) => (o ? `${o.height}px/${rowsForHeight(o.height)}r/${o.docked ? 'docked' : 'undocked'}${o.dockMatches ? '' : '(dock query off)'}` : 'n/a');
 const clickTab = (name) => `(() => {
   const tab = [...document.querySelectorAll('header [role="group"][aria-label^="Switch between"] button')]
     .find((b) => b.textContent.trim().toLowerCase() === ${JSON.stringify(name)});
@@ -355,6 +466,73 @@ const clickTab = (name) => `(() => {
   tab.click();
   return true;
 })()`;
+
+// `--self-test`: replay real measurements through judgeHeader() without a
+// browser. The macOS and Linux rows are what each platform actually rendered
+// for the SAME correct build (Linux: the CI run that went red against the old
+// pixel table, reproduced in a container); every one must pass. The
+// regression rows are layouts this guard exists to reject; every one must
+// fail. Run by ci.yml before the browser passes, so a rule change that would
+// re-break a platform — or stop catching a regression — fails in a second.
+function selfTest() {
+  const D = true;   // dock query matches / filters docked
+  const U = false;
+  // [width, height, rows as rendered (for the reader; the rules derive them), dock query, docked]
+  const obs = (view, width, height, _rows, dockMatches, docked) => ({ view, width, height, dockMatches, docked });
+  const good = {
+    'macOS (pointer: fine), Board': [
+      [320, 84, 2, U, U], [360, 84, 2, U, U], [390, 84, 2, U, U],
+      [768, 115, 3, D, D], [820, 115, 3, D, D], [824, 115, 3, D, D], [900, 115, 3, D, D],
+      [1024, 83, 2, D, D], [1100, 83, 2, D, D], [1280, 83, 2, D, D], [1440, 83, 2, D, D], [1728, 83, 2, D, D],
+      [1920, 49, 1, D, D], [2048, 49, 1, D, D],
+    ].map((r) => obs('board', ...r)),
+    'macOS (pointer: fine), About': [
+      [768, 82, 2, D, U], [900, 82, 2, D, U], [1024, 49, 1, D, U], [1100, 49, 1, D, U], [1280, 49, 1, D, U],
+      [1440, 49, 1, D, U], [1728, 49, 1, D, U], [1920, 49, 1, D, U], [2048, 49, 1, D, U],
+    ].map((r) => obs('about', ...r)),
+    // Headless Linux Chrome: `(pointer: none)`, so the dock query is off
+    // below 1024px and the header keeps the undocked arrangement there.
+    'Linux CI (pointer: none), Board': [
+      [320, 84, 2, U, U], [360, 84, 2, U, U], [390, 84, 2, U, U],
+      [768, 120, 3, U, U], [820, 82, 2, U, U], [824, 82, 2, U, U], [900, 82, 2, U, U],
+      [1024, 82, 2, D, D], [1100, 82, 2, D, D], [1280, 82, 2, D, D], [1440, 82, 2, D, D], [1728, 82, 2, D, D],
+      [1920, 49, 1, D, D], [2048, 49, 1, D, D],
+    ].map((r) => obs('board', ...r)),
+    'Linux CI (pointer: none), About': [
+      [768, 120, 3, U, U], [900, 82, 2, U, U], [1024, 49, 1, D, U], [1100, 49, 1, D, U], [1280, 49, 1, D, U],
+      [1440, 49, 1, D, U], [1728, 49, 1, D, U], [1920, 49, 1, D, U], [2048, 49, 1, D, U],
+    ].map((r) => obs('about', ...r)),
+  };
+  const bad = [
+    ['long assignee adds a row at 1440 (review blocker B1)', obs('board', 1440, 115, 3, D, D)],
+    ['long assignee adds a row at 1920 (review blocker B1)', obs('board', 1920, 82, 2, D, D)],
+    ['long assignee adds a row at 1100', obs('board', 1100, 115, 3, D, D)],
+    ['filters wrap inside the one-row header at 2048', obs('board', 2048, 83, 2, D, D)],
+    ['About header wraps at 1280', obs('about', 1280, 82, 2, D, U)],
+    ['dock query matches at 768 but the filters did not dock', obs('board', 768, 82, 2, D, U)],
+    ['filters docked although the dock query is off', obs('board', 820, 115, 3, U, D)],
+    ['filters still docked on About', obs('about', 1440, 83, 2, D, D)],
+    ['dock query off at 1024 and up', obs('board', 1280, 49, 1, U, U)],
+    ['five header rows in the band', obs('board', 800, 181, 5, D, D)],
+    ['four rows without docked filters', obs('board', 800, 148, 4, U, U)],
+    ['a control wrapped inside a row (not a whole number of rows)', obs('board', 900, 100, 2, D, D)],
+    ['phone header grew a row', obs('board', 390, 120, 3, U, U)],
+    ['header missing', obs('board', 1280, null, 0, D, D)],
+  ];
+  let failures = 0;
+  for (const [name, list] of Object.entries(good)) {
+    const rejected = list.map((o) => [o, judgeHeader(o)]).filter(([, reason]) => reason);
+    console.log(`  ${rejected.length ? 'FAIL' : 'ok  '} ${name}: ${list.length - rejected.length}/${list.length} accepted`);
+    for (const [o, reason] of rejected) { failures += 1; console.error(`       ${o.width}px ${o.height}px wrongly rejected: ${reason}`); }
+  }
+  for (const [name, o] of bad) {
+    const reason = judgeHeader(o);
+    if (reason) console.log(`  ok   rejects: ${name}`);
+    else { failures += 1; console.error(`  FAIL accepts a regression: ${name}`); }
+  }
+  console.log(failures ? `header layout guard self-test: ${failures} failure(s)` : 'header layout guard self-test: OK');
+  process.exit(failures ? 1 : 0);
+}
 
 async function main() {
   let target = null;
@@ -423,7 +601,9 @@ async function main() {
   const measuredHeights = {};
   const measuredBoxes = {};
 
-  const allWidths = [...new Set([...Object.keys(EXPECTATIONS).map(Number), ...CONTAINMENT_WIDTHS])].sort((a, b) => a - b);
+  const allWidths = [...new Set([...BOARD_WIDTHS, ...CONTAINMENT_WIDTHS])].sort((a, b) => a - b);
+  const boardDetail = {};
+  let environment = null;
 
   for (const width of allWidths) {
     await send('Emulation.setDeviceMetricsOverride', {
@@ -431,19 +611,17 @@ async function main() {
     });
     await new Promise((r) => setTimeout(r, 150));
 
-    if (Object.prototype.hasOwnProperty.call(EXPECTATIONS, width)) {
-      const expected = EXPECTATIONS[width];
-      const r = await send('Runtime.evaluate', { expression: HEADER_HEIGHT_PROBE, returnByValue: true });
-      const h = r.result && r.result.value;
-      measuredHeights[width] = h;
-      if (typeof h !== 'number') {
-        heightOffenders.push({ width, expected, actual: h, reason: 'header missing' });
-      } else if (Math.abs(h - expected) > TOLERANCE_PX) {
-        heightOffenders.push({
-          width, expected, actual: h,
-          reason: h > expected ? `+${h - expected}px over` : `-${expected - h}px under`,
-        });
+    if (BOARD_WIDTHS.includes(width)) {
+      const r = await send('Runtime.evaluate', { expression: ROW_PROBE, returnByValue: true });
+      const o = r.result && r.result.value;
+      measuredHeights[width] = o ? o.height : null;
+      boardDetail[width] = describe(o);
+      if (o && !environment) environment = `pointer: ${o.pointer}`;
+      if (o && o.innerWidth !== width) {
+        heightOffenders.push({ width, reason: `the page reports innerWidth ${o.innerWidth} for an emulated ${width}px viewport` });
       }
+      const reason = o ? judgeHeader({ view: 'board', width, ...o }) : 'header missing';
+      if (reason) heightOffenders.push({ width, reason });
     }
 
     if (CONTAINMENT_WIDTHS.includes(width)) {
@@ -531,7 +709,8 @@ async function main() {
     const r = await send('Runtime.evaluate', { expression, returnByValue: true });
     return r.result && r.result.value;
   };
-  const rowWidths = [...new Set([...STABLE_ROW_WIDTHS, ...Object.keys(UNDOCKED_EXPECTATIONS).map(Number)])].sort((a, b) => a - b);
+  const aboutDetail = {};
+  const rowWidths = [...new Set([...STABLE_ROW_WIDTHS, ...ABOUT_WIDTHS])].sort((a, b) => a - b);
   for (const width of rowWidths) {
     await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
     await evalValue(clickTab('board'));
@@ -547,11 +726,14 @@ async function main() {
       continue;
     }
     measuredUndocked[width] = about.height;
+    aboutDetail[width] = describe(about);
     if (board.docked) sawDocked = true;
-    if (about.docked) rowOffenders.push({ width, reason: 'the filters are still docked on the About view' });
     if (board.pageOverflow > 0) rowOffenders.push({ width, reason: `the page overflows horizontally by ${board.pageOverflow}px with the filters docked` });
     if (STABLE_ROW_WIDTHS.includes(width)) {
-      if (!board.docked) rowOffenders.push({ width, reason: 'the filters are not docked into the header on the Board view (is the board seeded?)' });
+      // Docked exactly when the page's own dock query matches (a pointer-less
+      // headless browser legitimately stays undocked under 1024px).
+      const dockReason = judgeHeader({ view: 'board', width, ...board });
+      if (dockReason && board.docked !== board.dockMatches) rowOffenders.push({ width, reason: dockReason });
       for (const key of ['tabs', 'picker', 'count', 'theme']) {
         const b = board[key];
         const a = about[key];
@@ -565,11 +747,9 @@ async function main() {
       if (sel.label === 'Filter tasks by assignee' && sel.longestOption >= LONG_ASSIGNEE_MIN_CHARS) sawLongAssignee = true;
       if (sel.width > DOCKED_SELECT_MAX_PX) rowOffenders.push({ width, reason: `docked select "${sel.label}" is ${sel.width}px wide (cap ${DOCKED_SELECT_MAX_PX}px; longest option ${sel.longestOption} chars)` });
     }
-    if (Object.prototype.hasOwnProperty.call(UNDOCKED_EXPECTATIONS, width)) {
-      const expected = UNDOCKED_EXPECTATIONS[width];
-      if (Math.abs(about.height - expected) > TOLERANCE_PX) {
-        rowOffenders.push({ width, reason: `undocked (About) header is ${about.height}px, expected ${expected}±${TOLERANCE_PX}` });
-      }
+    if (ABOUT_WIDTHS.includes(width)) {
+      const reason = judgeHeader({ view: 'about', width, ...about });
+      if (reason) rowOffenders.push({ width, reason: `About view (no filters): ${reason}` });
     }
   }
   if (!sawDocked) rowOffenders.push({ width: '-', reason: 'the filters never docked: the board has no tasks, so every docked check passed vacuously' });
@@ -668,6 +848,7 @@ async function main() {
     for (const width of FINE_WIDTHS) {
       const expected = offNonCoarse ? offNonCoarse[width] : fineNonCoarseExpected(width);
       const actual = onNonCoarse[width];
+      if (!offNonCoarse && expected === null && typeof actual === 'number') continue;
       if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
         fineOffenders.push({ mode, coarse: false, width, expected, actual });
       }
@@ -675,6 +856,7 @@ async function main() {
     for (const width of FINE_COARSE_WIDTHS) {
       const expected = offCoarse ? offCoarse[width] : fineCoarseExpected(width);
       const actual = onCoarse[width];
+      if (!offCoarse && expected === null && typeof actual === 'number') continue;
       if (typeof actual !== 'number' || typeof expected !== 'number' || Math.abs(actual - expected) > TOLERANCE_PX) {
         fineOffenders.push({ mode, coarse: true, width, expected, actual });
       }
@@ -687,9 +869,12 @@ async function main() {
   ws.close();
 
   console.log(`header layout guard (CDP :${usedPort})`);
+  console.log(`  environment: ${environment || 'unknown'}; dock query: ${DOCK_QUERY}`);
   console.log(`  heights (non-coarse): ${JSON.stringify(measuredHeights)}`);
+  console.log(`  board detail (height/rows/docking): ${JSON.stringify(boardDetail)}`);
   console.log(`  heights (coarse):     ${JSON.stringify(measuredCoarseHeights)}`);
   console.log(`  heights (undocked, About view): ${JSON.stringify(measuredUndocked)}`);
+  console.log(`  about detail (height/rows/docking): ${JSON.stringify(aboutDetail)}`);
   console.log(`  stable row 1 + capped docked selects (Board vs About): ${rowOffenders.length === 0 ? 'OK' : `${rowOffenders.length} offender(s)`}`);
   console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
   console.log(`  fine wrap-threshold sweep (${fineMode}, ${THEME_MODES.join('/')}): ${fineOffenders.length === 0 ? 'OK' : `${fineOffenders.length} offender(s)`}`);
@@ -709,10 +894,8 @@ async function main() {
     }
   }
   if (heightOffenders.length) {
-    console.error(`  FAIL — ${heightOffenders.length} width(s) off the expected header height:`);
-    for (const o of heightOffenders) {
-      console.error(`    ${o.width}px: expected ${o.expected}±${TOLERANCE_PX}, got ${o.actual}  (${o.reason})`);
-    }
+    console.error(`  FAIL — ${heightOffenders.length} header height / docking violation(s) (non-coarse):`);
+    for (const o of heightOffenders) console.error(`    ${o.width}px: ${o.reason}`);
   }
   if (containmentOffenders.length) {
     console.error(`  FAIL — ${containmentOffenders.length} popover containment violation(s):`);
@@ -733,4 +916,5 @@ async function main() {
   process.exit(1);
 }
 
-main().catch((e) => { console.error('header layout guard error:', e.message); process.exit(2); });
+if (SELF_TEST) selfTest();
+else main().catch((e) => { console.error('header layout guard error:', e.message); process.exit(2); });
