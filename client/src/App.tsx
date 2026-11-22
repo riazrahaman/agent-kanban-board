@@ -48,7 +48,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
-import { boardDetailsLocked, isDetailsLocked, lockIndicator, openKeyFor, readStoredUnlock, UNRECOGNISED_NOTE, writeStoredUnlock, type DetailStatus, type StoredUnlock } from './lib/detailLock'
+import { boardDetailsLocked, colourRefusedMessage, isDetailsLocked, lockIndicator, openKeyFor, readStoredUnlock, UNRECOGNISED_NOTE, writeStoredUnlock, type DetailStatus, type StoredUnlock } from './lib/detailLock'
 import { filterTasks, isFilterActive } from './lib/filterTasks'
 import type { SeverityFilter } from './lib/ownership'
 import { useDocumentScrollLock } from './lib/scrollLock'
@@ -654,7 +654,16 @@ export default function App() {
   const [columnColors, setColumnColors] = useState<ColumnColors | null>(() =>
     readStoredColumnColors(initialProject()),
   )
-  const [columnColorsSaveError, setColumnColorsSaveError] = useState<string | null>(null)
+  // Why the last save failed; the text is derived at render time so a refusal
+  // names the credential the server says this deployment has (see
+  // colourRefusedMessage), and corrects itself when that status arrives late.
+  const [columnColorsSaveFailure, setColumnColorsSaveFailure] = useState<'rejected' | 'network' | null>(null)
+  const columnColorsSaveError =
+    columnColorsSaveFailure === 'rejected'
+      ? colourRefusedMessage(detailStatus)
+      : columnColorsSaveFailure === 'network'
+        ? 'Not saved: the server could not be reached. Try again.'
+        : null
   // The palette the server last confirmed for the current scope (what a
   // refused save reverts to), and a counter so a slow answer to an older pick
   // never overrides a newer one.
@@ -668,7 +677,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     serverColors.current = null
-    setColumnColorsSaveError(null)
+    setColumnColorsSaveFailure(null)
     setColumnColors(readStoredColumnColors(project || undefined))
 
     getSettings(project || undefined)
@@ -685,7 +694,7 @@ export default function App() {
   const saveColumnColors = useCallback((colors: ColumnColors, payload: ColumnColors) => {
     const seq = ++colorSaveSeq.current
     setColumnColors(colors) // optimistic
-    setColumnColorsSaveError(null)
+    setColumnColorsSaveFailure(null)
     saveSettings(project || undefined, payload)
       .then(() => {
         // The server's own `settings` event carries the resolved palette back
@@ -694,11 +703,7 @@ export default function App() {
       .catch((err: unknown) => {
         if (seq !== colorSaveSeq.current) return
         setColumnColors(serverColors.current)
-        setColumnColorsSaveError(
-          err instanceof SettingsSaveError && err.rejected
-            ? 'Not saved. Enter the master password in the header token box to save column colours.'
-            : 'Not saved: the server could not be reached. Try again.',
-        )
+        setColumnColorsSaveFailure(err instanceof SettingsSaveError && err.rejected ? 'rejected' : 'network')
       })
   }, [project])
   const handleColumnColorsChange = useCallback((colors: ColumnColors) => {

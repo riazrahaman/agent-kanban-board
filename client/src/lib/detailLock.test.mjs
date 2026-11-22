@@ -239,5 +239,24 @@ test('Columns popover: a refused save is announced, not swallowed', () => {
   assert.match(control, /data-testid="column-colors-save-error"/)
   assert.match(control, /role="alert"/)
   const app = read('App.tsx')
-  assert.match(app, /Not saved\. Enter the master password in the header token box to save column colours\./)
+  assert.match(app, /colourRefusedMessage\(detailStatus\)/, 'the refusal text follows what the server reports')
+  assert.doesNotMatch(app, /Enter the master password in the header token box/, 'no hard-coded master-password text in App')
+})
+
+test('a refused colour save names only a credential the deployment has', () => {
+  // Master password configured, anonymous browser: the server withholds details.
+  assert.equal(m.colourRefusedMessage({ details: false, unlock: false }), m.COLOUR_REFUSED_MASTER)
+  // Configured, unlock held (e.g. it lapsed between status and save).
+  assert.equal(m.colourRefusedMessage({ details: true, unlock: true }), m.COLOUR_REFUSED_MASTER)
+  // No master password: details are open to everyone, no unlock exists.
+  assert.equal(m.colourRefusedMessage({ details: true, unlock: false }), m.COLOUR_REFUSED_TOKEN)
+  // Unknown: the status request failed or has not answered.
+  assert.equal(m.colourRefusedMessage(null), m.COLOUR_REFUSED_UNKNOWN)
+  assert.equal(m.colourRefusedMessage(undefined), m.COLOUR_REFUSED_UNKNOWN)
+
+  assert.match(m.COLOUR_REFUSED_MASTER, /^Not saved\. Enter the master password in the header token box/)
+  assert.match(m.COLOUR_REFUSED_TOKEN, /^Not saved\. Enter an API token in the header token box/)
+  assert.doesNotMatch(m.COLOUR_REFUSED_TOKEN, /master password/i)
+  assert.match(m.COLOUR_REFUSED_UNKNOWN, /header token box/)
+  assert.doesNotMatch(m.COLOUR_REFUSED_UNKNOWN, /master password/i, 'unknown must not claim a master password exists')
 })

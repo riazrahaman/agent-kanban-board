@@ -174,6 +174,28 @@ export function classifyUnlockResponse(status: number, body: unknown): UnlockOut
 export type DetailStatus = { details: boolean; unlock: boolean }
 
 /**
+ * The Columns popover's note when the server refuses a colour save (401/403).
+ * It names only a credential the deployment actually has, from what the SERVER
+ * reports (`GET /api/auth/details`; `unlock` there means "this caller sent a
+ * valid unlock", not "a master password is configured"):
+ *   - `details: false` or `unlock: true`: only a configured master password
+ *     produces either, so the master-password text.
+ *   - `details: true, unlock: false`: no master password, or one with a board
+ *     token that may read but not save here; "an API token" is true in both.
+ *   - unknown (the request failed, has not answered, or was refused): names the
+ *     token box without claiming a master password exists.
+ */
+export const COLOUR_REFUSED_MASTER = 'Not saved. Enter the master password in the header token box to save column colours.'
+export const COLOUR_REFUSED_TOKEN = 'Not saved. Enter an API token in the header token box to save column colours.'
+export const COLOUR_REFUSED_UNKNOWN = 'Not saved. Enter a credential that may save column colours in the header token box.'
+
+export function colourRefusedMessage(status: DetailStatus | null | undefined): string {
+  if (!status) return COLOUR_REFUSED_UNKNOWN
+  if (status.unlock === true || status.details === false) return COLOUR_REFUSED_MASTER
+  return COLOUR_REFUSED_TOKEN
+}
+
+/**
  * The header's lock indicator, from what the SERVER says rather than from what
  * is stored: a stored unlock the server no longer honours is not "unlocked",
  * even on an empty board with no tasks to infer it from. Until the server has
