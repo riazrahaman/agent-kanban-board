@@ -142,23 +142,49 @@ export function unlockHeaders(unlock: StoredUnlock | null = readStoredUnlock()):
 export type UnlockOutcome =
   | { kind: 'unlocked'; unlock: StoredUnlock }
   | { kind: 'token' }
+  | { kind: 'unrecognised' }
   | { kind: 'throttled'; retryAfterMs: number }
   | { kind: 'unverified' }
 
+/** Shown beside the box when the server recognised the value as neither. */
+export const UNRECOGNISED_NOTE = 'Not recognised: not saved'
+
 /**
- * Classifies the server's answer to POST /api/auth/unlock. Only an explicit
- * "not the master password" (`unlocked: false`) lets the value be stored as an
- * API token: on a throttle or a failure nothing is stored, because the value
- * might be the master password and must never be kept or sent as a bearer token.
+ * Classifies the server's answer to POST /api/auth/unlock. The box only ever
+ * persists a value the server RECOGNISES: the master password (exchanged for
+ * an unlock token) or a valid board credential (`credential: true`, stored as
+ * the API token). Anything else, including a mistyped master password, is
+ * `unrecognised` and nothing is stored: it must never be kept in this browser
+ * or sent as a bearer token. A throttle or a failure stores nothing either.
  */
 export function classifyUnlockResponse(status: number, body: unknown): UnlockOutcome {
-  const b = (body ?? {}) as { unlocked?: unknown; token?: unknown; expires_at?: unknown; retry_after_ms?: unknown }
+  const b = (body ?? {}) as { unlocked?: unknown; credential?: unknown; token?: unknown; expires_at?: unknown; retry_after_ms?: unknown }
   if (status === 200 && b.unlocked === true && typeof b.token === 'string' && typeof b.expires_at === 'number') {
     return { kind: 'unlocked', unlock: { token: b.token, exp: b.expires_at } }
   }
-  if (status === 200 && b.unlocked === false) return { kind: 'token' }
+  if (status === 200 && b.unlocked === false && b.credential === true) return { kind: 'token' }
+  if (status === 200 && b.unlocked === false) return { kind: 'unrecognised' }
   if (status === 429) {
     return { kind: 'throttled', retryAfterMs: typeof b.retry_after_ms === 'number' ? b.retry_after_ms : 60000 }
   }
   return { kind: 'unverified' }
+}
+
+/** What the server says it will serve this browser (GET /api/auth/details). */
+export type DetailStatus = { details: boolean; unlock: boolean }
+
+/**
+ * The header's lock indicator, from what the SERVER says rather than from what
+ * is stored: a stored unlock the server no longer honours is not "unlocked",
+ * even on an empty board with no tasks to infer it from. Until the server has
+ * answered, only the task data can say "locked".
+ */
+export function lockIndicator(
+  status: DetailStatus | null,
+  hasStoredUnlock: boolean,
+  tasksLocked: boolean,
+): 'unlocked' | 'locked' | 'open' {
+  if (status?.unlock === true && hasStoredUnlock && !tasksLocked) return 'unlocked'
+  if (tasksLocked || status?.details === false) return 'locked'
+  return 'open'
 }

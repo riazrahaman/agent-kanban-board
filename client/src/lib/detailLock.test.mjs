@@ -101,12 +101,31 @@ test('readStoredUnlock / writeStoredUnlock keep only the token, drop an expired 
 
 test('the server decides what the typed value is; an unclear answer stores nothing', () => {
   assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: true, token: 't.m', expires_at: 99 }), { kind: 'unlocked', unlock: { token: 't.m', exp: 99 } })
-  assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: false }), { kind: 'token' })
+  assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: false, credential: true }), { kind: 'token' })
+  // B2: only a credential the server recognises is a token. A mistyped master
+  // password (or any other value) is unrecognised and must not be stored.
+  assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: false, credential: false }), { kind: 'unrecognised' })
+  assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: false }), { kind: 'unrecognised' })
+  assert.deepEqual(m.classifyUnlockResponse(200, { unlocked: false, credential: 'true' }), { kind: 'unrecognised' })
+  assert.equal(m.UNRECOGNISED_NOTE, 'Not recognised: not saved')
   assert.deepEqual(m.classifyUnlockResponse(429, { retry_after_ms: 1234 }), { kind: 'throttled', retryAfterMs: 1234 })
   assert.deepEqual(m.classifyUnlockResponse(429, null), { kind: 'throttled', retryAfterMs: 60000 })
   for (const [status, body] of [[500, null], [200, null], [200, { unlocked: true }], [400, { error: 'password_required' }], [404, null]]) {
     assert.deepEqual(m.classifyUnlockResponse(status, body), { kind: 'unverified' }, `${status}`)
   }
+})
+
+test('the lock indicator follows the server, not localStorage', () => {
+  const none = null
+  // Stale stored unlock on an EMPTY board (no tasks to infer from): not "unlocked".
+  assert.equal(m.lockIndicator({ details: false, unlock: false }, true, false), 'locked')
+  assert.equal(m.lockIndicator(none, true, false), 'open', 'before the server answers, a stored unlock alone proves nothing')
+  assert.equal(m.lockIndicator({ details: true, unlock: true }, true, false), 'unlocked')
+  assert.equal(m.lockIndicator({ details: true, unlock: true }, true, true), 'locked', 'tasks still locked (re-priming): not shown as unlocked')
+  assert.equal(m.lockIndicator({ details: true, unlock: true }, false, false), 'open')
+  assert.equal(m.lockIndicator({ details: true, unlock: false }, false, false), 'open', 'feature off, or a board token: no mark')
+  assert.equal(m.lockIndicator({ details: false, unlock: false }, false, false), 'locked')
+  assert.equal(m.lockIndicator(none, false, true), 'locked')
 })
 
 // --- source contracts -------------------------------------------------------
@@ -147,7 +166,25 @@ test('App: the header box asks the server what the value is and never stores an 
   const tokenBranch = commit.slice(commit.indexOf("outcome.kind === 'token'"), commit.indexOf('} else {'))
   assert.match(tokenBranch, /writeStoredToken\(value\)/)
   const otherBranches = commit.replace(tokenBranch, '')
-  assert.doesNotMatch(otherBranches, /writeStoredToken\(value\)/, 'only an explicit "not the master password" answer may store the value as a token')
+  assert.doesNotMatch(otherBranches, /writeStoredToken\(value\)/, 'only a value the server recognised as a board credential may be stored as a token')
+  // B2: an unrecognised value stores nothing and says so.
+  const unrecognised = commit.slice(commit.indexOf("outcome.kind === 'unrecognised'"))
+  const unrecognisedBranch = unrecognised.slice(0, unrecognised.indexOf('} else {'))
+  assert.match(unrecognisedBranch, /setTokenNote\(UNRECOGNISED_NOTE\)/)
+  assert.doesNotMatch(unrecognisedBranch, /writeStored|setTokenDraft|setAuthEpoch/, 'nothing is stored, cleared or re-subscribed for an unrecognised value')
+  // The blur that follows Enter must not submit the same rejected value again
+  // (each unrecognised value is a lockout strike); editing clears the latch.
+  assert.match(unrecognisedBranch, /rejectedValue\.current = value/)
+  assert.match(commit, /if \(value !== '' && value === rejectedValue\.current\) return/)
+  assert.match(app, /setTokenDraft\(e\.target\.value\)\s*rejectedValue\.current = null/)
+  // A previously stored value the server does not recognise is removed on load.
+  assert.match(app, /requestUnlock\(stored\)\.then\(\(outcome\) => \{[\s\S]*?if \(outcome\.kind !== 'unrecognised' && outcome\.kind !== 'unlocked'\) return\s*writeStoredToken\(''\)/)
+  // The cue takes no width: a live region, the warn border and the lock mark.
+  assert.match(app, /className="sr-only" role="status" aria-live="polite" data-testid="token-note"/)
+  assert.match(app, /aria-invalid=\{tokenNote \? true : undefined\}/)
+  // The indicator is derived from the server's answer.
+  assert.match(app, /const lockState = lockIndicator\(detailStatus, unlock !== null, detailsLocked\)/)
+  assert.match(app, /if \(status && !status\.unlock && readStoredUnlock\(\)\) \{\s*writeStoredUnlock\(null\)/)
   assert.match(commit, /writeStoredUnlock\(outcome\.unlock\)/)
   // The stream is re-opened when credentials change, so details follow the lock.
   assert.match(app, /\}, \[project, authEpoch\]\)/)
@@ -166,6 +203,25 @@ test('api: the password goes in a POST body; the unlock token only ever in a hea
   assert.match(api, /return \{ \.\.\.authHeaders\(readStoredToken\(\)\), \.\.\.unlockHeaders\(\) \}/)
   // saveSettings no longer swallows a refusal.
   assert.match(api, /throw new SettingsSaveError\(res\.status/)
+})
+
+test('TaskCard is a keyboard-operable button; a locked one is aria-disabled and described', () => {
+  const card = read('components', 'TaskCard.tsx')
+  assert.match(card, /role="button"/)
+  assert.match(card, /tabIndex=\{0\}/)
+  assert.match(card, /aria-disabled=\{locked \? true : undefined\}/)
+  assert.match(card, /aria-description=\{locked \? LOCKED_HINT : undefined\}/)
+  assert.match(card, /if \(e\.key !== 'Enter' && e\.key !== ' '\) return\s*e\.preventDefault\(\)\s*if \(!locked\) onOpen\(task\.project, task\.id\)/)
+})
+
+test('TaskSheet: the tail of a double-click cannot close the sheet or press one of its buttons', () => {
+  const sheet = read('components', 'TaskSheet.tsx')
+  assert.match(sheet, /export const BACKDROP_GUARD_MS = 400/)
+  assert.match(sheet, /if \(e\.detail > 1\) return\s*if \(Date\.now\(\) - openedAt\.current < BACKDROP_GUARD_MS\) return\s*onClose\(\)/)
+  assert.match(sheet, /onClick=\{handleBackdropClick\}/)
+  assert.doesNotMatch(sheet, /onClick=\{onClose\}\s*\/>/, 'the backdrop must not close on every click')
+  assert.match(sheet, /const guardStyle = guarding \? \(\{ pointerEvents: 'none' \} as const\) : undefined/)
+  assert.match(sheet, /style=\{guardStyle\}/)
 })
 
 test('HeaderHelp explains both uses of the box and offers Lock', () => {

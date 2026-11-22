@@ -1,7 +1,7 @@
 import type { Task, ProjectSummary, MetricsResponse, MilestoneSummary } from './types'
 import type { DeployDrift } from './lib/deployDrift'
 import { authHeaders, CLIENT_ROLE, readStoredToken } from './lib/authToken'
-import { classifyUnlockResponse, readStoredUnlock, unlockHeaders, type UnlockOutcome } from './lib/detailLock'
+import { classifyUnlockResponse, readStoredUnlock, unlockHeaders, type DetailStatus, type UnlockOutcome } from './lib/detailLock'
 
 // Same-origin `/api`: the deployed server serves the client bundle AND the API
 // on one origin, so a relative base works everywhere (local dev proxies it via
@@ -465,6 +465,23 @@ export async function requestUnlock(value: string): Promise<UnlockOutcome> {
  * is stored; a deployment with KANBAN_READ_AUTH off simply leaves the stream
  * open and this resolves null.
  */
+/**
+ * What the server will serve this browser with the credentials it holds now:
+ * whether card details are open to it, and whether its stored unlock is still
+ * valid. Null on any failure (the caller then falls back to the task data).
+ */
+export async function getDetailStatus(): Promise<DetailStatus | null> {
+  try {
+    const res = await fetch(`${API_BASE}/auth/details`, { headers: readHeaders() })
+    if (!res.ok) return null
+    const body = (await res.json()) as Partial<DetailStatus>
+    if (typeof body?.details !== 'boolean' || typeof body?.unlock !== 'boolean') return null
+    return { details: body.details, unlock: body.unlock }
+  } catch {
+    return null
+  }
+}
+
 async function mintStreamTicket(project?: string): Promise<string | null> {
   const viaToken = readStoredToken() ? await mintTicketWith(mutationHeaders({ project }), project) : null
   if (viaToken) return viaToken

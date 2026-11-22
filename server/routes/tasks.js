@@ -11,7 +11,7 @@ import {
 } from '../idempotency.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard, rawProjectScope } from '../middleware/projectScope.js';
-import { DETAILS_LOCKED_BODY, detailsLockedFor, shapeTaskFor, shapeTasksFor } from '../masterUnlock.js';
+import { DETAILS_LOCKED_BODY, detailsLockedFor, masterPasswordConfigured, shapeTaskFor, shapeTasksFor } from '../masterUnlock.js';
 
 const router = Router();
 
@@ -113,6 +113,22 @@ function resolveMutationAgentId(req) {
 // A supplied-but-invalid project scope is a client error, never a widening.
 // Shared with the metrics router — see middleware/projectScope.js.
 router.use(projectScopeGuard());
+
+// Master password: the same URL now has two bodies (summary vs full), chosen by
+// request headers. Mark every task read as private and uncacheable so a shared
+// cache or proxy can never hand an unlocked body to an anonymous reader, and
+// name the headers the body depends on. Only when the feature is on: with it
+// off, responses (and their ETag/If-None-Match behaviour) are byte-identical
+// to before.
+router.use((req, res, next) => {
+  if ((req.method === 'GET' || req.method === 'HEAD') && masterPasswordConfigured()) {
+    res.set('Cache-Control', 'private, no-store');
+    res.vary('Authorization');
+    res.vary('X-API-Token');
+    res.vary('X-Kanban-Unlock');
+  }
+  next();
+});
 
 // --- Collection ---------------------------------------------------------
 

@@ -11,7 +11,7 @@
  * `KANBAN_AUTH_TOKEN` for every project.
  */
 import { referencedProjects } from './projectScope.js';
-import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole } from '../store.js';
+import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole, getProjectSummaries } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
 import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
@@ -289,7 +289,7 @@ import { tokensMatch } from '../utils/constantTime.js';
  * Truthy `KANBAN_AUTH_LOG` enables redacted auth-failure logging. Unset/empty
  * (or the common "0"/"false") keeps the original silent behaviour.
  */
-function authLogEnabled() {
+export function authLogEnabled() {
   const flag = process.env.KANBAN_AUTH_LOG;
   if (flag === undefined || flag === '') return false;
   return flag !== '0' && flag.toLowerCase() !== 'false';
@@ -473,6 +473,19 @@ export function resolveDetailAccess(req) {
   const unlock = requestUnlock(req);
   if (unlock) return { access: true, until: unlock.exp };
   return { access: false, until: null };
+}
+
+/**
+ * The unlock saves colours for the board-wide palette (no project named) or
+ * for a project that already EXISTS. It must not be a way to create settings
+ * rows under arbitrary new project names, through any channel the request can
+ * name a project in (query, header, body).
+ */
+function unlockMaySaveColours(req) {
+  const referenced = referencedProjects(req);
+  if (referenced.length === 0) return true;
+  const existing = new Set(getProjectSummaries().map((s) => s.project));
+  return referenced.every((p) => typeof p === 'string' && (p === defaultProjectName() || existing.has(p)));
 }
 
 /** PUT /api/settings (any casing, trailing slashes): the one master write. */
@@ -761,7 +774,7 @@ export function createAuthMiddleware() {
     // mutation, a claim, a delete/purge or an admin operation. The caller gets
     // no functional or privileged role and no agent identity; the payload is
     // still validated by the store's colour validation.
-    if (isColourSaveRoute(req) && requestUnlock(req) !== null) {
+    if (isColourSaveRoute(req) && requestUnlock(req) !== null && unlockMaySaveColours(req)) {
       req.caller = {
         agent_id: null,
         role: 'master',

@@ -5,20 +5,29 @@
  */
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp, startupAuthErrors } from '../server.js';
 import * as store from '../store.js';
-import { resetStreamTickets } from '../streamTicket.js';
+import { createStreamTicket, resetProcessTicketKey, resetStreamTickets, verifyStreamTicket } from '../streamTicket.js';
 import { resetAuthLimits, authFailuresExceeded } from '../middleware/rateLimit.js';
 import {
   MASTER_PASSWORD_MIN_LENGTH,
   SUMMARY_TASK_FIELDS,
   UNLOCK_TTL_MS,
+  UNLOCK_SECRET_DIR,
+  UNLOCK_SECRET_FILE,
   createUnlockToken,
+  masterUnlockKey,
   redactTaskDetails,
   resetUnlockFailures,
+  resetUnlockKeyMaterial,
+  setUnlockFailureCapacity,
+  unlockLockedOut,
+  recordUnlockFailure,
+  unlockSecretPersisted,
   unlockFailureLimit,
   verifyUnlockToken,
 } from '../masterUnlock.js';
@@ -82,11 +91,19 @@ async function unlock(baseUrl, password = MASTER) {
 describe('master password: startup refusal', () => {
   it('unset, or a distinct long value: no errors', () => {
     assert.deepEqual(startupAuthErrors({}), []);
-    assert.deepEqual(startupAuthErrors({ KANBAN_MASTER_PASSWORD: '   ' }), []);
+    assert.deepEqual(startupAuthErrors({ KANBAN_MASTER_PASSWORD: '' }), []);
     assert.deepEqual(startupAuthErrors({
       KANBAN_MASTER_PASSWORD: MASTER, KANBAN_AUTH_TOKEN: 'shared', KANBAN_ADMIN_TOKEN: 'adm',
       KANBAN_PROJECT_TOKENS: JSON.stringify({ alpha: 'tok-a' }),
     }), []);
+  });
+
+  it('a whitespace-only master password is refused instead of silently meaning "off"', () => {
+    for (const blank of [' ', '   ', '\t', ' \n ']) {
+      const errs = startupAuthErrors({ KANBAN_MASTER_PASSWORD: blank });
+      assert.equal(errs.length, 1, JSON.stringify(blank));
+      assert.match(errs[0], /KANBAN_MASTER_PASSWORD is set but blank/);
+    }
   });
 
   it('a short master password is refused', () => {
@@ -153,15 +170,54 @@ describe('master password: redaction shape', () => {
   });
 });
 
-describe('master password: unlock tokens', () => {
+/** Every way the pre-fix build (or a guesser) could turn a password into a key. */
+function guessableKeys(password, publicValues = []) {
+  const keys = [Buffer.from(password, 'utf8'), crypto.createHash('sha256').update(password).digest()];
+  for (const extra of ['', ...publicValues]) {
+    keys.push(crypto.createHmac('sha256', password).update(`kanban-master-unlock-v1\u0000${extra}`).digest());
+    keys.push(crypto.createHmac('sha256', password).update(`kanban-unlock-v2\u0000${extra}`).digest());
+    keys.push(crypto.createHmac('sha256', password).update(extra).digest());
+    keys.push(crypto.scryptSync(password, extra, 32));
+  }
+  return keys;
+}
+const macWith = (key, payload) => crypto.createHmac('sha256', key).update(payload).digest('hex');
+
+describe('master password: unlock tokens and signing keys (B1)', () => {
+  let dirA;
+  let dirB;
+
+  before(async () => {
+    dirA = await mkdtemp(path.join(os.tmpdir(), 'kanban-unlockkey-a-'));
+    dirB = await mkdtemp(path.join(os.tmpdir(), 'kanban-unlockkey-b-'));
+  });
+
+  beforeEach(() => {
+    for (const k of ['KANBAN_AUTH_SECRET', 'KANBAN_AUTH_TOKEN', 'KANBAN_GIT_DIR']) delete process.env[k];
+    process.env.KANBAN_DATA_DIR = dirA;
+    resetUnlockKeyMaterial();
+    resetProcessTicketKey();
+    resetStreamTickets();
+  });
+
   afterEach(() => {
     delete process.env.KANBAN_MASTER_PASSWORD;
     delete process.env.KANBAN_AUTH_SECRET;
+    delete process.env.KANBAN_DATA_DIR;
+    resetUnlockKeyMaterial();
+    resetProcessTicketKey();
+    resetStreamTickets();
   });
 
-  it('no password configured: nothing mints, nothing verifies', () => {
+  after(async () => {
+    await rm(dirA, { recursive: true, force: true });
+    await rm(dirB, { recursive: true, force: true });
+  });
+
+  it('no password configured: nothing mints, nothing verifies, no secret file is created', async () => {
     assert.equal(createUnlockToken(), null);
     assert.equal(verifyUnlockToken('abc.def'), null);
+    await assert.rejects(stat(path.join(dirA, UNLOCK_SECRET_DIR, UNLOCK_SECRET_FILE)));
   });
 
   it('a minted token verifies until it expires, and dies when the password changes', () => {
@@ -175,11 +231,125 @@ describe('master password: unlock tokens', () => {
     assert.equal(verifyUnlockToken(`${minted.token}0`, now + 1), null, 'tampered MAC');
     process.env.KANBAN_MASTER_PASSWORD = 'a-different-master-pw';
     assert.equal(verifyUnlockToken(minted.token, now + 1), null, 'rotating the password revokes every unlock');
+    process.env.KANBAN_MASTER_PASSWORD = MASTER;
+    assert.equal(verifyUnlockToken(minted.token, now + 1).exp, minted.expiresAt, 'same password + same server secret: still valid');
   });
 
   it('a too-short password fails closed: it can never mint', () => {
     process.env.KANBAN_MASTER_PASSWORD = 'short';
     assert.equal(createUnlockToken(), null);
+  });
+
+  it('the unlock key cannot be recomputed from the password plus public values (offline-guess oracle)', async () => {
+    process.env.KANBAN_MASTER_PASSWORD = MASTER;
+    const minted = createUnlockToken();
+    const [payload, mac] = minted.token.split('.');
+    const publicValues = [payload, Buffer.from(payload, 'base64url').toString('utf8'), JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).jti];
+    // The reviewer's exploit: knowing the RIGHT password, try every derivation
+    // an attacker could run offline. None reproduces the MAC, so a captured
+    // token confirms nothing about a password guess.
+    for (const key of guessableKeys(MASTER, publicValues)) {
+      assert.notEqual(macWith(key, payload), mac, 'the unlock MAC was reproduced from the password alone');
+    }
+    // The key really does depend on a server-only random secret: another data
+    // directory (another server) with the SAME password rejects the token.
+    const keyA = Buffer.from(masterUnlockKey());
+    process.env.KANBAN_DATA_DIR = dirB;
+    resetUnlockKeyMaterial();
+    assert.equal(verifyUnlockToken(minted.token), null, 'a token must not verify under a different server secret');
+    assert.ok(!keyA.equals(masterUnlockKey()), 'same password, different server secret: different key');
+    // ...and a forged token signed with any guessable key is rejected.
+    const forgedPayload = Buffer.from(JSON.stringify({ typ: 'unlock', jti: 'f'.repeat(32), exp: Date.now() + 60000 })).toString('base64url');
+    for (const key of guessableKeys(MASTER)) {
+      assert.equal(verifyUnlockToken(`${forgedPayload}.${macWith(key, forgedPayload)}`), null);
+    }
+  });
+
+  it('the server secret is random, stored 0600 under the data dir, and survives a restart', async () => {
+    process.env.KANBAN_MASTER_PASSWORD = MASTER;
+    const minted = createUnlockToken();
+    assert.equal(unlockSecretPersisted(), true);
+    const file = path.join(dirA, UNLOCK_SECRET_DIR, UNLOCK_SECRET_FILE);
+    const info = await stat(file);
+    assert.equal(info.mode & 0o777, 0o600, 'secret file must be owner-only');
+    assert.equal((await stat(path.join(dirA, UNLOCK_SECRET_DIR))).mode & 0o777, 0o700, 'secret directory must be owner-only');
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    assert.match(stored.secret, /^[0-9a-f]{64}$/);
+    assert.match(stored.salt, /^[0-9a-f]{32}$/);
+    assert.ok(!JSON.stringify(stored).includes(MASTER), 'the password is never written to disk');
+    // A data dir that is a git repository must not pick the secret up via `git add -A`.
+    assert.equal(await readFile(path.join(dirA, UNLOCK_SECRET_DIR, '.gitignore'), 'utf8'), '*\n');
+    // "Restart": forget everything in memory; the same file gives the same key.
+    resetUnlockKeyMaterial();
+    assert.ok(verifyUnlockToken(minted.token), 'an unlock survives a restart');
+    // A loosened file is tightened again on load.
+    await chmod(file, 0o644);
+    resetUnlockKeyMaterial();
+    assert.ok(verifyUnlockToken(minted.token));
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    // A corrupt file is replaced by fresh random material (old unlocks die).
+    await writeFile(file, '{"secret":"nope"}');
+    resetUnlockKeyMaterial();
+    assert.equal(verifyUnlockToken(minted.token), null);
+    assert.match(JSON.parse(await readFile(file, 'utf8')).secret, /^[0-9a-f]{64}$/);
+  });
+
+  it('an unwritable data dir falls back to a per-process secret, says so once, and still works', async () => {
+    process.env.KANBAN_MASTER_PASSWORD = MASTER;
+    const blocker = path.join(dirB, 'not-a-directory');
+    await writeFile(blocker, 'x');
+    process.env.KANBAN_DATA_DIR = blocker; // a FILE: nothing can be created under it
+    resetUnlockKeyMaterial();
+    const warnings = [];
+    const original = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    let minted;
+    try {
+      minted = createUnlockToken();
+      createUnlockToken();
+    } finally {
+      console.warn = original;
+    }
+    assert.ok(verifyUnlockToken(minted.token));
+    assert.equal(unlockSecretPersisted(), false);
+    assert.equal(warnings.filter((w) => w.includes('per-process secret')).length, 1);
+    assert.ok(!warnings.join('\n').includes(MASTER));
+    resetUnlockKeyMaterial(); // a "restart" forgets the per-process secret
+    console.warn = () => {};
+    try {
+      assert.equal(verifyUnlockToken(minted.token), null);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  it('fallback stream tickets are signed with a random per-process key, never a password-derived one', () => {
+    process.env.KANBAN_MASTER_PASSWORD = MASTER;
+    // No KANBAN_AUTH_SECRET and no KANBAN_AUTH_TOKEN: the configuration the
+    // reviewer brute-forced. Any ticket (here a project-token style one and a
+    // master one) must not be checkable against a password guess.
+    for (const opts of [{ role: 'builder', project: 'alpha', credentialId: 'abc' }, { role: null, project: null, masterUntil: Date.now() + 60000 }]) {
+      const { ticket } = createStreamTicket(opts);
+      const [payload, mac] = ticket.split('.');
+      const publicValues = [payload, Buffer.from(payload, 'base64url').toString('utf8')];
+      const candidates = [...guessableKeys(MASTER, publicValues), Buffer.from(masterUnlockKey())];
+      for (const key of candidates) {
+        assert.notEqual(macWith(key, payload), mac, 'a stream-ticket MAC was reproduced from the password or the unlock key');
+      }
+      // A ticket forged with a guessable key is rejected even if its jti were live.
+      for (const key of candidates) {
+        assert.equal(verifyStreamTicket(`${payload}.${macWith(key, payload)}`), null);
+      }
+      assert.ok(verifyStreamTicket(ticket), 'the genuine ticket still verifies');
+    }
+    // Per-process: a "restart" changes the key, so an outstanding ticket dies.
+    const { ticket } = createStreamTicket({ role: 'builder', project: 'alpha' });
+    resetProcessTicketKey();
+    assert.equal(verifyStreamTicket(ticket), null);
+  });
+
+  it('without a master password the ticket fallback does not exist (unchanged: no signing secret, no tickets)', () => {
+    assert.equal(createStreamTicket({ role: 'builder', project: 'alpha' }), null);
   });
 });
 
@@ -415,9 +585,14 @@ describe('master password: every read surface', () => {
     assert.ok(!good.text.includes(MASTER));
     const wrong = await unlock(baseUrl, 'definitely-wrong-guess');
     assert.equal(wrong.response.status, 200);
-    assert.deepEqual(wrong.body, { unlocked: false });
-    const token = await unlock(baseUrl, ALPHA);
-    assert.deepEqual(token.body, { unlocked: false });
+    assert.deepEqual(wrong.body, { unlocked: false, credential: false }, 'unrecognised: the browser must store nothing');
+    const typo = await unlock(baseUrl, `${MASTER.slice(0, -1)}X`);
+    assert.deepEqual(typo.body, { unlocked: false, credential: false }, 'a one-character-off password is "unrecognised", never "a token"');
+    for (const known of [ALPHA, ADMIN]) {
+      const token = await unlock(baseUrl, known);
+      assert.deepEqual(token.body, { unlocked: false, credential: true }, 'a valid board credential is recognised as one');
+    }
+    assert.equal(good.response.headers.get('cache-control'), 'no-store');
     const empty = await req(baseUrl, '/api/auth/unlock', { method: 'POST', headers: json(), body: '{}' });
     assert.equal(empty.response.status, 400);
     // The password is only accepted in the body: a query string does nothing.
@@ -449,7 +624,7 @@ describe('master password: every read surface', () => {
     for (let i = 0; i < 12; i += 1) {
       const r = await unlock(baseUrl, i % 2 ? ALPHA : ADMIN);
       assert.equal(r.response.status, 200);
-      assert.deepEqual(r.body, { unlocked: false });
+      assert.deepEqual(r.body, { unlocked: false, credential: true });
     }
     assert.equal((await unlock(baseUrl)).body.unlocked, true, 'twelve token checks did not lock the address out');
     // Wrong master guesses do not consume the board's failed-auth budget either.
@@ -559,6 +734,91 @@ describe('master password: every read surface', () => {
     }
   });
 
+  it('S1: an address pushed into the overflow bucket is locked out too, and the lockout is logged without the value', async () => {
+    // Fill the per-address table so the next NEW address has no counter of its own.
+    setUnlockFailureCapacity(2);
+    try {
+      recordUnlockFailure('198.51.100.1');
+      recordUnlockFailure('198.51.100.2');
+      const limit = unlockFailureLimit();
+      for (let i = 0; i < limit; i += 1) recordUnlockFailure(`203.0.113.${i}`); // all land in overflow
+      assert.equal(unlockLockedOut('203.0.113.250'), true, 'a fresh overflow address must not start with a clean slate');
+      assert.equal(unlockLockedOut('198.51.100.1'), false, 'a tracked address is still judged on its own counter');
+    } finally {
+      setUnlockFailureCapacity();
+      resetUnlockFailures();
+    }
+
+    process.env.KANBAN_AUTH_LOG = '1';
+    const lines = [];
+    const original = { log: console.log, warn: console.warn };
+    console.log = (...a) => lines.push(a.join(' '));
+    console.warn = (...a) => lines.push(a.join(' '));
+    const audits = [];
+    const off = store.onAudit((e) => audits.push(e));
+    try {
+      for (let i = 0; i < unlockFailureLimit(); i += 1) await unlock(baseUrl, `logged-guess-${i}-zzz`);
+    } finally {
+      console.log = original.log;
+      console.warn = original.warn;
+      off();
+      delete process.env.KANBAN_AUTH_LOG;
+    }
+    const failures = lines.filter((l) => l.includes('unlock attempt not recognised'));
+    assert.equal(failures.length, unlockFailureLimit());
+    assert.match(failures[0], /address: 127\.0\.0\.1, 1 of 10 in window/);
+    assert.equal(lines.filter((l) => l.includes('unlock lockout for address 127.0.0.1')).length, 1);
+    const lockouts = audits.filter((e) => e.kind === 'unlock_lockout');
+    assert.equal(lockouts.length, 1);
+    assert.ok(!JSON.stringify(lockouts).includes('127.0.0.1'), 'the audit entry carries no address');
+    assert.ok(!lines.join('\n').includes('logged-guess'), 'the guessed value is never logged');
+    assert.ok(!JSON.stringify(audits).includes('logged-guess'));
+  });
+
+  it('task reads are private and uncacheable while the feature is on, and vary on the credential headers', async () => {
+    for (const route of ['/api/tasks', '/api/tasks/a1?project=alpha', '/api/tasks/archive', '/api/tasks/trash', '/api/tasks/a1/logs?project=alpha', '/api/tasks/a1/issues?project=alpha']) {
+      for (const headers of [{}, master(), { Authorization: `Bearer ${ALPHA}` }]) {
+        const r = await req(baseUrl, route, { headers });
+        assert.equal(r.response.headers.get('cache-control'), 'private, no-store', route);
+        const vary = (r.response.headers.get('vary') || '').toLowerCase();
+        for (const h of ['authorization', 'x-api-token', 'x-kanban-unlock']) assert.ok(vary.includes(h), `${route} must vary on ${h} (got "${vary}")`);
+      }
+    }
+    // A conditional request can never turn an anonymous read into a cached unlocked body.
+    const full = await req(baseUrl, '/api/tasks', { headers: master() });
+    const etag = full.response.headers.get('etag');
+    const anon = await req(baseUrl, '/api/tasks', { headers: etag ? { 'If-None-Match': etag } : {} });
+    assert.equal(anon.response.status, 200);
+    assert.deepEqual(leaks(anon.text), []);
+  });
+
+  it('GET /api/auth/details tells a browser what the server will serve it', async () => {
+    assert.deepEqual((await req(baseUrl, '/api/auth/details')).body, { details: false, unlock: false });
+    const viaUnlock = await req(baseUrl, '/api/auth/details', { headers: master() });
+    assert.equal(viaUnlock.body.details, true);
+    assert.equal(viaUnlock.body.unlock, true);
+    assert.ok(viaUnlock.body.expires_at > Date.now());
+    assert.deepEqual((await req(baseUrl, '/api/auth/details', { headers: { Authorization: `Bearer ${ALPHA}` } })).body, { details: true, unlock: false });
+    assert.deepEqual((await req(baseUrl, '/api/auth/details', { headers: { 'X-Kanban-Unlock': 'stale.token' } })).body, { details: false, unlock: false });
+    assert.equal(viaUnlock.response.headers.get('cache-control'), 'private, no-store');
+  });
+
+  it('settings: the unlock cannot create a palette for a project that does not exist, through any channel', async () => {
+    const put = (route, body, extra = {}) => req(baseUrl, route, { method: 'PUT', headers: json({ ...master(), ...extra }), body: JSON.stringify(body) });
+    const colours = { column_colors: { READY: 'warn' } };
+    assert.equal((await put('/api/settings?project=beta-new', colours)).response.status, 401, 'query');
+    assert.equal((await put('/api/settings?workspace=beta-new', colours)).response.status, 401, 'workspace alias');
+    assert.equal((await put('/api/settings', { ...colours, project: 'beta-new' })).response.status, 401, 'body project');
+    assert.equal((await put('/api/settings', { ...colours, workspace_id: 'beta-new' })).response.status, 401, 'body workspace_id');
+    assert.equal((await put('/api/settings', colours, { 'X-Kanban-Project': 'beta-new' })).response.status, 401, 'header');
+    // Nothing was created: the unknown project still resolves to the board-wide palette only.
+    const after = await req(baseUrl, '/api/settings?project=beta-new');
+    assert.deepEqual(after.body.column_colors, (await req(baseUrl, '/api/settings')).body.column_colors);
+    // Existing projects and the board-wide palette still work.
+    assert.equal((await put('/api/settings?project=alpha', colours)).response.status, 200);
+    assert.equal((await put('/api/settings', colours)).response.status, 200);
+  });
+
   it('the password and the unlock token never reach a log line or an audit entry', async () => {
     const lines = [];
     const original = { log: console.log, warn: console.warn, error: console.error, info: console.info };
@@ -627,7 +887,13 @@ describe('master password not configured: nothing changes', () => {
   it('the unlock endpoint answers the same quiet body and unlocks nothing', async () => {
     const r = await unlock(baseUrl, 'any-value-at-all-123');
     assert.equal(r.response.status, 200);
-    assert.deepEqual(r.body, { unlocked: false });
+    assert.deepEqual(r.body, { unlocked: false, credential: false });
+    const known = await unlock(baseUrl, 'shared-token-nomaster');
+    assert.deepEqual(known.body, { unlocked: false, credential: true });
+    const status = await req(baseUrl, '/api/auth/details');
+    assert.deepEqual(status.body, { details: true, unlock: false });
+    const list = await req(baseUrl, '/api/tasks');
+    assert.equal(list.response.headers.get('cache-control'), null, 'feature off: no cache header is added');
     const put = await req(baseUrl, '/api/settings', { method: 'PUT', headers: json({ 'X-Kanban-Unlock': 'whatever.token' }), body: JSON.stringify({ column_colors: {} }) });
     assert.equal(put.response.status, 401);
   });

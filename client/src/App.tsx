@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProjectSummary, Task } from './types'
-import { getBugReportConfig, getHealth, getProjects, getSettings, requestUnlock, saveSettings, SettingsSaveError, subscribeToBoard } from './api'
+import { getBugReportConfig, getDetailStatus, getHealth, getProjects, getSettings, requestUnlock, saveSettings, SettingsSaveError, subscribeToBoard } from './api'
 import { driftChip } from './lib/deployDrift'
 import type { DeployDrift } from './lib/deployDrift'
 import type { DiffEvent } from './api'
@@ -48,7 +48,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useClaimCoordinator } from './lib/useClaimCoordinator'
 import { useVisitCount } from './lib/useVisitCount'
 import { readStoredToken, writeStoredToken } from './lib/authToken'
-import { boardDetailsLocked, isDetailsLocked, openKeyFor, readStoredUnlock, writeStoredUnlock, type StoredUnlock } from './lib/detailLock'
+import { boardDetailsLocked, isDetailsLocked, lockIndicator, openKeyFor, readStoredUnlock, UNRECOGNISED_NOTE, writeStoredUnlock, type DetailStatus, type StoredUnlock } from './lib/detailLock'
 import { filterTasks, isFilterActive } from './lib/filterTasks'
 import type { SeverityFilter } from './lib/ownership'
 import { useDocumentScrollLock } from './lib/scrollLock'
@@ -144,7 +144,9 @@ export default function App() {
     // server once (POST /api/auth/unlock). The master password is exchanged for
     // a 12-hour unlock token, which is all this browser keeps (localStorage,
     // `kanban.unlock`); the password itself is never stored and the box goes
-    // back to showing the API token. Anything else is an API token, as before.
+    // back to showing the API token. A valid board credential is stored as the
+    // API token. A value the server recognises as NEITHER (a typo of either one)
+    // is not stored at all: the box keeps what was typed and says so.
     const [unlock, setUnlock] = useState<StoredUnlock | null>(() => readStoredUnlock())
     // Bumped whenever the stored credentials change, so the board stream is
     // re-opened (and re-primed) with them: details appear on unlock and go
@@ -154,9 +156,15 @@ export default function App() {
     // attempts, network). Nothing is stored in that case.
     const [tokenNote, setTokenNote] = useState<string | null>(null)
     const tokenCommitting = useRef(false)
+    // The value the server just answered "not recognised" for. The box keeps
+    // it so it can be corrected, and the blur that follows Enter must not ask
+    // again: every unrecognised value is a strike against the unlock lockout.
+    // Cleared as soon as the value is edited.
+    const rejectedValue = useRef<string | null>(null)
     const commitToken = async () => {
       const value = tokenDraft.trim()
       if (tokenCommitting.current) return
+      if (value !== '' && value === rejectedValue.current) return
       // Unchanged (blur after Enter, or a click away without typing): nothing
       // to verify, and no reason to spend an unlock attempt.
       if (value === readStoredToken()) return
@@ -181,6 +189,12 @@ export default function App() {
           setTokenSaved(true)
           setTokenNote(null)
           setAuthEpoch((n) => n + 1)
+        } else if (outcome.kind === 'unrecognised') {
+          // Neither the master password nor a credential this board accepts
+          // (most likely a typo). Nothing is stored and nothing is sent as a
+          // bearer token; the typed value stays in the box to be corrected.
+          rejectedValue.current = value
+          setTokenNote(UNRECOGNISED_NOTE)
         } else {
           // Not stored: the value may be the master password, which must never
           // be kept in this browser or sent as a bearer token.
@@ -194,6 +208,51 @@ export default function App() {
         tokenCommitting.current = false
       }
     }
+    // A token stored by an earlier build may be one the server never accepted
+    // (for example a mistyped master password). Ask once per load: a value the
+    // server does not recognise is removed instead of being sent as a bearer
+    // token on every request; a stored master password is turned into an
+    // unlock. On a throttle or a network failure the stored value is left alone.
+    useEffect(() => {
+      const stored = readStoredToken()
+      if (!stored) return
+      let cancelled = false
+      requestUnlock(stored).then((outcome) => {
+        if (cancelled || readStoredToken() !== stored) return
+        if (outcome.kind !== 'unrecognised' && outcome.kind !== 'unlocked') return
+        writeStoredToken('')
+        setTokenSaved(false)
+        setTokenDraft((draft) => (draft.trim() === stored ? '' : draft))
+        if (outcome.kind === 'unlocked') {
+          writeStoredUnlock(outcome.unlock)
+          setUnlock(outcome.unlock)
+        } else {
+          setTokenNote('The saved token is not recognised by this board and was removed from this browser.')
+        }
+        setAuthEpoch((n) => n + 1)
+      })
+      return () => {
+        cancelled = true
+      }
+    }, [])
+    // What the SERVER says this browser may read with what it holds now. The
+    // lock indicator follows this, not localStorage: an unlock the server no
+    // longer honours (password rotated, secret replaced) is dropped here.
+    const [detailStatus, setDetailStatus] = useState<DetailStatus | null>(null)
+    useEffect(() => {
+      let cancelled = false
+      getDetailStatus().then((status) => {
+        if (cancelled) return
+        setDetailStatus(status)
+        if (status && !status.unlock && readStoredUnlock()) {
+          writeStoredUnlock(null)
+          setUnlock(null)
+        }
+      })
+      return () => {
+        cancelled = true
+      }
+    }, [authEpoch])
     const lockDetails = useCallback(() => {
       writeStoredUnlock(null)
       setUnlock(null)
@@ -492,9 +551,12 @@ export default function App() {
     return found && !isDetailsLocked(found) ? found : null
   }, [tasks, openTaskId])
   const detailsLocked = useMemo(() => boardDetailsLocked(tasks), [tasks])
-  // "Unlocked" is what the DATA says, not just what is stored: an unlock the
-  // server no longer honours (password rotated) still leaves the cards locked.
-  const unlocked = unlock !== null && !detailsLocked
+  // The indicator is what the SERVER says (GET /api/auth/details plus the task
+  // data), never just what is stored: a stale stored unlock is not "unlocked",
+  // on an empty board either.
+  const lockState = lockIndicator(detailStatus, unlock !== null, detailsLocked)
+  const unlocked = lockState === 'unlocked'
+  const lockedOut = lockState === 'locked'
 
   // v3.2.4 phone layout: the document scrolls, so freeze it (preserving the
   // scroll position) while a full-height overlay is open — TaskSheet,
@@ -888,6 +950,7 @@ export default function App() {
              value={tokenDraft}
              onChange={(e) => {
                setTokenDraft(e.target.value)
+               rejectedValue.current = null
                if (tokenNote) setTokenNote(null)
              }}
              onBlur={() => { void commitToken() }}
@@ -906,21 +969,31 @@ export default function App() {
              // descriptive name) is unchanged.
              placeholder="token"
              data-token-saved={tokenSaved ? 'true' : 'false'}
-             data-detail-state={tokenNote ? 'unverified' : unlocked ? 'unlocked' : detailsLocked ? 'locked' : 'open'}
+             data-detail-state={tokenNote ? 'unverified' : unlocked ? 'unlocked' : lockedOut ? 'locked' : 'open'}
              aria-label="API token for mutating requests"
              aria-description="Also accepts the master password, which unlocks card details"
+             aria-invalid={tokenNote ? true : undefined}
              title={tokenNote ?? (unlocked
                ? 'Card details are unlocked in this browser (12 hours; lock again from the "i" help). An API token can still be entered here for claim, heartbeat and log writes.'
                : 'API token: required for claim, heartbeat and log writes; stored in this browser only and sent as an Authorization header, never in a URL. Master password: type it here to view card details; it is checked by the server and never stored.')}
              autoComplete="off"
              spellCheck={false}
-             className="w-full min-w-0 border border-line bg-surface py-1.5 pl-2 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11"
+             className={`w-full min-w-0 border bg-surface py-1.5 pl-2 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11 ${
+               tokenNote ? 'border-warn' : 'border-line'
+             }`}
             />
-            {(unlocked || detailsLocked || tokenNote) && (
+            {/* The cue for a value that was not saved: the warn border, the
+                warn lock mark and its tooltip, and this live region for screen
+                readers. None of them takes any width, so the header row is the
+                same in every state. */}
+            <span className="sr-only" role="status" aria-live="polite" data-testid="token-note">
+              {tokenNote ?? ''}
+            </span>
+            {(unlocked || lockedOut || tokenNote) && (
               <span
                 data-testid="detail-lock-mark"
                 role="img"
-                aria-label={tokenNote ? 'Not checked' : unlocked ? 'Card details unlocked' : 'Card details locked'}
+                aria-label={tokenNote ? 'Not saved' : unlocked ? 'Card details unlocked' : 'Card details locked'}
                 title={tokenNote ?? (unlocked ? 'Card details unlocked' : 'Card details locked: enter the master password')}
                 className={`pointer-events-none absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center ${
                   tokenNote ? 'text-warn' : unlocked ? 'text-pass' : 'text-muted'
@@ -945,7 +1018,7 @@ export default function App() {
               </span>
             )}
             </span>
-            <HeaderHelp unlocked={unlocked} detailsLocked={detailsLocked} onLock={lockDetails} />
+            <HeaderHelp unlocked={unlocked} detailsLocked={lockedOut} onLock={lockDetails} />
             {/* "read-only" chip hidden at the owner's request ("do we need
                 to mention READ-ONLY"). Kept, not deleted: un-comment to
                 restore. The help popover still explains read-only mode.

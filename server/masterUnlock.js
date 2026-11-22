@@ -20,9 +20,17 @@
  * Token format: `<payload-base64url>.<mac-hex>`,
  *   payload = base64url(JSON.stringify({ typ: 'unlock', jti, exp }))
  *   mac     = HMAC_SHA256(key, payload) hex
- * The key is DERIVED from the password (domain-separated, mixed with
- * `KANBAN_AUTH_SECRET` when one is set), so tokens survive a restart and every
- * outstanding unlock dies the moment the password is rotated. No session table.
+ *   key     = HMAC_SHA256(serverSecret, "kanban-unlock-v2" || scrypt(password, salt))
+ *
+ * `serverSecret` and `salt` are RANDOM (32 and 16 bytes), generated once and
+ * kept in `<data dir>/.secrets/master-unlock.json` (directory 0700, file 0600)
+ * so unlocks survive a restart; if that file cannot be read or written they
+ * live for the process only (a warning says so, and a restart then asks every
+ * browser for the password again). Nothing a client ever holds can therefore
+ * be checked offline against a password guess: verifying a MAC needs the
+ * server's random secret. The scrypt fingerprint only BINDS the key to the
+ * current password, so rotating the password still revokes every outstanding
+ * unlock; it is computed once per password value. No session table.
  *
  * What the unlock grants: READ of card details, plus exactly one write - saving
  * column colours through `PUT /api/settings` (see middleware/auth.js). It is
@@ -33,7 +41,9 @@
  * key appear in no log line, audit entry, URL or error body.
  */
 import crypto from 'node:crypto';
-import { authSecret } from './sessionAuth.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { jsonDataDir } from './task-identity.js';
 import { tokensMatch } from './utils/constantTime.js';
 import { addressOwnerKey } from './utils/addressKey.js';
 
@@ -72,19 +82,106 @@ function masterPasswordUsable() {
   return masterPassword().length >= MASTER_PASSWORD_MIN_LENGTH;
 }
 
-let cachedKeyInput = null;
-let cachedKey = null;
+// --- signing material -------------------------------------------------------
 
-/** HMAC key for unlock tokens, derived from the password; null when unusable. */
+export const UNLOCK_SECRET_DIR = '.secrets';
+export const UNLOCK_SECRET_FILE = 'master-unlock.json';
+/** scrypt cost for the password fingerprint (about 50-100 ms, once per password). */
+const SCRYPT_PARAMS = Object.freeze({ N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+
+let material = null; // { dir, secret: Buffer, salt: Buffer, persisted: boolean }
+let cachedPassword = null;
+let cachedKey = null;
+let warnedEphemeral = false;
+
+function validMaterial(parsed) {
+  return parsed && typeof parsed === 'object'
+    && typeof parsed.secret === 'string' && /^[0-9a-f]{64}$/.test(parsed.secret)
+    && typeof parsed.salt === 'string' && /^[0-9a-f]{32}$/.test(parsed.salt);
+}
+
+/**
+ * Loads the random signing secret + salt for the current data dir, creating
+ * them on first use. Falls back to per-process values when the file cannot be
+ * read or written (read-only volume): unlocks then do not survive a restart.
+ */
+function loadMaterial() {
+  const dir = path.join(jsonDataDir(), UNLOCK_SECRET_DIR);
+  if (material && material.dir === dir) return material;
+  const file = path.join(dir, UNLOCK_SECRET_FILE);
+  let loaded = null;
+  let persisted = false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (validMaterial(parsed)) {
+      loaded = { secret: Buffer.from(parsed.secret, 'hex'), salt: Buffer.from(parsed.salt, 'hex') };
+      persisted = true;
+      // Tighten a file that was restored or copied with looser permissions.
+      try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    }
+  } catch {
+    loaded = null; // absent or unreadable: create below
+  }
+  if (!loaded) {
+    loaded = { secret: crypto.randomBytes(32), salt: crypto.randomBytes(16) };
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // The data dir can be a git repository (KANBAN_GIT_DIR, git-yaml
+      // storage). The store only ever stages its own files by name, but keep
+      // a manual `git add -A` there from picking up a signing secret too.
+      try { fs.writeFileSync(path.join(dir, '.gitignore'), '*\n', { mode: 0o600, flag: 'wx' }); } catch { /* exists or best effort */ }
+      const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+      fs.writeFileSync(
+        tmp,
+        JSON.stringify({ v: 2, secret: loaded.secret.toString('hex'), salt: loaded.salt.toString('hex') }),
+        { mode: 0o600, flag: 'wx' },
+      );
+      fs.renameSync(tmp, file);
+      persisted = true;
+    } catch {
+      persisted = false;
+    }
+  }
+  if (!persisted && !warnedEphemeral) {
+    warnedEphemeral = true;
+    console.warn(
+      '[kanban auth] the master-unlock signing secret could not be stored under the data directory; ' +
+      'using a per-process secret, so every browser must re-enter the master password after a restart.'
+    );
+  }
+  material = { dir, ...loaded, persisted };
+  cachedPassword = null;
+  cachedKey = null;
+  return material;
+}
+
+/** Whether the signing secret is stored on disk (false = per-process only). */
+export function unlockSecretPersisted() {
+  return masterPasswordUsable() ? loadMaterial().persisted : false;
+}
+
+/** Test helper: forget the loaded secret, the derived key and the warning latch. */
+export function resetUnlockKeyMaterial() {
+  material = null;
+  cachedPassword = null;
+  cachedKey = null;
+  warnedEphemeral = false;
+}
+
+/**
+ * HMAC key for unlock tokens; null when no usable password is configured.
+ * Keyed by the server's RANDOM secret, so it cannot be recomputed from the
+ * password and public values; bound to the password through a salted scrypt
+ * fingerprint, so a new password yields a new key (every old unlock dies).
+ */
 export function masterUnlockKey() {
   if (!masterPasswordUsable()) return null;
-  const input = `${masterPassword()}\u0000${authSecret() ?? ''}`;
-  if (input !== cachedKeyInput) {
-    cachedKey = crypto
-      .createHmac('sha256', masterPassword())
-      .update(`kanban-master-unlock-v1\u0000${authSecret() ?? ''}`)
-      .digest();
-    cachedKeyInput = input;
+  const m = loadMaterial();
+  const password = masterPassword();
+  if (cachedKey === null || cachedPassword !== password) {
+    const fingerprint = crypto.scryptSync(password, m.salt, 32, SCRYPT_PARAMS);
+    cachedKey = crypto.createHmac('sha256', m.secret).update('kanban-unlock-v2\u0000').update(fingerprint).digest();
+    cachedPassword = password;
   }
   return cachedKey;
 }
@@ -162,6 +259,17 @@ export function requestUnlock(req) {
 // shares the address, and an agent's 401s never lock the owner out of here.
 // ---------------------------------------------------------------------------
 const unlockFailures = new Map(); // address key -> { count, windowStartMs }
+let maxFailureEntries = MAX_UNLOCK_FAILURE_ENTRIES;
+
+/** Test helper: shrink the per-address table so the overflow path is reachable. */
+export function setUnlockFailureCapacity(n = MAX_UNLOCK_FAILURE_ENTRIES) {
+  maxFailureEntries = n;
+}
+
+/** True when `ip` is being counted on the shared overflow counter. */
+export function unlockUsesOverflow(ip, now = Date.now()) {
+  return failureKey(ip, now, false) === OVERFLOW_KEY;
+}
 
 export function resetUnlockFailures() {
   unlockFailures.clear();
@@ -183,13 +291,13 @@ export function unlockClientKey(req) {
 function failureKey(ip, now, sweep) {
   if (unlockFailures.has(ip)) return ip;
   const tracked = () => unlockFailures.size - (unlockFailures.has(OVERFLOW_KEY) ? 1 : 0);
-  if (sweep && tracked() >= MAX_UNLOCK_FAILURE_ENTRIES) {
+  if (sweep && tracked() >= maxFailureEntries) {
     for (const [k, r] of unlockFailures) {
       if (now - r.windowStartMs < UNLOCK_FAILURE_WINDOW_MS) break;
       unlockFailures.delete(k);
     }
   }
-  return tracked() < MAX_UNLOCK_FAILURE_ENTRIES ? ip : OVERFLOW_KEY;
+  return tracked() < maxFailureEntries ? ip : OVERFLOW_KEY;
 }
 
 /** Records one failed attempt; returns the count in the live window. */
@@ -205,9 +313,14 @@ export function recordUnlockFailure(ip, now = Date.now()) {
   return rec.count;
 }
 
-/** True while this address has used up its failed attempts for the window. */
+/**
+ * True while this address has used up its failed attempts for the window. An
+ * address that could not get its own counter (table full) is judged on the
+ * shared overflow counter, so a flood of fresh addresses is locked out as a
+ * group instead of each one starting with a clean slate.
+ */
 export function unlockLockedOut(ip, now = Date.now()) {
-  const rec = unlockFailures.get(ip);
+  const rec = unlockFailures.get(failureKey(ip, now, false));
   if (!rec) return false;
   if (now - rec.windowStartMs >= UNLOCK_FAILURE_WINDOW_MS) return false;
   return rec.count >= unlockFailureLimit();

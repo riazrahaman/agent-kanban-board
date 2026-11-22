@@ -28,7 +28,7 @@ import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
 import { formatLine, log as emitLog, logError, logWarn } from './logger.js';
-import { MASTER_PASSWORD_MIN_LENGTH, redactTaskDetails } from './masterUnlock.js';
+import { MASTER_PASSWORD_MIN_LENGTH, masterPasswordConfigured, masterUnlockKey, redactTaskDetails, unlockSecretPersisted } from './masterUnlock.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -337,7 +337,13 @@ export function startupAuthErrors(env = process.env) {
   // box as an API token. If it equalled a board credential, the browser could
   // not tell which of the two the owner meant, and a "view details" secret
   // would silently be a write (or admin) credential.
-  const master = typeof env.KANBAN_MASTER_PASSWORD === 'string' ? env.KANBAN_MASTER_PASSWORD.trim() : '';
+  const rawMaster = typeof env.KANBAN_MASTER_PASSWORD === 'string' ? env.KANBAN_MASTER_PASSWORD : '';
+  const master = rawMaster.trim();
+  if (rawMaster !== '' && master === '') {
+    // Whitespace only: the operator meant to set one. Treating it as "off"
+    // would silently leave card details open.
+    out.push('KANBAN_MASTER_PASSWORD is set but blank (whitespace only). Give it a value of at least 12 characters, or remove it to leave card details open.');
+  }
   if (master) {
     if (master.length < MASTER_PASSWORD_MIN_LENGTH) {
       out.push(`KANBAN_MASTER_PASSWORD must be at least ${MASTER_PASSWORD_MIN_LENGTH} characters.`);
@@ -790,6 +796,18 @@ export async function startServer(
   }
 
   for (const line of startupAuthWarnings()) logWarn('auth', line);
+
+  // Master password: load (or create) the random signing secret and compute the
+  // password fingerprint ONCE here, so the first unlock request does not pay
+  // for the scrypt, and so a non-persistent secret is reported at boot.
+  if (masterPasswordConfigured()) {
+    try {
+      masterUnlockKey();
+      emitLog('info', 'auth', `master password: card details are gated (unlock secret ${unlockSecretPersisted() ? 'stored under the data directory' : 'per-process only'})`);
+    } catch (err) {
+      logWarn('auth', 'master password key setup failed', { error: err.message });
+    }
+  }
 
   const app = createApp();
   if (process.env.PORT && !(process.env.KANBAN_ALLOWED_ORIGIN || '').trim()) {

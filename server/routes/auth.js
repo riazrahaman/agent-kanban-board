@@ -6,18 +6,21 @@ import {
   consumeSessionChallenge,
   sessionNonceMode,
 } from '../sessionChallenge.js';
-import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch, isKnownCredential } from '../middleware/auth.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch, isKnownCredential, authLogEnabled, resolveDetailAccess } from '../middleware/auth.js';
 import {
   MASTER_PASSWORD_MAX_LENGTH,
   createUnlockToken,
   masterPasswordMatches,
+  masterPasswordConfigured,
   recordUnlockFailure,
   requestUnlock,
+  unlockFailureLimit,
+  unlockUsesOverflow,
   unlockClientKey,
   unlockLockedOut,
   unlockRetryAfterMs,
 } from '../masterUnlock.js';
-import { isValidProjectId, defaultProjectName, isPrivilegedRole } from '../store.js';
+import { isValidProjectId, defaultProjectName, isPrivilegedRole, emitAudit } from '../store.js';
 import { createStreamTicket } from '../streamTicket.js';
 import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from '../middleware/rateLimit.js';
 
@@ -240,22 +243,56 @@ router.post('/stream-ticket', (req, res) => {
  * POST /api/auth/unlock — exchange the master password for an unlock token.
  *
  * This is also the header box's ONE classification call: the browser cannot
- * tell an API token from the master password by looking at it, so it asks.
- * The answer is `{ unlocked: true, token, expires_at }` for the master
- * password and `{ unlocked: false }` for everything else — the same body
- * whether the value was a valid API token, a wrong guess, or the feature is
- * not configured at all, so the endpoint says nothing about the configuration
- * that an anonymous read does not already show.
+ * tell an API token from the master password by looking at it, so it asks, and
+ * it stores only what the server recognises:
+ *
+ *   { unlocked: true, token, expires_at }   the master password
+ *   { unlocked: false, credential: true }   a valid board credential (API token)
+ *   { unlocked: false, credential: false }  neither: the browser stores nothing
+ *
+ * The last answer is the same whether the value was a wrong guess, a typo or
+ * the feature is not configured at all, so the endpoint says nothing about the
+ * configuration that an anonymous read does not already show.
  *
  * Throttling is its own per-address counter (see masterUnlock.js), checked
- * BEFORE any comparison. A value that is a valid board credential is not a
- * guess and is not counted; nothing here touches the board's failed-auth
- * limiter, so typing a token into the box can never lock out an agent that
- * shares the address. The password travels only in the POST body and is never
- * logged, audited or echoed.
+ * BEFORE any comparison, and it is a hard lockout: while an address is locked
+ * out even the correct password is refused. Every unrecognised value counts;
+ * a valid board credential does not. Nothing here touches the board's
+ * failed-auth limiter, so typing into the box can never lock out an agent that
+ * shares the address. `req.ip` is the key, so behind a reverse proxy
+ * KANBAN_TRUST_PROXY must be set or every visitor shares one counter.
+ *
+ * The value travels only in the POST body and is never logged, audited or
+ * echoed: failures are logged by address and count alone.
  */
+function noteUnlockFailure(req, ip, count) {
+  const limit = unlockFailureLimit();
+  if (authLogEnabled()) {
+    console.warn(`[kanban auth failure] unlock attempt not recognised (address: ${ip}, ${count} of ${limit} in window)`);
+  }
+  // Once per window, on the failure that uses up the allowance: the address
+  // goes to the server console only; the audit entry (which board readers can
+  // reach through the audit stream) carries none.
+  if (count === limit) {
+    const who = unlockUsesOverflow(ip) ? 'the shared overflow bucket' : `address ${ip}`;
+    console.warn(
+      `[kanban auth] unlock lockout for ${who}: ${count} unrecognised attempts in the current window; ` +
+      'POST /api/auth/unlock answers 429 for it until the window ends'
+    );
+    emitAudit({
+      ts: new Date().toISOString(),
+      kind: 'unlock_lockout',
+      project: defaultProjectName(),
+      task: null,
+      actor: 'system',
+      reason: `unlock lockout (${count} unrecognised attempts in window)`,
+    });
+  }
+}
+
 router.post('/unlock', (req, res) => {
   const ip = unlockClientKey(req);
+  res.set('Cache-Control', 'no-store');
   if (unlockLockedOut(ip)) {
     const ms = unlockRetryAfterMs(ip);
     res.set('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))));
@@ -269,12 +306,39 @@ router.post('/unlock', (req, res) => {
   if (masterPasswordMatches(provided)) {
     const minted = createUnlockToken();
     if (minted) {
-      res.set('Cache-Control', 'no-store');
       return res.status(200).json({ unlocked: true, token: minted.token, expires_at: minted.expiresAt });
     }
   }
-  if (!isKnownCredential(provided)) recordUnlockFailure(ip);
-  return res.status(200).json({ unlocked: false });
+  if (isKnownCredential(provided)) {
+    return res.status(200).json({ unlocked: false, credential: true });
+  }
+  noteUnlockFailure(req, ip, recordUnlockFailure(ip));
+  return res.status(200).json({ unlocked: false, credential: false });
+});
+
+/**
+ * GET /api/auth/details — what THIS caller may read, as the server sees it.
+ * The browser uses it so its lock indicator reflects the server's answer, not
+ * what happens to be in localStorage (a stored unlock may have been revoked by
+ * a password rotation, and an empty board has no tasks to infer it from).
+ *
+ *   details: true   card details are served to this caller
+ *   unlock:  true   the X-Kanban-Unlock token it sent is valid right now
+ *
+ * It reveals nothing an anonymous GET /api/tasks does not (whether details are
+ * withheld), identifies only, and never records an auth failure.
+ */
+router.get('/details', (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  res.vary('Authorization');
+  res.vary('X-API-Token');
+  res.vary('X-Kanban-Unlock');
+  const unlock = masterPasswordConfigured() ? requestUnlock(req) : null;
+  return res.status(200).json({
+    details: resolveDetailAccess(req).access,
+    unlock: unlock !== null,
+    ...(unlock ? { expires_at: unlock.exp } : {}),
+  });
 });
 
 /**

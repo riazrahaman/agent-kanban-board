@@ -46,10 +46,24 @@ function TaskCard({
     <div
       data-id={task.id}
       data-details-locked={locked ? 'true' : undefined}
+      // A card is a button: focusable, and Enter/Space opens it like a click.
+      // A locked card stays focusable so its state is announced, but it is
+      // aria-disabled and described, not just explained by a hover tooltip.
+      role="button"
+      tabIndex={0}
+      aria-disabled={locked ? true : undefined}
+      aria-description={locked ? LOCKED_HINT : undefined}
       onClick={locked ? undefined : () => onOpen(task.project, task.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        if (!locked) onOpen(task.project, task.id)
+      }}
       title={locked ? LOCKED_HINT : undefined}
       className={[
         'group border border-line bg-surface p-3 transition-colors',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink',
         locked ? 'cursor-default' : 'cursor-pointer',
         'hover:bg-muted-bg/50',
         'border-l-[3px]',

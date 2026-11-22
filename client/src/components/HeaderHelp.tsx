@@ -99,7 +99,8 @@ export default function HeaderHelp({ unlocked = false, detailsLocked = false, on
                 master password unlocks card details: click a card to read its
                 description, comments and agent log, and save column colours.
                 It is checked once by the server and is never stored; this
-                browser keeps only a 12-hour unlock, then asks again. Without
+                browser keeps only a 12-hour unlock, then asks again. A value
+                the server does not recognise as either is not saved. Without
                 either, the board is{' '}
                 <span className="font-mono text-[10px] uppercase tracking-wider">read-only</span>.
               </dd>

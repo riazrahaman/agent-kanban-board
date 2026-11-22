@@ -24,7 +24,7 @@
 import crypto from 'node:crypto';
 import { authSecret } from './sessionAuth.js';
 import { tokensMatch } from './utils/constantTime.js';
-import { masterUnlockKey } from './masterUnlock.js';
+import { masterPasswordConfigured } from './masterUnlock.js';
 
 const TICKET_TTL_MS = 60 * 1000;
 
@@ -39,16 +39,28 @@ export function streamTicketTtlMs() {
 
 /**
  * Signing key: the session secret, or the global token as a fallback. A
- * deployment that has neither but does set a master password signs with the
- * key derived from it, so an unlocked browser (and a project-token browser)
- * can still open an authenticated stream.
+ * deployment that has neither but does set a master password signs with a
+ * RANDOM PER-PROCESS key, so an unlocked browser (and a project-token browser)
+ * can still open an authenticated stream. That key is never derived from the
+ * master password or anything else a client could guess: a ticket must not be
+ * an offline oracle for it. Tickets live 60 seconds and are single-use, so
+ * losing the key on restart costs nothing (the client re-mints on reconnect).
  */
+let processTicketKey = null;
+
 function ticketSecret() {
   const secret = authSecret();
   if (secret) return secret;
   const token = process.env.KANBAN_AUTH_TOKEN;
   if (typeof token === 'string' && token !== '') return token;
-  return masterUnlockKey();
+  if (!masterPasswordConfigured()) return null;
+  if (processTicketKey === null) processTicketKey = crypto.randomBytes(32);
+  return processTicketKey;
+}
+
+/** Test helper: drop the per-process fallback key (as a restart would). */
+export function resetProcessTicketKey() {
+  processTicketKey = null;
 }
 
 function macHex(secret, payload) {
