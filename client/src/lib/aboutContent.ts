@@ -241,7 +241,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Search & real-time quick filters', code: 'BoardFilters.tsx, lib/filterTasks.ts' },
   { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
   { name: 'Live Metrics Dashboard summary (toggle currently hidden)', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
-  { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
+  { name: 'Board JSON Export (button currently hidden)', code: 'App.tsx, BoardFilters.tsx' },
   { name: 'Anonymous visit counter', code: 'App.tsx · lib/useVisitCount.ts' },
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },
   { name: 'Task comments thread', code: 'store.js · addComment, POST /:id/comments' },
