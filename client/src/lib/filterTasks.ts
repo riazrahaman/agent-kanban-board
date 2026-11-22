@@ -9,6 +9,16 @@ export type FilterCriteria = {
   severity: SeverityFilter[]
 }
 
+/** True when any filter narrows the board (drives Reset and "X of Y tasks"). */
+export function isFilterActive(criteria: FilterCriteria): boolean {
+  return (
+    criteria.search.trim() !== '' ||
+    criteria.priority !== 'all' ||
+    criteria.assignee !== 'all' ||
+    (criteria.severity ?? []).length > 0
+  )
+}
+
 export function filterTasks(tasks: Task[], criteria: FilterCriteria): Task[] {
   const searchLower = criteria.search.trim().toLowerCase()
   const priorityFilter = criteria.priority.trim().toLowerCase()

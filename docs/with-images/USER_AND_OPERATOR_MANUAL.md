@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.17.1
+**System:** Agent Kanban Board v3.17.2
 
 ---
 
@@ -407,20 +407,20 @@ flowchart TD
 > The board scrolls horizontally. When more columns exist than fit the viewport, an edge-fade gradient and a paging chevron appear on the side that has hidden columns — click the chevron (or scroll/swipe) to page one column at a time. On the **all projects** view each card also shows its owning **project chip** so cards from different projects are distinguishable; switch the header's project filter to a single project to hide the chips and scope the board.
 
 ### 5.1.1 Filter, Sort & Export Toolbar
-A toolbar above the board (`BoardFilters.tsx`) operates the board view:
+A toolbar (`BoardFilters.tsx`) operates the board view. On desktop it is docked into the header, which reads left to right as three groups: what you are looking at (title, **Board / About** tabs, project picker), narrowing it down (these filters), and who you are (task count, agent id, token, help, bug report and theme, right-aligned). From 1880px wide the filters share the single header row; below that they take a second header row of their own. The tabs and the picker never move when the filters appear or disappear. On phones, and on touch tablets under 1024px, the toolbar stays above the board:
 
 - **Search:** live substring filter matching task id, title, description, branch and assigned agent, with an inline `×` clear button.
 - **Priority filter:** `All Priorities` / `High (P0 / P1)` / `Medium (P2)` / `Low (P3)` — normalizes the triage ratings before matching.
 - **Assignee filter:** `All Assignees` / `Unassigned` / one entry per agent currently holding work.
-- **Sort selector:** orders cards inside every column — `Sort: Priority` (default: high → medium → low, server recency within a rank), `Sort: Recently Updated` (newest first), or `Sort: Task ID` (lexical). The choice is persisted in this browser (`localStorage kanban.sort`) and re-applied on every live update.
+- **Sort selector:** orders cards inside every column — `Sort: Priority` (default: high → medium → low, server recency within a rank), `Sort: Updated` (most recently updated first), or `Sort: Task ID` (lexical). The choice is persisted in this browser (`localStorage kanban.sort`) and re-applied on every live update.
 - **Reset:** appears only while a filter is active and clears all of them.
-- **Export:** downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
-- **Metrics:** toggles the summary dashboard (§5.1.2). The dashboard always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
+- **Export:** currently hidden (owner decision: anyone who could open the board could export its contents). The button is commented out in `BoardFilters.tsx`, not removed; when shown it downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
+- **Metrics:** currently hidden (the button is commented out in `BoardFilters.tsx`, and the dashboard is treated as closed while it is). When shown it toggles the summary dashboard (§5.1.2), which always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
 
-The right-hand counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`.
+The task counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`. On desktop it is the chip at the start of the right-hand header group; on phones it sits at the end of the toolbar.
 
 ### 5.1.2 Metrics Dashboard
-Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Planning + In Progress + In Review + Validation), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
+The Metrics toggle is currently hidden, so this banner is not reachable from the UI; the description is kept for when it is restored. Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Planning + In Progress + In Review + Validation), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
 
 ### 5.2 Card Anatomy
 - **Left 3px Color Stripe:** Visual severity and state indicator:
@@ -491,16 +491,16 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - **Bottom scroll clearance (v3.2.3):** on coarse pointers (touch) below `md`, the board columns, Portfolio and About each reserve `env(safe-area-inset-bottom) + 5rem` of bottom padding, so the last row can be scrolled up clear of iOS Safari's floating bottom toolbar. A mouse window resized under 768px keeps the dense default padding — there is no floating toolbar to clear there.
 - **Pinch zoom (v3.2.4):** iOS Safari has ignored `user-scalable=no` in the viewport meta tag since ~iOS 10, so zoom is instead blocked via `touch-action: pan-x pan-y` on every element (keeps both scroll axes fully intact for every column, sheet and dialog; v3.2.3 set it on the page root only, which WebKit does not carry into scroll containers) plus a JS guard that cancels two-finger `touchmove` and WebKit's pinch-gesture events. One-finger scrolling and taps are never cancelled, and desktop browser zoom (ctrl+wheel, keyboard) is left alone.
 - **Card text sizing (v3.2.3):** iOS Safari's WebKit text autosizer previously inflated multi-line card titles independently of their explicit font size, next to mono status badges that stayed their declared size — `text-size-adjust: 100%` disables that autosizing so the rendered scale matches the design system everywhere.
-- **Phone disclosure (v2.9.1):** below `md`/`sm` the secondary header and toolbar controls (agent id, token, help, Signal, theme, project picker, priority/assignee/sort, export, column colours, metrics) collapse behind a single `⋯` / `Filters` disclosure button; only the title, the Board/Portfolio/About switch, the search box and the task count stay visible. This keeps the chrome to roughly three rows — measured at 390px, chrome went from 299px to ~155px so the board keeps ~82% of the viewport.
+- **Phone disclosure (v2.9.1):** below `md`/`sm` the secondary header and toolbar controls (agent id, token, help, Signal, theme, project picker, priority/assignee/sort, column colours) collapse behind a single `⋯` / `Filters` disclosure button; only the title, the Board/About switch, the search box and the task count stay visible. This keeps the chrome to roughly three rows — measured at 390px, chrome went from 299px to ~155px so the board keeps ~82% of the viewport.
 - **Column paging arrows (v2.9.1):** the `‹ / ›` scroll-columns buttons are hidden below `md`; touch devices use the native horizontal swipe + snap instead.
 - **Task-card header (v2.9.1):** on phones the card header wraps and the badge group (project/estimate/priority/status) takes its own full-width line, so the task id keeps a readable width instead of collapsing to 1–2 characters.
 - **Header agent-id field (v3.2.3):** inside the `⋯` disclosure, the agent-id input previously carried a zero flex-basis (`flex-1`) alongside two fixed-basis siblings, so it absorbed none of a crowded row's growth and shrank to ~2 characters on a real 390px phone; it now carries the same real basis as its siblings (`flex-initial`) and wraps as a whole field instead of collapsing.
-- Lower-priority header chips (`read-only`, claim status, task count) progressively hide on narrow viewports; the project filter and token input remain available behind the disclosure.
+- Lower-priority header chips (claim status, task count; the `read-only` chip is hidden since v3.17.2) progressively hide on narrow viewports; the project filter and token input remain available behind the disclosure.
 
 Three regression guards lock these invariants in CI: `client/src/lib/responsive.test.mjs` (shell, columns, rail, viewport, card header stacking), `client/src/lib/mobileToolbar.test.mjs` (the toolbar's shrink-and-wrap contract, the phone disclosures, the mobile paging-arrow rule, and phone tap targets — v2.5.9/v2.9.1), and `client/src/lib/useVisitCount.test.mjs` (the About visit counter).
 
 ### 5.7 About View
-The header's segmented switcher (**Board / Portfolio / About**) opens a third top-level view: an in-app product overview aimed at new adopters and contributors.
+The header's segmented switcher (**Board / About**; the **Portfolio** tab is currently hidden, though the cross-project rollup view is still in the code) opens the About view: an in-app product overview aimed at new adopters and contributors.
 
 - **Hero:** the product pitch ("A trusted state register for swarms of coding agents"), a short lead, and two calls to action (open the live demo / fork on GitHub).
 - **Headless-first snippet:** a `curl` walkthrough showing an agent claiming the next task and advancing it, to make the API-first model concrete.

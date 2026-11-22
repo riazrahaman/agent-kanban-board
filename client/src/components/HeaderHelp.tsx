@@ -86,7 +86,7 @@ export default function HeaderHelp() {
               <dd className="text-[11px] leading-snug text-muted">
                 Credential for writes (claim, heartbeat, log). Sent as an
                 Authorization: Bearer header; stored in this browser only, never in a
-                URL. Reads need no token — without one the board shows{' '}
+                URL. Reads need no token — without one the board is{' '}
                 <span className="font-mono text-[10px] uppercase tracking-wider">read-only</span>.
               </dd>
             </div>

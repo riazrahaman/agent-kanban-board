@@ -115,20 +115,41 @@ jobs:
           # Mutating endpoints require BOTH a token and a valid agent role — a
           # create with only the token returns "A valid agent role is required
           # for mutating operations" (verified against the real server).
+          # Seeded into BOTH servers: the board filter row docks into the
+          # header on desktop, and only renders once the board has tasks, so
+          # the header guard's live ON-vs-OFF diff is only meaningful when the
+          # feature-OFF board (:4001) holds the same tasks as the ON one.
           seed_id() {
-            curl -sf -X POST http://127.0.0.1:4000/api/tasks \
-              -H "x-api-token: $KANBAN_AUTH_TOKEN" \
-              -H 'x-agent-id: ci-layout' -H 'x-agent-role: admin' \
-              -H 'Content-Type: application/json' -d "$1" >/dev/null
+            for SEED_PORT in 4000 4001; do
+              curl -sf -X POST "http://127.0.0.1:$SEED_PORT/api/tasks" \
+                -H "x-api-token: $KANBAN_AUTH_TOKEN" \
+                -H 'x-agent-id: ci-layout' -H 'x-agent-role: admin' \
+                -H 'Content-Type: application/json' -d "$1" >/dev/null
+            done
           }
           seed_id "{\"id\":\"init-agent-investment-advisor\",\"title\":\"Init agent-investment-advisor\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
           seed_id "{\"id\":\"layout-worst-case-long-id\",\"title\":\"Title with $LONG_TOKEN embedded\",\"description\":\"Desc $LONG_TOKEN\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
           seed_id "{\"id\":\"layout-short\",\"title\":\"Short title\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
-          seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
-          # Give one card a long agent id so the footer row is exercised too.
-          curl -sf -X POST "http://127.0.0.1:4000/api/tasks/layout-long-agent/claim?project=layoutfixture" \
-            -H "x-api-token: $KANBAN_AUTH_TOKEN" -H 'x-agent-id: ci-layout' -H 'x-agent-role: builder' \
-            -H 'Content-Type: application/json' -d "{\"agent_id\":\"agent-${LONG_TOKEN:0:44}}\"}" >/dev/null || true
+          seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"READY\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
+          # Give one card a LONG assignee, on both servers. Two guards need it:
+          # the card guard (footer row) and the header guard, which checks
+          # that the docked assignee <select> does not grow with its longest
+          # option (a 70-character agent id once added a header row at every
+          # desktop width). Only a READY card can be claimed, and the claim
+          # used to target a BACKLOG card on :4000 only and swallow its 409
+          # with `|| true` — so the fixture silently had no assignee at all.
+          LONG_AGENT='agent-with-a-very-long-identifier-that-used-to-widen-the-assignee-select'
+          for SEED_PORT in 4000 4001; do
+            curl -sf -X POST "http://127.0.0.1:$SEED_PORT/api/tasks/layout-long-agent/claim?project=layoutfixture" \
+              -H "x-api-token: $KANBAN_AUTH_TOKEN" -H "x-agent-id: $LONG_AGENT" -H 'x-agent-role: builder' \
+              -H 'Content-Type: application/json' -d "{\"agent_id\":\"$LONG_AGENT\"}" >/dev/null
+            if ! curl -sf "http://127.0.0.1:$SEED_PORT/api/tasks?project=layoutfixture" \
+              -H "x-api-token: $KANBAN_AUTH_TOKEN" | grep -q "\"assigned_agent\":\"$LONG_AGENT\""; then
+              echo "::error::the long-assignee claim did not land on :$SEED_PORT — the header guard's select-width check would pass vacuously"
+              kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
+              exit 1
+            fi
+          done
 
           # Fail loudly if the fixture did not land — otherwise the guard would
           # run against an empty board and pass vacuously.
@@ -137,6 +158,14 @@ jobs:
           echo "layout fixture seeded: $SEEDED task(s)"
           if [ "$SEEDED" -lt 4 ]; then
             echo "::error::layout fixture did not seed (got $SEEDED of 4) — the guard would pass vacuously"
+            kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
+            exit 1
+          fi
+          SEEDED_OFF=$(curl -sf "http://127.0.0.1:4001/api/tasks?project=layoutfixture" \
+            -H "x-api-token: $KANBAN_AUTH_TOKEN" | grep -o '"id"' | wc -l)
+          echo "layout fixture seeded (feature-OFF server): $SEEDED_OFF task(s)"
+          if [ "$SEEDED_OFF" -lt 4 ]; then
+            echo "::error::layout fixture did not seed on the feature-OFF server (got $SEEDED_OFF of 4) — the header ON-vs-OFF diff would compare a docked header with an undocked one"
             kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
             exit 1
           fi

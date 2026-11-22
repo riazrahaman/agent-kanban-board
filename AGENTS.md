@@ -153,7 +153,20 @@ combined SSE `EventSource` (diff + settings). `api.ts` is the typed fetch layer
 `subscribeToEvents` / `subscribeToSettings` were deleted in v3.12.5). Pure logic
 lives in `lib/*.ts` with sibling `.test.mjs` files (filtering, sorting, metrics,
 claim coordination, column colors, theming, `aboutContent.ts`). Views: Board,
-Portfolio, About; plus `TaskSheet`, `SignalRail`, `MetricsDashboard`. The About
+Portfolio, About; plus `TaskSheet`, `SignalRail`, `MetricsDashboard`. The
+Portfolio header tab is hidden at the owner's request - its tab entry in
+`App.tsx` is commented out and `HIDDEN_VIEWS` in `lib/uiSettings.ts` coerces a
+stored `portfolio` view to the board - but the view and its code stay. On
+desktop (`DESKTOP_HEADER_QUERY`: `md` up with a fine pointer, or `lg` up) the
+header is three groups - brand, tabs and project picker; the board filters;
+count, identity and theme - and the single `BoardFilters` instance is portalled
+into a header slot (`data-testid="header-filter-slot"`): inline in row 1 from
+`117.5rem`, its own second header row below that. The tabs and the picker must
+sit in the same place whether or not the filters show, and docked selects are
+width-capped; `scripts/check-header-layout.mjs` measures both and needs its two
+servers seeded alike (including a long assignee). The Export button, the
+Metrics toggle and the "read-only" chip are hidden the same way as the
+Portfolio tab (commented out, code kept; `METRICS_TOGGLE_HIDDEN`). The About
 page's shell is `components/About.tsx`; its article body and figures are
 `client/src/about/*` (`ChapterBody`, `ArchitectureDiagram`, `Ask` hero + figure,
 `VideoShowcase`, shared `primitives`), and the page-level source-contract tests

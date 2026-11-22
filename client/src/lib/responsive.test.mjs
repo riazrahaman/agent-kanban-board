@@ -130,7 +130,7 @@ test('agentDraft input stays flex-initial (not flex-1) with a usable min width',
   )
 })
 
-test('tokenDraft width reduction (bug-icon slack absorption) stays bounded and resets above xl', () => {
+test('tokenDraft width reduction (bug-icon slack absorption) applies at every md+ width, with no xl reset', () => {
   // v2.17.0 round 3 (tester-caught WebKit header-wrap defect, fixed via
   // App.tsx + scripts/check-header-layout.mjs): the icon's own footprint
   // (27px mouse / 44px coarse) has to come from somewhere in the
@@ -158,10 +158,17 @@ test('tokenDraft width reduction (bug-icon slack absorption) stays bounded and r
     /(?:^|\s)md:pointer-coarse:w-\[calc\(9rem-44px\)\](?:\s|$)/,
     'tokenDraft must cut 44px (the coarse-pointer bug icon width) from its md width under pointer-coarse',
   )
-  assert.match(
+  // Until the board filter row was docked into the header, the reduction
+  // reset to w-36 at xl ("the row has slack again there"). With the filters
+  // docked the header is tight at EVERY desktop width — the one-row threshold
+  // now sits near 1920px — so a right-hand group 27px wider with the icon on
+  // would wrap a row earlier than with it off. The clawback therefore has to
+  // persist from md up; scripts/check-header-layout.mjs sweeps that threshold
+  // ON vs OFF.
+  assert.doesNotMatch(
     tokenInput,
-    /\bxl:w-36\b/,
-    'tokenDraft must reset to w-36 at xl — the row has slack again there, so the reduction must not persist',
+    /(?:^|\s)(?:xl|2xl):w-/,
+    'tokenDraft must NOT reset its width at xl/2xl — the bug icon would then cost a header row near the one-row threshold',
   )
 })
 

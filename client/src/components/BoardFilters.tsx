@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ColumnColorsControl from './ColumnColorsControl'
 import { SEVERITY_COLORS, type SeverityFilter, type SeverityColor } from '../lib/ownership'
 import { readStoredMobileFiltersOpen, writeStoredMobileFiltersOpen } from '../lib/uiSettings'
+import { isFilterActive } from '../lib/filterTasks'
 
 const SEVERITY_BUBBLES: Array<{ key: SeverityColor; tooltip: string }> = [
   {
@@ -41,6 +42,15 @@ type Props = {
   /** v2.18.0: active solo-run severity filter (multi-select; empty = show all). */
   severity: SeverityFilter[]
   onSeverityChange: (severity: SeverityFilter[]) => void
+  /**
+   * Desktop presentation: the row is portalled into the app header (App.tsx)
+   * instead of sitting on top of the board. It drops its own strip (bottom
+   * border, background, padding) and its task count (the header shows the one
+   * count), narrows the search box and caps the selects so a long assignee
+   * name cannot widen the header; from 117.5rem, where it shares row 1 with the
+   * rest of the header, it shrinks instead of wrapping.
+   */
+  docked?: boolean
 }
 
 function SeverityFilterBubbles({
@@ -122,8 +132,15 @@ export default function BoardFilters({
   onColumnColorsReset,
   severity,
   onSeverityChange,
+  docked = false,
 }: Props) {
-  const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all' || severity.length > 0
+  const isFiltered = isFilterActive({ search, priority, assignee, severity })
+  // Export and Metrics are hidden at the owner's request: their buttons are
+  // commented out below, not deleted. The props stay part of the contract (App
+  // still passes the handlers) so restoring a button is only an un-comment.
+  void onExport
+  void showMetrics
+  void onToggleMetrics
   // v2.9.1: below sm the priority/assignee/sort/export/colors/metrics controls
   // collapse behind a Filters disclosure. Left to free-wrap they stacked into
   // ~5 rows and squeezed the board to a sliver (mobile-rendering-issues.md
@@ -132,8 +149,8 @@ export default function BoardFilters({
   const [filtersOpen, setFiltersOpen] = useState<boolean>(() => readStoredMobileFiltersOpen())
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4">
-      <div className="relative flex min-w-[180px] max-w-xs flex-1 items-center">
+    <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4 group/filters data-[docked=true]:border-b-0 data-[docked=true]:bg-transparent data-[docked=true]:p-0 min-[117.5rem]:data-[docked=true]:flex-nowrap" data-docked={docked ? 'true' : 'false'}>
+      <div className={`relative flex flex-1 items-center ${docked ? 'min-w-[120px] max-w-[10rem]' : 'min-w-[180px] max-w-xs'}`}>
         <input
           type="text"
           value={search}
@@ -174,18 +191,28 @@ export default function BoardFilters({
         {isFiltered ? 'Filters •' : 'Filters'}
       </button>
 
+      {/* Docked selects are capped (`max-w-[10rem]`/`[12rem]`, `min-w-0`): a
+          native select is as wide as its longest option, so one task claimed
+          by a 70-character agent id used to make the assignee select ~500px
+          wide and cost a whole header row. A capped select truncates. */}
+      {/* Docked (desktop header): `display: contents` dissolves this group so
+          its controls flow in the SAME wrapping row as the search box and the
+          count. As one flex item the whole group would drop to its own line
+          and then wrap again inside itself, costing an extra header row at
+          tablet widths. The data-variant outranks `sm:flex` by specificity. */}
       <div
         data-testid="filter-controls"
+        data-docked={docked ? 'true' : 'false'}
         className={`min-w-0 flex-wrap items-center gap-2 sm:flex ${
           filtersOpen ? 'flex w-full basis-full' : 'hidden'
-        }`}
+        } data-[docked=true]:contents`}
       >
         <select
           value={priority}
           onChange={(e) => onPriorityChange(e.target.value)}
           aria-label="Filter tasks by priority"
           title="Filter by priority"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11 group-data-[docked=true]/filters:min-w-0 group-data-[docked=true]/filters:max-w-[10rem]"
         >
           <option value="all">All Priorities</option>
           <option value="high">High (P0 / P1)</option>
@@ -198,7 +225,7 @@ export default function BoardFilters({
           onChange={(e) => onAssigneeChange(e.target.value)}
           aria-label="Filter tasks by assignee"
           title="Filter by assignee"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11 group-data-[docked=true]/filters:min-w-0 group-data-[docked=true]/filters:max-w-[10rem]"
         >
           <option value="all">All Assignees</option>
           <option value="unassigned">Unassigned</option>
@@ -214,10 +241,10 @@ export default function BoardFilters({
           onChange={(e) => onSortChange(e.target.value as 'priority' | 'updated' | 'id')}
           aria-label="Sort tasks within columns"
           title="Column ordering (persisted for this browser)"
-          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
+          className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11 group-data-[docked=true]/filters:min-w-0 group-data-[docked=true]/filters:max-w-[12rem]"
         >
           <option value="priority">Sort: Priority</option>
-          <option value="updated">Sort: Recently Updated</option>
+          <option value="updated">Sort: Updated</option>
           <option value="id">Sort: Task ID</option>
         </select>
 
@@ -235,6 +262,10 @@ export default function BoardFilters({
           </button>
         )}
 
+        {/* Export button hidden at the owner's request ("it is a security
+            issue for anyone to export the contents of the board"), on every
+            viewport. Kept, not deleted — the handler is still passed in as
+            `onExport`; un-comment to restore:
         {onExport && (
           <button
             type="button"
@@ -246,6 +277,7 @@ export default function BoardFilters({
             Export
           </button>
         )}
+        */}
 
         {onColumnColorsChange && onColumnColorsReset && (
           <ColumnColorsControl
@@ -255,6 +287,10 @@ export default function BoardFilters({
           />
         )}
 
+        {/* Metrics toggle hidden at the owner's request ("don't find use of
+            it"). Kept, not deleted; while hidden App also treats the
+            dashboard as closed (METRICS_TOGGLE_HIDDEN in lib/uiSettings.ts).
+            To restore, un-comment this and flip that constant:
         {onToggleMetrics && (
           <button
             type="button"
@@ -272,17 +308,21 @@ export default function BoardFilters({
             Metrics
           </button>
         )}
+        */}
       </div>
 
-      <div className="ml-auto shrink-0 text-right font-mono text-[10px] uppercase tracking-wider text-muted sm:w-auto">
-        {isFiltered ? (
-          <span>
-            {filteredCount} of {totalCount} tasks
-          </span>
-        ) : (
-          <span>{totalCount} tasks</span>
-        )}
-      </div>
+      {/* Docked, the header's own chip is the one (filter-aware) count. */}
+      {!docked && (
+        <div className="ml-auto shrink-0 text-right font-mono text-[10px] uppercase tracking-wider text-muted sm:w-auto">
+          {isFiltered ? (
+            <span>
+              {filteredCount} of {totalCount} tasks
+            </span>
+          ) : (
+            <span>{totalCount} tasks</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

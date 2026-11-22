@@ -86,6 +86,14 @@
  * Usage:
  *   node scripts/check-header-layout.mjs <base-url> [cdp-port] [off-base-url]
  *
+ * BOTH servers must hold the SAME seeded tasks, including one task assigned
+ * to a very long agent id. Since the board filter row docks into the header
+ * on desktop, the header's height depends on whether the board has tasks
+ * (the filters only render then) — an empty OFF board against a seeded ON
+ * board would diff a docked header against an undocked one and fail for a
+ * reason that has nothing to do with the bug icon. The long assignee is what
+ * lets this guard see a docked <select> growing with its options.
+ *
  * <off-base-url> is optional: a second server with the bug-report feature
  * OFF, for a live ON-vs-OFF diff in the third pass (see ci.yml).
  *
@@ -97,7 +105,9 @@
  * verifying that the rendered bug report button costs net-zero header height.
  *
  * Exit 0 = every width stays within tolerance on all three guards.
- * Exit 1 = a header-height, wrap-threshold or popover-containment regression.
+ * Exit 1 = a header-height, wrap-threshold, popover-containment, stable-row
+ *          (tabs moved between Board and About) or docked-select-width
+ *          regression.
  * Exit 2 = environmental skip/error (no Chrome / no server / no page).
  */
 import http from 'node:http';
@@ -118,19 +128,54 @@ const PORT_ARG = process.argv[3] || process.env.CDP_PORT;
 // width -> expected header height (px), NON-COARSE pointer (desktop window
 // resize). Real-Chromium ground truth — see the file header comment.
 // Identical with the bug-report feature on or off, in both themes.
+//
+// Re-baselined when the board filter row was DOCKED INTO THE HEADER on
+// desktop and the header was regrouped (brand + tabs + project picker | the
+// filters | count + identity + theme). Against a board that has tasks (both
+// CI servers are seeded alike, see ci.yml) the desktop header is:
+//   - row 1 (brand, tabs, picker, identity) + a filter row below 1880px;
+//   - ONE row from 1880px (`min-[117.5rem]`), where the filters sit inline.
+// That switch is a breakpoint, not a content-driven wrap. The only wrap
+// point left is the identity group dropping under the brand row below 993px
+// (three rows: brand row, identity row, filter row). Phone widths are
+// unchanged (the filters stay in the board pane).
 const EXPECTATIONS = {
   320: 84, 360: 84, 390: 84,
-  768: 120, 820: 120, 824: 120, 900: 120, 1024: 120,
-  1100: 82,
-  1280: 49, 1440: 49, 1920: 49,
+  768: 115, 820: 115, 824: 115, 900: 115,
+  1024: 83, 1100: 83,
+  1280: 83, 1440: 83, 1728: 83,
+  1920: 49, 2048: 49,
 };
+// The same header with NO filters docked (the About view; a loading or empty
+// board looks the same): just row 1, which must not depend on the filters.
+const UNDOCKED_EXPECTATIONS = {
+  768: 82, 900: 82,
+  1024: 49, 1280: 49, 1440: 49, 1728: 49, 1920: 49, 2048: 49,
+};
+// Widths at which the Board/About tabs, the project picker, the task count
+// and the theme toggle must sit at the SAME x/y on Board (filters docked) as
+// on About (no filters): a reviewer measured the tabs jumping from (729,45)
+// to (572,12) under the pointer at 1440px when the filters used to push them
+// onto a second row.
+const STABLE_ROW_WIDTHS = [768, 1024, 1280, 1440, 1728, 1920, 2048];
+// A docked <select> may not grow with its longest option: one task claimed
+// by a 70-character agent id once made the assignee select 496px wide and
+// added a header row at every desktop width. Docked selects are capped at
+// 10rem/12rem; the fixture (ci.yml) seeds such an assignee on both servers.
+const DOCKED_SELECT_MAX_PX = 200;
+const LONG_ASSIGNEE_MIN_CHARS = 40;
 // width -> expected header height (px), COARSE pointer (real touch phone/
 // tablet — `pointer-coarse:min-h-11` 44px targets grow several header
 // controls). Same real-Chromium measurement, `Emulation.setTouchEmulationEnabled`
 // forcing `pointer: coarse` to match. Checked at a subset of widths — the
 // same ones CONTAINMENT_WIDTHS below already covers.
+// Re-baselined with the docked filter row (see EXPECTATIONS). A coarse
+// pointer under 1024px does NOT dock (DESKTOP_HEADER_QUERY in
+// client/src/lib/uiSettings.ts), so 768px keeps the undocked header.
+// Measured, coarse: 155 (768-789) -> 101 -> 67 (1011-1023, undocked) ->
+// 117 (docked, from 1024) -> 67 (one row, from 1880).
 const COARSE_EXPECTATIONS = {
-  320: 113, 768: 155, 1100: 101, 1280: 67,
+  320: 113, 768: 155, 1100: 117, 1280: 117, 1920: 67, 2048: 67,
 };
 
 // Optional second server (feature OFF) for a live ON-vs-OFF diff in the
@@ -153,14 +198,20 @@ const range = (from, to, step) => {
 // either side, non-coarse and coarse pointer respectively. This is exactly
 // the grid fine enough to have caught the round-3 defect (an 8-40px band)
 // in Chromium, not just the WebKit repro it was first found in.
-const FINE_WIDTHS = range(1000, 1260, 8);
-const FINE_COARSE_WIDTHS = range(1000, 1270, 8);
+//
+// Since the filter row docks into the header the sweep runs from 768px (the
+// whole docked range used to start at 1000px) and also covers the 1880px
+// breakpoint where the filters move into row 1: the right-hand group must be
+// exactly as wide with the bug icon ON as OFF everywhere, or ON wraps a row
+// earlier.
+const FINE_WIDTHS = [...range(768, 1264, 8), ...range(1840, 1920, 8)];
+const FINE_COARSE_WIDTHS = [...range(768, 1272, 8), ...range(1840, 1920, 8)];
 // Fallback tables, used only when OFF_BASE is not supplied. Captured with a
 // live ON-vs-OFF diff (both empty, i.e. equal, at the time this pass was
 // written) against the same real-Chromium ground truth as EXPECTATIONS/
 // COARSE_EXPECTATIONS above.
-const fineNonCoarseExpected = (w) => (w <= 1032 ? 120 : w <= 1232 ? 82 : 49);
-const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1248 ? 101 : 67);
+const fineNonCoarseExpected = (w) => (w < 993 ? 115 : w < 1880 ? 83 : 49);
+const fineCoarseExpected = (w) => (w < 790 ? 155 : w < 1011 ? 101 : w < 1024 ? 67 : w < 1880 ? 117 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;
@@ -268,6 +319,41 @@ const READ_BUG_ICON = `(() => {
     themeBox: { x: t.x, width: t.width },
     gapPx: Math.round(t.x - (i.x + i.width)),
   };
+})()`;
+
+// Row-1 geometry + the docked selects, read in one go. Rects are rounded so
+// a sub-pixel difference is not reported as movement.
+const ROW_PROBE = `(() => {
+  const rect = (el) => {
+    if (!el || !el.getClientRects().length) return null;
+    const b = el.getBoundingClientRect();
+    return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width) };
+  };
+  const header = document.querySelector('header');
+  if (!header) return null;
+  const slot = header.querySelector('[data-testid="header-filter-slot"]');
+  const selects = slot ? [...slot.querySelectorAll('select')].map((sel) => ({
+    label: sel.getAttribute('aria-label'),
+    width: Math.round(sel.getBoundingClientRect().width),
+    longestOption: Math.max(0, ...[...sel.options].map((o) => o.textContent.length)),
+  })) : [];
+  return {
+    height: Math.round(header.getBoundingClientRect().height),
+    docked: !!slot && slot.childElementCount > 0,
+    tabs: rect(header.querySelector('[role="group"][aria-label^="Switch between"]')),
+    picker: rect(header.querySelector('[aria-haspopup="listbox"]')),
+    count: rect([...header.querySelectorAll('span')].find((sp) => /tasks$/.test(sp.textContent.trim()))),
+    theme: rect(header.querySelector('[aria-label="Toggle theme"]')),
+    selects,
+    pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+  };
+})()`;
+const clickTab = (name) => `(() => {
+  const tab = [...document.querySelectorAll('header [role="group"][aria-label^="Switch between"] button')]
+    .find((b) => b.textContent.trim().toLowerCase() === ${JSON.stringify(name)});
+  if (!tab) return false;
+  tab.click();
+  return true;
 })()`;
 
 async function main() {
@@ -431,6 +517,64 @@ async function main() {
     }
   }
 
+  // Stable-row pass (docked filter row). At each width: measure row 1 on the
+  // Board (filters docked), switch to About (no filters), measure again. The
+  // tabs, the picker, the count and the theme toggle must not have moved, the
+  // undocked header must match its own baseline, and no docked select may be
+  // wider than its cap even though the fixture holds a very long assignee.
+  const rowOffenders = [];
+  const measuredUndocked = {};
+  let sawLongAssignee = false;
+  let sawDocked = false;
+  const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+  const evalValue = async (expression) => {
+    const r = await send('Runtime.evaluate', { expression, returnByValue: true });
+    return r.result && r.result.value;
+  };
+  const rowWidths = [...new Set([...STABLE_ROW_WIDTHS, ...Object.keys(UNDOCKED_EXPECTATIONS).map(Number)])].sort((a, b) => a - b);
+  for (const width of rowWidths) {
+    await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await evalValue(clickTab('board'));
+    await settle(250);
+    const board = await evalValue(ROW_PROBE);
+    const wentToAbout = await evalValue(clickTab('about'));
+    await settle(250);
+    const about = await evalValue(ROW_PROBE);
+    await evalValue(clickTab('board'));
+    await settle(200);
+    if (!board || !about || !wentToAbout) {
+      rowOffenders.push({ width, reason: 'could not switch between the Board and About views' });
+      continue;
+    }
+    measuredUndocked[width] = about.height;
+    if (board.docked) sawDocked = true;
+    if (about.docked) rowOffenders.push({ width, reason: 'the filters are still docked on the About view' });
+    if (board.pageOverflow > 0) rowOffenders.push({ width, reason: `the page overflows horizontally by ${board.pageOverflow}px with the filters docked` });
+    if (STABLE_ROW_WIDTHS.includes(width)) {
+      if (!board.docked) rowOffenders.push({ width, reason: 'the filters are not docked into the header on the Board view (is the board seeded?)' });
+      for (const key of ['tabs', 'picker', 'count', 'theme']) {
+        const b = board[key];
+        const a = about[key];
+        if (!b || !a) { rowOffenders.push({ width, reason: `${key} not found in the header` }); continue; }
+        // The count's own width may differ by a digit; its left edge and row may not.
+        const moved = Math.abs(b.x - a.x) > 1 || Math.abs(b.y - a.y) > 1 || (key !== 'count' && Math.abs(b.w - a.w) > 1);
+        if (moved) rowOffenders.push({ width, reason: `${key} moved between Board (${b.x},${b.y} w${b.w}) and About (${a.x},${a.y} w${a.w})` });
+      }
+    }
+    for (const sel of board.selects) {
+      if (sel.label === 'Filter tasks by assignee' && sel.longestOption >= LONG_ASSIGNEE_MIN_CHARS) sawLongAssignee = true;
+      if (sel.width > DOCKED_SELECT_MAX_PX) rowOffenders.push({ width, reason: `docked select "${sel.label}" is ${sel.width}px wide (cap ${DOCKED_SELECT_MAX_PX}px; longest option ${sel.longestOption} chars)` });
+    }
+    if (Object.prototype.hasOwnProperty.call(UNDOCKED_EXPECTATIONS, width)) {
+      const expected = UNDOCKED_EXPECTATIONS[width];
+      if (Math.abs(about.height - expected) > TOLERANCE_PX) {
+        rowOffenders.push({ width, reason: `undocked (About) header is ${about.height}px, expected ${expected}±${TOLERANCE_PX}` });
+      }
+    }
+  }
+  if (!sawDocked) rowOffenders.push({ width: '-', reason: 'the filters never docked: the board has no tasks, so every docked check passed vacuously' });
+  if (!sawLongAssignee) rowOffenders.push({ width: '-', reason: `no assignee of ${LONG_ASSIGNEE_MIN_CHARS}+ characters in the fixture: the select-width cap was not exercised (see the claim step in ci.yml)` });
+
   // Second pass: COARSE pointer (a real touch phone/tablet), a handful of
   // widths — see COARSE_EXPECTATIONS above for why these numbers legitimately
   // differ from the non-coarse pass. `setDeviceMetricsOverride`'s own
@@ -545,12 +689,18 @@ async function main() {
   console.log(`header layout guard (CDP :${usedPort})`);
   console.log(`  heights (non-coarse): ${JSON.stringify(measuredHeights)}`);
   console.log(`  heights (coarse):     ${JSON.stringify(measuredCoarseHeights)}`);
+  console.log(`  heights (undocked, About view): ${JSON.stringify(measuredUndocked)}`);
+  console.log(`  stable row 1 + capped docked selects (Board vs About): ${rowOffenders.length === 0 ? 'OK' : `${rowOffenders.length} offender(s)`}`);
   console.log(`  popover boxes: ${JSON.stringify(measuredBoxes)}`);
   console.log(`  fine wrap-threshold sweep (${fineMode}, ${THEME_MODES.join('/')}): ${fineOffenders.length === 0 ? 'OK' : `${fineOffenders.length} offender(s)`}`);
 
-  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0 && fineOffenders.length === 0) {
+  if (heightOffenders.length === 0 && containmentOffenders.length === 0 && coarseOffenders.length === 0 && fineOffenders.length === 0 && rowOffenders.length === 0) {
     console.log(`  OK — header height within ${TOLERANCE_PX}px of baseline (both pointer types, every theme mode, fine and coarse width grids), popover fully contained (>=${POPOVER_MARGIN_PX}px margin) at every tested width`);
     process.exit(0);
+  }
+  if (rowOffenders.length) {
+    console.error(`  FAIL — ${rowOffenders.length} stable-row / docked-select violation(s):`);
+    for (const o of rowOffenders) console.error(`    ${o.width}px: ${o.reason}`);
   }
   if (coarseOffenders.length) {
     console.error(`  FAIL — ${coarseOffenders.length} width(s) off the expected COARSE-pointer header height:`);

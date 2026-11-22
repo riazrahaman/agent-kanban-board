@@ -149,6 +149,34 @@ describe('v2.14.4 UI Settings persistence', () => {
     assert.equal(m.readStoredView(), 'board')
   })
 
+  it("a hidden view (the Portfolio tab is hidden) resolves to the board; readStoredView stays a faithful read", async () => {
+    const m = await importModule('uiSettings.ts')
+    assert.deepEqual([...m.HIDDEN_VIEWS], ['portfolio'])
+    assert.equal(m.resolveVisibleView('portfolio'), 'board')
+    assert.equal(m.resolveVisibleView('board'), 'board')
+    assert.equal(m.resolveVisibleView('about'), 'about')
+    // The stored value is not rewritten or reinterpreted by the read itself.
+    m.writeStoredView('portfolio')
+    assert.equal(m.readStoredView(), 'portfolio')
+    assert.equal(m.resolveVisibleView(m.readStoredView()), 'board')
+    // Same for a `?view=portfolio` deep link.
+    globalThis.window = { location: { search: '?view=portfolio' } }
+    assert.equal(m.readStoredView(), 'portfolio')
+    assert.equal(m.resolveVisibleView(m.readStoredView()), 'board')
+    delete globalThis.window
+  })
+
+  it('the Metrics toggle is flagged hidden and the desktop-header query excludes coarse pointers under lg', async () => {
+    const m = await importModule('uiSettings.ts')
+    assert.equal(m.METRICS_TOGGLE_HIDDEN, true)
+    // A stored "shown" flag is still read faithfully; App is what ignores it
+    // while the toggle is hidden.
+    m.writeStoredShowMetrics(true)
+    assert.equal(m.readStoredShowMetrics(), true)
+    const clauses = m.DESKTOP_HEADER_QUERY.split(',').map((c) => c.trim())
+    assert.deepEqual(clauses, ['(min-width: 48rem) and (pointer: fine)', '(min-width: 64rem)'])
+  })
+
   it('railOpen persistence round-trips correctly', async () => {
     const m = await importModule('uiSettings.ts')
     assert.equal(m.readStoredRailOpen(), false)

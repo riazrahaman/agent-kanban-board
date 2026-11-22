@@ -20,7 +20,7 @@ const result = await build({
 const tmpDir = await mkdtemp(join(tmpdir(), 'filter-test-'))
 const tmpFile = join(tmpDir, 'filterTasks.mjs')
 await writeFile(tmpFile, result.outputFiles[0].text)
-const { filterTasks } = await import(pathToFileURL(tmpFile).href)
+const { filterTasks, isFilterActive } = await import(pathToFileURL(tmpFile).href)
 await rm(tmpDir, { recursive: true, force: true })
 
 const SAMPLE_TASKS = [
@@ -204,4 +204,14 @@ test('severity filter combines with other criteria', () => {
     severity: ['red'],
   })
   assert.equal(noMatch.length, 0)
+})
+
+test('isFilterActive: true only when a filter narrows the board', () => {
+  const none = { search: '', priority: 'all', assignee: 'all', severity: [] }
+  assert.equal(isFilterActive(none), false)
+  assert.equal(isFilterActive({ ...none, search: '   ' }), false, 'whitespace-only search is not a filter')
+  assert.equal(isFilterActive({ ...none, search: 'x' }), true)
+  assert.equal(isFilterActive({ ...none, priority: 'high' }), true)
+  assert.equal(isFilterActive({ ...none, assignee: 'unassigned' }), true)
+  assert.equal(isFilterActive({ ...none, severity: ['red'] }), true)
 })
