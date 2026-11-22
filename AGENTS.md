@@ -153,7 +153,14 @@ combined SSE `EventSource` (diff + settings). `api.ts` is the typed fetch layer
 `subscribeToEvents` / `subscribeToSettings` were deleted in v3.12.5). Pure logic
 lives in `lib/*.ts` with sibling `.test.mjs` files (filtering, sorting, metrics,
 claim coordination, column colors, theming, `aboutContent.ts`). Views: Board,
-Portfolio, About; plus `TaskSheet`, `SignalRail`, `MetricsDashboard`. The About
+Portfolio, About; plus `TaskSheet`, `SignalRail`, `MetricsDashboard`. The
+Portfolio header tab is hidden at the owner's request - its tab entry in
+`App.tsx` is commented out and `HIDDEN_VIEWS` in `lib/uiSettings.ts` coerces a
+stored `portfolio` view to the board - but the view and its code stay. On
+desktop (`md` up) the single `BoardFilters` instance is portalled into a header
+slot (`data-testid="header-filter-slot"`) instead of sitting above the board, so
+the header's height depends on whether the board has tasks;
+`scripts/check-header-layout.mjs` needs both of its servers seeded alike. The About
 page's shell is `components/About.tsx`; its article body and figures are
 `client/src/about/*` (`ChapterBody`, `ArchitectureDiagram`, `Ask` hero + figure,
 `VideoShowcase`, shared `primitives`), and the page-level source-contract tests

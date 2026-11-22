@@ -112,6 +112,22 @@ export function writeStoredShowMetrics(show: boolean): void {
   }
 }
 
+/**
+ * Views that still exist in code but have no header tab. The Portfolio tab is
+ * hidden at the owner's request (the view, its libs and its tests are kept);
+ * to restore it, empty this list and un-comment the tab entry in App.tsx.
+ */
+export const HIDDEN_VIEWS: readonly AppView[] = ['portfolio']
+
+/**
+ * Map a (stored or deep-linked) view to one the header can actually reach, so
+ * a browser that last sat on a hidden view is not stranded on a page with no
+ * tab. `readStoredView` itself stays a faithful read of what was persisted.
+ */
+export function resolveVisibleView(view: AppView): AppView {
+  return HIDDEN_VIEWS.includes(view) ? 'board' : view
+}
+
 /** Read persisted view mode ('board' | 'portfolio' | 'about'), falling back to URL search param. */
 export function readStoredView(): AppView {
   try {

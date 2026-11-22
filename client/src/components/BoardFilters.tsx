@@ -41,6 +41,12 @@ type Props = {
   /** v2.18.0: active solo-run severity filter (multi-select; empty = show all). */
   severity: SeverityFilter[]
   onSeverityChange: (severity: SeverityFilter[]) => void
+  /**
+   * Desktop presentation: the row is portalled into the app header (App.tsx)
+   * instead of sitting on top of the board, so it drops its own strip
+   * (bottom border, background, padding) and uses a narrower search box.
+   */
+  docked?: boolean
 }
 
 function SeverityFilterBubbles({
@@ -122,6 +128,7 @@ export default function BoardFilters({
   onColumnColorsReset,
   severity,
   onSeverityChange,
+  docked = false,
 }: Props) {
   const isFiltered = search.trim() !== '' || priority !== 'all' || assignee !== 'all' || severity.length > 0
   // v2.9.1: below sm the priority/assignee/sort/export/colors/metrics controls
@@ -132,13 +139,17 @@ export default function BoardFilters({
   const [filtersOpen, setFiltersOpen] = useState<boolean>(() => readStoredMobileFiltersOpen())
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4">
-      <div className="relative flex min-w-[180px] max-w-xs flex-1 items-center">
+    <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2 sm:px-4 data-[docked=true]:border-b-0 data-[docked=true]:bg-transparent data-[docked=true]:p-0" data-docked={docked ? 'true' : 'false'}>
+      <div className={`relative flex flex-1 items-center ${docked ? 'min-w-[120px] max-w-[10rem]' : 'min-w-[180px] max-w-xs'}`}>
         <input
           type="text"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Filter tasks…"
+          // Docked: a small intrinsic width, so the header's wrap decision
+          // counts this box at its 120px floor; it still grows to the
+          // wrapper's max when the row has room.
+          size={docked ? 8 : undefined}
           aria-label="Filter tasks by search term"
           className="w-full border border-line bg-surface px-2.5 py-1.5 pr-6 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:py-1 pointer-coarse:min-h-11 pointer-coarse:pr-11"
         />
@@ -174,11 +185,17 @@ export default function BoardFilters({
         {isFiltered ? 'Filters •' : 'Filters'}
       </button>
 
+      {/* Docked (desktop header): `display: contents` dissolves this group so
+          its controls flow in the SAME wrapping row as the search box and the
+          count. As one flex item the whole group would drop to its own line
+          and then wrap again inside itself, costing an extra header row at
+          tablet widths. The data-variant outranks `sm:flex` by specificity. */}
       <div
         data-testid="filter-controls"
+        data-docked={docked ? 'true' : 'false'}
         className={`min-w-0 flex-wrap items-center gap-2 sm:flex ${
           filtersOpen ? 'flex w-full basis-full' : 'hidden'
-        }`}
+        } data-[docked=true]:contents`}
       >
         <select
           value={priority}
@@ -217,7 +234,7 @@ export default function BoardFilters({
           className="max-w-full border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none sm:py-1 pointer-coarse:min-h-11"
         >
           <option value="priority">Sort: Priority</option>
-          <option value="updated">Sort: Recently Updated</option>
+          <option value="updated">Sort: Updated</option>
           <option value="id">Sort: Task ID</option>
         </select>
 

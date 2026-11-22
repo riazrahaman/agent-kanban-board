@@ -86,6 +86,12 @@
  * Usage:
  *   node scripts/check-header-layout.mjs <base-url> [cdp-port] [off-base-url]
  *
+ * BOTH servers must hold the SAME seeded tasks. Since the board filter row
+ * docks into the header on desktop, the header's height depends on whether
+ * the board has tasks (the filters only render then) — an empty OFF board
+ * against a seeded ON board would diff a docked header against an undocked
+ * one and fail for a reason that has nothing to do with the bug icon.
+ *
  * <off-base-url> is optional: a second server with the bug-report feature
  * OFF, for a live ON-vs-OFF diff in the third pass (see ci.yml).
  *
@@ -118,19 +124,33 @@ const PORT_ARG = process.argv[3] || process.env.CDP_PORT;
 // width -> expected header height (px), NON-COARSE pointer (desktop window
 // resize). Real-Chromium ground truth — see the file header comment.
 // Identical with the bug-report feature on or off, in both themes.
+//
+// Re-baselined when the board filter row was DOCKED INTO THE HEADER on
+// desktop (md and up) and the Portfolio tab was hidden: against a board that
+// has tasks (the only state CI measures — both servers are seeded, see
+// ci.yml) the header now also carries the filter controls, so from 768px up
+// it is taller than the old filter-less header, while the separate filter
+// strip under it (~45px, more when it wrapped) is gone. Phone widths are
+// unchanged (the filters stay in the board pane below md). Measured wrap
+// points, non-coarse: 874/927/1147/1849px (150 -> 138 -> 115 -> 82 -> 49),
+// i.e. header + filters + controls share ONE row from 1849px up.
 const EXPECTATIONS = {
   320: 84, 360: 84, 390: 84,
-  768: 120, 820: 120, 824: 120, 900: 120, 1024: 120,
-  1100: 82,
-  1280: 49, 1440: 49, 1920: 49,
+  768: 150, 820: 150, 824: 150,
+  900: 138,
+  1024: 115, 1100: 115,
+  1280: 82, 1440: 82,
+  1920: 49, 2048: 49,
 };
 // width -> expected header height (px), COARSE pointer (real touch phone/
 // tablet — `pointer-coarse:min-h-11` 44px targets grow several header
 // controls). Same real-Chromium measurement, `Emulation.setTouchEmulationEnabled`
 // forcing `pointer: coarse` to match. Checked at a subset of widths — the
 // same ones CONTAINMENT_WIDTHS below already covers.
+// Re-baselined with the docked filter row (see EXPECTATIONS): measured wrap
+// points, coarse: 852/905/1135/1855px (203 -> 174 -> 151 -> 117 -> 67).
 const COARSE_EXPECTATIONS = {
-  320: 113, 768: 155, 1100: 101, 1280: 67,
+  320: 113, 768: 203, 1100: 151, 1280: 117, 1920: 67, 2048: 67,
 };
 
 // Optional second server (feature OFF) for a live ON-vs-OFF diff in the
@@ -153,14 +173,20 @@ const range = (from, to, step) => {
 // either side, non-coarse and coarse pointer respectively. This is exactly
 // the grid fine enough to have caught the round-3 defect (an 8-40px band)
 // in Chromium, not just the WebKit repro it was first found in.
-const FINE_WIDTHS = range(1000, 1260, 8);
-const FINE_COARSE_WIDTHS = range(1000, 1270, 8);
+//
+// With the filter row docked into the header there is a THIRD threshold that
+// matters even more: the width at which header + filters + controls first
+// fit ONE row (1849px non-coarse, 1855px coarse). The right-hand group must
+// be exactly as wide with the bug icon ON as OFF there, or ON wraps a row
+// earlier — so the sweep also covers 1804-1900.
+const FINE_WIDTHS = [...range(1000, 1260, 8), ...range(1804, 1900, 8)];
+const FINE_COARSE_WIDTHS = [...range(1000, 1270, 8), ...range(1804, 1900, 8)];
 // Fallback tables, used only when OFF_BASE is not supplied. Captured with a
 // live ON-vs-OFF diff (both empty, i.e. equal, at the time this pass was
 // written) against the same real-Chromium ground truth as EXPECTATIONS/
 // COARSE_EXPECTATIONS above.
-const fineNonCoarseExpected = (w) => (w <= 1032 ? 120 : w <= 1232 ? 82 : 49);
-const fineCoarseExpected = (w) => (w <= 1056 ? 155 : w <= 1248 ? 101 : 67);
+const fineNonCoarseExpected = (w) => (w < 1147 ? 115 : w < 1849 ? 82 : 49);
+const fineCoarseExpected = (w) => (w < 1135 ? 151 : w < 1855 ? 117 : 67);
 // Two-sided: a height BELOW baseline-tolerance can mean content silently
 // disappeared just as much as ABOVE can mean a wrapped row.
 const TOLERANCE_PX = 6;

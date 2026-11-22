@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ProjectSummary, Task } from './types'
 import { getBugReportConfig, getHealth, getProjects, getSettings, saveSettings, subscribeToBoard } from './api'
 import { driftChip } from './lib/deployDrift'
@@ -13,6 +14,7 @@ import {
   readStoredShowMetrics,
   writeStoredShowMetrics,
   readStoredView,
+  resolveVisibleView,
   writeStoredView,
   readStoredRailOpen,
   writeStoredRailOpen,
@@ -47,6 +49,7 @@ import { readStoredToken, writeStoredToken } from './lib/authToken'
 import { filterTasks } from './lib/filterTasks'
 import type { SeverityFilter } from './lib/ownership'
 import { useDocumentScrollLock } from './lib/scrollLock'
+import { useMediaQuery } from './lib/useMediaQuery'
 import { readStoredSort, sortTasks, writeStoredSort, type BoardSort } from './lib/boardSort'
 
 /** Sentinel for "every project" in the switcher; '' is not a valid project id. */
@@ -78,7 +81,10 @@ export default function App() {
 
      // §2.10: which board is shown, and whether we are on the portfolio view.
     const [project, setProject] = useState<string>(initialProject)
-    const [view, setView] = useState<'board' | 'portfolio' | 'about'>(() => readStoredView())
+    // The Portfolio tab is hidden (see the tab group below), so a browser whose
+    // stored/deep-linked view is 'portfolio' is coerced to the board instead of
+    // being stranded on a view with no tab.
+    const [view, setView] = useState<'board' | 'portfolio' | 'about'>(() => resolveVisibleView(readStoredView()))
     const [projects, setProjects] = useState<ProjectSummary[]>([])
     // True once the (unscoped) project list has settled, so the stale-scope
     // recovery below never fires against an empty, not-yet-loaded list.
@@ -440,7 +446,22 @@ export default function App() {
     return () => ro.disconnect()
   }, [headerOpen])
 
-  const railDrawerShown = railOpen && view === 'board' && !loading && !error && tasks.length > 0
+  // The board is showing its filters: exactly the condition the board pane
+  // (and BoardFilters with it) renders under.
+  const boardReady = view === 'board' && !loading && !error && tasks.length > 0
+  const railDrawerShown = railOpen && boardReady
+
+  // Desktop (md and up): the filter row is DOCKED into the header, between the
+  // brand block and the right-hand controls, so the board gains a row of
+  // height. The single BoardFilters instance is portalled into the header
+  // slot below; under md it renders inline in the board pane exactly as
+  // before (phone "Filters" disclosure, sticky/collapsing header untouched).
+  // The slot only exists while it is wanted, so every other header state
+  // (About, loading/empty board, phones) is laid out exactly as without it.
+  const isDesktop = useMediaQuery('(min-width: 48rem)')
+  const wantsDockedFilters = isDesktop && boardReady
+  const [filterSlot, setFilterSlot] = useState<HTMLDivElement | null>(null)
+  const filtersDocked = wantsDockedFilters && filterSlot !== null
 
   // v3.2.4 (tester finding): the phone rail drawer used to trap itself — its
   // only toggle lives in the ⋯ header controls, which the open drawer covers,
@@ -542,13 +563,44 @@ export default function App() {
   // input (short placeholder, lots of slack vs its sm:w-36 box) absorbs it
   // instead of the agent id input (sm:w-64 is sized tight to its own
   // longer placeholder — responsive.test.mjs pins it for that reason).
-  // Scoped to md (the row is only tight there) and reset at xl (agent id
-  // drops to xl:w-52 and the row gap drops to xl:gap-2, so there is slack
-  // again) — confirmed by the fine sweep in check-header-layout.mjs: no
-  // reduction is needed at or above 1280px.
+  // Applies from md up with NO reset at xl: until the filter row was docked
+  // into the header the row had slack again from 1280px, so the reduction was
+  // dropped there. With the filters docked the header competes for width at
+  // every desktop size, and a 27px wider right-hand group with the icon ON
+  // would wrap one row earlier than OFF near the one-row threshold. Keeping
+  // the clawback at every md+ width makes the group's width identical ON vs
+  // OFF by construction.
   const tokenInputBugIconClawback = bugReportEnabled
-    ? 'md:w-[calc(9rem-27px)] md:pointer-coarse:w-[calc(9rem-44px)] xl:w-36'
+    ? 'md:w-[calc(9rem-27px)] md:pointer-coarse:w-[calc(9rem-44px)]'
     : ''
+
+  // ONE BoardFilters instance, rendered either inline in the board pane or
+  // (desktop) portalled into the header slot — never both.
+  const boardFilters = (
+    <BoardFilters
+      docked={filtersDocked}
+      search={searchQuery}
+      onSearchChange={handleSearchChange}
+      priority={priorityFilter}
+      onPriorityChange={handlePriorityChange}
+      assignee={assigneeFilter}
+      onAssigneeChange={handleAssigneeChange}
+      assignees={assignees}
+      totalCount={tasks.length}
+      filteredCount={filteredTasks.length}
+      onReset={resetFilters}
+      onExport={handleExport}
+      sort={boardSort}
+      onSortChange={handleSortChange}
+      showMetrics={showMetrics}
+      onToggleMetrics={handleToggleMetrics}
+      columnColors={columnColors}
+      onColumnColorsChange={handleColumnColorsChange}
+      onColumnColorsReset={handleColumnColorsReset}
+      severity={severityFilter}
+      onSeverityChange={handleSeverityChange}
+    />
+  )
 
   return (
      // v3.2.4 (GH #103 follow-up): two layouts, switched purely in CSS
@@ -563,7 +615,8 @@ export default function App() {
         <header
           ref={headerRef}
           data-controls-open={headerOpen ? 'true' : 'false'}
-          className="app-header flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
+          data-filters-docked={filtersDocked ? 'true' : 'false'}
+          className="app-header group/header flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] sm:px-4 sm:pb-2.5 sm:pt-[calc(0.625rem+env(safe-area-inset-top,0px))]">
           <div className="flex shrink-0 items-center gap-3">
             <BrandMark />
             <div className="flex items-baseline gap-2">
@@ -594,6 +647,21 @@ export default function App() {
              )}
             </div>
           </div>
+          {/* Desktop filter dock: BoardFilters is portalled in here (see
+              `boardFilters` above). `flex-auto` gives the slot its content's
+              one-line width as the flex basis, so when the header cannot
+              hold everything on one line the whole filter group (or the
+              right-hand controls after it) wraps onto its own header line
+              instead of overflowing; `min-w-0` lets it shrink and wrap
+              internally once it has a line to itself. Rendered only while
+              the filters are docked into it. */}
+          {wantsDockedFilters && (
+            <div
+              ref={setFilterSlot}
+              data-testid="header-filter-slot"
+              className="hidden min-w-0 flex-auto md:block"
+            />
+          )}
           {/* v2.9.1: phone-only disclosure. Collapses the header's secondary
               controls so they cannot wrap the board into a sliver. The view
               switcher below stays visible because navigation is primary. */}
@@ -617,12 +685,16 @@ export default function App() {
           <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-2 md:order-none md:ml-auto md:w-auto md:flex-nowrap md:gap-3 xl:gap-2">
              <div
               role="group"
-              aria-label="Switch between the board, the portfolio and the about page"
+              aria-label="Switch between the board and the about page"
               className="flex items-stretch border border-line bg-surface"
             >
               {([
                 ['board', 'Board', 'Show the task board'],
-                ['portfolio', 'Portfolio', 'Show the cross-project portfolio'],
+                // Portfolio tab hidden at the owner's request (redundant with
+                // the board). The view, its component and its libs are all
+                // kept: to restore it, un-comment the next line and empty
+                // HIDDEN_VIEWS in lib/uiSettings.ts.
+                // ['portfolio', 'Portfolio', 'Show the cross-project portfolio'],
                 ['about', 'About', 'About this project'],
               ] as const).map(([value, label, hint]) => (
                 <button
@@ -667,7 +739,10 @@ export default function App() {
              // the same real basis as them — verified via Playwright WebKit
              // computed getBoundingClientRect (144px), not just a className
              // read. Guarded by responsive.test.mjs so it cannot regress.
-             className="w-36 min-w-0 flex-initial border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11"
+             // While the filter row is docked into the header (desktop board
+             // view) the field narrows to 128px at every breakpoint, so
+             // header + filters fit one row on a wide screen.
+             className="w-36 min-w-0 flex-initial border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink placeholder:text-muted focus:outline-none sm:w-64 xl:w-52 2xl:w-64 sm:py-1 pointer-coarse:min-h-11 group-data-[filters-docked=true]/header:w-32"
             />
             <input
              type="password"
@@ -714,9 +789,14 @@ export default function App() {
                {coordinator.lastError ? ` · ${coordinator.lastError}` : ''}
              </span>
            )}
-           <span className="hidden font-mono text-xs tabular-nums text-ink px-2 py-0.5 border border-line bg-muted-bg sm:inline">
-             {tasks.length} tasks
-           </span>
+           {/* One count only: while the filters are docked in this header
+               they carry the filter-aware count ("X of Y tasks"), so the
+               plain chip would just repeat it. */}
+           {!filtersDocked && (
+             <span className="hidden font-mono text-xs tabular-nums text-ink px-2 py-0.5 border border-line bg-muted-bg sm:inline">
+               {tasks.length} tasks
+             </span>
+           )}
            <button
             ref={railToggleRef}
             type="button"
@@ -849,31 +929,10 @@ export default function App() {
                 )}
               </div>
             )}
-            {view === 'board' && !loading && !error && tasks.length > 0 && (
+            {boardReady && (
               <>
                 <div className="board-pane flex min-w-0 flex-1 flex-col overflow-hidden">
-                  <BoardFilters
-                    search={searchQuery}
-                    onSearchChange={handleSearchChange}
-                    priority={priorityFilter}
-                    onPriorityChange={handlePriorityChange}
-                    assignee={assigneeFilter}
-                    onAssigneeChange={handleAssigneeChange}
-                    assignees={assignees}
-                    totalCount={tasks.length}
-                    filteredCount={filteredTasks.length}
-                    onReset={resetFilters}
-                    onExport={handleExport}
-                    sort={boardSort}
-                    onSortChange={handleSortChange}
-                    showMetrics={showMetrics}
-                    onToggleMetrics={handleToggleMetrics}
-                    columnColors={columnColors}
-                    onColumnColorsChange={handleColumnColorsChange}
-                    onColumnColorsReset={handleColumnColorsReset}
-                    severity={severityFilter}
-                    onSeverityChange={handleSeverityChange}
-                  />
+                  {filtersDocked && filterSlot ? createPortal(boardFilters, filterSlot) : boardFilters}
                   {showMetrics && (
                     <MetricsDashboard
                       tasks={tasks}

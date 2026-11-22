@@ -91,7 +91,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board. The header switches between three top-level views — **Board**, **Portfolio** (cross-project rollup), and **About** (the in-app product overview with the headless-first pitch, a 24-minute interactive system walkthrough video with chapter jump chips, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
+Open `http://localhost:5173` in your browser to view the board. The header switches between the top-level views — **Board** and **About** (the third view, **Portfolio**, a cross-project rollup, still ships in the code but its header tab is currently hidden; un-comment its entry in `client/src/App.tsx` to bring it back). On desktop the board's filter row (search, priority/assignee/sort, severity, export, columns, metrics, task count) is docked into that same header row. **About** is (the in-app product overview with the headless-first pitch, a 24-minute interactive system walkthrough video with chapter jump chips, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
 
 ### 3. Drive It With the Orchestrator Skill
 

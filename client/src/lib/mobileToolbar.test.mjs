@@ -292,7 +292,7 @@ test('touch devices get >=16px text in text inputs (no iOS focus zoom) and compa
 
 test('header tabs, menu and controls reach 44px on coarse pointers', () => {
   const tabs = appSource.match(/aria-pressed=\{view === value\}[\s\S]*?className=\{`([^`]*)`/)?.[1]
-  assert.ok(tabs, 'App.tsx must render the Board/Portfolio/About tabs')
+  assert.ok(tabs, 'App.tsx must render the Board/About view tabs')
   assert.match(tabs, COARSE_TARGET, 'the view tabs need a 44px touch height')
 
   const menu = appSource.match(/aria-label="Toggle board controls"[\s\S]*?className="([^"]*)"/)?.[1]
