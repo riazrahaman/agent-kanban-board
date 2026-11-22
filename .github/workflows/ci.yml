@@ -212,6 +212,13 @@ jobs:
           # feature ON; :4001 (started above) runs with it OFF, so the
           # guard's fine wrap-threshold pass can diff the two live instead
           # of trusting a hand-verified table — see the script.
+          # The guard's expectations are rules, not one platform's pixels
+          # (headless Linux Chrome reports `pointer: none`, so it legitimately
+          # keeps the undocked header under 1024px, and fonts differ). The
+          # self-test replays recorded macOS AND Linux measurements, plus the
+          # regressions the guard must still reject, through those rules —
+          # no browser needed, so a bad rule fails here in a second.
+          node scripts/check-header-layout.mjs --self-test || STATUS=1
           HEADER=0
           node scripts/check-header-layout.mjs "http://127.0.0.1:4000" 9222 "http://127.0.0.1:4001" || HEADER=$?
           if [ "$HEADER" = "1" ]; then STATUS=1; fi
