@@ -98,7 +98,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '347',
+    value: '351',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -240,7 +240,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Trash sink & restore', code: 'store.js · restoreFromTrash, hardDeleteFromTrash' },
   { name: 'Search & real-time quick filters', code: 'BoardFilters.tsx, lib/filterTasks.ts' },
   { name: 'Effort estimation badges', code: 'TaskCard.tsx' },
-  { name: 'Live Metrics Dashboard summary', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
+  { name: 'Live Metrics Dashboard summary (toggle currently hidden)', code: 'MetricsDashboard.tsx, lib/dashboardMetrics.ts' },
   { name: 'Board JSON Export', code: 'App.tsx, BoardFilters.tsx' },
   { name: 'Anonymous visit counter', code: 'App.tsx · lib/useVisitCount.ts' },
   { name: 'Custom column colors (per project)', code: 'routes/settings.js, lib/columnColors.ts' },

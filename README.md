@@ -39,7 +39,7 @@ the self-approval pattern made visible.
 > **Connecting a new client or project?** See [ONBOARDING.md](ONBOARDING.md) for the
 > project-implicit model, per-role credential distribution, and a curl walkthrough.
 
-Operators get rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard, JSON export, and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
+Operators get rich supervisory tools: real-time substring search, multi-criteria quick filters, persisted column sorting, effort sizing badges, a live metrics summary dashboard and JSON export (both currently hidden in the UI, their code kept), and inline title editing. An optional, captcha-protected "Report a bug" form lets any visitor file a GitHub issue straight from the UI — off by default; see [Enabling Report-a-bug](#enabling-report-a-bug).
 
 ---
 
@@ -91,7 +91,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser to view the board. The header switches between the top-level views — **Board** and **About** (the third view, **Portfolio**, a cross-project rollup, still ships in the code but its header tab is currently hidden; un-comment its entry in `client/src/App.tsx` to bring it back). On desktop the board's filter row (search, priority/assignee/sort, severity, export, columns, metrics, task count) is docked into that same header row. **About** is (the in-app product overview with the headless-first pitch, a 24-minute interactive system walkthrough video with chapter jump chips, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
+Open `http://localhost:5173` in your browser to view the board. The header switches between the top-level views — **Board** and **About** (the third view, **Portfolio**, a cross-project rollup, still ships in the code but its header tab is currently hidden; un-comment its entry in `client/src/App.tsx` to bring it back). On desktop the board's filter row (search, priority/assignee/sort, severity, reset, columns) is docked into that same header: brand, tabs and project picker on the left, the filters in the middle, and task count, agent id, token, help and theme on the right. **About** is (the in-app product overview with the headless-first pitch, a 24-minute interactive system walkthrough video with chapter jump chips, an architecture & code-flow walkthrough — the stack, the next-claim path through the code, the three safety layers around every write — plus the reclaim-alert path and live screenshots).
 
 ### 3. Drive It With the Orchestrator Skill
 

@@ -407,20 +407,20 @@ flowchart TD
 > The board scrolls horizontally. When more columns exist than fit the viewport, an edge-fade gradient and a paging chevron appear on the side that has hidden columns — click the chevron (or scroll/swipe) to page one column at a time. On the **all projects** view each card also shows its owning **project chip** so cards from different projects are distinguishable; switch the header's project filter to a single project to hide the chips and scope the board.
 
 ### 5.1.1 Filter, Sort & Export Toolbar
-A toolbar (`BoardFilters.tsx`) operates the board view. On desktop (768px and up) it is docked into the top header row, between the title and the view tabs, wrapping onto a second header line when the window is too narrow to hold everything on one; on phones it stays above the board:
+A toolbar (`BoardFilters.tsx`) operates the board view. On desktop it is docked into the header, which reads left to right as three groups: what you are looking at (title, **Board / About** tabs, project picker), narrowing it down (these filters), and who you are (task count, agent id, token, help, bug report and theme, right-aligned). From 1880px wide the filters share the single header row; below that they take a second header row of their own. The tabs and the picker never move when the filters appear or disappear. On phones, and on touch tablets under 1024px, the toolbar stays above the board:
 
 - **Search:** live substring filter matching task id, title, description, branch and assigned agent, with an inline `×` clear button.
 - **Priority filter:** `All Priorities` / `High (P0 / P1)` / `Medium (P2)` / `Low (P3)` — normalizes the triage ratings before matching.
 - **Assignee filter:** `All Assignees` / `Unassigned` / one entry per agent currently holding work.
 - **Sort selector:** orders cards inside every column — `Sort: Priority` (default: high → medium → low, server recency within a rank), `Sort: Updated` (most recently updated first), or `Sort: Task ID` (lexical). The choice is persisted in this browser (`localStorage kanban.sort`) and re-applied on every live update.
 - **Reset:** appears only while a filter is active and clears all of them.
-- **Export:** downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
-- **Metrics:** toggles the summary dashboard (§5.1.2). The dashboard always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
+- **Export:** currently hidden (owner decision: anyone who could open the board could export its contents). The button is commented out in `BoardFilters.tsx`, not removed; when shown it downloads the currently loaded tasks as a timestamped JSON file (`kanban-export-<project|all>-<date>.json`).
+- **Metrics:** currently hidden (the button is commented out in `BoardFilters.tsx`, and the dashboard is treated as closed while it is). When shown it toggles the summary dashboard (§5.1.2), which always reports the whole board scope, so its totals stay stable while filters narrow the visible cards.
 
-The right-hand counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`.
+The task counter shows `n of m tasks` while any filter is active, otherwise just `m tasks`. On desktop it is the chip at the start of the right-hand header group; on phones it sits at the end of the toolbar.
 
 ### 5.1.2 Metrics Dashboard
-Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Planning + In Progress + In Review + Validation), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
+The Metrics toggle is currently hidden, so this banner is not reachable from the UI; the description is kept for when it is restored. Toggled from the toolbar, a banner above the board shows seven live tiles: **Total Tickets**, **Backlog**, **In Flight** (Planning + In Progress + In Review + Validation), **Blocked** (turns red when non-zero), **Completed**, **Avg Cycle Time** (derived from completed work), and **Overdue / Stalled** (active tasks past a freshness threshold, amber when non-zero). It is computed from the unfiltered task list by design — a filtered board still shows true portfolio totals.
 
 ### 5.2 Card Anatomy
 - **Left 3px Color Stripe:** Visual severity and state indicator:

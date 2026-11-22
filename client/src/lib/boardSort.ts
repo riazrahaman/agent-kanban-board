@@ -15,7 +15,7 @@ export const SORT_STORAGE_KEY = 'kanban.sort'
 
 export const SORT_OPTIONS: { value: BoardSort; label: string }[] = [
   { value: 'priority', label: 'Priority' },
-  { value: 'updated', label: 'Recently Updated' },
+  { value: 'updated', label: 'Updated' },
   { value: 'id', label: 'Task ID' },
 ]
 

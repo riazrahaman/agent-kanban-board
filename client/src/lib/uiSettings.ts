@@ -113,6 +113,24 @@ export function writeStoredShowMetrics(show: boolean): void {
 }
 
 /**
+ * When the header uses its desktop arrangement (tabs + project picker beside
+ * the brand, board filters docked into the header): md and up with a fine
+ * pointer, or lg and up with any pointer. A landscape phone or a portrait
+ * tablet (coarse pointer under 1024px) is deliberately excluded — its 44px
+ * touch targets would turn a docked header into a third of the screen.
+ */
+export const DESKTOP_HEADER_QUERY = '(min-width: 48rem) and (pointer: fine), (min-width: 64rem)'
+
+/**
+ * The Metrics toggle is hidden at the owner's request (its button is commented
+ * out in BoardFilters.tsx; MetricsDashboard and its libs are kept). While it is
+ * hidden App treats the dashboard as closed, so a browser that stored it as
+ * shown is not stuck with a banner it cannot dismiss. To restore: set this to
+ * false and un-comment the button.
+ */
+export const METRICS_TOGGLE_HIDDEN: boolean = true
+
+/**
  * Views that still exist in code but have no header tab. The Portfolio tab is
  * hidden at the owner's request (the view, its libs and its tests are kept);
  * to restore it, empty this list and un-comment the tab entry in App.tsx.

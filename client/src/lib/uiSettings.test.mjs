@@ -166,6 +166,17 @@ describe('v2.14.4 UI Settings persistence', () => {
     delete globalThis.window
   })
 
+  it('the Metrics toggle is flagged hidden and the desktop-header query excludes coarse pointers under lg', async () => {
+    const m = await importModule('uiSettings.ts')
+    assert.equal(m.METRICS_TOGGLE_HIDDEN, true)
+    // A stored "shown" flag is still read faithfully; App is what ignores it
+    // while the toggle is hidden.
+    m.writeStoredShowMetrics(true)
+    assert.equal(m.readStoredShowMetrics(), true)
+    const clauses = m.DESKTOP_HEADER_QUERY.split(',').map((c) => c.trim())
+    assert.deepEqual(clauses, ['(min-width: 48rem) and (pointer: fine)', '(min-width: 64rem)'])
+  })
+
   it('railOpen persistence round-trips correctly', async () => {
     const m = await importModule('uiSettings.ts')
     assert.equal(m.readStoredRailOpen(), false)

@@ -130,11 +130,26 @@ jobs:
           seed_id "{\"id\":\"init-agent-investment-advisor\",\"title\":\"Init agent-investment-advisor\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
           seed_id "{\"id\":\"layout-worst-case-long-id\",\"title\":\"Title with $LONG_TOKEN embedded\",\"description\":\"Desc $LONG_TOKEN\",\"status\":\"BACKLOG\",\"priority\":\"high\",\"project\":\"layoutfixture\",\"round\":1}"
           seed_id "{\"id\":\"layout-short\",\"title\":\"Short title\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
-          seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"BACKLOG\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
-          # Give one card a long agent id so the footer row is exercised too.
-          curl -sf -X POST "http://127.0.0.1:4000/api/tasks/layout-long-agent/claim?project=layoutfixture" \
-            -H "x-api-token: $KANBAN_AUTH_TOKEN" -H 'x-agent-id: ci-layout' -H 'x-agent-role: builder' \
-            -H 'Content-Type: application/json' -d "{\"agent_id\":\"agent-${LONG_TOKEN:0:44}}\"}" >/dev/null || true
+          seed_id "{\"id\":\"layout-long-agent\",\"title\":\"Long agent id\",\"description\":\"\",\"status\":\"READY\",\"priority\":\"low\",\"project\":\"layoutfixture\",\"round\":1}"
+          # Give one card a LONG assignee, on both servers. Two guards need it:
+          # the card guard (footer row) and the header guard, which checks
+          # that the docked assignee <select> does not grow with its longest
+          # option (a 70-character agent id once added a header row at every
+          # desktop width). Only a READY card can be claimed, and the claim
+          # used to target a BACKLOG card on :4000 only and swallow its 409
+          # with `|| true` — so the fixture silently had no assignee at all.
+          LONG_AGENT='agent-with-a-very-long-identifier-that-used-to-widen-the-assignee-select'
+          for SEED_PORT in 4000 4001; do
+            curl -sf -X POST "http://127.0.0.1:$SEED_PORT/api/tasks/layout-long-agent/claim?project=layoutfixture" \
+              -H "x-api-token: $KANBAN_AUTH_TOKEN" -H "x-agent-id: $LONG_AGENT" -H 'x-agent-role: builder' \
+              -H 'Content-Type: application/json' -d "{\"agent_id\":\"$LONG_AGENT\"}" >/dev/null
+            if ! curl -sf "http://127.0.0.1:$SEED_PORT/api/tasks?project=layoutfixture" \
+              -H "x-api-token: $KANBAN_AUTH_TOKEN" | grep -q "\"assigned_agent\":\"$LONG_AGENT\""; then
+              echo "::error::the long-assignee claim did not land on :$SEED_PORT — the header guard's select-width check would pass vacuously"
+              kill $SERVER_PID $SERVER_OFF_PID 2>/dev/null || true
+              exit 1
+            fi
+          done
 
           # Fail loudly if the fixture did not land — otherwise the guard would
           # run against an empty board and pass vacuously.
