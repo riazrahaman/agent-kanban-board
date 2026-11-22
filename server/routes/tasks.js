@@ -11,6 +11,7 @@ import {
 } from '../idempotency.js';
 import { VALID_ROLES, getAuthorizedProjects } from '../middleware/auth.js';
 import { projectScopeGuard, rawProjectScope } from '../middleware/projectScope.js';
+import { DETAILS_LOCKED_BODY, detailsLockedFor, masterPasswordConfigured, shapeTaskFor, shapeTasksFor } from '../masterUnlock.js';
 
 const router = Router();
 
@@ -113,6 +114,22 @@ function resolveMutationAgentId(req) {
 // Shared with the metrics router — see middleware/projectScope.js.
 router.use(projectScopeGuard());
 
+// Master password: the same URL now has two bodies (summary vs full), chosen by
+// request headers. Mark every task read as private and uncacheable so a shared
+// cache or proxy can never hand an unlocked body to an anonymous reader, and
+// name the headers the body depends on. Only when the feature is on: with it
+// off, responses (and their ETag/If-None-Match behaviour) are byte-identical
+// to before.
+router.use((req, res, next) => {
+  if ((req.method === 'GET' || req.method === 'HEAD') && masterPasswordConfigured()) {
+    res.set('Cache-Control', 'private, no-store');
+    res.vary('Authorization');
+    res.vary('X-API-Token');
+    res.vary('X-Kanban-Unlock');
+  }
+  next();
+});
+
 // --- Collection ---------------------------------------------------------
 
 /**
@@ -144,7 +161,9 @@ router.get('/', asyncHandler(async (req, res) => {
     return res.json(store.getTasks().filter((t) => authorized.has(t.project)));
   }
 
-  res.json(store.getTasks(project));
+  // Master password: a caller with neither a credential nor the unlock gets
+  // the summary shape (the scoped branches above always hold a credential).
+  res.json(shapeTasksFor(req, store.getTasks(project)));
 }));
 
 /**
@@ -272,7 +291,7 @@ router.get('/archive', asyncHandler(async (req, res) => {
     return res.json(out);
   }
 
-  res.json(store.getArchivedTasks(project));
+  res.json(shapeTasksFor(req, store.getArchivedTasks(project)));
 }));
 
 router.post('/archive/sweep', asyncHandler(async (req, res) => {
@@ -330,7 +349,7 @@ router.get('/trash', asyncHandler(async (req, res) => {
     return res.json(out);
   }
 
-  res.json(store.getTrashedTasks(project));
+  res.json(shapeTasksFor(req, store.getTrashedTasks(project)));
 }));
 
 router.post('/trash/:id/restore', asyncHandler(async (req, res) => {
@@ -443,7 +462,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!task || !readScopeAllows(req, task.project)) {
     return res.status(404).json({ error: 'Task not found' });
   }
-  res.json(task);
+  res.json(shapeTaskFor(req, task));
 }));
 
 router.delete('/:id', asyncHandler(async (req, res) => {
@@ -633,6 +652,9 @@ router.get('/:id/logs', asyncHandler(async (req, res) => {
   if (!task || !readScopeAllows(req, task.project)) {
     return res.status(404).json({ error: 'Task not found' });
   }
+  // Log and comment history is detail content: a locked caller gets an
+  // explicit 403 (not a failed-auth strike), never a silently empty history.
+  if (detailsLockedFor(req)) return res.status(403).json(DETAILS_LOCKED_BODY);
   const project = resolveProjectFromReq(req);
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 50));

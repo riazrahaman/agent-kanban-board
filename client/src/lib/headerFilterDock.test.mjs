@@ -143,7 +143,7 @@ test('desktop: the header reads brand + tabs + picker, then filters, then identi
     'data-testid="header-controls"',
     'placeholder="agent id"',
     'placeholder="token"',
-    '<HeaderHelp />',
+    '<HeaderHelp ',
     'aria-label="Toggle theme"',
   ].map((needle) => [needle, header.indexOf(needle)])
   for (const [needle, at] of order) assert.ok(at >= 0, `the header must contain ${needle}`)

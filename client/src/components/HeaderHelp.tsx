@@ -12,7 +12,16 @@ import { useEffect, useRef, useState } from 'react'
  * containment fix below (round 4) stays: it fixes a real clipping bug in
  * THIS popover's own positioning, unrelated to what it contains.
  */
-export default function HeaderHelp() {
+type Props = {
+  /** This browser holds a live master unlock (card details are readable). */
+  unlocked?: boolean
+  /** The server is withholding card details from this browser. */
+  detailsLocked?: boolean
+  /** Forget the unlock held by this browser. */
+  onLock?: () => void
+}
+
+export default function HeaderHelp({ unlocked = false, detailsLocked = false, onLock }: Props = {}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -82,15 +91,40 @@ export default function HeaderHelp() {
               </dd>
             </div>
             <div>
-              <dt className="font-mono text-[11px] text-ink">api token</dt>
+              <dt className="font-mono text-[11px] text-ink">token (api token or master password)</dt>
               <dd className="text-[11px] leading-snug text-muted">
-                Credential for writes (claim, heartbeat, log). Sent as an
-                Authorization: Bearer header; stored in this browser only, never in a
-                URL. Reads need no token — without one the board is{' '}
+                One box, two uses. An api token is the credential for writes
+                (claim, heartbeat, log); it is sent as an Authorization: Bearer
+                header and stored in this browser only, never in a URL. The
+                master password unlocks card details: click a card to read its
+                description, comments and agent log, and save column colours.
+                It is checked once by the server and is never stored; this
+                browser keeps only a 12-hour unlock, then asks again. A value
+                the server does not recognise as either is not saved. Without
+                either, the board is{' '}
                 <span className="font-mono text-[10px] uppercase tracking-wider">read-only</span>.
               </dd>
             </div>
           </dl>
+          {(unlocked || detailsLocked) && (
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-2">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted" data-testid="detail-lock-state">
+                {unlocked ? 'Card details: unlocked' : 'Card details: locked'}
+              </span>
+              {unlocked && onLock && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onLock()
+                    setOpen(false)
+                  }}
+                  className="border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg active:scale-[0.98] pointer-coarse:min-h-11"
+                >
+                  Lock
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

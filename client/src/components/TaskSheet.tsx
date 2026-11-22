@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Task } from '../types'
 import { addComment, appendLog, assignTask } from '../api'
 import { normalizePriority } from '../priority'
@@ -16,6 +16,9 @@ type Props = {
   task: Task | null
   onClose: () => void
 }
+
+/** How long after opening the backdrop ignores clicks (the rest of a double-click). */
+export const BACKDROP_GUARD_MS = 400
 
 function formatTimestamp(ts: string): string {
   const date = new Date(ts)
@@ -35,6 +38,31 @@ export default function TaskSheet({ task, onClose }: Props) {
   const [assignError, setAssignError] = useState<string | null>(null)
 
   const open = !!task
+
+  // A double-click on a card opens the sheet with its FIRST click, and the
+  // second click then lands on this backdrop, which used to close the sheet
+  // again at once. The backdrop therefore ignores the tail of a multi-click
+  // (`detail > 1`) and anything within a short moment of the sheet opening
+  // (a touch double-tap reports `detail` 1). A deliberate click still closes.
+  // For the same moment the sheet itself takes no pointer input either: it
+  // slides in over the board (and over the signal rail), so the second click
+  // could otherwise land on one of its buttons (Assign, Release, Close).
+  const openedAt = useRef(0)
+  const [guarding, setGuarding] = useState(false)
+  const taskKey = task ? `${task.project}/${task.id}` : null
+  useEffect(() => {
+    if (!taskKey) return
+    openedAt.current = Date.now()
+    setGuarding(true)
+    const timer = setTimeout(() => setGuarding(false), BACKDROP_GUARD_MS)
+    return () => clearTimeout(timer)
+  }, [taskKey])
+  const guardStyle = guarding ? ({ pointerEvents: 'none' } as const) : undefined
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.detail > 1) return
+    if (Date.now() - openedAt.current < BACKDROP_GUARD_MS) return
+    onClose()
+  }
 
   // MOB-6: the sheet scrolls on short viewports (see the panel below), so it
   // would otherwise keep its scroll offset when the operator opens a different
@@ -103,7 +131,8 @@ export default function TaskSheet({ task, onClose }: Props) {
           'fixed inset-0 z-40 bg-black/40 dark:bg-black/60 transition-opacity',
           open ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
         ].join(' ')}
-        onClick={onClose}
+        data-testid="task-sheet-backdrop"
+        onClick={handleBackdropClick}
       />
 
       {/* pt safe-area (v3.2.4): the shell can now sit behind the status bar
@@ -116,6 +145,7 @@ export default function TaskSheet({ task, onClose }: Props) {
           'overflow-y-auto overscroll-contain',
           open ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
+        style={guardStyle}
       >
         {task && (
           <>

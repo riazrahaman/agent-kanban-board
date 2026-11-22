@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.17.2
+version: 3.18.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -254,6 +254,10 @@ The board exposes two public endpoint trees mounted prior to board-token authent
 1. `POST /api/bug-reports`: Direct GitHub issue filing for human visitors (labelled `user-report`). Unauthenticated, takes no board token and no `?project=`.
 2. `POST /api/ask` and `GET /api/ask/config`: Read-only AI assistant for human visitors to query board architecture, code flow, and protocol. Gated by a dedicated shared password header `x-ask-pass` (`KANBAN_ASK_PASSWORD`), NOT a board token. Supports OpenRouter (`openai/gpt-oss-20b` or larger models) and local Ollama (`KANBAN_ASK_PROVIDER=ollama`, default `qwen3.6:latest` on `http://localhost:11434` with optional `KANBAN_ASK_OLLAMA_AUTH_HEADER` tunnel proxy support).
 Neither endpoint creates tasks or modifies board state. Agents do not call either endpoint.
+
+### Reads without a token may be reduced (master password)
+
+Reads are open by default, but an operator can set `KANBAN_MASTER_PASSWORD`. A `GET` (or SSE frame) that carries **no valid token** then returns the summary shape of each task: `details_locked: true`, `description: ""`, `agent_logs: []`, `comments: []`, `metadata` reduced to `estimate`/`points`/`size`, and `GET /tasks/:id/logs` answers `403 details_locked`. **Always send your token on reads** (`x-api-token` / `Authorization: Bearer`), as you already do on writes: with a valid token you get full cards exactly as before. If you see `details_locked: true`, your read was unauthenticated or the token is not valid for that board; do not treat the empty description or log as real.
 
 ### Reading Logs Back — `agent_logs` is inline-capped and spilled
 

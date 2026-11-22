@@ -24,6 +24,7 @@
 import crypto from 'node:crypto';
 import { authSecret } from './sessionAuth.js';
 import { tokensMatch } from './utils/constantTime.js';
+import { masterPasswordConfigured } from './masterUnlock.js';
 
 const TICKET_TTL_MS = 60 * 1000;
 
@@ -36,13 +37,30 @@ export function streamTicketTtlMs() {
   return TICKET_TTL_MS;
 }
 
-/** Signing key: the session secret, or the global token as a fallback. */
+/**
+ * Signing key: the session secret, or the global token as a fallback. A
+ * deployment that has neither but does set a master password signs with a
+ * RANDOM PER-PROCESS key, so an unlocked browser (and a project-token browser)
+ * can still open an authenticated stream. That key is never derived from the
+ * master password or anything else a client could guess: a ticket must not be
+ * an offline oracle for it. Tickets live 60 seconds and are single-use, so
+ * losing the key on restart costs nothing (the client re-mints on reconnect).
+ */
+let processTicketKey = null;
+
 function ticketSecret() {
   const secret = authSecret();
   if (secret) return secret;
   const token = process.env.KANBAN_AUTH_TOKEN;
   if (typeof token === 'string' && token !== '') return token;
-  return null;
+  if (!masterPasswordConfigured()) return null;
+  if (processTicketKey === null) processTicketKey = crypto.randomBytes(32);
+  return processTicketKey;
+}
+
+/** Test helper: drop the per-process fallback key (as a restart would). */
+export function resetProcessTicketKey() {
+  processTicketKey = null;
 }
 
 function macHex(secret, payload) {
@@ -101,7 +119,7 @@ export function liveStreamTicketCount() {
  * Mints a stream ticket bound to a role + project. Returns null when no signing
  * key is configured, so a deployment without any secret cannot hand out tickets.
  */
-export function createStreamTicket({ role, project, agentId = null, credentialId = null } = {}) {
+export function createStreamTicket({ role, project, agentId = null, credentialId = null, masterUntil = null } = {}) {
   const secret = ticketSecret();
   if (!secret) return null;
   prune();
@@ -116,6 +134,9 @@ export function createStreamTicket({ role, project, agentId = null, credentialId
   const exp = Date.now() + TICKET_TTL_MS;
   const claims = { typ: 'stream', jti, exp, role: role ?? null, project: project ?? null };
   if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
+  // A MASTER ticket (minted from an unlock token, not a board credential): it
+  // carries no role or project, only the instant the unlock itself expires.
+  if (Number.isInteger(masterUntil)) claims.master_until = masterUntil;
   const payload = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
   const token = `${payload}.${macHex(secret, payload)}`;
   issued.set(jti, { exp, owner });
@@ -147,7 +168,7 @@ export function verifyStreamTicket(ticket) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  const { typ, jti, exp, role, project, agent_id: agentId } = parsed;
+  const { typ, jti, exp, role, project, agent_id: agentId, master_until: masterUntil } = parsed;
   if (typ !== 'stream') return null;
   if (!Number.isInteger(exp) || exp <= Date.now()) return null;
   if (typeof jti !== 'string' || !issued.has(jti)) return null;
@@ -158,5 +179,7 @@ export function verifyStreamTicket(ticket) {
     role,
     project,
     agent_id: typeof agentId === 'string' && agentId !== '' ? agentId : null,
+    // Present only on a master ticket: details-only, never a board credential.
+    master_until: Number.isInteger(masterUntil) ? masterUntil : null,
   };
 }

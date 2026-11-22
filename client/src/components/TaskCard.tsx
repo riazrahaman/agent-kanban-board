@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import type { Task } from '../types'
 import StatusBadge from './StatusBadge'
 import SeverityDot from './SeverityDot'
@@ -6,7 +6,7 @@ import { statusStyle } from '../status.js'
 import { formatStageOwners } from '../lib/stageOwners'
 import { decodeStored } from '../sanitize'
 import { normalizePriority, priorityBadgeClass } from '../priority'
-import { patchTask } from '../api'
+import { LOCKED_HINT, isDetailsLocked } from '../lib/detailLock'
 
 type Props = {
   task: Task
@@ -23,6 +23,9 @@ function areEqual(prev: Props, next: Props): boolean {
   return (
     prev.task.id === next.task.id &&
     prev.task.version === next.task.version &&
+    // Master password: the same version can arrive with or without its details
+    // (the stream re-primes on unlock/lock), and the card's click gate follows it.
+    prev.task.details_locked === next.task.details_locked &&
     prev.onOpen === next.onOpen &&
     prev.showProject === next.showProject
   )
@@ -36,32 +39,32 @@ function TaskCard({
   const stripe = statusStyle(task.status).stripe
   const isHigh = normalizePriority(task.priority) === 'high'
   const estimate = (task.metadata?.estimate ?? task.metadata?.points ?? task.metadata?.size) as string | number | undefined
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [draftTitle, setDraftTitle] = useState(task.title)
-
-  const handleSaveTitle = async (e?: React.SyntheticEvent) => {
-    e?.stopPropagation()
-    const trimmed = draftTitle.trim()
-    if (!trimmed || trimmed === task.title) {
-      setDraftTitle(task.title)
-      setEditingTitle(false)
-      return
-    }
-    try {
-      await patchTask(task.id, { title: trimmed }, { project: task.project, expected_version: task.version })
-    } catch {
-      setDraftTitle(task.title)
-    } finally {
-      setEditingTitle(false)
-    }
-  }
+  // Master password: a card whose details the server withheld does not open.
+  const locked = isDetailsLocked(task)
 
   return (
     <div
       data-id={task.id}
-      onClick={() => onOpen(task.project, task.id)}
+      data-details-locked={locked ? 'true' : undefined}
+      // A card is a button: focusable, and Enter/Space opens it like a click.
+      // A locked card stays focusable so its state is announced, but it is
+      // aria-disabled and described, not just explained by a hover tooltip.
+      role="button"
+      tabIndex={0}
+      aria-disabled={locked ? true : undefined}
+      aria-description={locked ? LOCKED_HINT : undefined}
+      onClick={locked ? undefined : () => onOpen(task.project, task.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        if (!locked) onOpen(task.project, task.id)
+      }}
+      title={locked ? LOCKED_HINT : undefined}
       className={[
-        'group cursor-pointer border border-line bg-surface p-3 transition-colors',
+        'group border border-line bg-surface p-3 transition-colors',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink',
+        locked ? 'cursor-default' : 'cursor-pointer',
         'hover:bg-muted-bg/50',
         'border-l-[3px]',
         stripe,
@@ -104,36 +107,11 @@ function TaskCard({
         <SeverityDot task={task} />
       </div>
 
-      {editingTitle ? (
-        <input
-          type="text"
-          value={draftTitle}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => setDraftTitle(e.target.value)}
-          onBlur={handleSaveTitle}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSaveTitle(e)
-            if (e.key === 'Escape') {
-              setDraftTitle(task.title)
-              setEditingTitle(false)
-            }
-          }}
-          autoFocus
-          className="w-full border border-line bg-surface px-1.5 py-0.5 font-mono text-sm text-ink focus:outline-none"
-        />
-      ) : (
-        <p
-          className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]"
-          onDoubleClick={(e) => {
-            e.stopPropagation()
-            setDraftTitle(task.title)
-            setEditingTitle(true)
-          }}
-          title="Double-click to edit title"
-        >
-          {decodeStored(task.title)}
-        </p>
-      )}
+      {/* The title is display-only: a card is edited through the API, never
+          inline (a double-click is just two clicks). */}
+      <p className="text-sm font-medium leading-snug text-ink break-words [overflow-wrap:anywhere]">
+        {decodeStored(task.title)}
+      </p>
 
       <div className="mt-2.5 border-t border-line/60 pt-2">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 text-[11px]">
