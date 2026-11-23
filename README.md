@@ -262,10 +262,15 @@ so a title or description made only of them is rejected too: the soft hyphen,
 combining grapheme joiner, Hangul fillers (U+3164, U+115F, U+1160, U+FFA0),
 Khmer inherent vowels, Mongolian vowel separator, invisible operators, tag
 characters, variation selectors and every other default-ignorable code
-point, plus lone UTF-16 surrogates. They survive only as part of real text:
-VS16 right after an emoji (a lone one goes), tag characters inside a
-subdivision flag such as England's, a Hangul filler that builds an old-style
-syllable block, and a variation selector on a CJK or Mongolian character.
+point, plus the interlinear annotation and Egyptian hieroglyph format
+controls (U+FFF9-U+FFFB, U+13430-U+1343F) and lone UTF-16 surrogates. They
+survive only as part of real text, right after a visible character that is
+itself kept: VS16 right after an emoji (a lone one goes), tag characters
+inside a subdivision flag such as England's, a Hangul filler that builds an
+old-style syllable block, and one variation selector on a CJK or Mongolian
+character (a run of selectors keeps at most the first, and one after an
+invisible or removed character goes). Cleaning is idempotent: the text that
+is validated is exactly the text that is sent.
 The Braille blank U+2800 becomes an ordinary space (it is the Braille word
 space), and Hangul syllables and the Braille dot patterns U+2801-U+28FF are
 untouched. In the

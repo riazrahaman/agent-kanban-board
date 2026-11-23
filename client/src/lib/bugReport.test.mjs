@@ -59,6 +59,19 @@ test('validateTitle: empty/whitespace-only is rejected', () => {
   assert.equal(validateTitle('a'), undefined)
 })
 
+test('validateTitle: a title of only invisible characters says so; real text with selectors passes', () => {
+  const msg = 'Title is empty or only invisible characters.'
+  assert.equal(validateTitle(''), msg)
+  assert.equal(validateTitle('   '), msg)
+  for (const blank of ['\u3164', '\u2800\u2800', '\uFE00\uFE00', '\u3164\uFE00', '\u{E0100}\u{E0100}', '\u00AD\u034F\u180E\u2061\uFE0F', '\u{E0020}\u17B4', '\uFFF9', '\u{13430}', ' \u200B\uFEFF ', '\uD800']) {
+    assert.equal(validateTitle(blank), msg, [...blank].map((c) => c.codePointAt(0).toString(16)).join(','))
+  }
+  for (const real of ['a', '\u2764\uFE0F', '1\uFE0F\u20E3', '\u845B\u{E0100}', '\uD55C\uAD6D\uC5B4', '\u2813\u2811', '\u{1F469}\u200D\u{1F4BB}', '\u0600']) {
+    assert.equal(validateTitle(real), undefined, real)
+  }
+  assert.match(describeSubmitError(400, 'invalid_title'), /empty or only invisible characters/)
+})
+
 test('validateTitle: accepts exactly 120 chars, rejects 121', () => {
   assert.equal(validateTitle('x'.repeat(120)), undefined)
   assert.ok(validateTitle('x'.repeat(121)))

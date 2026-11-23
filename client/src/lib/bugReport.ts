@@ -28,14 +28,27 @@ export type FieldErrors = {
   description?: string
 }
 
+// Characters the server always strips and that render as nothing: every
+// default-ignorable code point, the Braille blank, the interlinear and
+// Egyptian format controls, lone surrogates, and whitespace. A title made
+// only of them is certainly rejected server-side, so the form says so first.
+const ALWAYS_BLANK_RE = /^[\s\p{Default_Ignorable_Code_Point}\u2800\uFFF9-\uFFFB\u{13430}-\u{1343F}\uD800-\uDFFF]*$/u
+
+/** True when the text has no visible character at all (a cheap pre-check). */
+export function isBlankText(text: string): boolean {
+  return ALWAYS_BLANK_RE.test(text)
+}
+
 /**
- * Trims the way the server does (`stripControlChars(title).trim()`) before
- * measuring length, so a title that is all whitespace reads as empty here
- * exactly like it would server-side — the counter and the submit gate agree.
+ * A light check, NOT the server's cleaning: it trims whitespace and rejects a
+ * title that is empty or made only of invisible characters. The server still
+ * strips invisible characters in context (for example a variation selector
+ * after another invisible one) and has the final word; its 400 is shown by
+ * describeSubmitError.
  */
 export function validateTitle(title: string): string | undefined {
   const trimmed = title.trim()
-  if (trimmed.length < TITLE_MIN) return 'Title is required.'
+  if (trimmed.length < TITLE_MIN || isBlankText(trimmed)) return 'Title is empty or only invisible characters.'
   if (trimmed.length > TITLE_MAX) return `Title must be ${TITLE_MAX} characters or fewer.`
   return undefined
 }
@@ -121,7 +134,9 @@ export function describeSubmitError(status: number, code?: string): string {
     return 'Verification failed or expired. Please try again.'
   }
   if (status === 400) {
-    if (code === 'invalid_title') return `Title must be ${TITLE_MIN}-${TITLE_MAX} characters.`
+    if (code === 'invalid_title') {
+      return `Title is empty or only invisible characters, or longer than ${TITLE_MAX} characters.`
+    }
     if (code === 'invalid_description') {
       return `Description must be ${DESCRIPTION_MIN}-${DESCRIPTION_MAX} characters.`
     }
