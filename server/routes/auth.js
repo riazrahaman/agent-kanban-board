@@ -197,6 +197,15 @@ router.post('/stream-ticket', (req, res) => {
   // reads exactly the projects it is listed under, any other session reads
   // its own project.
   const adminSession = cred.kind === 'session' && cred.session.role === 'admin';
+  // A non-admin session with no project reads nothing as a bearer
+  // (computeAuthorizedProjects returns an empty set), so it gets no ticket at
+  // all, whatever project it names. /api/auth/session always stamps a
+  // project, so only a session record minted some other way can reach this.
+  if (cred.kind === 'session' && !adminSession && !cred.session.project) {
+    return res.status(403).json({
+      error: 'Forbidden: this session has no project, so it cannot mint a stream ticket',
+    });
+  }
   const rawProject = body.project;
   let project;
   let projects = null;
@@ -210,10 +219,9 @@ router.post('/stream-ticket', (req, res) => {
     // read every project.
     project = null;
   } else if (cred.kind === 'session') {
-    // A non-admin session reads only its own project. A session without one
-    // reads nothing as a bearer, so it gets no ticket (below) rather than a
-    // default-project one.
-    project = cred.session.project ?? null;
+    // A non-admin session reads only its own project (a session without one
+    // was refused above).
+    project = cred.session.project;
   } else if (cred.kind === 'project' && cred.projects.length === 1) {
     project = cred.projects[0];
   } else if (cred.kind === 'project') {
@@ -234,7 +242,7 @@ router.post('/stream-ticket', (req, res) => {
       error: `Forbidden: token is not authorized for project '${project}'`,
     });
   }
-  if (cred.kind === 'session' && !adminSession && (!cred.session.project || project !== cred.session.project)) {
+  if (cred.kind === 'session' && !adminSession && project !== cred.session.project) {
     return res.status(403).json({
       error: `Forbidden: token is not authorized for project '${project}'`,
     });

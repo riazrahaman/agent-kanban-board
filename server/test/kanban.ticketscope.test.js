@@ -18,6 +18,7 @@ import * as store from '../store.js';
 import crypto from 'node:crypto';
 import { createStreamTicket, resetStreamTickets, verifyStreamTicket } from '../streamTicket.js';
 import { challengeProofInput } from '../routes/auth.js';
+import { createSessionToken, verifySessionToken } from '../sessionAuth.js';
 import { resetAuthLimits } from '../middleware/rateLimit.js';
 import { resetUnlockFailures, resetUnlockKeyMaterial } from '../masterUnlock.js';
 
@@ -464,6 +465,29 @@ for (const config of CONFIGS) {
       assert.ok(!s.text.includes(ids.gamma), 'a gamma frame reached the alpha+beta ticket');
       assert.ok(!s.text.includes(ids.default), 'a default frame reached the alpha+beta ticket');
       assert.deepEqual(seen(s), ['alpha', 'beta']);
+    });
+
+    it('a non-admin session with no project gets no ticket (403 naming the missing project), named project or not', async () => {
+      // /api/auth/session always stamps a project, so this record cannot come
+      // from the handshake: it is minted directly with the board's secret, the
+      // way kanban.ticketsession.test.js builds session records.
+      const { token } = createSessionToken({ clientNonce: 'cn', serverNonce: 'sn', role: 'builder', project: null });
+      assert.equal(verifySessionToken(token)?.project ?? null, null);
+      // As a bearer it reads nothing.
+      const b = await viaBearer(token, 'prime=1');
+      assert.equal(b.status, 200, b.text);
+      assert.deepEqual(seen(b), []);
+      for (const body of [{}, { project: 'alpha' }, { project: 'default' }]) {
+        const r = await mint(bearer(token), body);
+        assert.equal(r.response.status, 403, `${JSON.stringify(body)}: ${r.text}`);
+        assert.match(r.body.error, /session has no project/);
+        assert.doesNotMatch(r.body.error, /'null'|'undefined'/);
+      }
+      // An admin session without a project is still unscoped, like its bearer.
+      const admin = createSessionToken({ clientNonce: 'cn', serverNonce: 'sn', role: 'admin', project: null }).token;
+      const r = await mint(bearer(admin));
+      assert.equal(r.response.status, 200, r.text);
+      assert.equal(r.body.project, null);
     });
 
     it('single-project token: unchanged (alpha only; minting for beta is refused)', async () => {
