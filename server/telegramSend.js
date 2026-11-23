@@ -11,8 +11,9 @@
  *   - Telegram HTML parse mode; only `& < >` are markup, so only those are
  *     escaped (htmlEscape).
  *   - `disable_web_page_preview: true` so a URL in a report never unfurls.
- *   - One retry on HTTP 429, honouring `parameters.retry_after` (capped, so
- *     an upstream "retry in an hour" can never park a request handler).
+ *   - One retry on HTTP 429 when `parameters.retry_after` is <= 10 s; a
+ *     longer wait fails at once. Either way a shared pause (below) makes
+ *     further report sends fail fast until the wait (capped 60 s) is over.
  *   - A per-attempt timeout.
  *   - NEVER throws and never returns or logs the bot token: the token lives
  *     in the request URL, so any error text is scrubbed before it leaves.
@@ -22,6 +23,40 @@ export const TELEGRAM_TEXT_LIMIT = 4096;
 export const DEFAULT_TELEGRAM_API_URL = 'https://api.telegram.org';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRY_AFTER_S = 10;
+export const MAX_PAUSE_S = 60;
+
+/**
+ * True when the process looks like a production deployment: NODE_ENV is
+ * "production", or Railway's runtime variables are present. Used to refuse
+ * local-only test/stub overrides (see routes/bugReports.js).
+ */
+export function isProductionRuntime(env = process.env) {
+  return Boolean(
+    env.NODE_ENV === 'production' || env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared 429 pause. The report route, the reclaim notifier and the daily
+// backup all post through the SAME bot. When Telegram answers 429 to a
+// report send, every report send fails fast (no outbound call) until the
+// `retry_after` window (capped at MAX_PAUSE_S) has passed, so anonymous
+// report traffic cannot keep the bot rate-limited and starve the alerts and
+// the backup. Only callers of sendTelegramMessage (the report route) are
+// paused; notifier.js, deployDrift.js and telegramBackup.js keep their own
+// senders and behaviour unchanged.
+// ---------------------------------------------------------------------------
+let pausedUntil = 0;
+
+/** Epoch ms until which report sends are paused (0 = not paused). */
+export function telegramPausedUntil() {
+  return pausedUntil;
+}
+
+/** Test helper: clear the shared pause. */
+export function resetTelegramPause() {
+  pausedUntil = 0;
+}
 
 /** Only the three characters Telegram's HTML parser treats as markup. */
 export function htmlEscape(str) {
@@ -71,7 +106,19 @@ export async function sendTelegramMessage({
   sleep = defaultSleep,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxRetryAfterS = DEFAULT_MAX_RETRY_AFTER_S,
+  now = Date.now,
 } = {}) {
+  if (now() < pausedUntil) {
+    return {
+      ok: false,
+      status: 429,
+      networkError: false,
+      paused: true,
+      description: 'paused after a recent Telegram 429',
+      attempts: 0,
+    };
+  }
+
   const base = String(apiUrl || DEFAULT_TELEGRAM_API_URL).replace(/\/+$/, '');
   const url = `${base}/bot${botToken}/sendMessage`;
   const body = JSON.stringify({
@@ -109,11 +156,17 @@ export async function sendTelegramMessage({
       data = null;
     }
 
-    if (res.status === 429 && attempts < 2) {
+    if (res.status === 429) {
       const raw = Number(data?.parameters?.retry_after);
       const secs = Number.isFinite(raw) && raw >= 0 ? raw : 1;
-      await sleep(Math.min(secs, maxRetryAfterS) * 1000);
-      continue;
+      pausedUntil = Math.max(pausedUntil, now() + Math.min(secs, MAX_PAUSE_S) * 1000);
+      // One retry, only when Telegram's wait is short enough to sit out
+      // inside a request. A longer wait fails now (retrying early would only
+      // earn another 429 on the shared bot); the pause covers the rest.
+      if (attempts < 2 && secs <= maxRetryAfterS) {
+        await sleep(secs * 1000);
+        continue;
+      }
     }
 
     if (res.ok && data && data.ok === true) return { ok: true, status: res.status, attempts };

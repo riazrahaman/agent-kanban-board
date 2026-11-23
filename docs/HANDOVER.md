@@ -352,9 +352,12 @@ copy that leaves the volume. Marker file `<backup root>/.telegram-last-sent`.
   `KANBAN_REPORT_PER_IP_PER_HOUR` 3). Sends ONE private Telegram message (HTML:
   title in bold, description in `<pre>`, version/viewport/user-agent footer, never
   the IP); creates no card and no GitHub issue (the pre-Telegram
-  `KANBAN_REPORT_GITHUB_*`/`KANBAN_REPORT_REPO` variables are no longer read). One
-  retry on 429 honouring `retry_after` (capped 10 s), otherwise 502
-  `could_not_send`. `GET /api/bug-reports/config` returns the site key. Never
+  `KANBAN_REPORT_GITHUB_*`/`KANBAN_REPORT_REPO` variables are no longer read). A 429
+  is retried once only when `retry_after` <= 10 s and sets a shared pause (<= 60 s)
+  in which report sends fail fast without calling Telegram, so reports cannot
+  starve the alerts/backup on the same bot; otherwise 502 `could_not_send`. The
+  local-stub overrides (`KANBAN_REPORT_TELEGRAM_API_URL`, `TURNSTILE_SITEVERIFY_URL`)
+  are ignored in production (NODE_ENV=production or Railway) with a startup warning. `GET /api/bug-reports/config` returns the site key. Never
   logs the bot token, secret, report text, message or client IP.
 - **Telegram notifier** (`notifier.js`) — an `onDiff` subscriber that posts a
   full-detail alert when a card is reclaimed. Off unless **both**

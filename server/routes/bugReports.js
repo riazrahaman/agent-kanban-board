@@ -4,6 +4,7 @@ import {
   DEFAULT_TELEGRAM_API_URL,
   TELEGRAM_TEXT_LIMIT,
   htmlEscape,
+  isProductionRuntime,
   scrubSecret,
   sendTelegramMessage,
 } from '../telegramSend.js';
@@ -35,7 +36,7 @@ import {
  *   TURNSTILE_HOSTNAMES                   comma list; siteverify hostname
  *                                          must be in it. Unset = skipped,
  *                                          with one startup warning.
- *   KANBAN_REPORT_DAILY_CAP               global cap/UTC day (default 50)
+ *   KANBAN_REPORT_DAILY_CAP               global cap per rolling 24 h (default 50)
  *   KANBAN_REPORT_PER_IP_PER_HOUR         per-IP cap/hour (default 3)
  *   KANBAN_REPORT_TELEGRAM_API_URL        Bot API base (default
  *                                          https://api.telegram.org) — lets
@@ -44,6 +45,9 @@ import {
  *   KANBAN_BOARD_URL                      when set, shown in the message footer.
  *   TURNSTILE_SITEVERIFY_URL              siteverify URL override for local
  *                                          stubs (default Cloudflare's).
+ *   Both local-stub overrides are IGNORED (real endpoints, one startup
+ *   warning naming the variable) when NODE_ENV=production or Railway's
+ *   RAILWAY_ENVIRONMENT / RAILWAY_PROJECT_ID is set.
  * The pre-Telegram KANBAN_REPORT_GITHUB_TOKEN / KANBAN_REPORT_REPO /
  * KANBAN_REPORT_GITHUB_API_URL are no longer read at all.
  *
@@ -67,22 +71,33 @@ export function stripControlChars(str) {
   return String(str).replace(CONTROL_CHARS_RE, '');
 }
 
-// C1 controls, the Unicode line/paragraph separators, and the bidi
-// embedding/override/isolate controls. Natural right-to-left text needs none
-// of these (the renderer handles RTL scripts on its own); an override can
-// only be used to make the message read differently from what it says.
-const EXTRA_INVISIBLE_RE = /[\u0080-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
+// Invisible formatting characters removed from ALL report text (title,
+// description, user agent), both before validation and before rendering, so
+// what is validated is exactly what is sent: C1 controls, the Unicode
+// line/paragraph separators, the bidi embedding/override/isolate controls,
+// the LRM/RLM/ALM marks (U+200E, U+200F, U+061C), zero-width space and
+// non-joiner (U+200B, U+200C), word joiner (U+2060) and BOM (U+FEFF).
+// Natural right-to-left text needs none of these (the renderer handles RTL
+// scripts on its own); they can only hide text or make it read differently.
+const EXTRA_INVISIBLE_RE = /[\u0080-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069\u200B\u200C\u200E\u200F\u2060\uFEFF\u061C]/g;
+
+// ZERO WIDTH JOINER (U+200D) is kept only where it glues two pictographs of
+// an emoji ZWJ sequence (e.g. woman + skin tone + ZWJ + laptop); anywhere
+// else it is removed like the characters above.
+const STRAY_ZWJ_RE = /(?<!\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\uFE0F]?)\u200D|\u200D(?!\p{Extended_Pictographic})/gu;
+
+function stripInvisible(str) {
+  return String(str ?? '').replace(EXTRA_INVISIBLE_RE, '').replace(STRAY_ZWJ_RE, '');
+}
 
 /** Free text for the message body: control chars gone, newlines/tabs kept. */
 export function cleanMultiline(str) {
-  return stripControlChars(str).replace(/\r\n?/g, '\n').replace(EXTRA_INVISIBLE_RE, '');
+  return stripInvisible(stripControlChars(str ?? '').replace(/\r\n?/g, '\n'));
 }
 
 /** One-line text (title, user agent): every control char and newline becomes a space. */
 export function cleanOneLine(str) {
-  return String(str ?? '')
-    .replace(/[\x00-\x1F\x7F]+/g, ' ')
-    .replace(EXTRA_INVISIBLE_RE, '')
+  return stripInvisible(String(str ?? '').replace(/[\x00-\x1F\x7F]+/g, ' '))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -169,7 +184,9 @@ export function reportTelegramTarget() {
   const reportChat = String(process.env.KANBAN_REPORT_TELEGRAM_CHAT_ID || '').trim();
   const alertChat = String(process.env.KANBAN_TELEGRAM_CHAT_ID || '').trim();
   const chatId = reportChat || alertChat;
-  const apiUrl = String(process.env.KANBAN_REPORT_TELEGRAM_API_URL || '').trim() || DEFAULT_TELEGRAM_API_URL;
+  const apiOverride = String(process.env.KANBAN_REPORT_TELEGRAM_API_URL || '').trim();
+  // Local-only override: ignored in production (see ignoredLocalOverrides).
+  const apiUrl = apiOverride && !isProductionRuntime() ? apiOverride : DEFAULT_TELEGRAM_API_URL;
   return {
     enabled: Boolean(botToken && chatId),
     botToken,
@@ -213,6 +230,25 @@ const LOG_PREFIX = '[kanban bug-report]';
 // local demos/e2e runs only (scripts/stub-telegram.mjs serves a stand-in), so a
 // test never calls Cloudflare.
 const TURNSTILE_SITEVERIFY_DEFAULT = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+
+/** Siteverify URL: the local-stub override is honoured only outside production. */
+export function turnstileSiteverifyUrl() {
+  const override = String(process.env.TURNSTILE_SITEVERIFY_URL || '').trim();
+  return override && !isProductionRuntime() ? override : TURNSTILE_SITEVERIFY_DEFAULT;
+}
+
+/**
+ * Names of the local-only overrides that are set but IGNORED because the
+ * process is a production deployment (NODE_ENV=production, or Railway's
+ * RAILWAY_ENVIRONMENT / RAILWAY_PROJECT_ID). Never returns values.
+ */
+export function ignoredLocalOverrides() {
+  if (!isProductionRuntime()) return [];
+  const names = [];
+  if (String(process.env.KANBAN_REPORT_TELEGRAM_API_URL || '').trim()) names.push('KANBAN_REPORT_TELEGRAM_API_URL');
+  if (String(process.env.TURNSTILE_SITEVERIFY_URL || '').trim()) names.push('TURNSTILE_SITEVERIFY_URL');
+  return names;
+}
 
 /** Loose shape check: Cloudflare Turnstile site keys are a short opaque
  * token with no whitespace; this does not try to validate the real format,
@@ -281,6 +317,16 @@ export function createBugReportsRouter(deps = {}) {
   const now = deps.now || (() => Date.now());
   const BOARD_VERSION = boardVersion();
   const router = express.Router();
+
+  // A local-only stub override left set on a production deployment would
+  // silently replace real captcha verification or real delivery, so it is
+  // ignored there (the real endpoint is used) and named loudly once.
+  for (const name of ignoredLocalOverrides()) {
+    console.warn(
+      `${LOG_PREFIX} WARNING: ${name} is set but IGNORED: it is a local test/stub override and this is a ` +
+        'production runtime (NODE_ENV=production or Railway). The real endpoint is used. Unset it.',
+    );
+  }
 
   // One-time startup warnings, evaluated at router creation (≈ process
   // startup). An operator who configured Turnstile (the visible half of the
@@ -419,7 +465,7 @@ export function createBugReportsRouter(deps = {}) {
 
     let res;
     try {
-      res = await fetchImpl(process.env.TURNSTILE_SITEVERIFY_URL || TURNSTILE_SITEVERIFY_DEFAULT, {
+      res = await fetchImpl(turnstileSiteverifyUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
@@ -502,11 +548,15 @@ export function createBugReportsRouter(deps = {}) {
   // failure: the visitor is told to try again later instead.
   // ---------------------------------------------------------------------
   function logTelegramFailure(result) {
-    const statusLabel = result.networkError ? 'network error' : `status=${result.status}`;
+    const statusLabel = result.paused
+      ? 'paused (recent 429, no call made)'
+      : result.networkError
+        ? 'network error'
+        : `status=${result.status}`;
     const hint = result.networkError
       ? 'network/DNS error or wrong KANBAN_REPORT_TELEGRAM_API_URL'
       : hintForTelegramStatus(result.status);
-    const key = `telegram:${result.networkError ? 'network' : result.status}`;
+    const key = `telegram:${result.paused ? 'paused' : result.networkError ? 'network' : result.status}`;
     // Redact the RAW description first, then sanitise/truncate (see
     // safeLogValue): truncating first could leak a secret's prefix.
     const safeDescription = safeLogValue(redactSecrets(result.description || ''), 160);
@@ -537,6 +587,7 @@ export function createBugReportsRouter(deps = {}) {
         apiUrl: target.apiUrl,
         fetchImpl,
         sleep,
+        now, // same injectable clock as the rate limits; drives the shared 429 pause
       });
     } catch {
       // sendTelegramMessage never rejects; belt and braces.
@@ -575,12 +626,14 @@ export function createBugReportsRouter(deps = {}) {
       return res.status(400).json({ error: 'invalid_payload' });
     }
 
-    const safeTitle = stripControlChars(title).trim();
+    // Validate exactly what will be rendered (cleanOneLine/cleanMultiline),
+    // so a title made only of invisible characters is rejected as empty.
+    const safeTitle = cleanOneLine(title);
     if (safeTitle.length < 1 || safeTitle.length > 120) {
       return res.status(400).json({ error: 'invalid_title' });
     }
 
-    const safeDescription = stripControlChars(description).trim();
+    const safeDescription = cleanMultiline(description).trim();
     if (safeDescription.length < 10 || safeDescription.length > 5000) {
       return res.status(400).json({ error: 'invalid_description' });
     }

@@ -812,8 +812,8 @@ Read the `status` and `hint` fields to diagnose and fix:
 | `400` | bad request: chat id wrong (chat not found) or message rejected | Check `KANBAN_REPORT_TELEGRAM_CHAT_ID` / `KANBAN_TELEGRAM_CHAT_ID` (channel ids start with `-100`). |
 | `401` | bot token invalid/revoked | `KANBAN_TELEGRAM_BOT_TOKEN` is wrong or was revoked; the reclaim alerts will be failing too. |
 | `403` | bot is not a member of the chat or may not post there | Add the bot to the chat; for a channel, make it an administrator allowed to post messages. |
-| `404` | wrong bot token or KANBAN_REPORT_TELEGRAM_API_URL | The token is malformed, or the local-stub API URL override is set in production. |
-| `429` | Telegram rate limit; retry later | The server already waited Telegram's `retry_after` (capped at 10 seconds) and retried once. Transient. |
+| `404` | wrong bot token or KANBAN_REPORT_TELEGRAM_API_URL | The token is malformed, or a local-stub API URL points somewhere wrong (outside production; in production the override is ignored with a startup warning). |
+| `429` | Telegram rate limit; retry later | With `retry_after` of 10 seconds or less the server waits and retries once; a longer wait fails at once. Report sends then pause for `retry_after` (capped at 60 seconds) and fail fast without calling Telegram (`paused (recent 429, no call made)`), so reports cannot starve the reclaim alerts or the daily backup on the same bot. Transient. |
 | `5xx` | Telegram outage | Transient; no retry is made and the visitor is asked to try again later. |
 | network error | network/DNS error or wrong KANBAN_REPORT_TELEGRAM_API_URL | The server couldn't reach Telegram at all. Check connectivity, and that the override is unset in production. |
 

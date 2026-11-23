@@ -13,7 +13,7 @@
  * guards that mounting this unauthenticated route does not weaken auth on
  * any other route and that a report creates no board card.
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import {
@@ -23,13 +23,26 @@ import {
   escapeWithin,
   formatReportMessage,
   hintForTelegramStatus,
+  ignoredLocalOverrides,
   looksLikeTurnstileSiteKey,
   neutralizeEntities,
   reportTelegramTarget,
   safeLogValue,
   stripControlChars,
+  turnstileSiteverifyUrl,
 } from '../routes/bugReports.js';
-import { TELEGRAM_TEXT_LIMIT, scrubSecret, sendTelegramMessage } from '../telegramSend.js';
+import {
+  TELEGRAM_TEXT_LIMIT,
+  isProductionRuntime,
+  resetTelegramPause,
+  scrubSecret,
+  sendTelegramMessage,
+  telegramPausedUntil,
+} from '../telegramSend.js';
+
+// The 429 pause is module-level (shared by every report send in the
+// process), so each test starts unpaused.
+beforeEach(() => resetTelegramPause());
 
 // Telegram-shaped dummy bot token (never a real one).
 const DUMMY_BOT_TOKEN = '123456789:AAFakeBotTokenForTestsOnly_abcdefghijk';
@@ -56,6 +69,10 @@ const ENV_KEYS = [
   'KANBAN_REPORT_GITHUB_API_URL',
   'KANBAN_AUTH_TOKEN',
   'KANBAN_TRUST_PROXY',
+  'KANBAN_ALLOWED_ORIGIN',
+  'NODE_ENV',
+  'RAILWAY_ENVIRONMENT',
+  'RAILWAY_PROJECT_ID',
 ];
 
 function configureEnv(overrides = {}) {
@@ -787,7 +804,7 @@ describe('bug reports: Telegram delivery', () => {
     assert.equal(fetchImpl.telegram[0].body.text, fetchImpl.telegram[1].body.text, 'the retry resends the same message');
   });
 
-  it('an absurd retry_after is capped at 10s so a visitor is never parked', async () => {
+  it('a retry_after over 10s is not sat out in the request: 502 at once, one attempt, no sleep', async () => {
     clearEnv();
     configureEnv();
     const sleep = recordingSleep();
@@ -795,9 +812,12 @@ describe('bug reports: Telegram delivery', () => {
       telegram: (n) => (n === 1 ? telegramError(429, 'Too Many Requests', { parameters: { retry_after: 3600 } }) : okTelegram()),
     });
     await withApp({ fetch: fetchImpl, sleep }, async (baseUrl) => {
-      assert.equal((await post(baseUrl)).res.status, 201);
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.equal(res.body.error, 'could_not_send');
     });
-    assert.deepEqual(sleep.waits, [10_000]);
+    assert.deepEqual(sleep.waits, []);
+    assert.equal(fetchImpl.telegram.length, 1);
   });
 
   it('a second 429 is not retried again: 502 could_not_send after exactly two attempts', async () => {
@@ -894,7 +914,7 @@ describe('bug reports: Telegram message formatting', () => {
     assertBalancedTags(text);
   });
 
-  it('@mentions and links in the title and user agent are neutralised; the <pre> description is left verbatim', () => {
+  it('@mentions and scheme:// links in the title and user agent are neutralised; the <pre> description is left verbatim', () => {
     const text = formatReportMessage({
       ...base,
       title: 'ping @admin see https://evil.test',
@@ -1417,5 +1437,251 @@ describe('bug reports: startup warnings', () => {
     clearEnv();
     lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
     assert.deepEqual(lines.warn, []);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Round 2 follow-ups: production guard for the local-only overrides,
+// validation of exactly the cleaned text, and the shared 429 pause.
+// ---------------------------------------------------------------------
+
+describe('bug reports: local-only overrides are ignored in production', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+  });
+  afterEach(() => restoreEnv(saved));
+
+  async function assertOverridesIgnored(prodEnv) {
+    clearEnv();
+    configureEnv({
+      KANBAN_ALLOWED_ORIGIN: 'https://board.example.test',
+      KANBAN_REPORT_TELEGRAM_API_URL: 'http://127.0.0.1:3457/secret-stub-path',
+      TURNSTILE_SITEVERIFY_URL: 'http://127.0.0.1:3457/turnstile/v0/siteverify',
+      ...prodEnv,
+    });
+    const fetchImpl = makeFetch();
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        assert.equal((await post(baseUrl)).res.status, 201);
+      }),
+    );
+    const verify = fetchImpl.calls.find((c) => c.url.includes('siteverify'));
+    assert.equal(verify.url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify', 'real siteverify is used');
+    assert.equal(fetchImpl.telegram[0].url, `https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`, 'real Bot API is used');
+    for (const name of ['KANBAN_REPORT_TELEGRAM_API_URL', 'TURNSTILE_SITEVERIFY_URL']) {
+      assert.ok(
+        lines.warn.some((l) => l.includes(`${name} is set but IGNORED`)),
+        `expected a startup warning naming ${name}, got ${JSON.stringify(lines.warn)}`,
+      );
+    }
+    assert.ok(!allLines(lines).includes('127.0.0.1:3457'), 'the override value is never logged');
+    assert.ok(!allLines(lines).includes('secret-stub-path'));
+  }
+
+  it('NODE_ENV=production: both overrides are ignored and named in a startup warning (never their values)', async () => {
+    await assertOverridesIgnored({ NODE_ENV: 'production' });
+  });
+
+  it('RAILWAY_ENVIRONMENT set: both overrides are ignored and named', async () => {
+    await assertOverridesIgnored({ RAILWAY_ENVIRONMENT: 'production' });
+  });
+
+  it('RAILWAY_PROJECT_ID set: both overrides are ignored and named', async () => {
+    await assertOverridesIgnored({ RAILWAY_PROJECT_ID: '00000000-0000-0000-0000-000000000000' });
+  });
+
+  it('outside production the overrides are honoured and no warning fires', async () => {
+    clearEnv();
+    configureEnv({
+      KANBAN_REPORT_TELEGRAM_API_URL: 'http://127.0.0.1:3457',
+      TURNSTILE_SITEVERIFY_URL: 'http://127.0.0.1:3457/turnstile/v0/siteverify',
+      TURNSTILE_HOSTNAMES: 'board.example.test',
+    });
+    const seen = [];
+    const fetchImpl = async (url) => {
+      seen.push(String(url));
+      return String(url).endsWith('/siteverify') ? fakeResponse(200, okTurnstileBody()) : okTelegram();
+    };
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        assert.equal((await post(baseUrl)).res.status, 201);
+      }),
+    );
+    assert.equal(seen[0], 'http://127.0.0.1:3457/turnstile/v0/siteverify');
+    assert.equal(seen[1], `http://127.0.0.1:3457/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+    assert.deepEqual(lines.warn, []);
+    assert.deepEqual(ignoredLocalOverrides(), []);
+  });
+
+  it('isProductionRuntime / turnstileSiteverifyUrl / reportTelegramTarget follow the guard', () => {
+    assert.equal(isProductionRuntime({}), false);
+    assert.equal(isProductionRuntime({ NODE_ENV: 'development' }), false);
+    assert.equal(isProductionRuntime({ NODE_ENV: 'production' }), true);
+    assert.equal(isProductionRuntime({ RAILWAY_ENVIRONMENT: 'staging' }), true);
+    assert.equal(isProductionRuntime({ RAILWAY_PROJECT_ID: 'x' }), true);
+    const before = saveEnv();
+    try {
+      clearEnv();
+      process.env.TURNSTILE_SITEVERIFY_URL = 'http://127.0.0.1:1/sv';
+      process.env.KANBAN_REPORT_TELEGRAM_API_URL = 'http://127.0.0.1:1';
+      assert.equal(turnstileSiteverifyUrl(), 'http://127.0.0.1:1/sv');
+      assert.equal(reportTelegramTarget().apiUrl, 'http://127.0.0.1:1');
+      process.env.NODE_ENV = 'production';
+      assert.equal(turnstileSiteverifyUrl(), 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
+      assert.equal(reportTelegramTarget().apiUrl, 'https://api.telegram.org');
+      assert.deepEqual(ignoredLocalOverrides(), ['KANBAN_REPORT_TELEGRAM_API_URL', 'TURNSTILE_SITEVERIFY_URL']);
+    } finally {
+      restoreEnv(before);
+    }
+  });
+});
+
+describe('bug reports: validation sees exactly the cleaned text', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '100', KANBAN_REPORT_DAILY_CAP: '100' });
+  });
+  after(() => restoreEnv(saved));
+
+  it('a title made only of RIGHT-TO-LEFT OVERRIDE characters is rejected as empty (400 invalid_title), nothing sent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: '\u202E\u202E\u202E' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_title');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('a title made only of zero-width / BOM / LRM / RLM / ALM characters is rejected as empty', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: '\u200B‌‍⁠﻿\u200E\u200F؜' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_title');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('a description that is only invisible characters (well over 10 code units) is rejected (400 invalid_description)', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { description: '\u200B\u202E﻿\u2028\u0085'.repeat(10) + 'short' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_description');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('length limits count visible characters: 120 visible + invisible padding is accepted and sent clean', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: 'x'.repeat(120) + '\u200B'.repeat(10) });
+      assert.equal(res.res.status, 201);
+    });
+    assert.ok(fetchImpl.telegram[0].body.text.includes(`<b>${'x'.repeat(120)}</b>`));
+  });
+
+  it('what is rendered never contains LRM/RLM/ALM, zero-width, word joiner or BOM in the title or user agent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(
+        baseUrl,
+        { title: 'Hid\u200Bden\u200E \u200Ftitle⁠﻿؜ here' },
+        { 'User-Agent': 'UA/1.0' },
+      );
+      assert.equal(res.res.status, 201);
+    });
+    const text = fetchImpl.telegram[0].body.text;
+    assert.ok(text.includes('<b>Hidden title here</b>'));
+    assert.doesNotMatch(text.replace(/@\u200B|:\u200B\/\//g, ''), /[\u200B‌\u200E\u200F⁠﻿؜]/);
+  });
+
+  it('emoji ZWJ sequences survive; a stray ZWJ between letters is removed', () => {
+    const technologist = '\u{1F469}\u{1F3FD}‍\u{1F4BB}';
+    const family = '\u{1F468}‍\u{1F469}‍\u{1F467}';
+    assert.equal(cleanOneLine(`${technologist} and ${family}`), `${technologist} and ${family}`);
+    assert.equal(cleanOneLine('a‍b'), 'ab');
+    assert.equal(cleanOneLine('‍\u{1F4BB}'), '\u{1F4BB}', 'a leading ZWJ glues nothing');
+    const text = formatReportMessage({ title: 'x', description: 'desc text here', userAgent: 'U\u200EA\u200B' });
+    assert.ok(text.includes('<i>UA: UA</i>'));
+  });
+});
+
+describe('bug reports: shared 429 pause', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+  });
+  afterEach(() => restoreEnv(saved));
+
+  it('a 429 pauses report sends: the next report fails fast with NO Telegram call and does not spend the budget', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1', KANBAN_REPORT_PER_IP_PER_HOUR: '1' });
+    let clock = 5_000_000;
+    let throttled = true;
+    const fetchImpl = makeFetch({
+      telegram: () =>
+        throttled ? telegramError(429, 'Too Many Requests', { parameters: { retry_after: 30 } }) : okTelegram(),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, now: () => clock }, async (baseUrl) => {
+        const first = await post(baseUrl);
+        assert.equal(first.res.status, 502);
+        assert.equal(fetchImpl.telegram.length, 1, 'retry_after 30 > 10: no in-request retry');
+        assert.equal(telegramPausedUntil(), clock + 30_000);
+
+        throttled = false;
+        clock += 29_000; // still inside the pause
+        const paused = await post(baseUrl);
+        assert.equal(paused.res.status, 502);
+        assert.equal(paused.body.error, 'could_not_send');
+        assert.equal(fetchImpl.telegram.length, 1, 'no outbound call while paused');
+
+        clock += 2_000; // pause over
+        const ok = await post(baseUrl);
+        assert.equal(ok.res.status, 201, 'neither failure spent the budget of 1');
+        assert.equal(fetchImpl.telegram.length, 2);
+      }),
+    );
+    const pausedLine = lines.error.find((l) => l.includes('paused (recent 429, no call made)'));
+    assert.ok(pausedLine, JSON.stringify(lines.error));
+    assert.ok(!allLines(lines).includes(DUMMY_BOT_TOKEN));
+  });
+
+  it('the pause is capped at 60s however large retry_after is', async () => {
+    clearEnv();
+    configureEnv();
+    const clock = 7_000_000;
+    const fetchImpl = makeFetch({
+      telegram: () => telegramError(429, 'Too Many Requests', { parameters: { retry_after: 3600 } }),
+    });
+    await withApp({ fetch: fetchImpl, now: () => clock }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 502);
+    });
+    assert.equal(telegramPausedUntil(), clock + 60_000);
+  });
+
+  it('sendTelegramMessage refuses to call fetch while paused and resumes after the window', async () => {
+    let clock = 1_000;
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return calls === 1 ? telegramError(429, 'slow down', { parameters: { retry_after: 20 } }) : okTelegram();
+    };
+    const first = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock, sleep: async () => {} });
+    assert.equal(first.ok, false);
+    assert.equal(first.status, 429);
+    const blocked = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock });
+    assert.equal(blocked.paused, true);
+    assert.equal(blocked.attempts, 0);
+    assert.equal(calls, 1);
+    clock += 20_000;
+    const resumed = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock });
+    assert.equal(resumed.ok, true);
+    assert.equal(calls, 2);
   });
 });
