@@ -375,6 +375,9 @@ function computeAuthorizedProjects(req) {
         role: scope.role ?? req.caller.role,
         ...(scope.agent_id ? { agent_id: scope.agent_id } : {}),
       };
+      // A multi-project ticket reads exactly its set (checked FIRST: its
+      // `project` is null, which must never fall through to '*').
+      if (Array.isArray(scope.projects)) return new Set(scope.projects);
       if (scope.project) return new Set([scope.project]);
       return '*';
     }

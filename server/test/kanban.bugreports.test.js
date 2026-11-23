@@ -1611,6 +1611,294 @@ describe('bug reports: validation sees exactly the cleaned text', () => {
   });
 });
 
+describe('bug reports: blank-looking characters and lone surrogates', () => {
+  // Characters that render as nothing (or as a blank cell) in Telegram. Before
+  // 3.19.1 a title made only of them, or a description of ten or more, passed
+  // validation and arrived as a blank-looking line.
+  const BLANK = {
+    'U+3164 HANGUL FILLER': '\u3164',
+    'U+2800 BRAILLE PATTERN BLANK': '\u2800',
+    'U+115F HANGUL CHOSEONG FILLER': '\u115F',
+    'U+FFA0 HALFWIDTH HANGUL FILLER': '\uFFA0',
+    'U+00AD SOFT HYPHEN': '\u00AD',
+    'U+034F COMBINING GRAPHEME JOINER': '\u034F',
+    'U+180E MONGOLIAN VOWEL SEPARATOR': '\u180E',
+    'U+2061 FUNCTION APPLICATION': '\u2061',
+    'U+FE0F VARIATION SELECTOR-16': '\uFE0F',
+    'U+E0020 TAG SPACE': '\u{E0020}',
+    'U+17B4 KHMER VOWEL INHERENT AQ': '\u17B4',
+  };
+  const HEART = '\u2764\uFE0F';
+  const KEYCAP_ONE = '1\uFE0F\u20E3';
+  const TECHNOLOGIST = '\u{1F469}\u{1F3FD}\u200D\u{1F4BB}';
+  const HEART_ON_FIRE = '\u2764\uFE0F\u200D\u{1F525}';
+  const RAINBOW_FLAG = '\u{1F3F3}\uFE0F\u200D\u{1F308}';
+  const ENGLAND = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+  const KOREAN = '\uD55C\uAD6D\uC5B4 \u3131\u3134\u3137';
+  const BRAILLE = '\u2813\u2811\u2807\u2807\u2815';
+  const BRAILLE_ALL_DOTS = '\u2801\u283F\u28FF';
+  const codePoints = (str) => [...str].map((c) => c.codePointAt(0).toString(16));
+
+  let saved;
+  before(() => {
+    saved = saveEnv();
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '1000', KANBAN_REPORT_DAILY_CAP: '1000' });
+  });
+  after(() => restoreEnv(saved));
+
+  it('each blank-looking character alone: a title of it is rejected (invalid_title) and a description of 12 of it (invalid_description), nothing sent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      for (const [name, ch] of Object.entries(BLANK)) {
+        for (const title of [ch, ch.repeat(5), ` ${ch} ${ch} `]) {
+          const res = await post(baseUrl, { title });
+          assert.equal(res.res.status, 400, `${name} title ${codePoints(title)}`);
+          assert.equal(res.body.error, 'invalid_title', name);
+        }
+        const res = await post(baseUrl, { description: ch.repeat(12) });
+        assert.equal(res.res.status, 400, `${name} description`);
+        assert.equal(res.body.error, 'invalid_description', name);
+        // Visible text padded past 10 code units with it is still too short.
+        const padded = await post(baseUrl, { description: `short${ch.repeat(12)}` });
+        assert.equal(padded.body.error, 'invalid_description', `${name} padding`);
+      }
+      // All of them mixed together.
+      const all = Object.values(BLANK).join('');
+      assert.equal((await post(baseUrl, { title: all })).body.error, 'invalid_title');
+      assert.equal((await post(baseUrl, { description: all.repeat(3) })).body.error, 'invalid_description');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('mixed with real text, each one is removed from what is rendered (the Braille blank becomes a space)', () => {
+    for (const [name, ch] of Object.entries(BLANK)) {
+      const expected = ch === '\u2800' ? 'ab cd' : 'abcd';
+      assert.deepEqual(codePoints(cleanOneLine(`ab${ch}cd`)), codePoints(expected), name);
+      assert.deepEqual(codePoints(cleanMultiline(`ab${ch}cd\n${ch}x`)), codePoints(ch === '\u2800' ? 'ab cd\n x' : 'abcd\nx'), name);
+    }
+  });
+
+  it('real emoji sequences survive (VS16 after a base, keycaps, ZWJ sequences, subdivision flags); a lone VS16 or stray tag goes', () => {
+    for (const emoji of [HEART, KEYCAP_ONE, TECHNOLOGIST, HEART_ON_FIRE, RAINBOW_FLAG, ENGLAND, '#\uFE0F\u20E3', '\u263A\uFE0E']) {
+      assert.deepEqual(codePoints(cleanOneLine(`ok ${emoji} ok`)), codePoints(`ok ${emoji} ok`), codePoints(emoji).join(','));
+      assert.deepEqual(codePoints(cleanMultiline(emoji)), codePoints(emoji));
+    }
+    assert.equal(cleanOneLine('\uFE0F'), '');
+    assert.equal(cleanOneLine('a\uFE0Fb'), 'ab', 'VS16 after a letter is not an emoji presentation');
+    assert.equal(cleanOneLine(' \uFE0F x'), 'x');
+    assert.equal(cleanOneLine(`${HEART}\uFE0F`), HEART, 'a second VS16 has no base');
+    assert.equal(cleanOneLine('\u3164\uFE0F'), '');
+    // Tag characters outside a subdivision flag (and an unterminated one) go.
+    assert.equal(cleanOneLine('a\u{E0067}\u{E0062}b'), 'ab');
+    assert.equal(cleanOneLine('\u{1F3F4}\u{E0067}\u{E0062}'), '\u{1F3F4}');
+    assert.equal(cleanOneLine(`${ENGLAND}\u{E0020}`), ENGLAND);
+  });
+
+  it('Hangul and Braille text survive; only the fillers and the blank cell are treated as blank', () => {
+    assert.equal(cleanOneLine(KOREAN), KOREAN);
+    assert.equal(cleanOneLine(`${KOREAN}\u3164`), KOREAN);
+    assert.equal(cleanOneLine(`\uD55C\u3164\uAD6D\uFFA0\uC5B4`), '\uD55C\uAD6D\uC5B4');
+    assert.equal(cleanOneLine(BRAILLE), BRAILLE);
+    assert.equal(cleanOneLine(BRAILLE_ALL_DOTS), BRAILLE_ALL_DOTS, 'U+2801..U+28FF dot patterns are text');
+    assert.equal(cleanOneLine(`${BRAILLE}\u2800${BRAILLE}`), `${BRAILLE} ${BRAILLE}`, 'the Braille word space stays a space');
+    assert.equal(cleanMultiline(`${BRAILLE}\u2800\u2800${BRAILLE}`), `${BRAILLE}  ${BRAILLE}`);
+    // Conjoining jamo: a filler that builds a syllable block stays.
+    assert.equal(cleanOneLine('\u115F\u1161'), '\u115F\u1161', 'choseong filler + a real vowel');
+    assert.equal(cleanOneLine('\u1100\u1160'), '\u1100\u1160', 'a real initial + jungseong filler');
+    assert.equal(cleanOneLine('\u115F\u1160'), '', 'two fillers build nothing visible');
+    // Variation selectors on real text (an ideographic variant, a Mongolian FVS) stay.
+    assert.equal(cleanOneLine('\u845B\u{E0100}'), '\u845B\u{E0100}');
+    assert.equal(cleanOneLine('\u182E\u1823\u1829\u180B\u182D'), '\u182E\u1823\u1829\u180B\u182D');
+    assert.equal(cleanOneLine('\u{E0100}'), '');
+  });
+
+  it('lone UTF-16 surrogates are stripped; well-formed pairs (emoji) are kept', () => {
+    assert.equal(cleanOneLine('x\uD800y'), 'xy');
+    assert.equal(cleanOneLine('x\uDC00y'), 'xy');
+    assert.equal(cleanOneLine('end\uD83D'), 'end');
+    assert.equal(cleanOneLine('\uDE00start'), 'start');
+    assert.equal(cleanOneLine('\uDE00\uD83D'), '', 'a reversed pair is two lone halves');
+    assert.equal(cleanMultiline('a\uD800\nb\uDFFF'), 'a\nb');
+    assert.equal(cleanOneLine('\u{1F600}\uD800'), '\u{1F600}');
+    assert.ok(!/[\uD800-\uDFFF]/u.test(cleanOneLine('\uD800\u{10FC00}\uDFFF'.split('').reverse().join(''))));
+  });
+
+  it('cleaning is idempotent (the title is cleaned for validation and again when rendered)', () => {
+    const inputs = [
+      ...Object.values(BLANK).flatMap((ch) => [ch, `ab${ch}cd`, `${HEART}${ch}\uFE0F`, `\u2764${ch}\uFE0F`]),
+      HEART, KEYCAP_ONE, TECHNOLOGIST, HEART_ON_FIRE, RAINBOW_FLAG, ENGLAND, KOREAN, BRAILLE,
+      `${BRAILLE}\u2800\u2800${BRAILLE}`, 'x\uD800y', '\u115F\u1161', '\u1100\u1160', '\u115F\u1160',
+      '\u2764\u00AD\uFE0F', '\u{1F469}\u00AD\u200D\u{1F4BB}', `a\u202E${HEART}\u200D`,
+    ];
+    for (const x of inputs) {
+      assert.equal(cleanOneLine(cleanOneLine(x)), cleanOneLine(x), codePoints(x).join(','));
+      assert.equal(cleanMultiline(cleanMultiline(x)), cleanMultiline(x), codePoints(x).join(','));
+    }
+  });
+
+  it('a real report with emoji, Hangul, Braille and a lone surrogate is delivered, cleaned', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, {
+        title: `${HEART} ${KOREAN}\u3164 bug\uD800`,
+        description: `${TECHNOLOGIST} steps: ${BRAILLE}\u2800${BRAILLE} then ${ENGLAND} \uFE0F done`,
+      });
+      assert.equal(res.res.status, 201, JSON.stringify(res.body));
+    });
+    const text = fetchImpl.telegram[0].body.text;
+    assert.ok(text.includes(`<b>${HEART} ${KOREAN} bug</b>`), text);
+    assert.ok(text.includes(`${TECHNOLOGIST} steps: ${BRAILLE} ${BRAILLE} then ${ENGLAND}  done`), text);
+    assert.ok(!/[\uD800-\uDFFF\u3164\u2800]/u.test(text));
+  });
+});
+
+describe('bug reports: invisible characters are judged by the last KEPT character (3.19.1 round 2)', () => {
+  // Review repros: an ignorable character used to be kept when the RAW
+  // character before it looked visible, even when that neighbour was itself
+  // invisible or removed in the same pass. A run of selectors therefore lost
+  // only its first member, and cleaning was not idempotent.
+  const cps = (str) => [...str].map((c) => c.codePointAt(0).toString(16)).join(',');
+  const DI = /^\p{Default_Ignorable_Code_Point}$/u;
+  const VISIBLE_BASE = /^[\p{L}\p{N}\p{P}\p{S}]$/u;
+
+  let saved;
+  before(() => {
+    saved = saveEnv();
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '1000', KANBAN_REPORT_DAILY_CAP: '1000' });
+  });
+  after(() => restoreEnv(saved));
+
+  const BLANK_TITLES = {
+    'U+FE00 U+FE00': '\uFE00\uFE00',
+    'U+3164 U+FE00': '\u3164\uFE00',
+    'U+E0100 U+E0100': '\u{E0100}\u{E0100}',
+    'U+115F U+FE00': '\u115F\uFE00',
+    'U+17B4 U+FE00': '\u17B4\uFE00',
+    'U+034F U+FE00': '\u034F\uFE00',
+    'U+3164 U+FE0F': '\u3164\uFE0F',
+    'U+FE00 x 5': '\uFE00'.repeat(5),
+    'space + U+FE00': ' \uFE00',
+    'U+180B U+180B': '\u180B\u180B',
+    'U+FFF9 U+FFFA U+FFFB': '\uFFF9\uFFFA\uFFFB',
+    'U+13430 U+1343F': '\u{13430}\u{1343F}',
+    'U+1D159': '\u{1D159}',
+    'U+1D159 x3': '\u{1D159}'.repeat(3),
+    'U+1D159 U+FE00': '\u{1D159}\uFE00',
+  };
+  const BLANK_DESCRIPTIONS = {
+    '11 x U+FE00': '\uFE00'.repeat(11),
+    '11 x U+E0100': '\u{E0100}'.repeat(11),
+    'U+3164 + 11 x U+FE00': '\u3164' + '\uFE00'.repeat(11),
+    '6 x (U+115F U+FE00)': '\u115F\uFE00'.repeat(6),
+    '12 x U+FFF9': '\uFFF9'.repeat(12),
+    '12 x U+13430': '\u{13430}'.repeat(12),
+    '5 x U+1D159': '\u{1D159}'.repeat(5),
+    '12 x U+1D159': '\u{1D159}'.repeat(12),
+    '11 x (U+1D159 U+FE00)': '\u{1D159}\uFE00'.repeat(11),
+  };
+
+  it('every review repro is rejected through the route (title: invalid_title, description: invalid_description), nothing sent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      for (const [name, title] of Object.entries(BLANK_TITLES)) {
+        assert.equal(cleanOneLine(title), '', `${name} cleans to ${cps(cleanOneLine(title))}`);
+        const res = await post(baseUrl, { title });
+        assert.equal(res.res.status, 400, name);
+        assert.equal(res.body.error, 'invalid_title', name);
+      }
+      for (const [name, description] of Object.entries(BLANK_DESCRIPTIONS)) {
+        assert.equal(cleanMultiline(description).trim(), '', `${name} cleans to ${cps(cleanMultiline(description))}`);
+        const res = await post(baseUrl, { description });
+        assert.equal(res.res.status, 400, name);
+        assert.equal(res.body.error, 'invalid_description', name);
+      }
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('a selector run collapses to the one that follows a real base; selectors after an ignorable or a removed character go', () => {
+    assert.equal(cleanOneLine('\u845B\u{E0100}\u{E0100}\u{E0101}'), '\u845B\u{E0100}');
+    assert.equal(cleanOneLine('\u2764\uFE0F\uFE0F\uFE0F'), '\u2764\uFE0F');
+    assert.equal(cleanOneLine('a\uFE00\uFE00'), 'a\uFE00');
+    assert.equal(cleanOneLine('a\u00AD\uFE00'), 'a', 'the base is the last KEPT character, not the soft hyphen');
+    assert.equal(cleanOneLine('\u2764\u00AD\uFE0F'), '\u2764');
+    assert.equal(cleanOneLine('e\u0301\uFE00'), 'e\u0301', 'a combining mark is no base');
+    assert.equal(cleanOneLine('\u182E\u180B\u180C'), '\u182E\u180B');
+    assert.equal(cleanOneLine('\u115F\u1161\uFE00'), '\u115F\u1161\uFE00', 'a real vowel is a base');
+    assert.equal(cleanOneLine('\u1100\u1160\uFE00'), '\u1100\u1160', 'a kept filler is no base');
+    assert.equal(cleanOneLine('\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}\uFE0F'), '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}', 'no VS16 after a flag tag run');
+    assert.equal(cleanOneLine('a\u{1D159}\uFE00b'), 'ab', 'the null notehead is removed and is no base');
+    assert.equal(cleanOneLine('a\uFFF9b\uFFFAc\uFFFBd\u{13430}e\u{1343F}'), 'abcde');
+  });
+
+  it('what must still work is delivered intact through the route', async () => {
+    const KEEP = [
+      ['emoji + VS16', '\u2764\uFE0F ok'],
+      ['keycap', 'press 1\uFE0F\u20E3 now'],
+      ['CJK + variation selector', 'name \u845B\u{E0100} here'],
+      ['Mongolian + FVS', 'word \u182E\u1823\u1829\u180B\u182D'],
+      ['ZWJ emoji', 'dev \u{1F469}\u{1F3FD}\u200D\u{1F4BB} \u2764\uFE0F\u200D\u{1F525}'],
+      ['old Hangul', 'jamo \u115F\u1161 \u1100\u1160'],
+      ['subdivision flags', 'flags \u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'],
+      ['Hangul and Braille', '\uD55C\uAD6D\uC5B4 \u3131 \u2813\u2811\u2807\u2807\u2815'],
+    ];
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      for (const [name, text] of KEEP) {
+        const res = await post(baseUrl, { title: text, description: `${text} (description)` });
+        assert.equal(res.res.status, 201, `${name}: ${JSON.stringify(res.body)}`);
+      }
+    });
+    KEEP.forEach(([name, text], i) => {
+      const sent = fetchImpl.telegram[i].body.text;
+      assert.ok(sent.includes(`<b>${text}</b>`), `${name} title: ${cps(sent)}`);
+      assert.ok(sent.includes(`<pre>${text} (description)</pre>`), `${name} description`);
+    });
+  });
+
+  it('fuzz: cleaning is idempotent and never leaves invisible-only text (all default-ignorables + marks, whitespace, real text)', () => {
+    const ignorables = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const ch = String.fromCodePoint(cp);
+      if (DI.test(ch)) ignorables.push(ch);
+    }
+    assert.ok(ignorables.length > 4000, `only ${ignorables.length} default-ignorables found`);
+    const groups = [
+      ignorables,
+      // The selectors and fillers that need context, weighted up.
+      ['\uFE00', '\uFE0D', '\uFE0E', '\uFE0F', '\u{E0100}', '\u{E01EF}', '\u115F', '\u1160', '\u3164', '\uFFA0', '\u180B', '\u180E', '\u180F', '\u200D', '\u{E0067}', '\u{E0062}', '\u{E007F}', '\u00AD', '\u034F', '\u17B4'],
+      ['\u0301', '\u0300', '\u036F', '\u20E3', '\u0E31', '\u093F', '\u{1F3FB}'],
+      [' ', '\t', '\n', '\u00A0', '\u3000', '\u2800', '\u2028', '\u202E', '\u200B', '\uFEFF', '\uFFF9', '\u{13430}', '\u{1D159}', '\uD800', '\uDC00'],
+      ['a', 'Z', '7', '#', '*', '.', '@', '\u845B', '\uD55C', '\u3131', '\u1100', '\u1161', '\u182E', '\u1823', '\u2813', '\u{1F600}', '\u2764', '\u{1F469}', '\u{1F4BB}', '\u{1F3F4}', '\u0628'],
+    ];
+    let seed = 0x5eed;
+    const rand = (n) => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return (seed >>> 8) % n; };
+    let idempotenceFailures = 0;
+    let invisibleOnly = 0;
+    const examples = [];
+    for (let n = 0; n < 20000; n++) {
+      const len = 1 + rand(10);
+      let x = '';
+      for (let k = 0; k < len; k++) { const g = groups[rand(groups.length)]; x += g[rand(g.length)]; }
+      for (const clean of [cleanOneLine, cleanMultiline]) {
+        const once = clean(x);
+        if (clean(once) !== once) { idempotenceFailures++; if (examples.length < 5) examples.push(`idem ${cps(x)}`); }
+        const rest = once.replace(/[\p{M}\s]/gu, '');
+        if (rest !== '' && ![...rest].some((c) => VISIBLE_BASE.test(c) && !DI.test(c))) {
+          invisibleOnly++;
+          if (examples.length < 5) examples.push(`blank ${cps(x)} -> ${cps(once)}`);
+        }
+        if (/[\uD800-\uDFFF]/u.test(once)) { invisibleOnly++; if (examples.length < 5) examples.push(`surrogate ${cps(x)}`); }
+      }
+    }
+    assert.equal(idempotenceFailures, 0, examples.join('\n'));
+    assert.equal(invisibleOnly, 0, examples.join('\n'));
+  });
+});
+
 describe('bug reports: shared 429 pause', () => {
   let saved;
   before(() => {

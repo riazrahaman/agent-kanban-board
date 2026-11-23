@@ -11,7 +11,7 @@
  *   GET  /api/events?ticket=<t>    (read-auth)    -> 200 text/event-stream
  *
  * Format: `<payload-base64url>.<mac-hex>` where
- *   payload = base64url(JSON.stringify({ jti, exp, role, project }))
+ *   payload = base64url(JSON.stringify({ typ, jti, exp, role, project, projects? }))
  *   mac     = HMAC_SHA256(secret, payload) hex
  *
  * Single-use is enforced with a small in-memory issued-set: a ticket's `jti` is
@@ -118,7 +118,7 @@ export function liveStreamTicketCount() {
  * Mints a stream ticket bound to a role + project. A signing key is always
  * available (see ticketSecret); who may mint is decided by the route.
  */
-export function createStreamTicket({ role, project, agentId = null, credentialId = null, masterUntil = null } = {}) {
+export function createStreamTicket({ role, project, projects = null, agentId = null, credentialId = null, masterUntil = null } = {}) {
   // ticketSecret() always yields a key (KANBAN_AUTH_SECRET or the per-process
   // fallback), so a mint never fails for want of one.
   const secret = ticketSecret();
@@ -134,6 +134,13 @@ export function createStreamTicket({ role, project, agentId = null, credentialId
   const exp = Date.now() + TICKET_TTL_MS;
   const claims = { typ: 'stream', jti, exp, role: role ?? null, project: project ?? null };
   if (typeof agentId === 'string' && agentId !== '') claims.agent_id = agentId;
+  // A ticket for a credential valid under SEVERAL projects (no single project
+  // named at mint time) carries that exact set: the reader treats it as the
+  // ticket's whole scope, never as "all projects".
+  if (Array.isArray(projects)) {
+    claims.project = null;
+    claims.projects = [...new Set(projects.filter((p) => typeof p === 'string' && p !== ''))].sort();
+  }
   // A MASTER ticket (minted from an unlock token, not a board credential): it
   // carries no role or project, only the instant the unlock itself expires.
   if (Number.isInteger(masterUntil)) claims.master_until = masterUntil;
@@ -145,7 +152,8 @@ export function createStreamTicket({ role, project, agentId = null, credentialId
 }
 
 /**
- * Verifies and CONSUMES a stream ticket. Returns `{ role, project }` on success,
+ * Verifies and CONSUMES a stream ticket. Returns `{ role, project, projects }`
+ * on success (`projects` is the exact set for a multi-project ticket, else null),
  * or null when the key is unset, the format is malformed, the MAC fails, the
  * ticket has expired, or it was never issued / has already been used.
  */
@@ -168,8 +176,13 @@ export function verifyStreamTicket(ticket) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  const { typ, jti, exp, role, project, agent_id: agentId, master_until: masterUntil } = parsed;
+  const { typ, jti, exp, role, project, projects, agent_id: agentId, master_until: masterUntil } = parsed;
   if (typ !== 'stream') return null;
+  // A multi-project scope must be a list of non-empty strings; anything else
+  // is refused rather than read as unscoped.
+  if (projects !== undefined && !(Array.isArray(projects) && projects.every((p) => typeof p === 'string' && p !== ''))) {
+    return null;
+  }
   if (!Number.isInteger(exp) || exp <= Date.now()) return null;
   if (typeof jti !== 'string' || !issued.has(jti)) return null;
 
@@ -178,6 +191,8 @@ export function verifyStreamTicket(ticket) {
   return {
     role,
     project,
+    // Present only on a multi-project ticket: the exact set it may read.
+    projects: Array.isArray(projects) ? [...projects] : null,
     agent_id: typeof agentId === 'string' && agentId !== '' ? agentId : null,
     // Present only on a master ticket: details-only, never a board credential.
     master_until: Number.isInteger(masterUntil) ? masterUntil : null,

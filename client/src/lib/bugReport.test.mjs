@@ -59,6 +59,29 @@ test('validateTitle: empty/whitespace-only is rejected', () => {
   assert.equal(validateTitle('a'), undefined)
 })
 
+test('validateTitle: a title of only invisible characters says so; real text with selectors passes', () => {
+  const msg = 'Title is empty or only invisible characters.'
+  assert.equal(validateTitle(''), msg)
+  assert.equal(validateTitle('   '), msg)
+  for (const blank of ['\u3164', '\u2800\u2800', '\uFE00\uFE00', '\u3164\uFE00', '\u{E0100}\u{E0100}', '\u00AD\u034F\u180E\u2061\uFE0F', '\u{E0020}\u17B4', '\uFFF9', '\u{13430}', '\u{1D159}', ' \u200B\uFEFF ', '\uD800']) {
+    assert.equal(validateTitle(blank), msg, [...blank].map((c) => c.codePointAt(0).toString(16)).join(','))
+  }
+  for (const real of ['a', '\u2764\uFE0F', '1\uFE0F\u20E3', '\u845B\u{E0100}', '\uD55C\uAD6D\uC5B4', '\u2813\u2811', '\u{1F469}\u200D\u{1F4BB}', '\u0600']) {
+    assert.equal(validateTitle(real), undefined, real)
+  }
+  assert.match(describeSubmitError(400, 'invalid_title'), /empty or only invisible characters/)
+})
+
+test('validateDescription: a description of only invisible characters says so; real text is measured as before', () => {
+  const msg = 'Description is empty or only invisible characters.'
+  for (const blank of ['', '   ', '\u3164'.repeat(12), '\u2800'.repeat(12), '\uFE00'.repeat(11), '\u{1D159}'.repeat(12), ' \u200B\n\uFEFF ']) {
+    assert.equal(validateDescription(blank), msg, [...blank].map((c) => c.codePointAt(0).toString(16)).join(','))
+  }
+  assert.match(validateDescription('short'), /at least 10/)
+  assert.equal(validateDescription('A real description.'), undefined)
+  assert.equal(validateDescription('\uD55C\uAD6D\uC5B4 \u2813\u2811 \u2764\uFE0F ok'), undefined)
+})
+
 test('validateTitle: accepts exactly 120 chars, rejects 121', () => {
   assert.equal(validateTitle('x'.repeat(120)), undefined)
   assert.ok(validateTitle('x'.repeat(121)))
