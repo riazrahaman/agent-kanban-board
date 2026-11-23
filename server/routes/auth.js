@@ -191,24 +191,37 @@ router.post('/stream-ticket', (req, res) => {
     }
   }
 
+  // The ticket's scope must never exceed what the same credential reads as a
+  // bearer (computeAuthorizedProjects in middleware/auth.js): an admin
+  // session and the admin/global tokens read every project, a project token
+  // reads exactly the projects it is listed under, any other session reads
+  // its own project.
+  const adminSession = cred.kind === 'session' && cred.session.role === 'admin';
   const rawProject = body.project;
   let project;
+  let projects = null;
   if (typeof rawProject === 'string' && isValidProjectId(rawProject)) {
     project = rawProject;
+  } else if (adminSession || cred.kind === 'admin' || cred.kind === 'global') {
+    // Unscoped ('*') as bearers, so unscoped tickets (project null). The admin
+    // role is checked BEFORE session.project: /api/auth/session always stamps
+    // a project (the default one when none is named), and an admin session's
+    // ticket used to stay pinned to it while the same session as a bearer
+    // read every project.
+    project = null;
   } else if (cred.kind === 'session') {
-    // An admin session reads every project as a bearer; its ticket must not
-    // be narrower (nor, since 3.18.1 enforces ticket scope, silently pinned
-    // to the default project).
-    project = cred.session.project ?? (cred.session.role === 'admin' ? null : defaultProjectName());
+    // A non-admin session reads only its own project. A session without one
+    // reads nothing as a bearer, so it gets no ticket (below) rather than a
+    // default-project one.
+    project = cred.session.project ?? null;
   } else if (cred.kind === 'project' && cred.projects.length === 1) {
     project = cred.projects[0];
-  } else if (cred.kind === 'admin' || cred.kind === 'global') {
-    // 3.18.1: the admin and global tokens are unscoped ('*') as bearers. With
-    // no project named, their ticket is unscoped too (project null), so the
-    // ticket grants exactly what the credential does: before 3.18.1 the
-    // ticket's project scope was dropped by the auth middleware, which hid
-    // that these tickets were pinned to the default project.
+  } else if (cred.kind === 'project') {
+    // A token listed under several projects, with none named (the browser's
+    // "All projects" view): a ticket for exactly that set. Before, the mint
+    // fell back to the default project and 403'd unless the token held it.
     project = null;
+    projects = [...cred.projects];
   } else {
     project = defaultProjectName();
   }
@@ -216,12 +229,12 @@ router.post('/stream-ticket', (req, res) => {
   // Deep-review (auth P1): a stream ticket carries role AND project — so the
   // mint must be scope-checked, or a caller mints a ticket for a project its
   // credential cannot see and the enforced read gates are bypassed.
-  if (cred.kind === 'project' && !cred.projects.includes(project)) {
+  if (cred.kind === 'project' && projects === null && !cred.projects.includes(project)) {
     return res.status(403).json({
       error: `Forbidden: token is not authorized for project '${project}'`,
     });
   }
-  if (cred.kind === 'session' && cred.session.project && project !== cred.session.project) {
+  if (cred.kind === 'session' && !adminSession && (!cred.session.project || project !== cred.session.project)) {
     return res.status(403).json({
       error: `Forbidden: token is not authorized for project '${project}'`,
     });
@@ -230,7 +243,7 @@ router.post('/stream-ticket', (req, res) => {
   let boundAgentId = null;
   if (cred.kind === 'session') boundAgentId = cred.session.agent_id ?? null;
   else if (cred.kind === 'project') boundAgentId = cred.credential.agent_id ?? null;
-  const minted = createStreamTicket({ role, project, agentId: boundAgentId, credentialId: credentialIdFor(req) });
+  const minted = createStreamTicket({ role, project, projects, agentId: boundAgentId, credentialId: credentialIdFor(req) });
   if (minted?.refused) {
     res.set('Retry-After', String(Math.ceil(minted.retryAfterMs / 1000)));
     return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: minted.retryAfterMs });
@@ -240,6 +253,7 @@ router.post('/stream-ticket', (req, res) => {
     expires_at: minted.expiresAt,
     role,
     project,
+    ...(projects ? { projects: [...projects].sort() } : {}),
   });
 });
 
