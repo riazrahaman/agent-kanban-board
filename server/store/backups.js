@@ -191,6 +191,16 @@ function isTransientTemp(name) {
   return name.startsWith('.tmp_') || name.endsWith('.tmp');
 }
 
+/**
+ * Directory names never copied into a snapshot, at any depth. `.secrets/`
+ * holds the master-unlock signing secret (masterUnlock.js): it is a server
+ * secret, not board data, and a snapshot directory (0755) and the Telegram
+ * archive are both readable by more people than the secret is. A board
+ * restored onto a fresh volume therefore generates a new secret, and every
+ * browser enters the master password again.
+ */
+export const BACKUP_EXCLUDED_DIRS = Object.freeze(['.secrets']);
+
 async function copyDirTree(src, dest, skip = new Set()) {
   const entries = await readdir(src, { withFileTypes: true });
   await mkdir(dest, { recursive: true });
@@ -199,6 +209,7 @@ async function copyDirTree(src, dest, skip = new Set()) {
     const d = path.join(dest, entry.name);
     if (entry.isDirectory()) {
       if (skip.has(path.resolve(s))) continue;
+      if (BACKUP_EXCLUDED_DIRS.includes(entry.name)) continue;
       await copyDirTree(s, d, skip);
     } else {
       // COR-105: atomic-write temp files are transient; skip them. Any other

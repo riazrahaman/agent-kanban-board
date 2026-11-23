@@ -14,7 +14,7 @@ import { referencedProjects } from './projectScope.js';
 import { isValidProjectId, defaultProjectName, emitAudit, isPrivilegedRole, getProjectSummaries } from '../store.js';
 import { authSecret, verifySessionToken } from '../sessionAuth.js';
 import { verifyStreamTicket } from '../streamTicket.js';
-import { authHardCapExceeded, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
+import { authFailuresExceeded, authHardCapExceeded, recordAuthFailure, rejectFailedAuth, sendAuthThrottled } from './rateLimit.js';
 import { noteRolePresentation } from '../utils/roleCrossing.js';
 import { masterPasswordConfigured, requestUnlock } from '../masterUnlock.js';
 
@@ -432,11 +432,52 @@ function authorizeRead(req) {
  * to disclose, not whether to serve one.
  *
  * Side effect matches the middleware's: on success `req.caller.role` may be
- * refined from a stream ticket. No failure is recorded, so calling this on a
- * probe path can never trip the auth-failure rate limiter.
+ * refined from a stream ticket. No failure is recorded here; a route that must
+ * count a wrong token as a strike calls `chargeInvalidReadToken` as well.
  */
 export function hasReadCredential(req) {
   return authorizeRead(req);
+}
+
+/**
+ * 3.18.1 — failed-auth strikes for the identify-only routes that sit outside
+ * the read check (`GET /api/auth/details`, mounted before this middleware, and
+ * `GET /api/health`, a probe path). Both answer a valid and an invalid token
+ * differently by design, so on a board that gates reads
+ * (`KANBAN_READ_AUTH=token`) they would let a caller test token guesses that an
+ * ordinary read counts as strikes. This charges exactly what such a read would:
+ *
+ *   - read auth off, or no bearer / `x-api-token` presented: nothing (an
+ *     anonymous caller and every health probe that sends no token are
+ *     untouched; on an open board an invalid token is just an anonymous read).
+ *   - past the hard cap: 429, as the middleware refuses any credential-checked
+ *     read up front.
+ *   - a token that is not a board credential, with no valid unlock: one strike,
+ *     and the failed-auth 429 once the address is over budget. Below the
+ *     budget the route still answers normally (its documented body).
+ *   - a valid token, or a valid `X-Kanban-Unlock` (which opens reads on its
+ *     own): nothing.
+ *
+ * Returns true when it has answered the request (429); the caller then stops.
+ */
+export function chargeInvalidReadToken(req, res) {
+  if (!readAuthEnabled()) return false;
+  if (!extractToken(req)) return false;
+  const hardCapRetry = authHardCapExceeded(req);
+  if (hardCapRetry !== null) {
+    sendAuthThrottled(res, hardCapRetry);
+    return true;
+  }
+  if (getAuthorizedProjects(req) !== null) return false;
+  if (requestUnlock(req) !== null) return false;
+  logAuthFailure(req, 401, 'invalid-token');
+  const retryAfter = authFailuresExceeded(req);
+  recordAuthFailure(req);
+  if (retryAfter !== null) {
+    sendAuthThrottled(res, retryAfter);
+    return true;
+  }
+  return false;
 }
 
 /**

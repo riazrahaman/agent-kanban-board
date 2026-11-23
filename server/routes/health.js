@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as store from '../store.js';
-import { parseProjectTokens, getAuthorizedProjects } from '../middleware/auth.js';
+import { parseProjectTokens, getAuthorizedProjects, chargeInvalidReadToken } from '../middleware/auth.js';
 import { checkCredentialCoverage } from '../utils/credentialMap.js';
 import { deployDriftStatus } from '../deployDrift.js';
 // C4 (v3.12.5): the deployed version comes from the one shared helper, never a
@@ -22,6 +22,11 @@ function asyncHandler(handler) {
  * createApp() before the SPA catch-all so it is never swallowed by the index.
  */
 router.get('/', asyncHandler(async (req, res) => {
+  // 3.18.1: the body below names projects for a valid token only (v3.2.0, by
+  // design), so with KANBAN_READ_AUTH=token an invalid token presented here is
+  // a failed-auth strike, as on any read. A probe that sends no token is never
+  // charged.
+  if (chargeInvalidReadToken(req, res)) return;
   const loaded = store.isStoreLoaded();
   // B3 (v3.12.2): the probe only needs the count — getTasks() sorts a full
   // copy of the live set for nothing. O(1) instead of O(n log n).

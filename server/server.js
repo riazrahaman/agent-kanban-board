@@ -28,7 +28,7 @@ import { staticCacheControl, setStaticHeaders } from './utils/staticCache.js';
 import { createBugReportsRouter } from './routes/bugReports.js';
 import { createAskRouter } from './routes/ask.js';
 import { formatLine, log as emitLog, logError, logWarn } from './logger.js';
-import { MASTER_PASSWORD_MIN_LENGTH, masterPasswordConfigured, masterUnlockKey, redactTaskDetails, unlockSecretPersisted } from './masterUnlock.js';
+import { MASTER_PASSWORD_MIN_LENGTH, masterPasswordConfigured, masterUnlockKey, redactTaskDetails, unlockSecretFallbackReason, unlockSecretPersisted } from './masterUnlock.js';
 
 // ---------------------------------------------------------------------------
 // SEC-05 (v2.6.0) — cap concurrent SSE streams.
@@ -803,7 +803,13 @@ export async function startServer(
   if (masterPasswordConfigured()) {
     try {
       masterUnlockKey();
-      emitLog('info', 'auth', `master password: card details are gated (unlock secret ${unlockSecretPersisted() ? 'stored under the data directory' : 'per-process only'})`);
+      const fallback = unlockSecretFallbackReason();
+      const where = unlockSecretPersisted()
+        ? 'stored under the data directory'
+        : fallback === 'read_error'
+          ? 'per-process only: the stored secret file could not be read and was left untouched'
+          : 'per-process only';
+      emitLog('info', 'auth', `master password: card details are gated (unlock secret ${where})`);
     } catch (err) {
       logWarn('auth', 'master password key setup failed', { error: err.message });
     }

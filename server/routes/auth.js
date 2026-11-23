@@ -6,7 +6,7 @@ import {
   consumeSessionChallenge,
   sessionNonceMode,
 } from '../sessionChallenge.js';
-import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch, isKnownCredential, authLogEnabled, resolveDetailAccess } from '../middleware/auth.js';
+import { VALID_ROLES, parseProjectTokens, tokensMatch, emitRoleBindingMismatch, emitIdentityBindingMismatch, isKnownCredential, authLogEnabled, resolveDetailAccess, chargeInvalidReadToken } from '../middleware/auth.js';
 import {
   MASTER_PASSWORD_MAX_LENGTH,
   createUnlockToken,
@@ -326,10 +326,15 @@ router.post('/unlock', (req, res) => {
  *   unlock:  true   the X-Kanban-Unlock token it sent is valid right now
  *
  * It reveals nothing an anonymous GET /api/tasks does not (whether details are
- * withheld), identifies only, and never records an auth failure.
+ * withheld) and identifies only. But it does tell a valid token from an invalid
+ * one, so on a board that gates reads (KANBAN_READ_AUTH=token) an invalid
+ * bearer / x-api-token counts a failed-auth strike here exactly as on a read,
+ * with the same 429 once the address is over budget (3.18.1). Anonymous callers
+ * and a valid unlock are unaffected.
  */
 router.get('/details', (req, res) => {
   res.set('Cache-Control', 'private, no-store');
+  if (chargeInvalidReadToken(req, res)) return undefined;
   res.vary('Authorization');
   res.vary('X-API-Token');
   res.vary('X-Kanban-Unlock');

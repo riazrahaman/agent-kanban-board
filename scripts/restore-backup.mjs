@@ -33,7 +33,7 @@
  *   node scripts/restore-backup.mjs /mnt/restore/2026-09-24T10-00-00-000Z --dry-run
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const MANIFEST = 'backup-manifest.json';
 
@@ -118,6 +118,14 @@ const excluded = new Set([resolve(src, MANIFEST)]);
 if (defaultDest) for (const rel of defaultFiles) excluded.add(resolve(src, rel));
 // The git card tree never belongs in the data dir.
 if (gitSnap) excluded.add(resolve(gitSnap));
+// `.secrets/` (the master-unlock signing secret) is never restored, at any
+// depth: snapshots made since 3.18.1 leave it out, but a 3.18.0 snapshot holds
+// one, and copying it would overwrite the target's live secret. A board
+// restored onto a fresh volume generates a new secret on start (every browser
+// enters the master password again); an in-place restore keeps the existing one.
+const SECRET_DIRS = new Set(['.secrets']);
+const isSecretPath = (p) => relative(src, resolve(p)).split(sep).some((part) => SECRET_DIRS.has(part));
+const keep = (p) => !excluded.has(resolve(p)) && !isSecretPath(p);
 
 console.log(`restore-backup: snapshot ${src}`);
 console.log(`restore-backup: target  ${dest}${dryRun ? ' (dry run)' : ''}`);
@@ -141,7 +149,8 @@ if (gitDest) {
 }
 if (dryRun) {
   for (const name of readdirSync(src)) {
-    if (!excluded.has(resolve(src, name))) console.log(`  would copy: ${name}`);
+    if (keep(resolve(src, name))) console.log(`  would copy: ${name}`);
+    else if (SECRET_DIRS.has(name)) console.log(`  skipping: ${name}/ (signing secret, never restored)`);
   }
   if (defaultDest) for (const rel of defaultFiles) console.log(`  would copy: ${rel} -> ${join(defaultDest, rel)}`);
   if (gitDest) console.log(`  would copy: ${manifest.git.snapshot_dir}/ -> ${gitDest}`);
@@ -149,7 +158,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-cpSync(src, dest, { recursive: true, filter: (p) => !excluded.has(resolve(p)) });
+cpSync(src, dest, { recursive: true, filter: keep });
 if (defaultDest) {
   for (const rel of defaultFiles) {
     const from = join(src, rel);
@@ -161,7 +170,7 @@ if (defaultDest) {
 }
 if (gitDest) {
   // The card tree only; an existing .git in the target is left untouched.
-  cpSync(gitSnap, gitDest, { recursive: true });
+  cpSync(gitSnap, gitDest, { recursive: true, filter: (p) => !isSecretPath(p) });
 }
 console.log('restore-backup: copy complete');
 console.log('restore-backup: restart the service so the store reloads from the restored files');

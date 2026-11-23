@@ -24,9 +24,11 @@
  *
  * `serverSecret` and `salt` are RANDOM (32 and 16 bytes), generated once and
  * kept in `<data dir>/.secrets/master-unlock.json` (directory 0700, file 0600)
- * so unlocks survive a restart; if that file cannot be read or written they
- * live for the process only (a warning says so, and a restart then asks every
- * browser for the password again). Nothing a client ever holds can therefore
+ * so unlocks survive a restart; if that file cannot be written they live for
+ * the process only (a warning says so, and a restart then asks every browser
+ * for the password again). A file that exists but cannot be READ is never
+ * overwritten: that run uses a per-process secret and leaves the file alone.
+ * `.secrets/` is never included in a backup (store/backups.js). Nothing a client ever holds can therefore
  * be checked offline against a password guess: verifying a MAC needs the
  * server's random secret. The scrypt fingerprint only BINDS the key to the
  * current password, so rotating the password still revokes every outstanding
@@ -46,6 +48,9 @@ import path from 'node:path';
 import { jsonDataDir } from './task-identity.js';
 import { tokensMatch } from './utils/constantTime.js';
 import { addressOwnerKey } from './utils/addressKey.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('auth');
 
 /** Shortest master password the server will start with. */
 export const MASTER_PASSWORD_MIN_LENGTH = 12;
@@ -101,28 +106,87 @@ function validMaterial(parsed) {
 }
 
 /**
- * Loads the random signing secret + salt for the current data dir, creating
- * them on first use. Falls back to per-process values when the file cannot be
- * read or written (read-only volume): unlocks then do not survive a restart.
+ * Tightens a `.secrets/` directory that is group- or world-writable (restored
+ * from an archive, created by hand) back to 0700, and says so. Best effort.
+ */
+function tightenSecretDir(dir) {
+  let info;
+  try {
+    info = fs.statSync(dir);
+  } catch {
+    return; // absent (created 0700 below) or unreadable (the read reports it)
+  }
+  if (!info.isDirectory() || (info.mode & 0o022) === 0) return;
+  const was = (info.mode & 0o777).toString(8).padStart(3, '0');
+  try {
+    fs.chmodSync(dir, 0o700);
+    log.warn('tightened a group/world-writable unlock secret directory to 0700', { path: dir, was });
+  } catch (err) {
+    log.warn('unlock secret directory is group/world-writable and could not be tightened', { path: dir, was, code: err?.code });
+  }
+}
+
+/**
+ * Loads the random signing secret + salt for the current data dir. Three cases
+ * are told apart, and none of them ever logs a secret value:
+ *
+ *   - file MISSING (ENOENT): first start; create it and log that (info).
+ *   - file present but CORRUPT or EMPTY: replace it with fresh material, with a
+ *     warning naming the path (never the content: a JSON parse error message
+ *     quotes the input, so it is not logged either). Outstanding unlocks die.
+ *   - READ ERROR (EACCES, EIO, ...): the stored secret may be perfectly good,
+ *     so it is NOT rotated. This run uses a per-process key instead (a warning
+ *     says so, and the startup line reports "per-process"); the next start
+ *     that can read the file gets the stored secret back.
+ *
+ * A file that cannot be written (read-only volume) also leaves a per-process
+ * secret: unlocks then do not survive a restart.
  */
 function loadMaterial() {
   const dir = path.join(jsonDataDir(), UNLOCK_SECRET_DIR);
   if (material && material.dir === dir) return material;
   const file = path.join(dir, UNLOCK_SECRET_FILE);
+  tightenSecretDir(dir);
   let loaded = null;
   let persisted = false;
+  let state = 'missing'; // missing | corrupt | read_error | stored
+  let readErrorCode = null;
+  let raw = null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      state = 'missing';
+    } else {
+      state = 'read_error';
+      readErrorCode = (err && err.code) || 'unknown';
+    }
+  }
+  if (raw !== null) {
+    let parsed = null;
+    try { parsed = JSON.parse(raw); } catch { parsed = null; }
     if (validMaterial(parsed)) {
       loaded = { secret: Buffer.from(parsed.secret, 'hex'), salt: Buffer.from(parsed.salt, 'hex') };
       persisted = true;
+      state = 'stored';
       // Tighten a file that was restored or copied with looser permissions.
       try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    } else {
+      state = 'corrupt';
     }
-  } catch {
-    loaded = null; // absent or unreadable: create below
   }
-  if (!loaded) {
+  if (state === 'read_error') {
+    loaded = { secret: crypto.randomBytes(32), salt: crypto.randomBytes(16) };
+    warnedEphemeral = true;
+    log.warn(
+      'the master-unlock signing secret file could not be read; it is left untouched and this run uses a ' +
+      'per-process secret (unlocks made now end at the next restart; fix the file permissions or volume)',
+      { path: file, code: readErrorCode },
+    );
+  } else if (!loaded) {
+    if (state === 'corrupt') {
+      log.warn('the master-unlock signing secret file is empty or corrupt; replacing it (every browser must re-enter the master password)', { path: file });
+    }
     loaded = { secret: crypto.randomBytes(32), salt: crypto.randomBytes(16) };
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -138,6 +202,7 @@ function loadMaterial() {
       );
       fs.renameSync(tmp, file);
       persisted = true;
+      if (state === 'missing') log.info('created the master-unlock signing secret', { path: file });
     } catch {
       persisted = false;
     }
@@ -149,10 +214,22 @@ function loadMaterial() {
       'using a per-process secret, so every browser must re-enter the master password after a restart.'
     );
   }
-  material = { dir, ...loaded, persisted };
+  material = { dir, ...loaded, persisted, state };
   cachedPassword = null;
   cachedKey = null;
   return material;
+}
+
+/**
+ * Why the signing secret is per-process, for the startup line: null when it is
+ * stored on disk (or no usable password is configured), 'read_error' when the
+ * stored file exists but could not be read, 'unwritable' otherwise.
+ */
+export function unlockSecretFallbackReason() {
+  if (!masterPasswordUsable()) return null;
+  const m = loadMaterial();
+  if (m.persisted) return null;
+  return m.state === 'read_error' ? 'read_error' : 'unwritable';
 }
 
 /** Whether the signing secret is stored on disk (false = per-process only). */

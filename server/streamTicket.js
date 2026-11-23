@@ -18,13 +18,14 @@
  * recorded at mint time and deleted on first successful verification, so a
  * replayed or leaked ticket is inert. The client re-mints on every (re)connect.
  *
- * Signing key: `KANBAN_AUTH_SECRET` when set, else the global `KANBAN_AUTH_TOKEN`
- * — so tickets work in any read-auth deployment without forcing a new secret.
+ * Signing key: `KANBAN_AUTH_SECRET` when set, else a random per-process key
+ * (3.18.1). It is never the global `KANBAN_AUTH_TOKEN`: a project-token holder
+ * can mint tickets, and a ticket MACed with the shared token would let them
+ * test guesses of that token offline.
  */
 import crypto from 'node:crypto';
 import { authSecret } from './sessionAuth.js';
 import { tokensMatch } from './utils/constantTime.js';
-import { masterPasswordConfigured } from './masterUnlock.js';
 
 const TICKET_TTL_MS = 60 * 1000;
 
@@ -38,22 +39,20 @@ export function streamTicketTtlMs() {
 }
 
 /**
- * Signing key: the session secret, or the global token as a fallback. A
- * deployment that has neither but does set a master password signs with a
- * RANDOM PER-PROCESS key, so an unlocked browser (and a project-token browser)
- * can still open an authenticated stream. That key is never derived from the
- * master password or anything else a client could guess: a ticket must not be
- * an offline oracle for it. Tickets live 60 seconds and are single-use, so
- * losing the key on restart costs nothing (the client re-mints on reconnect).
+ * Signing key: the session secret (`KANBAN_AUTH_SECRET`) when set, otherwise a
+ * RANDOM PER-PROCESS key. Never a value a client holds or could guess: not the
+ * shared `KANBAN_AUTH_TOKEN` (3.18.1; a project-token holder mints tickets, so
+ * signing with the shared token handed them an offline oracle for it), not the
+ * master password. Tickets live 60 seconds, are single-use and are tracked in
+ * this process's memory anyway (the issued-set), so a ticket never verifies in
+ * another process or after a restart whatever the key; losing the per-process
+ * key on restart costs nothing (the client re-mints on every reconnect).
  */
 let processTicketKey = null;
 
 function ticketSecret() {
   const secret = authSecret();
   if (secret) return secret;
-  const token = process.env.KANBAN_AUTH_TOKEN;
-  if (typeof token === 'string' && token !== '') return token;
-  if (!masterPasswordConfigured()) return null;
   if (processTicketKey === null) processTicketKey = crypto.randomBytes(32);
   return processTicketKey;
 }
@@ -116,8 +115,8 @@ export function liveStreamTicketCount() {
 }
 
 /**
- * Mints a stream ticket bound to a role + project. Returns null when no signing
- * key is configured, so a deployment without any secret cannot hand out tickets.
+ * Mints a stream ticket bound to a role + project. A signing key is always
+ * available (see ticketSecret); who may mint is decided by the route.
  */
 export function createStreamTicket({ role, project, agentId = null, credentialId = null, masterUntil = null } = {}) {
   const secret = ticketSecret();
