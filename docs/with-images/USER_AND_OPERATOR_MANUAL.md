@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.18.1
+**System:** Agent Kanban Board v3.18.2
 
 ---
 
@@ -381,7 +381,7 @@ flowchart TD
             Details["ID, Title, Status, Priority, Assigned Agent"]
             MetaView["Raw JSON Metadata View"]
             Timeline["Reverse-Chronological Agent Logs"]
-            HumanInput["Operator Form:\nAdd manual human log note"]
+            HumanInput["Comment / log / assign forms:\ncurrently hidden (agents use the API)"]
         end
     end
 
@@ -448,12 +448,13 @@ Clicking any card opens the Inspector Sheet (when a master password is configure
 - Read comprehensive task descriptions and structured JSON metadata.
 - **Comments (v2.5.0):** A discussion thread beside the activity log, stored
   server-side as `comments[]` and written through `POST /api/tasks/:id/comments`.
-  The thread renders oldest-first with the author chip and timestamp; the
-  composer shares the sheet's single Agent ID input. Comments are deliberately
+  The thread renders oldest-first with the author chip and timestamp, and is
+  read-only in the sheet: its comment composer is currently hidden (see below),
+  so comments are posted by agents through the API. Comments are deliberately
   separate from the machine `agent_logs` audit trail.
 - **Agent Log:** Reverse-chronological timeline of operational logs submitted by agents.
 - **Stage ownership:** The `stage_owners` history shows which actor created, claimed, or transitioned each lifecycle stage.
-- **Operator Notes (Human Form):** Human operators can enter manual notes directly into the card timeline.
+- **Write forms (currently hidden):** the sheet's "Add a comment..." box with **Post comment**, the log form (Agent ID field, "Add a log message..." box, **Add log entry**) and the **Assignment** block (**Assign** / **Release**) are hidden at the owner's request, on every screen size and for every browser, token holder or not. Agents write comments and log entries through the API (`POST /api/tasks/:id/comments`, `POST /api/tasks/:id/logs`), and a privileged caller assigns or releases with `POST /api/tasks/:id/assign`. The forms' code is kept, so they can be restored.
 
 Privileged operators can remove one task with `DELETE /api/tasks/:id` or bulk-clean selected/filtered tasks with `POST /api/tasks/purge`. Both operations require the admin token or a privileged session and are audited; they are not available to ordinary lifecycle roles.
 
@@ -467,7 +468,7 @@ is written only by `POST /api/tasks/:id/claim` (or `next-claim`) — and the
 audit trail records only real transitions and real log/comment calls.
 
 > [!NOTE]
-> The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser (such as the TaskSheet manual log form) require authorization credentials; the browser holds a server-issued session whose role comes from the server, never a header. For operator log appends outside the browser, use authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token — under role-bound `KANBAN_PROJECT_TOKENS` that means the admin token (which derives `admin`) or an unbound credential, since `human` cannot be bound to a project credential.
+> The frontend dashboard is primarily an observability viewport. When `KANBAN_AUTH_TOKEN` is configured on the backend, mutating API calls directly from the browser require authorization credentials (the TaskSheet's comment, log and assign forms are currently hidden, so the browser makes none from the sheet); the browser holds a server-issued session whose role comes from the server, never a header. For operator log appends outside the browser, use authenticated cURL/HTTP requests with `-H "X-Agent-Role: human"` and the bearer token — under role-bound `KANBAN_PROJECT_TOKENS` that means the admin token (which derives `admin`) or an unbound credential, since `human` cannot be bound to a project credential.
 
 ### 5.3.1 Master Password: Locked and Unlocked Card Details
 The board is always publicly viewable. Whether a visitor can open a card depends on `KANBAN_MASTER_PASSWORD`:
@@ -478,7 +479,7 @@ The board is always publicly viewable. Whether a visitor can open a card depends
 - **The same box still takes an API token.** The browser does not guess which one was typed: it asks the server, and it keeps only what the server recognises. The master password becomes an unlock; a token that is valid for the board is stored as the API token (and also opens card details for the projects it covers). **Anything else, for example a mistyped password, is not saved and is not sent anywhere:** the box keeps what you typed, its border and lock mark turn amber, and the tooltip reads "Not recognised: not saved". Correct it and press Enter again. If the server cannot be asked (network error), nothing is saved either.
 - **Too many wrong attempts:** after 10 unrecognised values in a minute from one address the server refuses further attempts, the correct password included, until the minute is over; the tooltip shows how long to wait. Operators: behind a reverse proxy `KANBAN_TRUST_PROXY` must be set (§3.1), otherwise all visitors share one address and one counter.
 - **Double-click and keyboard:** double-clicking a card (or a signal-rail row) opens the sheet and leaves it open. Cards can also be reached with Tab and opened with Enter or Space.
-- **What the unlock cannot do:** it is read-only. Writing a log or comment, assigning or claiming still needs an API token. The one exception is saving column colours (§5.1.1), for the board-wide palette or an existing project.
+- **What the unlock cannot do:** it is read-only. Writing a log or comment, assigning or claiming still needs an API token (and goes through the API: the sheet's comment, log and assign forms are currently hidden). The one exception is saving column colours (§5.1.1), for the board-wide palette or an existing project.
 - **What stays public when locked:** card titles, milestone labels, issue ids and the short estimate chip are part of the public board. Keep confidential text in the description, comments or log, not in the title.
 - **Other things to know:** with `KANBAN_READ_AUTH=token` the master unlock is accepted as a read credential for every read (cards, metrics, milestones, projects, audit). Ask-the-Board is separate: a holder of the Ask password can receive card text in an answer. The lock mark in the box always reflects what the server says, so an unlock that is no longer valid (password changed) shows as locked and is forgotten.
 
@@ -502,7 +503,7 @@ The dashboard is responsive from ~360px phone widths up to widescreen desktop:
 - **Header rhythm:** On phones the header uses tighter padding (`py-2`) and the title scales down (`text-base`), so it folds to roughly 118px on a 390px viewport instead of a four-row 158px stack.
 - **Filter toolbar:** The toolbar row wraps on phones and every control group may shrink (`min-w-0`), so `Sort`, `Export`, column colours and `Metrics` stay reachable at 360px and up. Each select clamps to `max-w-full`. (Before v2.5.9 the control group was a rigid 720px row clipped by the board column, which made those four controls untappable.)
 - **Phone layout (v3.2.4):** on a touch phone in portrait (below 768px), the page scrolls like a normal website. The header (title, `⋯` and view tabs) stays pinned at the top, every column shows all its cards at full height, and you swipe sideways between columns. Because the page itself scrolls, iOS Safari draws the board behind its translucent floating toolbar and can collapse its address bar. Opening the `⋯` controls unpins the header, so the controls scroll away with the page. While a card, the bug-report dialog or the signal drawer is open, the page behind it is frozen and returns to the same position when you close it.
-- **Viewport height:** on desktop, tablets and landscape phones the app is exactly the visible viewport (`100dvh`) and columns scroll inside themselves, so a visible URL bar never hides content. The task-detail sheet and bug-report dialog always stay at `100dvh`, so their pinned footers stay visible.
+- **Viewport height:** on desktop, tablets and landscape phones the app is exactly the visible viewport (`100dvh`) and columns scroll inside themselves, so a visible URL bar never hides content. The task-detail sheet and bug-report dialog always stay at `100dvh`, so the dialog's pinned footer and the bottom of the sheet stay visible.
 - **Bottom scroll clearance (v3.2.3):** on coarse pointers (touch) below `md`, the board columns, Portfolio and About each reserve `env(safe-area-inset-bottom) + 5rem` of bottom padding, so the last row can be scrolled up clear of iOS Safari's floating bottom toolbar. A mouse window resized under 768px keeps the dense default padding — there is no floating toolbar to clear there.
 - **Pinch zoom (v3.2.4):** iOS Safari has ignored `user-scalable=no` in the viewport meta tag since ~iOS 10, so zoom is instead blocked via `touch-action: pan-x pan-y` on every element (keeps both scroll axes fully intact for every column, sheet and dialog; v3.2.3 set it on the page root only, which WebKit does not carry into scroll containers) plus a JS guard that cancels two-finger `touchmove` and WebKit's pinch-gesture events. One-finger scrolling and taps are never cancelled, and desktop browser zoom (ctrl+wheel, keyboard) is left alone.
 - **Card text sizing (v3.2.3):** iOS Safari's WebKit text autosizer previously inflated multi-line card titles independently of their explicit font size, next to mono status badges that stayed their declared size — `text-size-adjust: 100%` disables that autosizing so the rendered scale matches the design system everywhere.

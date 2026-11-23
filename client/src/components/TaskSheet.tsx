@@ -46,7 +46,8 @@ export default function TaskSheet({ task, onClose }: Props) {
   // (a touch double-tap reports `detail` 1). A deliberate click still closes.
   // For the same moment the sheet itself takes no pointer input either: it
   // slides in over the board (and over the signal rail), so the second click
-  // could otherwise land on one of its buttons (Assign, Release, Close).
+  // could otherwise land on one of its buttons (Close; and Assign / Release
+  // when that hidden block is restored).
   const openedAt = useRef(0)
   const [guarding, setGuarding] = useState(false)
   const taskKey = task ? `${task.project}/${task.id}` : null
@@ -123,6 +124,24 @@ export default function TaskSheet({ task, onClose }: Props) {
       setCommenting(false)
     }
   }
+
+  // The comment composer, the log composer (with its Agent ID field) and the
+  // Assignment block are hidden at the owner's request ("Hidden completely"):
+  // agents write comments and logs through the API, and in a browser without a
+  // token these forms only produced 401s. Their JSX is commented out below, not
+  // deleted; the handlers, state and api.ts calls are kept so restoring them is
+  // only an un-comment. While hidden, `void` keeps what only the JSX read
+  // referenced (noUnusedLocals); drop these lines when restoring.
+  void handleAssign
+  void handleSubmit
+  void handleComment
+  void setAgentId
+  void submitting
+  void commenting
+  void error
+  void commentError
+  void assigning
+  void assignError
 
   return (
     <>
@@ -206,7 +225,10 @@ export default function TaskSheet({ task, onClose }: Props) {
               </button>
             </div>
 
-            <div className="min-h-[160px] flex-1 overflow-y-auto p-4 space-y-4">
+            {/* With the composers hidden this region is the sheet's lowest element,
+                so it carries the safe-area bottom padding the log composer had
+                (v3.2.3, GH #103) to clear iOS Safari's floating toolbar. */}
+            <div className="min-h-[160px] flex-1 overflow-y-auto p-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] space-y-4">
               <section>
                 <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Description
@@ -230,8 +252,15 @@ export default function TaskSheet({ task, onClose }: Props) {
                 </section>
               )}
 
-              {/* v2.11.0 (opt-operator-assignment): operator assignment. The
-                  target agent is the sheet's single Agent ID field below. */}
+              {/* Assignment block hidden at the owner's request ("Hidden
+                  completely"), on every viewport and for every browser: it is a
+                  human write control like the composers, and its target is the
+                  Agent ID field in the (also hidden) log composer. Kept, not
+                  deleted; handleAssign and assignTask stay. To restore,
+                  un-comment this section together with the composers below and
+                  drop the `void` lines above the return.
+                  v2.11.0 (opt-operator-assignment): operator assignment. The
+                  target agent is the sheet's single Agent ID field below.
               <section>
                 <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
                   Assignment
@@ -263,6 +292,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                   </p>
                 )}
               </section>
+              */}
 
               {task.metadata && Object.keys(task.metadata).length > 0 && (
                 <section>
@@ -365,8 +395,16 @@ export default function TaskSheet({ task, onClose }: Props) {
               </section>
             </div>
 
-            {/* v2.5.0: discussion composer. Shares the sheet's single Agent ID
-                input (one "who am I" field for both composers). */}
+            {/* Comment composer and log composer hidden at the owner's request
+                ("Hidden completely"), on every viewport and for every browser:
+                agents post comments and log entries through the API. Kept, not
+                deleted; handleComment / handleSubmit and the api.ts calls stay.
+                To restore, un-comment both forms (and the Assignment section
+                above), drop the `void` lines above the return, and move the
+                safe-area bottom padding back from the content region to the log
+                composer.
+                v2.5.0: discussion composer. Shares the sheet's single Agent ID
+                input (one "who am I" field for both composers).
             <form
               onSubmit={handleComment}
               className="shrink-0 space-y-2 border-t border-line bg-surface p-4 pb-2"
@@ -420,6 +458,7 @@ export default function TaskSheet({ task, onClose }: Props) {
                 {submitting ? 'Submitting…' : 'Add log entry'}
               </button>
             </form>
+            */}
           </>
         )}
       </aside>

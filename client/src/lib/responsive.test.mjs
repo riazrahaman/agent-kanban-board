@@ -529,11 +529,17 @@ test('TaskSheet wraps every unbroken-token render site (and not the nowrap ones)
   // The other end of the same class of bug: a node that renders a raw thrown
   // message. `err.message` is arbitrary text — it can be one unbroken
   // path/URL/identifier — and this `p` sits in a `p-4` box with no clipping,
-  // so an unbroken message painted past the form edge.
-  const submitErr = taskSheetSource.match(
+  // so an unbroken message painted past the form edge. The log composer is
+  // hidden at the owner's request (commented out, not deleted), so this
+  // asserts the kept code inside that hidden block stays wrap-safe.
+  const hiddenComposers = [...taskSheetSource.matchAll(/\{\/\*[\s\S]*?\*\/\}/g)]
+    .map((m) => m[0])
+    .find((c) => c.includes('Comment composer and log composer hidden'))
+  assert.ok(hiddenComposers, 'TaskSheet.tsx must keep the hidden composer block')
+  const submitErr = hiddenComposers.match(
     /className="([^"]*)"[^>]*>\{error\}/,
   )?.[1]
-  assert.ok(submitErr, 'TaskSheet.tsx must render {error && <p>{error}</p>}')
+  assert.ok(submitErr, 'the hidden log composer must keep {error && <p>{error}</p>}')
   assert.match(
     submitErr,
     /\[overflow-wrap:anywhere\]/,
@@ -910,14 +916,23 @@ test('TaskSheet <aside> scrolls when its fixed children exceed the viewport', ()
   )
 })
 
-test('TaskSheet header and both composer forms are pinned against the region', () => {
+test('TaskSheet header is pinned, and the hidden composers left no pinned footer behind', () => {
   // Select each element by its token set rather than by an anchor + distance
   // window. An earlier revision anchored on a nearby attribute with a character
   // window, which is fragile in both directions: too tight and the element's own
   // className falls outside it; too wide and a NEIGHBOURING element's `shrink-0`
   // satisfies the assertion. Token sets are unambiguous.
-  const all = [...taskSheetSource.matchAll(/className="([^"]*)"/g)].map((m) => tokensOf(m[1]))
-  const find = (pred, label) => {
+  //
+  // The comment and log composers used to be pinned below the region (both
+  // `shrink-0 border-t`). They are hidden at the owner's request: commented
+  // out, not deleted. Commented JSX never renders, so the live sheet is the
+  // source minus its {/* */} blocks, and the kept forms are asserted inside
+  // the hidden block so a restore keeps their pinning.
+  const jsxComments = [...taskSheetSource.matchAll(/\{\/\*[\s\S]*?\*\/\}/g)].map((m) => m[0])
+  const liveSheet = taskSheetSource.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  const classTokens = (src) => [...src.matchAll(/className="([^"]*)"/g)].map((m) => tokensOf(m[1]))
+  const live = classTokens(liveSheet)
+  const find = (all, pred, label) => {
     const hit = all.filter(pred)
     assert.equal(
       hit.length,
@@ -928,39 +943,50 @@ test('TaskSheet header and both composer forms are pinned against the region', (
   }
 
   const header = find(
+    live,
     (t) => t.includes('shrink-0') && t.includes('border-b'),
     'sheet header (shrink-0 + border-b)',
   )
   assert.ok(header.includes('shrink-0'), 'the sheet header must carry `shrink-0`')
 
+  // No pinned footer bar may be left live: the region fills the sheet.
+  assert.equal(
+    live.filter((t) => t.includes('shrink-0') && t.includes('border-t')).length,
+    0,
+    'no pinned composer/footer (shrink-0 + border-t) may render while the composers are hidden',
+  )
+  const region = find(
+    live,
+    (t) => t.includes('flex-1') && t.includes('overflow-y-auto') && t.includes('space-y-4'),
+    'content region (flex-1 + overflow-y-auto + space-y-4)',
+  )
+  // v3.2.3 (GH #103 follow-up, round 1): the sheet's LOWEST element needs —
+  // like BugReportDialog's submit footer — safe-area clearance above iOS
+  // Safari's floating bottom toolbar. With the composers hidden that is the
+  // content region.
+  assert.ok(
+    region.includes('pb-[calc(1rem_+_env(safe-area-inset-bottom))]'),
+    'the content region (now the lowest element) must carry the same safe-area bottom padding as BugReportDialog\'s pinned footer',
+  )
+
+  // The kept (hidden) composers still carry their pinning for a restore.
+  const hidden = jsxComments.find((c) => c.includes('Comment composer and log composer hidden'))
+  assert.ok(hidden, 'the hidden composer block must be kept')
+  const kept = classTokens(hidden)
   const comment = find(
+    kept,
     (t) => t.includes('shrink-0') && t.includes('pb-2') && t.includes('border-t'),
-    'comment composer (shrink-0 + border-t + pb-2)',
+    'hidden comment composer (shrink-0 + border-t + pb-2)',
   )
-  assert.ok(comment.includes('shrink-0'), 'the comment composer must carry `shrink-0`')
-
   const log = find(
+    kept,
     (t) => t.includes('shrink-0') && t.includes('border-t') && !t.includes('pb-2'),
-    'log composer (shrink-0 + border-t, no pb-2)',
+    'hidden log composer (shrink-0 + border-t, no pb-2)',
   )
-  assert.ok(log.includes('shrink-0'), 'the log composer must carry `shrink-0`')
-
-  // Both composers and the header must be pinned together: if any one of them
-  // can shrink, it reclaims height from the description region instead.
-  for (const [label, tokens] of [['header', header], ['comment composer', comment], ['log composer', log]]) {
-    assert.ok(
-      tokens.includes('shrink-0'),
-      `the ${label} must keep \`shrink-0\` so the description region absorbs the compression`,
-    )
-  }
-
-  // v3.2.3 (GH #103 follow-up, round 1): the log composer is the sheet's
-  // LOWEST pinned element (below the comment composer), so — like
-  // BugReportDialog's submit footer — it needs safe-area clearance above
-  // iOS Safari's floating bottom toolbar.
+  assert.ok(comment.includes('shrink-0'), 'the kept comment composer must carry `shrink-0`')
   assert.ok(
     log.includes('pb-[calc(1rem_+_env(safe-area-inset-bottom))]'),
-    'the log composer must carry the same safe-area bottom padding as BugReportDialog\'s pinned footer',
+    'the kept log composer keeps its safe-area padding for a restore',
   )
 })
 
