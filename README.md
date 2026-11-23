@@ -256,7 +256,19 @@ characters are stripped from the title, description and user agent before
 the report is validated, so a title made only of them is rejected as empty:
 control characters, the line/paragraph separators, bidi embedding/override/
 isolate controls, LRM/RLM/ALM marks, zero-width space/non-joiner, word joiner
-and BOM (a zero-width joiner survives only inside an emoji sequence). In the
+and BOM (a zero-width joiner survives only inside an emoji sequence). Since
+3.19.1 the other characters that render as nothing are stripped the same way,
+so a title or description made only of them is rejected too: the soft hyphen,
+combining grapheme joiner, Hangul fillers (U+3164, U+115F, U+1160, U+FFA0),
+Khmer inherent vowels, Mongolian vowel separator, invisible operators, tag
+characters, variation selectors and every other default-ignorable code
+point, plus lone UTF-16 surrogates. They survive only as part of real text:
+VS16 right after an emoji (a lone one goes), tag characters inside a
+subdivision flag such as England's, a Hangul filler that builds an old-style
+syllable block, and a variation selector on a CJK or Mongolian character.
+The Braille blank U+2800 becomes an ordinary space (it is the Braille word
+space), and Hangul syllables and the Braille dot patterns U+2801-U+28FF are
+untouched. In the
 title and user agent exactly two things are neutralised: `@` (so `@name` is
 not a mention) and `://` (so `scheme://...` is not a link). **Bare domains
 such as `example.com` or `t.me/x` in the title may still be made clickable by

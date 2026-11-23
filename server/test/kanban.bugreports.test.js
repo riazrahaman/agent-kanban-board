@@ -1611,6 +1611,148 @@ describe('bug reports: validation sees exactly the cleaned text', () => {
   });
 });
 
+describe('bug reports: blank-looking characters and lone surrogates', () => {
+  // Characters that render as nothing (or as a blank cell) in Telegram. Before
+  // 3.19.1 a title made only of them, or a description of ten or more, passed
+  // validation and arrived as a blank-looking line.
+  const BLANK = {
+    'U+3164 HANGUL FILLER': 'ㅤ',
+    'U+2800 BRAILLE PATTERN BLANK': '⠀',
+    'U+115F HANGUL CHOSEONG FILLER': 'ᅟ',
+    'U+FFA0 HALFWIDTH HANGUL FILLER': 'ﾠ',
+    'U+00AD SOFT HYPHEN': '­',
+    'U+034F COMBINING GRAPHEME JOINER': '͏',
+    'U+180E MONGOLIAN VOWEL SEPARATOR': '᠎',
+    'U+2061 FUNCTION APPLICATION': '⁡',
+    'U+FE0F VARIATION SELECTOR-16': '️',
+    'U+E0020 TAG SPACE': '\u{E0020}',
+    'U+17B4 KHMER VOWEL INHERENT AQ': '឴',
+  };
+  const HEART = '❤️';
+  const KEYCAP_ONE = '1️⃣';
+  const TECHNOLOGIST = '\u{1F469}\u{1F3FD}‍\u{1F4BB}';
+  const HEART_ON_FIRE = '❤️‍\u{1F525}';
+  const RAINBOW_FLAG = '\u{1F3F3}️‍\u{1F308}';
+  const ENGLAND = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+  const KOREAN = '한국어 ㄱㄴㄷ';
+  const BRAILLE = '⠓⠑⠇⠇⠕';
+  const BRAILLE_ALL_DOTS = '⠁⠿⣿';
+  const codePoints = (str) => [...str].map((c) => c.codePointAt(0).toString(16));
+
+  let saved;
+  before(() => {
+    saved = saveEnv();
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '1000', KANBAN_REPORT_DAILY_CAP: '1000' });
+  });
+  after(() => restoreEnv(saved));
+
+  it('each blank-looking character alone: a title of it is rejected (invalid_title) and a description of 12 of it (invalid_description), nothing sent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      for (const [name, ch] of Object.entries(BLANK)) {
+        for (const title of [ch, ch.repeat(5), ` ${ch} ${ch} `]) {
+          const res = await post(baseUrl, { title });
+          assert.equal(res.res.status, 400, `${name} title ${codePoints(title)}`);
+          assert.equal(res.body.error, 'invalid_title', name);
+        }
+        const res = await post(baseUrl, { description: ch.repeat(12) });
+        assert.equal(res.res.status, 400, `${name} description`);
+        assert.equal(res.body.error, 'invalid_description', name);
+        // Visible text padded past 10 code units with it is still too short.
+        const padded = await post(baseUrl, { description: `short${ch.repeat(12)}` });
+        assert.equal(padded.body.error, 'invalid_description', `${name} padding`);
+      }
+      // All of them mixed together.
+      const all = Object.values(BLANK).join('');
+      assert.equal((await post(baseUrl, { title: all })).body.error, 'invalid_title');
+      assert.equal((await post(baseUrl, { description: all.repeat(3) })).body.error, 'invalid_description');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('mixed with real text, each one is removed from what is rendered (the Braille blank becomes a space)', () => {
+    for (const [name, ch] of Object.entries(BLANK)) {
+      const expected = ch === '⠀' ? 'ab cd' : 'abcd';
+      assert.deepEqual(codePoints(cleanOneLine(`ab${ch}cd`)), codePoints(expected), name);
+      assert.deepEqual(codePoints(cleanMultiline(`ab${ch}cd\n${ch}x`)), codePoints(ch === '⠀' ? 'ab cd\n x' : 'abcd\nx'), name);
+    }
+  });
+
+  it('real emoji sequences survive (VS16 after a base, keycaps, ZWJ sequences, subdivision flags); a lone VS16 or stray tag goes', () => {
+    for (const emoji of [HEART, KEYCAP_ONE, TECHNOLOGIST, HEART_ON_FIRE, RAINBOW_FLAG, ENGLAND, '#️⃣', '☺︎']) {
+      assert.deepEqual(codePoints(cleanOneLine(`ok ${emoji} ok`)), codePoints(`ok ${emoji} ok`), codePoints(emoji).join(','));
+      assert.deepEqual(codePoints(cleanMultiline(emoji)), codePoints(emoji));
+    }
+    assert.equal(cleanOneLine('️'), '');
+    assert.equal(cleanOneLine('a️b'), 'ab', 'VS16 after a letter is not an emoji presentation');
+    assert.equal(cleanOneLine(' ️ x'), 'x');
+    assert.equal(cleanOneLine(`${HEART}️`), HEART, 'a second VS16 has no base');
+    assert.equal(cleanOneLine('ㅤ️'), '');
+    // Tag characters outside a subdivision flag (and an unterminated one) go.
+    assert.equal(cleanOneLine('a\u{E0067}\u{E0062}b'), 'ab');
+    assert.equal(cleanOneLine('\u{1F3F4}\u{E0067}\u{E0062}'), '\u{1F3F4}');
+    assert.equal(cleanOneLine(`${ENGLAND}\u{E0020}`), ENGLAND);
+  });
+
+  it('Hangul and Braille text survive; only the fillers and the blank cell are treated as blank', () => {
+    assert.equal(cleanOneLine(KOREAN), KOREAN);
+    assert.equal(cleanOneLine(`${KOREAN}ㅤ`), KOREAN);
+    assert.equal(cleanOneLine(`한ㅤ국ﾠ어`), '한국어');
+    assert.equal(cleanOneLine(BRAILLE), BRAILLE);
+    assert.equal(cleanOneLine(BRAILLE_ALL_DOTS), BRAILLE_ALL_DOTS, 'U+2801..U+28FF dot patterns are text');
+    assert.equal(cleanOneLine(`${BRAILLE}⠀${BRAILLE}`), `${BRAILLE} ${BRAILLE}`, 'the Braille word space stays a space');
+    assert.equal(cleanMultiline(`${BRAILLE}⠀⠀${BRAILLE}`), `${BRAILLE}  ${BRAILLE}`);
+    // Conjoining jamo: a filler that builds a syllable block stays.
+    assert.equal(cleanOneLine('ᅟᅡ'), 'ᅟᅡ', 'choseong filler + a real vowel');
+    assert.equal(cleanOneLine('ᄀᅠ'), 'ᄀᅠ', 'a real initial + jungseong filler');
+    assert.equal(cleanOneLine('ᅟᅠ'), '', 'two fillers build nothing visible');
+    // Variation selectors on real text (an ideographic variant, a Mongolian FVS) stay.
+    assert.equal(cleanOneLine('葛\u{E0100}'), '葛\u{E0100}');
+    assert.equal(cleanOneLine('ᠮᠣᠩ᠋ᠭ'), 'ᠮᠣᠩ᠋ᠭ');
+    assert.equal(cleanOneLine('\u{E0100}'), '');
+  });
+
+  it('lone UTF-16 surrogates are stripped; well-formed pairs (emoji) are kept', () => {
+    assert.equal(cleanOneLine('x\uD800y'), 'xy');
+    assert.equal(cleanOneLine('x\uDC00y'), 'xy');
+    assert.equal(cleanOneLine('end\uD83D'), 'end');
+    assert.equal(cleanOneLine('\uDE00start'), 'start');
+    assert.equal(cleanOneLine('\uDE00\uD83D'), '', 'a reversed pair is two lone halves');
+    assert.equal(cleanMultiline('a\uD800\nb\uDFFF'), 'a\nb');
+    assert.equal(cleanOneLine('\u{1F600}\uD800'), '\u{1F600}');
+    assert.ok(!/[\uD800-\uDFFF]/u.test(cleanOneLine('\uD800􏰀\uDFFF'.split('').reverse().join(''))));
+  });
+
+  it('cleaning is idempotent (the title is cleaned for validation and again when rendered)', () => {
+    const inputs = [
+      ...Object.values(BLANK).flatMap((ch) => [ch, `ab${ch}cd`, `${HEART}${ch}️`, `❤${ch}️`]),
+      HEART, KEYCAP_ONE, TECHNOLOGIST, HEART_ON_FIRE, RAINBOW_FLAG, ENGLAND, KOREAN, BRAILLE,
+      `${BRAILLE}⠀⠀${BRAILLE}`, 'x\uD800y', 'ᅟᅡ', 'ᄀᅠ', 'ᅟᅠ',
+      '❤­️', '\u{1F469}­‍\u{1F4BB}', `a‮${HEART}‍`,
+    ];
+    for (const x of inputs) {
+      assert.equal(cleanOneLine(cleanOneLine(x)), cleanOneLine(x), codePoints(x).join(','));
+      assert.equal(cleanMultiline(cleanMultiline(x)), cleanMultiline(x), codePoints(x).join(','));
+    }
+  });
+
+  it('a real report with emoji, Hangul, Braille and a lone surrogate is delivered, cleaned', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, {
+        title: `${HEART} ${KOREAN}ㅤ bug\uD800`,
+        description: `${TECHNOLOGIST} steps: ${BRAILLE}⠀${BRAILLE} then ${ENGLAND} ️ done`,
+      });
+      assert.equal(res.res.status, 201, JSON.stringify(res.body));
+    });
+    const text = fetchImpl.telegram[0].body.text;
+    assert.ok(text.includes(`<b>${HEART} ${KOREAN} bug</b>`), text);
+    assert.ok(text.includes(`${TECHNOLOGIST} steps: ${BRAILLE} ${BRAILLE} then ${ENGLAND}  done`), text);
+    assert.ok(!/[\uD800-\uDFFFㅤ⠀]/u.test(text));
+  });
+});
+
 describe('bug reports: shared 429 pause', () => {
   let saved;
   before(() => {

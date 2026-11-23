@@ -86,8 +86,86 @@ const EXTRA_INVISIBLE_RE = /[\u0080-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069
 // else it is removed like the characters above.
 const STRAY_ZWJ_RE = /(?<!\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\uFE0F]?)\u200D|\u200D(?!\p{Extended_Pictographic})/gu;
 
+// Lone UTF-16 surrogates (half of a pair with its other half missing). With
+// the `u` flag a well-formed pair is one astral code point, so this class
+// matches only the lone halves; real emoji are untouched.
+const LONE_SURROGATE_RE = /[\uD800-\uDFFF]/gu;
+
+// U+2800 BRAILLE PATTERN BLANK is the word space of Braille text: it becomes
+// an ordinary space (so Braille words stay apart, and text made only of it is
+// trimmed to nothing). The dot patterns U+2801-U+28FF are untouched.
+const BRAILLE_BLANK_RE = /\u2800/g;
+
+// Every other Default_Ignorable_Code_Point renders as nothing: the soft
+// hyphen, combining grapheme joiner, Hangul fillers (U+115F, U+1160, U+3164,
+// U+FFA0), Khmer inherent vowels (U+17B4/5), Mongolian vowel separator,
+// invisible operators (U+2061-U+2064), deprecated format controls,
+// variation selectors, tag characters and the unassigned ignorables. A text
+// made only of them looks blank, so they are removed (the characters already
+// in EXTRA_INVISIBLE_RE and the ZWJ are ignorable too and handled there),
+// EXCEPT where they are part of real text, decided by keepIgnorable below.
+const DEFAULT_IGNORABLE_RE = /\p{Default_Ignorable_Code_Point}/gu;
+const EMOJI_RE = /^\p{Emoji}$/u;
+const VISIBLE_BASE_RE = /^[\p{L}\p{M}\p{N}\p{P}\p{S}]$/u;
+const HANGUL_CHOSEONG_RE = /^[\u1100-\u115E\uA960-\uA97C]$/u;
+const HANGUL_JUNGSEONG_RE = /^[\u1161-\u11A7\uD7B0-\uD7C6]$/u;
+const MONGOLIAN_LETTER_RE = /^[\u1820-\u1878\u1880-\u18AA]$/u;
+// A subdivision flag (England, Scotland, Wales): U+1F3F4 + tag letters/digits
+// + CANCEL TAG U+E007F. Only tags inside such a run survive.
+const TAG_FLAG_RE = /\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]+\u{E007F}/gu;
+
+/** The code point that ends `str` just before UTF-16 index `offset`, as a string. */
+function charBefore(str, offset) {
+  if (offset <= 0) return '';
+  const low = str.charCodeAt(offset - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && offset >= 2) {
+    const high = str.charCodeAt(offset - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return str.slice(offset - 2, offset);
+  }
+  return str[offset - 1];
+}
+
+/** Should the ignorable `ch` at `offset` stay because it belongs to real text? */
+function keepIgnorable(ch, offset, str) {
+  const cp = ch.codePointAt(0);
+  const prev = charBefore(str, offset);
+  // ZWJ: left to STRAY_ZWJ_RE (kept only inside an emoji ZWJ sequence).
+  if (cp === 0x200d) return true;
+  // VS15/VS16 (text/emoji presentation): only right after an emoji base
+  // (which includes keycap bases 0-9 # *). A lone U+FE0F goes.
+  if (cp === 0xfe0e || cp === 0xfe0f) return EMOJI_RE.test(prev);
+  // Other variation selectors (standardized and ideographic variants): only
+  // right after a visible base character.
+  if ((cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef)) return VISIBLE_BASE_RE.test(prev);
+  // Hangul jamo fillers: kept only where they build an old-style syllable
+  // block (choseong filler + a real vowel; a real initial + jungseong filler).
+  if (cp === 0x115f) return HANGUL_JUNGSEONG_RE.test(str[offset + 1] ?? '');
+  if (cp === 0x1160) return HANGUL_CHOSEONG_RE.test(prev);
+  // Mongolian free variation selectors and vowel separator: only inside
+  // Mongolian words.
+  if (cp >= 0x180b && cp <= 0x180f) return MONGOLIAN_LETTER_RE.test(prev);
+  return false;
+}
+
+function stripIgnorable(str) {
+  // Whole subdivision flags are copied through untouched; the text between
+  // them is filtered, so every other tag character is dropped.
+  let out = '';
+  let last = 0;
+  for (const m of str.matchAll(TAG_FLAG_RE)) {
+    out += stripIgnorableRun(str.slice(last, m.index)) + m[0];
+    last = m.index + m[0].length;
+  }
+  return out + stripIgnorableRun(str.slice(last));
+}
+
+function stripIgnorableRun(str) {
+  return str.replace(DEFAULT_IGNORABLE_RE, (ch, offset, whole) => (keepIgnorable(ch, offset, whole) ? ch : ''));
+}
+
 function stripInvisible(str) {
-  return String(str ?? '').replace(EXTRA_INVISIBLE_RE, '').replace(STRAY_ZWJ_RE, '');
+  const text = String(str ?? '').replace(LONE_SURROGATE_RE, '').replace(BRAILLE_BLANK_RE, ' ');
+  return stripIgnorable(text.replace(EXTRA_INVISIBLE_RE, '')).replace(STRAY_ZWJ_RE, '');
 }
 
 /** Free text for the message body: control chars gone, newlines/tabs kept. */
