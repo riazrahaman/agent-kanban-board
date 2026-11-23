@@ -377,21 +377,32 @@ test('the 44px touch sizing never leaks to fine pointers (desktop density unchan
 // ---------------------------------------------------------------------------
 
 test('the TaskSheet close and assignment buttons reach 44px on coarse pointers', () => {
-  const close = taskSheetSource.match(/aria-label="Close"[\s\S]*?className="([^"]*)"/)?.[1]
+  // Commented-out JSX never renders: the live sheet is the source minus {/* */}.
+  const jsxComments = [...taskSheetSource.matchAll(/\{\/\*[\s\S]*?\*\/\}/g)].map((m) => m[0])
+  const liveSheet = taskSheetSource.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+
+  const close = liveSheet.match(/aria-label="Close"[\s\S]*?className="([^"]*)"/)?.[1]
   assert.ok(close, 'TaskSheet must render its close button')
   assert.match(close, COARSE_TARGET, 'the TaskSheet close button needs a 44px touch height')
   assert.match(close, /\bpointer-coarse:min-w-11\b/, 'the icon-only close button needs a 44px touch width')
 
-  const assign = taskSheetSource.match(
+  // The Assignment block is hidden at the owner's request (commented out, not
+  // deleted). Its buttons must not render, and the kept code must still carry
+  // the 44px coarse target so a restore is touch-ready.
+  assert.doesNotMatch(liveSheet, /handleAssign\((true|false)\)/, 'the Assign / Release buttons must stay hidden')
+  const hidden = jsxComments.find((c) => c.includes('Assignment block hidden'))
+  assert.ok(hidden, 'the hidden Assignment block must be kept')
+
+  const assign = hidden.match(
     /onClick=\{\(\) => handleAssign\(false\)\}[\s\S]*?className="([^"]*)"/,
   )?.[1]
-  assert.ok(assign, 'TaskSheet must render the Assign button')
+  assert.ok(assign, 'the hidden block must keep the Assign button')
   assert.match(assign, COARSE_TARGET, 'the Assign button needs a 44px touch height')
 
-  const release = taskSheetSource.match(
+  const release = hidden.match(
     /onClick=\{\(\) => handleAssign\(true\)\}[\s\S]*?className="([^"]*)"/,
   )?.[1]
-  assert.ok(release, 'TaskSheet must render the Release button')
+  assert.ok(release, 'the hidden block must keep the Release button')
   assert.match(release, COARSE_TARGET, 'the Release button needs a 44px touch height')
 })
 

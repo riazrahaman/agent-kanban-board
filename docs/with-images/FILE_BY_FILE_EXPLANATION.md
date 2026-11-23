@@ -193,7 +193,7 @@ flowchart TD
     
     Board["Board.tsx\nReceives tasks array;\nComputes grouped tasks via groupTasks()"]
     SignalRail["SignalRail.tsx\nReceives tasks array;\nComputes signalStats & 20 recent activities"]
-    TaskSheet["TaskSheet.tsx (Modal Drawer)\nReceives active task object or null;\nLive agent log feed & manual log submission form"]
+    TaskSheet["TaskSheet.tsx (Modal Drawer)\nReceives active task object or null;\nLive agent log feed & comments (read-only;\ncomment/log/assign forms hidden)"]
 
     ColBacklog["Column: 01 BACKLOG"]
     ColReady["Column: 02 READY (claimable)"]
@@ -585,7 +585,7 @@ inherited from `referencedProjects`).
 - **`Column.tsx`:** Renders a column header with workflow step number, a plain task count badge (the advisory WIP badges/banner were removed in v2.5.2) and vertically scrolling card container. Each column carries a distinct top accent per stage (violet for In Test). Responsive: `85vw` with snap alignment below `md`, fixed `w-72` from `md` up. Memoized.
 - **`TaskCard.tsx`:** Renders card ID, status stripe, priority badge, effort/estimate chip (`⚡` from task metadata), title (display-only; a card whose details the server withheld, `details_locked`, has no click handler and shows the "Enter the master password" tooltip), project chip (unscoped board only), agent assignment, and issues badge. High-priority cards get a red right accent. Memoized. The header row wraps on phones and the badge group goes full-width (`w-full … sm:w-auto`, v2.9.1) so the id keeps a readable width instead of collapsing to 1–2 characters.
 - **`StatusBadge.tsx`:** Renders status glyphs (`▲`, `•`) and styling.
-- **`TaskSheet.tsx`:** Slide-over modal displaying card details (including the project), metadata, logs timeline, and human log submission form.
+- **`TaskSheet.tsx`:** Slide-over modal displaying card details (including the project), metadata, the comments thread and the agent log timeline. Its human write forms (comment composer, log composer with the Agent ID field, and the Assign / Release block) are currently hidden at the owner's request: the JSX is commented out with a restore note and the handlers and `api.ts` calls are kept; agents write comments and logs through the API.
 - **`SignalRail.tsx`:** Right sidebar rendering Signal Overview metric tiles and recent activity feed. Docked at `md`+, rendered as a mobile slide-over drawer below `md`.
 - **`Portfolio.tsx`:** Cross-project aggregate view with per-project summary rows.
 - **`About.tsx`:** In-app product overview (third top-level view). Renders the elevator pitch, a headless-first curl snippet, a trust strip, the "why a normal board isn't enough" cards, the lifecycle walk, capabilities, an **Architecture & code flow** section (the stack table, the step-by-step next-claim code path, the three safety layers around every write, and a six-layer summary — all data-driven and mobile-first, with the stack table collapsing to labelled cards below `sm`), a curated tour of `/landing/*.png` screenshots, an FAQ, and the community CTA. Takes the live server `version` as a prop so the page can never show a stale version. The footer shows an **anonymous visit count** (v2.9.1, `useVisitCount`; hoisted to `App.tsx` in v2.14.2 so it counts every site load rather than only the About tab) with honest copy — no accounts, no tracking, one counter, no per-visitor data.

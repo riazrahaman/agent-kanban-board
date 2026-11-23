@@ -111,14 +111,21 @@ describe('v2.5.0 column colors', () => {
     assert.match(column, /prev\.accentClass === next\.accentClass/)
   })
 
-  it('TaskSheet renders a comments thread + composer sharing the single agent id', () => {
+  it('TaskSheet renders a comments thread; its composer is kept but hidden, sharing the single agent id', () => {
     const sheet = readFileSync(path.join(__dirname, '..', 'components', 'TaskSheet.tsx'), 'utf8')
-    assert.match(sheet, /\bComments\b/)
-    assert.match(sheet, /addComment\(task\.id/)
-    assert.match(sheet, /Post comment/)
-    // One shared Agent ID input (placeholder appears exactly once as an input).
+    // Commented-out JSX never renders: strip it to get the live sheet.
+    const live = sheet.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    assert.match(live, /\bComments\b/)
+    assert.match(live, /addComment\(task\.id/)
+    // The composer is hidden at the owner's request: commented out, not deleted.
+    assert.doesNotMatch(live, /Post comment/)
+    const hidden = [...sheet.matchAll(/\{\/\*[\s\S]*?\*\/\}/g)].map((m) => m[0]).find((c) => c.includes('Post comment'))
+    assert.ok(hidden, 'the comment composer must be kept inside a hidden (commented) block')
+    assert.match(hidden, /owner's request/)
+    // One shared Agent ID input (placeholder appears exactly once, in the hidden block).
     const matches = sheet.match(/placeholder="Agent ID"/g) ?? []
     assert.equal(matches.length, 1)
+    assert.match(hidden, /placeholder="Agent ID"/)
     // Comments decode stored entities and sort oldest-first.
     assert.match(sheet, /decodeStored\(comment\.message\)/)
   })

@@ -61,12 +61,16 @@ test('TaskCard renders the milestone chip', () => {
   )
 })
 
-test('TaskSheet calls assignTask from its assignment control', () => {
+test('TaskSheet keeps assignTask for its (hidden) assignment control', () => {
+  // The Assign / Release block is hidden at the owner's request (commented out,
+  // not deleted); handleAssign still calls assignTask so a restore is an
+  // un-comment. taskSheetHiddenForms.test.mjs asserts the block is not live.
   assert.match(
     taskSheetSource,
-    /assignTask\(/,
-    'TaskSheet must call assignTask for the operator assign/release control',
+    /await assignTask\(task\.id/,
+    'TaskSheet must keep calling assignTask from handleAssign for the operator assign/release control',
   )
+  assert.match(taskSheetSource, /void handleAssign/, 'handleAssign must stay referenced while its buttons are hidden')
 })
 
 test('Portfolio loads and renders milestone rollups', () => {

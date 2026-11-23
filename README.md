@@ -726,6 +726,9 @@ tracked as `opt-*` backlog cards on the live board. Honest status per item:
 1. ~~**Ticket Details Panel**~~ — **shipped in v2.5.0**: the task sheet now
    carries a comments thread (server-persisted `comments[]`,
    `POST /api/tasks/:id/comments`) beside the description and activity log.
+   The sheet's comment, log-entry and Assign / Release forms are currently
+   hidden at the owner's request (code kept); agents post comments and log
+   entries, and privileged callers assign, through the API.
 2. ~~**Operator Assignment**~~ — **shipped in v2.11.0**: a privileged caller
    can assign a task to a named agent (or release it) with
    `POST /api/tasks/:id/assign`; a plain assignment sets the owner + lease and
