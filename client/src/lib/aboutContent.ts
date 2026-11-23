@@ -93,12 +93,12 @@ export type TrustMetric = {
 
 export const TRUST_METRICS: TrustMetric[] = [
   {
-    value: '1196',
+    value: '1219',
     label: 'server tests',
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '376',
+    value: '378',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },
@@ -253,7 +253,7 @@ export const CAPABILITIES: Capability[] = [
   { name: 'Dependency & field validation', code: 'store.js · validateDependencyGraph; task-fields.js · validateMetadata' },
   { name: 'Fail-closed corrupt-store load', code: 'storage.js · JsonStorage.load' },
   { name: 'Readiness probe', code: 'routes/health.js · GET /api/health/ready' },
-  { name: 'Anonymous "Report a bug" -> GitHub issue', code: 'routes/bugReports.js · POST /api/bug-reports, Turnstile-protected' },
+  { name: 'Anonymous "Report a Bug/Request a feature" -> private Telegram message', code: 'routes/bugReports.js · POST /api/bug-reports, Turnstile-protected' },
   { name: 'Ask-the-Board assistant (OpenRouter & Ollama)', code: 'routes/ask.js, lib/ask.ts · POST /api/ask, GET /api/ask/config' },
   { name: 'Two-stage graceful teardown', code: 'server.js · drainSseStreams, registerShutdownHandlers' },
   { name: 'HTTP ByteString header sanitization', code: 'api.ts · sanitizeByteStringHeaders' },
@@ -292,8 +292,8 @@ export const FAQ: FaqItem[] = [
     a: 'No. The board itself is local-first: no accounts, no SaaS, no analytics — run it on localhost or self-host it. Only this hosted demo adds one thing: a single anonymous site-wide visit counter (one count per browser session, no per-visitor data) shown on this page.',
   },
   {
-    q: 'How do I report a bug?',
-    a: '"Report a bug" opens a short form — title, description, a Cloudflare Turnstile captcha — and files a labelled GitHub issue straight from the server. Off by default; an operator turns it on with KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET and TURNSTILE_SITE_KEY (see README "Enabling Report-a-bug"). The same button lives in the header.',
+    q: 'How do I report a bug or request a feature?',
+    a: '"Report a Bug/Request a feature" opens a short form — title, description, a Cloudflare Turnstile captcha — and the server sends it privately to the board owner as one Telegram message, using the same bot as the reclaim alerts. Nothing is published: no card and no GitHub issue is created. Off by default; an operator turns it on with TURNSTILE_SECRET and TURNSTILE_SITE_KEY plus KANBAN_TELEGRAM_BOT_TOKEN and a chat id (KANBAN_TELEGRAM_CHAT_ID, or KANBAN_REPORT_TELEGRAM_CHAT_ID for a separate channel; see README "Enabling Report-a-bug"). The same button lives in the header.',
   },
 ]
 
@@ -725,13 +725,14 @@ KANBAN_DATA_DIR=/data         # named projects, archives and settings live here`
     emoji: '📣',
     title: 'Reporting & Alerts',
     eli5:
-      'Four optional channels let the humans find out what happened: file a bug, get a reclaim alert, receive a daily backup of the whole board, or stream every change to another system.',
+      'Four optional channels let the humans find out what happened: send a bug report or feature request, get a reclaim alert, receive a daily backup of the whole board, or stream every change to another system.',
     underTheHood:
-      'server/routes/bugReports.js turns an anonymous in-app report into a labelled GitHub issue, guarded by Cloudflare Turnstile, a honeypot field and peek-and-consume rate limits (a request that fails validation or the captcha never spends the budget). server/notifier.js posts a full-detail Telegram alert whenever the reaper returns a card to READY. server/telegramBackup.js (v3.17.0) snapshots ALL board data under the mutation lock, packs it as a .tar.gz and sends it to the same Telegram chat once a day (03:00 Abu Dhabi time by default; hour and IANA zone are configurable), with retries, a failure alert, a 50 MB guard and a marker file so a restart never re-sends within 24 h. server/webhooks.js POSTs a signed, machine-readable envelope for every committed mutation to one or more subscriber URLs.',
+      'server/routes/bugReports.js turns an anonymous in-app report into one private Telegram message to the owner (same bot as the alerts; KANBAN_REPORT_TELEGRAM_CHAT_ID can point it at a separate channel), guarded by Cloudflare Turnstile, a honeypot field and peek-and-consume rate limits (a request that fails validation, the captcha or the send never spends the budget). It creates no card and no GitHub issue, and the message never carries the visitor\'s IP. server/notifier.js posts a full-detail Telegram alert whenever the reaper returns a card to READY. server/telegramBackup.js (v3.17.0) snapshots ALL board data under the mutation lock, packs it as a .tar.gz and sends it to the same Telegram chat once a day (03:00 Abu Dhabi time by default; hour and IANA zone are configurable), with retries, a failure alert, a 50 MB guard and a marker file so a restart never re-sends within 24 h. server/webhooks.js POSTs a signed, machine-readable envelope for every committed mutation to one or more subscriber URLs.',
     snippet: {
       label: 'the four channels',
-      code: `# 1. bug reports -> one GitHub issue (routes/bugReports.js)
+      code: `# 1. bug reports / feature requests -> one private Telegram message (routes/bugReports.js)
 POST /api/bug-reports   # Turnstile + honeypot + peek-and-consume caps
+KANBAN_REPORT_TELEGRAM_CHAT_ID=...     # optional: a separate chat; default KANBAN_TELEGRAM_CHAT_ID
 
 # 2. reclaim alerts (notifier.js) — OFF unless BOTH are set
 KANBAN_TELEGRAM_BOT_TOKEN=...
@@ -747,8 +748,8 @@ KANBAN_WEBHOOK_URLS=https://example.test/hook
 KANBAN_WEBHOOK_SECRET=...`,
     },
     gotcha:
-      'All four are off by default and fail-silent: a Telegram or webhook outage is logged and swallowed so it can never break the mutation or reclaim that triggered it. The daily backup holds every task\'s text and Telegram bot chats are not end-to-end encrypted, so point it at a private chat only.',
-    files: ['server/routes/bugReports.js', 'server/notifier.js', 'server/telegramBackup.js', 'server/webhooks.js'],
+      'All four are off by default. The alerts, backup and webhooks are fail-silent: a Telegram or webhook outage is logged and swallowed so it can never break the mutation or reclaim that triggered it; a bug report that cannot be delivered tells the visitor to try again later instead. The daily backup holds every task\'s text and Telegram bot chats are not end-to-end encrypted, so point it at a private chat only.',
+    files: ['server/routes/bugReports.js', 'server/telegramSend.js', 'server/notifier.js', 'server/telegramBackup.js', 'server/webhooks.js'],
   },
   {
     id: 'client',

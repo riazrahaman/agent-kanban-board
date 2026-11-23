@@ -1,57 +1,106 @@
 /**
- * In-app "Report a bug" → GitHub issue (v2.16.0, opt-public-bug-reports).
+ * In-app "Report a Bug/Request a feature" -> ONE private Telegram message
+ * (v2.16.0 filed a GitHub issue; switched to Telegram, card
+ * bug-report-to-telegram).
  *
  * Covers routes/bugReports.js end to end over real HTTP (createApp + a fake
  * injected `fetch`, never the real network): the feature's off-by-default
- * gate, the honeypot, validation limits, Turnstile outcomes, the per-IP/
- * daily rate limits (incl. an X-Forwarded-For spoof attempt), GitHub retry
- * behaviour, and markdown-injection sanitisation. Also guards that mounting
- * this unauthenticated route does not weaken auth on any other route.
+ * gate (Turnstile + bot token + resolvable chat id), the bot/chat resolution
+ * order, the honeypot, validation limits, Turnstile outcomes, the per-IP/
+ * daily rate limits (incl. an X-Forwarded-For spoof attempt), Telegram
+ * delivery (429 retry honouring retry_after, upstream failures), message
+ * formatting/escaping and the 4096-char fit, and secret-free logging. Also
+ * guards that mounting this unauthenticated route does not weaken auth on
+ * any other route and that a report creates no board card.
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import {
-  buildIssueBody,
-  fenceDescription,
-  getMaxBackticks,
-  looksLikeGithubToken,
-  looksLikeRepoShape,
+  REPORT_HEADER,
+  cleanMultiline,
+  cleanOneLine,
+  escapeWithin,
+  formatReportMessage,
+  hintForTelegramStatus,
+  ignoredLocalOverrides,
   looksLikeTurnstileSiteKey,
-  neutralizeMentions,
-  sanitizeTitleForGithub,
+  neutralizeEntities,
+  reportTelegramTarget,
+  safeLogValue,
   stripControlChars,
+  turnstileSiteverifyUrl,
 } from '../routes/bugReports.js';
+import {
+  TELEGRAM_TEXT_LIMIT,
+  isProductionRuntime,
+  resetTelegramPause,
+  scrubSecret,
+  sendTelegramMessage,
+  telegramPausedUntil,
+} from '../telegramSend.js';
 
-// Realistic-shaped GitHub token (ghp_ prefix + 36 chars, matching
-// GITHUB_TOKEN_MIN_LENGTH in bugReports.js) so the suite's own fixtures never
-// trip the startup "does not look like a GitHub token (placeholder?)"
-// warning — see the dedicated placeholder-warning tests below for the one
-// case that intentionally uses an unrealistic value.
-const DUMMY_GITHUB_TOKEN = `ghp_${'a'.repeat(36)}`;
+// The 429 pause is module-level (shared by every report send in the
+// process), so each test starts unpaused.
+beforeEach(() => resetTelegramPause());
+
+// Telegram-shaped dummy bot token (never a real one).
+const DUMMY_BOT_TOKEN = '123456789:AAFakeBotTokenForTestsOnly_abcdefghijk';
+const ALERT_CHAT = '-1001111111111';
+const REPORT_CHAT = '-1002222222222';
 
 const ENV_KEYS = [
-  'KANBAN_REPORT_GITHUB_TOKEN',
-  'KANBAN_REPORT_REPO',
+  'KANBAN_TELEGRAM_BOT_TOKEN',
+  'KANBAN_TELEGRAM_CHAT_ID',
+  'KANBAN_REPORT_TELEGRAM_CHAT_ID',
+  'KANBAN_REPORT_TELEGRAM_API_URL',
+  'KANBAN_BOARD_URL',
   'TURNSTILE_SECRET',
   'TURNSTILE_SITE_KEY',
   'TURNSTILE_HOSTNAMES',
+  'TURNSTILE_SITEVERIFY_URL',
   'KANBAN_REPORT_DAILY_CAP',
   'KANBAN_REPORT_PER_IP_PER_HOUR',
+  // Pre-Telegram variables: no longer read; listed so a value in the shell
+  // cannot leak in, and so the "GitHub variables are ignored" tests can set
+  // them explicitly.
+  'KANBAN_REPORT_GITHUB_TOKEN',
+  'KANBAN_REPORT_REPO',
   'KANBAN_REPORT_GITHUB_API_URL',
   'KANBAN_AUTH_TOKEN',
   'KANBAN_TRUST_PROXY',
+  'KANBAN_ALLOWED_ORIGIN',
+  'NODE_ENV',
+  'RAILWAY_ENVIRONMENT',
+  'RAILWAY_PROJECT_ID',
 ];
 
 function configureEnv(overrides = {}) {
-  process.env.KANBAN_REPORT_GITHUB_TOKEN = DUMMY_GITHUB_TOKEN;
-  process.env.KANBAN_REPORT_REPO = 'owner/repo';
+  process.env.KANBAN_TELEGRAM_BOT_TOKEN = DUMMY_BOT_TOKEN;
+  process.env.KANBAN_TELEGRAM_CHAT_ID = ALERT_CHAT;
   process.env.TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
   process.env.TURNSTILE_SITE_KEY = '1x00000000000000000000AA';
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
+}
+
+function saveEnv() {
+  const saved = {};
+  for (const k of ENV_KEYS) saved[k] = process.env[k];
+  return saved;
+}
+
+function restoreEnv(saved) {
+  for (const k of ENV_KEYS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+}
+
+function clearEnv() {
+  for (const k of ENV_KEYS) delete process.env[k];
 }
 
 async function startTestServer(app) {
@@ -73,13 +122,24 @@ async function jsonRequest(baseUrl, route, options = {}) {
   return { res, body };
 }
 
+const REPORT_TITLE = 'Board shows blank column';
+const REPORT_DESCRIPTION = 'Steps: open the board, switch project, column X is blank for no reason.';
+
 function postBody(overrides = {}) {
   return JSON.stringify({
-    title: 'Board shows blank column',
-    description: 'Steps: open the board, switch project, column X is blank for no reason.',
+    title: REPORT_TITLE,
+    description: REPORT_DESCRIPTION,
     turnstileToken: 'test-token',
     website: '',
     ...overrides,
+  });
+}
+
+function post(baseUrl, overrides = {}, headers = {}) {
+  return jsonRequest(baseUrl, '/api/bug-reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: postBody(overrides),
   });
 }
 
@@ -98,20 +158,27 @@ function okTurnstileBody(overrides = {}) {
   return { success: true, action: 'bug-report', hostname: 'board.example.test', ...overrides };
 }
 
-function okGithubBody(overrides = {}) {
-  return { number: 42, html_url: 'https://github.com/owner/repo/issues/42', ...overrides };
+function okTelegram() {
+  return fakeResponse(200, { ok: true, result: { message_id: 7 } });
+}
+
+function telegramError(status, description, extra = {}) {
+  return fakeResponse(status, { ok: false, error_code: status, description, ...extra });
 }
 
 /**
  * Builds an injectable fetch that dispatches on URL: Turnstile siteverify vs
- * the GitHub issues endpoint. Each handler is a function of the call count
- * FOR THAT endpoint (1-based) so tests can script "fail once, then succeed".
- * Every call is recorded in `.calls` for assertions (e.g. "never called").
+ * the Telegram sendMessage endpoint. Each handler is a function of the call
+ * count FOR THAT endpoint (1-based) so tests can script "fail once, then
+ * succeed". Every call is recorded in `.calls`; Telegram calls also in
+ * `.telegram` with the parsed JSON body. Any other URL (GitHub included)
+ * throws, so a stray outbound call fails the test.
  */
-function makeFetch({ turnstile, github } = {}) {
+function makeFetch({ turnstile, telegram } = {}) {
   let turnstileCalls = 0;
-  let githubCalls = 0;
+  let telegramCalls = 0;
   const calls = [];
+  const telegramBodies = [];
   const fn = async (url, opts) => {
     calls.push({ url: String(url), opts });
     if (String(url).includes('challenges.cloudflare.com')) {
@@ -121,21 +188,33 @@ function makeFetch({ turnstile, github } = {}) {
       if (out instanceof Error) throw out;
       return out;
     }
-    if (String(url).includes('/issues')) {
-      githubCalls += 1;
-      if (!github) return fakeResponse(201, okGithubBody());
-      const out = github(githubCalls, opts);
+    if (String(url).endsWith('/sendMessage')) {
+      telegramCalls += 1;
+      telegramBodies.push({ url: String(url), body: JSON.parse(opts.body) });
+      if (!telegram) return okTelegram();
+      const out = telegram(telegramCalls, opts);
       if (out instanceof Error) throw out;
       return out;
     }
     throw new Error(`unexpected fetch url in test: ${url}`);
   };
   fn.calls = calls;
+  fn.telegram = telegramBodies;
+  return fn;
+}
+
+function recordingSleep() {
+  const waits = [];
+  const fn = async (ms) => {
+    waits.push(ms);
+  };
+  fn.waits = waits;
   return fn;
 }
 
 async function withApp(bugReportsDeps, fn) {
-  const app = createApp({ bugReports: bugReportsDeps });
+  const deps = { sleep: async () => {}, ...bugReportsDeps };
+  const app = createApp({ bugReports: deps });
   const { server, baseUrl } = await startTestServer(app);
   try {
     await fn(baseUrl);
@@ -144,69 +223,219 @@ async function withApp(bugReportsDeps, fn) {
   }
 }
 
-describe('bug reports: feature gate', () => {
-  let saved = {};
+/** Swaps the given console methods for recording stubs, runs `fn`, restores
+ * the originals even on throw, and returns `{ warn, error, info, log }`
+ * arrays of the args joined per call. */
+async function captureConsole(fn) {
+  const originals = { warn: console.warn, error: console.error, info: console.info, log: console.log };
+  const lines = { warn: [], error: [], info: [], log: [] };
+  console.warn = (...args) => lines.warn.push(args.join(' '));
+  console.error = (...args) => lines.error.push(args.join(' '));
+  console.info = (...args) => lines.info.push(args.join(' '));
+  console.log = (...args) => lines.log.push(args.join(' '));
+  try {
+    await fn();
+  } finally {
+    console.warn = originals.warn;
+    console.error = originals.error;
+    console.info = originals.info;
+    console.log = originals.log;
+  }
+  return lines;
+}
+
+function allLines(lines) {
+  return [...lines.warn, ...lines.error, ...lines.info, ...lines.log].join('\n');
+}
+
+/** Asserts every <b>/<i>/<pre> opened in `text` is closed, in order. */
+function assertBalancedTags(text) {
+  const stack = [];
+  for (const m of text.matchAll(/<(\/?)(b|i|pre)>/g)) {
+    if (m[1]) assert.equal(stack.pop(), m[2], `unbalanced </${m[2]}>`);
+    else stack.push(m[2]);
+  }
+  assert.deepEqual(stack, [], 'every tag must be closed');
+  // Any other '<' must be an escaped one.
+  const stray = text.replace(/<\/?(b|i|pre)>/g, '');
+  assert.doesNotMatch(stray, /[<>]/, 'no raw < or > outside the emitted tags');
+}
+
+describe('bug reports: feature gate and bot/chat resolution', () => {
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    saved = saveEnv();
   });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
+  afterEach(() => restoreEnv(saved));
 
   it('is off when unconfigured: config reports disabled, POST 404s', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    await withApp({}, async (baseUrl) => {
+    clearEnv();
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
       const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
       assert.equal(cfg.res.status, 200);
       assert.deepEqual(cfg.body, { enabled: false });
-
-      const post = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(post.res.status, 404);
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 404);
+      assert.equal(fetchImpl.calls.length, 0);
     });
   });
 
-  it('is off when only some of the four required vars are set', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    process.env.KANBAN_REPORT_GITHUB_TOKEN = 'tok';
-    process.env.KANBAN_REPORT_REPO = 'owner/repo';
-    // TURNSTILE_SECRET / TURNSTILE_SITE_KEY deliberately left unset.
-    await withApp({}, async (baseUrl) => {
+  it('is off when Turnstile is set but there is no bot token', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TELEGRAM_BOT_TOKEN: undefined });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
+      assert.deepEqual(cfg.body, { enabled: false });
+      assert.equal((await post(baseUrl)).res.status, 404);
+      assert.equal(fetchImpl.calls.length, 0);
+    });
+  });
+
+  it('is off when there is a bot token but no chat id of either kind', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TELEGRAM_CHAT_ID: undefined });
+    await withApp({ fetch: makeFetch() }, async (baseUrl) => {
       const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
       assert.deepEqual(cfg.body, { enabled: false });
     });
   });
 
-  it('config never leaks the GitHub token or Turnstile secret, only the public site key', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    await withApp({}, async (baseUrl) => {
+  it('is off when the bot and chat are set but Turnstile is not', async () => {
+    clearEnv();
+    configureEnv({ TURNSTILE_SECRET: undefined });
+    await withApp({ fetch: makeFetch() }, async (baseUrl) => {
+      const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
+      assert.deepEqual(cfg.body, { enabled: false });
+    });
+  });
+
+  it('is on with only the report chat override (no alert chat)', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TELEGRAM_CHAT_ID: undefined, KANBAN_REPORT_TELEGRAM_CHAT_ID: REPORT_CHAT });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
+      assert.equal(cfg.body.enabled, true);
+      assert.equal((await post(baseUrl)).res.status, 201);
+      assert.equal(fetchImpl.telegram[0].body.chat_id, REPORT_CHAT);
+    });
+  });
+
+  it('KANBAN_REPORT_TELEGRAM_CHAT_ID wins over KANBAN_TELEGRAM_CHAT_ID; the bot is always KANBAN_TELEGRAM_BOT_TOKEN', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_TELEGRAM_CHAT_ID: REPORT_CHAT });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 201);
+    });
+    assert.equal(fetchImpl.telegram.length, 1);
+    assert.equal(fetchImpl.telegram[0].body.chat_id, REPORT_CHAT);
+    assert.equal(fetchImpl.telegram[0].url, `https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+  });
+
+  it('falls back to KANBAN_TELEGRAM_CHAT_ID when no report chat is set (blank counts as unset)', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_TELEGRAM_CHAT_ID: '   ' });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 201);
+    });
+    assert.equal(fetchImpl.telegram[0].body.chat_id, ALERT_CHAT);
+  });
+
+  it('reportTelegramTarget resolves in the documented order', () => {
+    const before = saveEnv();
+    try {
+      clearEnv();
+      assert.equal(reportTelegramTarget().enabled, false);
+      process.env.KANBAN_TELEGRAM_BOT_TOKEN = DUMMY_BOT_TOKEN;
+      assert.equal(reportTelegramTarget().enabled, false, 'a bot alone has nowhere to send');
+      process.env.KANBAN_TELEGRAM_CHAT_ID = ALERT_CHAT;
+      let t = reportTelegramTarget();
+      assert.equal(t.enabled, true);
+      assert.equal(t.chatId, ALERT_CHAT);
+      assert.equal(t.chatSource, 'KANBAN_TELEGRAM_CHAT_ID');
+      assert.equal(t.apiUrl, 'https://api.telegram.org');
+      process.env.KANBAN_REPORT_TELEGRAM_CHAT_ID = REPORT_CHAT;
+      t = reportTelegramTarget();
+      assert.equal(t.chatId, REPORT_CHAT);
+      assert.equal(t.chatSource, 'KANBAN_REPORT_TELEGRAM_CHAT_ID');
+      assert.equal(t.botToken, DUMMY_BOT_TOKEN);
+      delete process.env.KANBAN_TELEGRAM_BOT_TOKEN;
+      assert.equal(reportTelegramTarget().enabled, false, 'no override exists for the bot token');
+    } finally {
+      restoreEnv(before);
+    }
+  });
+
+  it('GitHub variables alone do not enable the feature', async () => {
+    clearEnv();
+    configureEnv({
+      KANBAN_TELEGRAM_BOT_TOKEN: undefined,
+      KANBAN_TELEGRAM_CHAT_ID: undefined,
+      KANBAN_REPORT_GITHUB_TOKEN: `ghp_${'a'.repeat(36)}`,
+      KANBAN_REPORT_REPO: 'owner/repo',
+      KANBAN_REPORT_GITHUB_API_URL: 'http://127.0.0.1:1',
+    });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
+      assert.deepEqual(cfg.body, { enabled: false });
+      assert.equal((await post(baseUrl)).res.status, 404);
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('GitHub variables are ignored when set alongside Telegram: no GitHub call, one Telegram message', async () => {
+    clearEnv();
+    configureEnv({
+      KANBAN_REPORT_GITHUB_TOKEN: `ghp_${'a'.repeat(36)}`,
+      KANBAN_REPORT_REPO: 'owner/repo',
+      KANBAN_REPORT_GITHUB_API_URL: 'http://127.0.0.1:1',
+    });
+    const fetchImpl = makeFetch();
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        const res = await post(baseUrl);
+        assert.equal(res.res.status, 201);
+        assert.deepEqual(res.body, { ok: true });
+      }),
+    );
+    assert.equal(fetchImpl.calls.filter((c) => /github|127\.0\.0\.1:1/.test(c.url)).length, 0);
+    assert.equal(fetchImpl.telegram.length, 1);
+    assert.doesNotMatch(allLines(lines), /GITHUB|REPORT_REPO/);
+  });
+
+  it('config never leaks the bot token, chat id or Turnstile secret, only the public site key', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_TELEGRAM_CHAT_ID: REPORT_CHAT });
+    await withApp({ fetch: makeFetch() }, async (baseUrl) => {
       const cfg = await jsonRequest(baseUrl, '/api/bug-reports/config');
       assert.equal(cfg.res.status, 200);
       assert.deepEqual(cfg.body, { enabled: true, siteKey: process.env.TURNSTILE_SITE_KEY });
       const raw = JSON.stringify(cfg.body);
-      assert.doesNotMatch(raw, new RegExp(DUMMY_GITHUB_TOKEN));
-      assert.doesNotMatch(raw, new RegExp(process.env.TURNSTILE_SECRET));
+      assert.ok(!raw.includes(DUMMY_BOT_TOKEN));
+      assert.ok(!raw.includes(REPORT_CHAT));
+      assert.ok(!raw.includes(process.env.TURNSTILE_SECRET));
     });
   });
 
-  it('unauthenticated route does not weaken auth on other routes (mutations still need the token)', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+  it('unauthenticated route does not weaken auth on other routes, and a report creates no board card', async () => {
+    clearEnv();
     configureEnv({ KANBAN_AUTH_TOKEN: 'board-token' });
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
+      const before = await jsonRequest(baseUrl, '/api/tasks');
       // The bug-report route itself needs no token.
-      const report = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const report = await post(baseUrl);
       assert.equal(report.res.status, 201);
+
+      // No card appeared anywhere as a side effect.
+      const afterTasks = await jsonRequest(baseUrl, '/api/tasks');
+      assert.equal(afterTasks.res.status, 200);
+      assert.equal(JSON.stringify(afterTasks.body).length, JSON.stringify(before.body).length);
+      assert.ok(!JSON.stringify(afterTasks.body).includes(REPORT_TITLE));
 
       // Every other mutating route is still fail-closed without it.
       const createTask = await jsonRequest(baseUrl, '/api/tasks', {
@@ -215,36 +444,23 @@ describe('bug reports: feature gate', () => {
         body: JSON.stringify({ id: 't-1', project: 'default', title: 'x', round: 1, status: 'BACKLOG' }),
       });
       assert.equal(createTask.res.status, 401);
-
-      // Reads are unaffected (read-auth off by default).
-      const tasks = await jsonRequest(baseUrl, '/api/tasks');
-      assert.equal(tasks.res.status, 200);
     });
   });
 });
 
 describe('bug reports: honeypot + validation', () => {
-  let saved = {};
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
-    for (const k of ENV_KEYS) delete process.env[k];
+    saved = saveEnv();
+    clearEnv();
     configureEnv();
   });
-  after(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
+  after(() => restoreEnv(saved));
 
-  it('a filled honeypot returns a quiet fake success and never calls GitHub or Turnstile', async () => {
+  it('a filled honeypot returns a quiet fake success and never calls Telegram or Turnstile', async () => {
     const fetchImpl = makeFetch();
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ website: 'http://spam.example' }),
-      });
+      const res = await post(baseUrl, { website: 'http://spam.example' });
       assert.equal(res.res.status, 200);
       assert.deepEqual(res.body, { ok: true });
       assert.equal(fetchImpl.calls.length, 0, 'honeypot must short-circuit before any outbound call');
@@ -254,11 +470,7 @@ describe('bug reports: honeypot + validation', () => {
   it('a non-string honeypot value is treated as filled, not thrown on', async () => {
     const fetchImpl = makeFetch();
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ website: ['not-a-string'] }),
-      });
+      const res = await post(baseUrl, { website: ['not-a-string'] });
       assert.equal(res.res.status, 200);
       assert.deepEqual(res.body, { ok: true });
       assert.equal(fetchImpl.calls.length, 0);
@@ -267,11 +479,7 @@ describe('bug reports: honeypot + validation', () => {
 
   it('rejects non-string title/description/turnstileToken as invalid_payload', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ title: 42 }),
-      });
+      const res = await post(baseUrl, { title: 42 });
       assert.equal(res.res.status, 400);
       assert.equal(res.body.error, 'invalid_payload');
     });
@@ -279,11 +487,7 @@ describe('bug reports: honeypot + validation', () => {
 
   it('rejects an empty (post-trim) title', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ title: '   ' }),
-      });
+      const res = await post(baseUrl, { title: '   ' });
       assert.equal(res.res.status, 400);
       assert.equal(res.body.error, 'invalid_title');
     });
@@ -291,11 +495,7 @@ describe('bug reports: honeypot + validation', () => {
 
   it('rejects a title over 120 chars', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ title: 'x'.repeat(121) }),
-      });
+      const res = await post(baseUrl, { title: 'x'.repeat(121) });
       assert.equal(res.res.status, 400);
       assert.equal(res.body.error, 'invalid_title');
     });
@@ -303,22 +503,14 @@ describe('bug reports: honeypot + validation', () => {
 
   it('accepts a title at exactly 120 chars', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ title: 'x'.repeat(120) }),
-      });
+      const res = await post(baseUrl, { title: 'x'.repeat(120) });
       assert.equal(res.res.status, 201);
     });
   });
 
   it('rejects a description under 10 chars', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ description: 'too short' }),
-      });
+      const res = await post(baseUrl, { description: 'too short' });
       assert.equal(res.res.status, 400);
       assert.equal(res.body.error, 'invalid_description');
     });
@@ -326,11 +518,7 @@ describe('bug reports: honeypot + validation', () => {
 
   it('rejects a description over 5000 chars', async () => {
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody({ description: 'x'.repeat(5001) }),
-      });
+      const res = await post(baseUrl, { description: 'x'.repeat(5001) });
       assert.equal(res.res.status, 400);
       assert.equal(res.body.error, 'invalid_description');
     });
@@ -338,954 +526,714 @@ describe('bug reports: honeypot + validation', () => {
 });
 
 describe('bug reports: Turnstile outcomes', () => {
-  let saved = {};
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    saved = saveEnv();
   });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
+  afterEach(() => restoreEnv(saved));
 
-  it('success:false (fail or already-spent/replayed token) -> 403 invalid_captcha', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+  it('success:false (fail or already-spent/replayed token) -> 403 invalid_captcha, nothing sent', async () => {
+    clearEnv();
     configureEnv();
     const fetchImpl = makeFetch({
       turnstile: () => fakeResponse(200, { success: false, 'error-codes': ['invalid-input-response'] }),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 403);
       assert.equal(res.body.error, 'invalid_captcha');
-      assert.equal(fetchImpl.calls.filter((c) => c.url.includes('issues')).length, 0, 'must not file on a failed captcha');
+      assert.equal(fetchImpl.telegram.length, 0, 'must not send on a failed captcha');
     });
   });
 
   it('wrong action -> 403 invalid_captcha_action', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv();
-    const fetchImpl = makeFetch({
-      turnstile: () => fakeResponse(200, okTurnstileBody({ action: 'login' })),
-    });
+    const fetchImpl = makeFetch({ turnstile: () => fakeResponse(200, okTurnstileBody({ action: 'login' })) });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 403);
       assert.equal(res.body.error, 'invalid_captcha_action');
     });
   });
 
   it('hostname outside the allow-list -> 403 invalid_captcha_hostname', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ TURNSTILE_HOSTNAMES: 'allowed.example.test' });
     const fetchImpl = makeFetch({
       turnstile: () => fakeResponse(200, okTurnstileBody({ hostname: 'evil.example.test' })),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 403);
       assert.equal(res.body.error, 'invalid_captcha_hostname');
+      assert.equal(fetchImpl.telegram.length, 0);
     });
   });
 
-  it('hostname IS in the allow-list -> passes through to filing', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+  it('hostname IS in the allow-list -> passes through to sending', async () => {
+    clearEnv();
     configureEnv({ TURNSTILE_HOSTNAMES: 'allowed.example.test,other.example.test' });
     const fetchImpl = makeFetch({
       turnstile: () => fakeResponse(200, okTurnstileBody({ hostname: 'allowed.example.test' })),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 201);
     });
   });
 
   it('TURNSTILE_HOSTNAMES unset skips the hostname check entirely', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ TURNSTILE_HOSTNAMES: undefined });
     const fetchImpl = makeFetch({
       turnstile: () => fakeResponse(200, okTurnstileBody({ hostname: 'anything.example.test' })),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 201);
     });
   });
 
-  it('a Turnstile network error fails closed: 502 verification_unavailable', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      turnstile: () => new Error('ECONNRESET'),
-    });
+  it('TURNSTILE_SITEVERIFY_URL redirects siteverify (local stub), default is Cloudflare', async () => {
+    clearEnv();
+    configureEnv({ TURNSTILE_SITEVERIFY_URL: 'http://127.0.0.1:9/turnstile/v0/siteverify' });
+    const seen = [];
+    const fetchImpl = async (url, opts) => {
+      seen.push(String(url));
+      if (String(url).endsWith('/siteverify')) return fakeResponse(200, okTurnstileBody());
+      return okTelegram();
+    };
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      assert.equal((await post(baseUrl)).res.status, 201);
+    });
+    assert.equal(seen[0], 'http://127.0.0.1:9/turnstile/v0/siteverify');
+  });
+
+  it('a Turnstile network error fails closed: 502 verification_unavailable', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ turnstile: () => new Error('ECONNRESET') });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl);
       assert.equal(res.res.status, 502);
       assert.equal(res.body.error, 'verification_unavailable');
     });
   });
 
   it('a Turnstile network failure does NOT consume the daily cap (retry is free)', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ KANBAN_REPORT_DAILY_CAP: '1' });
     let fail = true;
     const fetchImpl = makeFetch({
-      turnstile: () => {
-        if (fail) return new Error('ECONNRESET');
-        return fakeResponse(200, okTurnstileBody());
-      },
+      turnstile: () => (fail ? new Error('ECONNRESET') : fakeResponse(200, okTurnstileBody())),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const first = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(first.res.status, 502);
+      assert.equal((await post(baseUrl)).res.status, 502);
       fail = false;
-      const second = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const second = await post(baseUrl);
       assert.equal(second.res.status, 201, 'the failed attempt must not have spent the cap of 1');
     });
   });
 });
 
 describe('bug reports: rate limits', () => {
-  let saved = {};
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    saved = saveEnv();
   });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
+  afterEach(() => restoreEnv(saved));
 
   it('enforces the per-IP hourly cap', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '2', KANBAN_REPORT_DAILY_CAP: '100' });
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
       const statuses = [];
-      for (let i = 0; i < 3; i++) {
-        const r = await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-        statuses.push(r.res.status);
-      }
+      for (let i = 0; i < 3; i++) statuses.push((await post(baseUrl)).res.status);
       assert.deepEqual(statuses, [201, 201, 429]);
     });
   });
 
   it('enforces the global daily cap across different IPs', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '100', KANBAN_REPORT_DAILY_CAP: '1' });
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const first = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.9' },
-        body: postBody(),
-      });
+      const first = await post(baseUrl, {}, { 'X-Forwarded-For': '203.0.113.9' });
       assert.equal(first.res.status, 201);
-      const second = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        // A different reported IP — the daily cap is global, not per-IP.
-        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.200' },
-        body: postBody(),
-      });
+      // A different reported IP — the daily cap is global, not per-IP.
+      const second = await post(baseUrl, {}, { 'X-Forwarded-For': '203.0.113.200' });
       assert.equal(second.res.status, 429);
       assert.equal(second.body.error, 'daily_cap_reached');
     });
   });
 
   it('a spoofed X-Forwarded-For prefix cannot dodge the per-IP limit beyond the trusted hop', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     // KANBAN_TRUST_PROXY=1: only the hop nearest the server is trusted, so
-    // Express reads the RIGHTMOST X-Forwarded-For entry as the client. An
-    // attacker connecting directly can prepend as many fake addresses as they
-    // like on the left; none of them should change the bucket the request is
-    // charged against as long as the rightmost (trusted-hop-supplied) address
-    // stays the same.
+    // Express reads the RIGHTMOST X-Forwarded-For entry as the client.
     configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '2', KANBAN_REPORT_DAILY_CAP: '100', KANBAN_TRUST_PROXY: '1' });
     await withApp({ fetch: makeFetch() }, async (baseUrl) => {
       const realIp = '198.51.100.7';
-      const chains = [
-        `9.9.9.9, ${realIp}`,
-        `1.2.3.4, 5.6.7.8, ${realIp}`,
-        `${Math.random()}, ${realIp}`,
-      ];
+      const chains = [`9.9.9.9, ${realIp}`, `1.2.3.4, 5.6.7.8, ${realIp}`, `${Math.random()}, ${realIp}`];
       const statuses = [];
-      for (const chain of chains) {
-        const r = await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': chain },
-          body: postBody(),
-        });
-        statuses.push(r.res.status);
-      }
-      assert.deepEqual(
-        statuses,
-        [201, 201, 429],
-        'every spoofed prefix must still collapse onto the one real-IP bucket',
-      );
+      for (const chain of chains) statuses.push((await post(baseUrl, {}, { 'X-Forwarded-For': chain })).res.status);
+      assert.deepEqual(statuses, [201, 201, 429], 'every spoofed prefix must still collapse onto the one real-IP bucket');
     });
   });
 
-  it('a report that fails to file does not consume the daily cap', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1' });
-
-    // A failing GitHub call must leave the cap of 1 untouched.
-    const failingFetch = makeFetch({ github: () => fakeResponse(400, { message: 'bad request' }) });
-    await withApp({ fetch: failingFetch }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-    });
-
-    // Rate-limit counters live inside the router closure created per
-    // createApp() call, so this second app starts with a clean slate — it
-    // stands in for "the same deployment, next request" to prove the cap
-    // itself (not just the counter) was never spent by the failed attempt.
-    // (A same-process persistence test would need the router to survive
-    // across requests on ONE app instance, which the per-IP/daily-cap test
-    // above already covers for the success path.)
-    await withApp({ fetch: makeFetch() }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 201);
-    });
-  });
-
-  it('a report that fails to file does not consume the daily cap (same app instance)', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1' });
+  it('a report Telegram rejects does not consume the per-IP or daily budget (same app instance)', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1', KANBAN_REPORT_PER_IP_PER_HOUR: '1' });
     let shouldFail = true;
     const fetchImpl = makeFetch({
-      github: () => (shouldFail ? fakeResponse(400, { message: 'bad request' }) : fakeResponse(201, okGithubBody())),
+      telegram: () => (shouldFail ? telegramError(400, 'Bad Request: chat not found') : okTelegram()),
     });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      const failed = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      const failed = await post(baseUrl);
       assert.equal(failed.res.status, 502);
+      const failedAgain = await post(baseUrl);
+      assert.equal(failedAgain.res.status, 502, 'a second failure is still not rate limited');
 
       shouldFail = false;
-      const succeeded = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(succeeded.res.status, 201, 'the cap of 1 must still be available after the earlier failure');
+      const succeeded = await post(baseUrl);
+      assert.equal(succeeded.res.status, 201, 'the budget of 1 must still be available after the failures');
 
-      shouldFail = false;
-      const third = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(third.res.status, 429, 'the cap IS spent once a report actually succeeds');
-    });
-  });
-});
-
-describe('bug reports: GitHub filing — retry, labels, success', () => {
-  let saved = {};
-  before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
-  });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
-
-  it('succeeds and returns the issue number + url', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => fakeResponse(201, okGithubBody({ number: 7 })) });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 201);
-      assert.equal(res.body.ok, true);
-      assert.equal(res.body.issue_number, 7);
-      assert.match(res.body.issue_url, /^https:\/\/github\.com\//);
+      const third = await post(baseUrl);
+      assert.equal(third.res.status, 429, 'the budget IS spent once a report actually arrives');
     });
   });
 
-  it('retries once on a 5xx and succeeds on the second attempt', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: (n) => (n === 1 ? fakeResponse(503, { message: 'down' }) : fakeResponse(201, okGithubBody())),
-    });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 201);
-      assert.equal(fetchImpl.calls.filter((c) => c.url.includes('issues')).length, 2);
-    });
-  });
-
-  it('retries on 429 and respects retry-after before the next attempt', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const start = Date.now();
-    const fetchImpl = makeFetch({
-      github: (n) => (n === 1 ? fakeResponse(429, { message: 'slow down' }, { 'Retry-After': '0' }) : fakeResponse(201, okGithubBody())),
-    });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 201);
-    });
-  });
-
-  it('exhausts retries on persistent 5xx -> 502 could_not_file, no upstream body leaked', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: () => fakeResponse(500, { message: 'internal secret stack trace details' }),
-    });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-      assert.equal(res.body.error, 'could_not_file');
-      assert.equal(fetchImpl.calls.filter((c) => c.url.includes('issues')).length, 3);
-      assert.doesNotMatch(JSON.stringify(res.body), /secret stack trace/);
-    });
-  });
-
-  it('does NOT retry on a plain 400/401 and returns 502 with no upstream detail', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl400 = makeFetch({ github: () => fakeResponse(400, { message: 'bad' }) });
-    await withApp({ fetch: fetchImpl400, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-      assert.equal(res.body.error, 'could_not_file');
-      assert.equal(fetchImpl400.calls.filter((c) => c.url.includes('issues')).length, 1);
-    });
-
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl401 = makeFetch({ github: () => fakeResponse(401, { message: 'bad creds' }) });
-    await withApp({ fetch: fetchImpl401, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-      assert.equal(fetchImpl401.calls.filter((c) => c.url.includes('issues')).length, 1);
-    });
-  });
-
-  it('exhausts retries on repeated network errors -> 502 could_not_file', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => new Error('ETIMEDOUT') });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-      assert.equal(res.body.error, 'could_not_file');
-    });
-  });
-
-  it('falls back to filing WITHOUT the label on a 422, uncounted against the retry budget', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const bodies = [];
-    const fetchImpl = makeFetch({
-      github: (n, opts) => {
-        bodies.push(JSON.parse(opts.body));
-        if (n === 1) return fakeResponse(422, { message: 'Label does not exist' });
-        return fakeResponse(201, okGithubBody());
-      },
-    });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 201);
-      assert.equal(bodies.length, 2);
-      assert.deepEqual(bodies[0].labels, ['user-report']);
-      assert.equal(bodies[1].labels, undefined, 'the retry must drop the labels field entirely');
-    });
-  });
-
-  it('a second consecutive 422 (no labels left to drop) is NOT retried forever', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => fakeResponse(422, { message: 'still invalid' }) });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-      assert.equal(res.res.status, 502);
-      // Exactly 2 calls: the original (with labels) + the one uncounted
-      // label-stripped retry, which also 422s and is NOT retried again.
-      assert.equal(fetchImpl.calls.filter((c) => c.url.includes('issues')).length, 2);
-    });
-  });
-
-  it('sends the required GitHub headers', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    let seenHeaders = null;
-    const fetchImpl = makeFetch({
-      github: (n, opts) => {
-        seenHeaders = opts.headers;
-        return fakeResponse(201, okGithubBody());
-      },
-    });
+  it('a Telegram network failure does not consume the budget either', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1' });
+    let fail = true;
+    const fetchImpl = makeFetch({ telegram: () => (fail ? new Error('ECONNREFUSED') : okTelegram()) });
     await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+      assert.equal((await post(baseUrl)).res.status, 502);
+      fail = false;
+      assert.equal((await post(baseUrl)).res.status, 201);
     });
-    assert.equal(seenHeaders.Authorization, `Bearer ${process.env.KANBAN_REPORT_GITHUB_TOKEN}`);
-    assert.equal(seenHeaders.Accept, 'application/vnd.github+json');
-    assert.equal(seenHeaders['X-GitHub-Api-Version'], '2022-11-28');
-    assert.ok(seenHeaders['User-Agent']);
-  });
-
-  it('posts to KANBAN_REPORT_GITHUB_API_URL when set (demo/test stub override)', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_GITHUB_API_URL: 'http://127.0.0.1:9999/fake-github' });
-    const fetchImpl = makeFetch({ github: () => fakeResponse(201, okGithubBody()) });
-    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
-      await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
-    });
-    assert.ok(fetchImpl.calls.some((c) => c.url.startsWith('http://127.0.0.1:9999/fake-github')));
   });
 });
 
-describe('bug reports: issue body sanitisation', () => {
-  it('escalates the fence past the longest backtick run in the description', () => {
-    const description = 'see this: ```` four backticks and ``` three';
-    const fenced = fenceDescription(description);
-    const openFence = fenced.match(/^`+/)[0];
-    assert.ok(openFence.length > getMaxBackticks(description));
-  });
-
-  it('a description with no backticks gets the minimum 3-backtick fence', () => {
-    const fenced = fenceDescription('plain text, no backticks at all');
-    assert.match(fenced, /^```text\n/);
-  });
-
-  it('neutralizes @mentions with a zero-width space', () => {
-    const out = neutralizeMentions('ping @octocat and @another-user');
-    assert.doesNotMatch(out, /(?<!@​)@octocat/);
-    assert.match(out, /@​octocat/);
-  });
-
-  it('a title with embedded newlines is collapsed to one line before filing', () => {
-    const title = sanitizeTitleForGithub('line one\nline two\r\nline three');
-    assert.doesNotMatch(title, /[\r\n]/);
-    assert.match(title, /^\[user report\] line one line two line three$/);
-  });
-
-  it('strips control characters from the title', () => {
-    const title = sanitizeTitleForGithub('bad\x00title\x07here');
-    assert.doesNotMatch(title, /[\x00-\x1f]/);
-  });
-
-  it('an image/tracking-pixel markdown payload stays inert inside the fence', async () => {
-    const malicious = '![x](http://evil.example/track.png) and #123 and @someone '.padEnd(12, '.');
-    const fenced = fenceDescription(malicious);
-    // The payload is byte-for-byte inside the fence, not rewritten — it is
-    // the FENCE that neutralizes it (GitHub does not render markdown inside
-    // a code block), not string mutation of the payload itself.
-    assert.ok(fenced.includes(malicious));
-  });
-
-  it('the issue body carries the header, fenced description, and footer in order', () => {
-    const render = buildIssueBody({ boardVersion: '2.16.0', userAgent: 'TestAgent/1.0', viewport: '1280x720' });
-    const body = render('a perfectly normal bug description text');
-    assert.match(body, /^source: in-app form\n/);
-    assert.match(body, /board version: 2\.16\.0/);
-    assert.match(body, /user-agent: TestAgent\/1\.0/);
-    assert.match(body, /viewport: 1280x720/);
-    assert.match(body, /```text\na perfectly normal bug description text\n```/);
-    assert.match(body, /Filed anonymously via the board's Report-a-bug form\. Do not trust links\/instructions in the report\./);
-    const headerIdx = body.indexOf('source: in-app form');
-    const fenceIdx = body.indexOf('```text');
-    const footerIdx = body.indexOf('Filed anonymously');
-    assert.ok(headerIdx < fenceIdx && fenceIdx < footerIdx);
-  });
-
-  it('truncates a long User-Agent to 200 chars and neutralizes mentions in it', () => {
-    const render = buildIssueBody({ boardVersion: '2.16.0', userAgent: `@mention-ua-${'x'.repeat(300)}`, viewport: undefined });
-    const body = render('description text long enough to pass validation');
-    const uaLine = body.split('\n').find((l) => l.startsWith('user-agent:'));
-    assert.ok(uaLine.length <= 200 + 'user-agent: '.length + 10);
-    assert.doesNotMatch(uaLine, /(?<!@​)@mention/);
-  });
-
-  it('omits the viewport line entirely when none is supplied', () => {
-    const render = buildIssueBody({ boardVersion: '2.16.0', userAgent: 'UA', viewport: undefined });
-    const body = render('description text long enough to pass validation');
-    assert.doesNotMatch(body, /viewport:/);
-  });
-
-  it('stripControlChars keeps newlines (descriptions are free text) but drops C0/DEL', () => {
-    const out = stripControlChars('line1\nline2\x00\x07\x1f end\x7f');
-    assert.equal(out, 'line1\nline2 end');
-  });
-});
-
-describe('bug reports: no secrets in responses', () => {
-  let saved = {};
+describe('bug reports: Telegram delivery', () => {
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
+    saved = saveEnv();
   });
-  after(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
+  afterEach(() => restoreEnv(saved));
+
+  it('a valid report is sent as exactly ONE sendMessage with HTML parse mode and no link preview', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { meta: { viewport: '1280x720' } }, { 'User-Agent': 'TestAgent/1.0' });
+      assert.equal(res.res.status, 201);
+      assert.deepEqual(res.body, { ok: true });
+    });
+    assert.equal(fetchImpl.telegram.length, 1);
+    const { url, body } = fetchImpl.telegram[0];
+    assert.equal(url, `https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+    assert.equal(body.chat_id, ALERT_CHAT);
+    assert.equal(body.parse_mode, 'HTML');
+    assert.equal(body.disable_web_page_preview, true);
+    assert.ok(body.text.startsWith(REPORT_HEADER));
+    assert.ok(body.text.includes(`<b>${REPORT_TITLE}</b>`));
+    assert.ok(body.text.includes(`<pre>${REPORT_DESCRIPTION.replace(/&/g, '&amp;')}</pre>`));
+    assert.match(body.text, /viewport 1280x720/);
+    assert.match(body.text, /UA: TestAgent\/1\.0/);
+    assertBalancedTags(body.text);
   });
 
-  it('a GitHub 5xx failure response never echoes the token or upstream body', async () => {
-    const fetchImpl = makeFetch({
-      github: () => fakeResponse(502, { message: process.env.KANBAN_REPORT_GITHUB_TOKEN }),
+  it('posts to KANBAN_REPORT_TELEGRAM_API_URL when set (local stub override, trailing slash tolerated)', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_TELEGRAM_API_URL: 'http://127.0.0.1:3457/' });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 201);
     });
-    await withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-      const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: postBody(),
-      });
+    assert.equal(fetchImpl.telegram[0].url, `http://127.0.0.1:3457/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+  });
+
+  it('the visitor IP never appears in the message (even behind a trusted proxy)', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TRUST_PROXY: '1' });
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      assert.equal((await post(baseUrl, {}, { 'X-Forwarded-For': '198.51.100.77' })).res.status, 201);
+    });
+    const sent = JSON.stringify(fetchImpl.telegram[0].body);
+    assert.ok(!sent.includes('198.51.100.77'));
+    assert.ok(!sent.includes('127.0.0.1'));
+    // Turnstile still receives it as remoteip (that is its purpose).
+    const verify = fetchImpl.calls.find((c) => c.url.includes('siteverify'));
+    assert.match(verify.opts.body, /remoteip=198\.51\.100\.77/);
+  });
+
+  it('the board URL appears in the footer only when KANBAN_BOARD_URL is set', async () => {
+    clearEnv();
+    configureEnv();
+    let fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      await post(baseUrl);
+    });
+    assert.doesNotMatch(fetchImpl.telegram[0].body.text, /Board: /);
+
+    configureEnv({ KANBAN_BOARD_URL: 'https://board.example.test/' });
+    fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      await post(baseUrl);
+    });
+    assert.match(fetchImpl.telegram[0].body.text, /<i>Board: https:\/\/board\.example\.test<\/i>/);
+  });
+
+  it('a 429 is retried ONCE after the retry_after Telegram asked for, then succeeds', async () => {
+    clearEnv();
+    configureEnv();
+    const sleep = recordingSleep();
+    const fetchImpl = makeFetch({
+      telegram: (n) =>
+        n === 1 ? telegramError(429, 'Too Many Requests: retry after 3', { parameters: { retry_after: 3 } }) : okTelegram(),
+    });
+    await withApp({ fetch: fetchImpl, sleep }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 201);
+    });
+    assert.equal(fetchImpl.telegram.length, 2);
+    assert.deepEqual(sleep.waits, [3000]);
+    assert.equal(fetchImpl.telegram[0].body.text, fetchImpl.telegram[1].body.text, 'the retry resends the same message');
+  });
+
+  it('a retry_after over 10s is not sat out in the request: 502 at once, one attempt, no sleep', async () => {
+    clearEnv();
+    configureEnv();
+    const sleep = recordingSleep();
+    const fetchImpl = makeFetch({
+      telegram: (n) => (n === 1 ? telegramError(429, 'Too Many Requests', { parameters: { retry_after: 3600 } }) : okTelegram()),
+    });
+    await withApp({ fetch: fetchImpl, sleep }, async (baseUrl) => {
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.equal(res.body.error, 'could_not_send');
+    });
+    assert.deepEqual(sleep.waits, []);
+    assert.equal(fetchImpl.telegram.length, 1);
+  });
+
+  it('a second 429 is not retried again: 502 could_not_send after exactly two attempts', async () => {
+    clearEnv();
+    configureEnv();
+    const sleep = recordingSleep();
+    const fetchImpl = makeFetch({
+      telegram: () => telegramError(429, 'Too Many Requests', { parameters: { retry_after: 1 } }),
+    });
+    await withApp({ fetch: fetchImpl, sleep }, async (baseUrl) => {
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.equal(res.body.error, 'could_not_send');
+    });
+    assert.equal(fetchImpl.telegram.length, 2);
+    assert.deepEqual(sleep.waits, [1000]);
+  });
+
+  it('a 5xx is not retried and returns 502 with no upstream detail', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => telegramError(500, 'Internal Server Error') });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.deepEqual(res.body, { error: 'could_not_send' });
+    });
+    assert.equal(fetchImpl.telegram.length, 1);
+  });
+
+  it('a 403 (bot not in the channel) returns 502 could_not_send', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => telegramError(403, 'Forbidden: bot is not a member of the channel chat') });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.deepEqual(res.body, { error: 'could_not_send' });
+    });
+  });
+
+  it('a network error reaching Telegram returns 502 could_not_send', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => new Error('getaddrinfo ENOTFOUND') });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl);
+      assert.equal(res.res.status, 502);
+      assert.equal(res.body.error, 'could_not_send');
+    });
+  });
+
+  it('an HTTP 200 whose body is not ok:true is treated as a failure, not a success', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => fakeResponse(200, { ok: false, description: 'weird' }) });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 502);
+    });
+  });
+
+  it('a failure response never echoes the bot token or the upstream description', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => telegramError(502, `bad gateway for bot${DUMMY_BOT_TOKEN}`) });
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl);
       const raw = JSON.stringify(res.body);
-      assert.doesNotMatch(raw, new RegExp(DUMMY_GITHUB_TOKEN));
+      assert.ok(!raw.includes(DUMMY_BOT_TOKEN));
+      assert.ok(!raw.includes('bad gateway'));
     });
   });
 });
 
-// ---------------------------------------------------------------------
-// Failure logging (v3.2.5): a report that can't be filed now leaves exactly
-// one diagnostic console line behind, keyed on status/network with a human
-// hint, GitHub's own `message`, and the two permission/rate-limit headers —
-// the server previously logged NOTHING on this path, which is what made a
-// placeholder KANBAN_REPORT_GITHUB_TOKEN on Railway invisible: every report
-// 502'd and the deploy logs gave no clue (GH incident, Oct 2026).
-// ---------------------------------------------------------------------
+describe('bug reports: Telegram message formatting', () => {
+  const base = { title: 'A title', description: 'A description long enough', boardVersion: '9.9.9' };
 
-/** Swaps the given console methods for recording stubs, runs `fn`, restores
- * the originals even on throw, and returns `{ warn, error, info }` arrays of
- * the args joined per call. */
-async function captureConsole(fn) {
-  const originals = { warn: console.warn, error: console.error, info: console.info };
-  const lines = { warn: [], error: [], info: [] };
-  console.warn = (...args) => lines.warn.push(args.join(' '));
-  console.error = (...args) => lines.error.push(args.join(' '));
-  console.info = (...args) => lines.info.push(args.join(' '));
-  try {
-    await fn();
-  } finally {
-    console.warn = originals.warn;
-    console.error = originals.error;
-    console.info = originals.info;
-  }
-  return lines;
-}
-
-describe('bug reports: GitHub failure logging', () => {
-  let saved = {};
-  before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
+  it('starts with the type marker header and puts the title in bold', () => {
+    const text = formatReportMessage(base);
+    assert.ok(text.startsWith('🐞 <b>Report a Bug/Request a feature</b>\n\n<b>A title</b>\n\n<pre>'));
+    assert.match(text, /<i>Board v9\.9\.9<\/i>/);
+    assertBalancedTags(text);
   });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
+
+  it('HTML injection in the title and description is escaped (only & < > are touched)', () => {
+    const text = formatReportMessage({
+      ...base,
+      title: '<a href="https://evil.test">click</a> & "quotes"',
+      description: '</pre><b>bold</b><a href="tg://x">x</a> & it\'s "fine"',
+    });
+    assert.ok(text.includes('&lt;a href="https:\u200B//evil.test"&gt;click&lt;/a&gt; &amp; "quotes"'));
+    assert.ok(text.includes('<pre>&lt;/pre&gt;&lt;b&gt;bold&lt;/b&gt;&lt;a href="tg://x"&gt;x&lt;/a&gt; &amp; it\'s "fine"</pre>'));
+    assert.ok(!text.includes('&quot;'), 'quotes are not entity-escaped (Telegram shows &quot; literally)');
+    assertBalancedTags(text);
+  });
+
+  it('@mentions and scheme:// links in the title and user agent are neutralised; the <pre> description is left verbatim', () => {
+    const text = formatReportMessage({
+      ...base,
+      title: 'ping @admin see https://evil.test',
+      description: 'hello @everyone visit https://evil.test',
+      userAgent: 'Bot @owner https://x.test',
+    });
+    assert.ok(text.includes('<b>ping @\u200Badmin see https:\u200B//evil.test</b>'));
+    assert.ok(text.includes('UA: Bot @\u200Bowner https:\u200B//x.test'));
+    assert.ok(text.includes('<pre>hello @everyone visit https://evil.test</pre>'), 'pre is not entity-parsed by Telegram');
+    assert.ok(!/@admin|@owner/.test(text));
+  });
+
+  it('control characters are stripped; newlines in the title collapse, in the description survive', () => {
+    const text = formatReportMessage({
+      ...base,
+      title: 'line1\nline2\u0007\u0000end',
+      description: 'para one\r\n\u0001para two\tTabbed\u007f\u0085',
+      userAgent: 'UA\r\nInjected: header',
+    });
+    assert.ok(text.includes('<b>line1 line2 end</b>'));
+    assert.ok(text.includes('<pre>para one\npara two\tTabbed</pre>'));
+    assert.ok(text.includes('UA: UA Injected: header'));
+    assert.doesNotMatch(text, /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+  });
+
+  it('emoji and right-to-left text survive; bidi override controls are removed', () => {
+    const text = formatReportMessage({
+      ...base,
+      title: 'تقرير 🐛 خطأ',
+      description: 'שלום עולם 👋🏽 and \u202Egnirts desrever\u202C here',
+    });
+    assert.ok(text.includes('<b>تقرير 🐛 خطأ</b>'));
+    assert.ok(text.includes('שלום עולם 👋🏽 and gnirts desrever here'));
+    assert.doesNotMatch(text, /[\u202A-\u202E\u2066-\u2069]/);
+  });
+
+  it('a very long title AND a 5000-char markup-heavy description fit in 4096 with balanced tags and whole entities', () => {
+    const text = formatReportMessage({
+      ...base,
+      title: '<&>'.repeat(40),
+      description: '<&>'.repeat(1667),
+      userAgent: 'U'.repeat(500),
+      viewport: '1x1',
+      boardUrl: 'https://board.example.test',
+    });
+    assert.ok(text.length <= TELEGRAM_TEXT_LIMIT, `length ${text.length}`);
+    assertBalancedTags(text);
+    const pre = text.slice(text.indexOf('<pre>') + 5, text.indexOf('</pre>'));
+    assert.match(pre, /^(?:&lt;|&amp;|&gt;)+$/, 'the cut never lands inside an entity');
+    assert.match(text, /… description shortened \(\d+ more characters\)/);
+    assert.ok(text.includes('<i>Board: https://board.example.test</i>'), 'the footer survives truncation');
+    assert.ok(text.includes('UA: ' + 'U'.repeat(200) + '</i>'), 'user agent is capped at 200 chars');
+  });
+
+  it('the cut never splits an emoji surrogate pair', () => {
+    for (let pad = 0; pad < 4; pad++) {
+      const text = formatReportMessage({ ...base, description: 'x'.repeat(pad) + '😀'.repeat(2500) });
+      assert.ok(text.length <= TELEGRAM_TEXT_LIMIT);
+      assert.ok(text.isWellFormed(), 'no lone surrogate at the cut');
     }
   });
+
+  it('a description that fits is never shortened', () => {
+    const description = 'y'.repeat(3500);
+    const text = formatReportMessage({ ...base, description });
+    assert.ok(text.includes(`<pre>${description}</pre>`));
+    assert.doesNotMatch(text, /shortened/);
+  });
+
+  it('escapeWithin stops at a whole character and reports how much was left out', () => {
+    assert.deepEqual(escapeWithin('a&b', 5), { text: 'a', omitted: 2 });
+    assert.deepEqual(escapeWithin('a&b', 6), { text: 'a&amp;', omitted: 1 });
+    assert.deepEqual(escapeWithin('ab', 10), { text: 'ab', omitted: 0 });
+  });
+
+  it('drops a viewport that is not WxH digits', () => {
+    const text = formatReportMessage({ ...base, viewport: '1x1\n<b>x</b>' });
+    assert.doesNotMatch(text, /viewport/);
+    assert.match(formatReportMessage({ ...base, viewport: '390x844' }), /viewport 390x844/);
+  });
+
+  it('the helpers behave as documented', () => {
+    assert.equal(neutralizeEntities('a@b c://d'), 'a@\u200Bb c:\u200B//d');
+    assert.equal(cleanOneLine(' a\n\tb\u202E '), 'a b');
+    assert.equal(cleanMultiline('a\r\nb\u0000\u2028c'), 'a\nbc');
+    assert.equal(stripControlChars('line1\nline2\u0007 end'), 'line1\nline2 end');
+  });
+});
+
+describe('bug reports: sendTelegramMessage transport', () => {
+  it('never rejects when fetch throws, and scrubs the token from what it returns', async () => {
+    const out = await sendTelegramMessage({
+      botToken: DUMMY_BOT_TOKEN,
+      chatId: '1',
+      text: 'x',
+      fetchImpl: async () => {
+        const err = new Error(`connect failed https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+        err.name = `Err${DUMMY_BOT_TOKEN}`;
+        throw err;
+      },
+    });
+    assert.equal(out.ok, false);
+    assert.equal(out.networkError, true);
+    assert.ok(!JSON.stringify(out).includes(DUMMY_BOT_TOKEN));
+  });
+
+  it('scrubs an echoed token from Telegram\'s description and tolerates a non-JSON body', async () => {
+    const echo = await sendTelegramMessage({
+      botToken: DUMMY_BOT_TOKEN,
+      chatId: '1',
+      text: 'x',
+      fetchImpl: async () => telegramError(401, `Unauthorized ${DUMMY_BOT_TOKEN}`),
+    });
+    assert.equal(echo.status, 401);
+    assert.equal(echo.description, 'Unauthorized [redacted]');
+    const notJson = await sendTelegramMessage({
+      botToken: DUMMY_BOT_TOKEN,
+      chatId: '1',
+      text: 'x',
+      fetchImpl: async () => ({ ok: false, status: 502, json: async () => { throw new Error('html'); } }),
+    });
+    assert.equal(notJson.ok, false);
+    assert.equal(notJson.status, 502);
+  });
+
+  it('a 429 without parameters waits the 1s default before its single retry', async () => {
+    const waits = [];
+    let n = 0;
+    const out = await sendTelegramMessage({
+      botToken: DUMMY_BOT_TOKEN,
+      chatId: '1',
+      text: 'x',
+      sleep: async (ms) => waits.push(ms),
+      fetchImpl: async () => (++n === 1 ? fakeResponse(429, { ok: false }) : okTelegram()),
+    });
+    assert.equal(out.ok, true);
+    assert.equal(out.attempts, 2);
+    assert.deepEqual(waits, [1000]);
+  });
+
+  it('scrubSecret removes raw, JSON-escaped and URL-encoded forms and ignores short secrets', () => {
+    const secret = '12345:ab/c"d';
+    assert.equal(scrubSecret(`x ${secret} y`, secret), 'x [redacted] y');
+    assert.equal(scrubSecret(`x ${JSON.stringify(secret).slice(1, -1)} y`, secret), 'x [redacted] y');
+    assert.equal(scrubSecret(`x ${encodeURIComponent(secret)} y`, secret), 'x [redacted] y');
+    assert.equal(scrubSecret('short abc', 'abc'), 'short abc');
+  });
+});
+
+// ---------------------------------------------------------------------
+// Failure logging: a report that can't be delivered leaves exactly one
+// diagnostic console line behind (rate-limited per kind), with the status,
+// Telegram's own description and a hint — and never the token, the report
+// text, the rendered message or the visitor's IP.
+// ---------------------------------------------------------------------
+
+describe('bug reports: Telegram failure logging', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+  });
+  afterEach(() => restoreEnv(saved));
 
   // One case per status, unrolled into explicit `it(...)` calls (rather than
   // a loop over a CASES array) so the static test-case count the About page
   // asserts against (client/src/lib/about.test.mjs, counting literal
   // `it(`/`test(` declarations) matches the runner's actual count.
-  async function assertFailureLogged({ status, githubMessage, hint }) {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => fakeResponse(status, { message: githubMessage }) });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.42' },
-          body: postBody(),
-        });
-        assert.equal(res.res.status, 502);
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine, `expected a could_not_file log line, got: ${JSON.stringify(lines)}`);
-    assert.match(failureLine, new RegExp(`status=${status}\\b`));
-    assert.match(failureLine, new RegExp(githubMessage));
-    assert.match(failureLine, new RegExp(hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.doesNotMatch(failureLine, new RegExp(DUMMY_GITHUB_TOKEN));
-    assert.doesNotMatch(failureLine, /203\.0\.113\.42/);
-    assert.doesNotMatch(failureLine, /Board shows blank column/); // report title
-    assert.doesNotMatch(failureLine, /Steps: open the board/); // report description
-  }
-
-  it('a GitHub 401 logs status + message + hint, with no secret/title/description/IP', async () => {
-    await assertFailureLogged({ status: 401, githubMessage: 'Bad credentials', hint: 'token invalid/expired/placeholder' });
-  });
-
-  it('a GitHub 403 logs status + message + hint, with no secret/title/description/IP', async () => {
-    await assertFailureLogged({
-      status: 403,
-      githubMessage: 'Resource not accessible by personal access token',
-      hint: 'token lacks Issues:write or secondary rate limit',
-    });
-  });
-
-  it('a GitHub 404 logs status + message + hint, with no secret/title/description/IP', async () => {
-    await assertFailureLogged({
-      status: 404,
-      githubMessage: 'Not Found',
-      hint: 'repo name wrong or token has no access to that repo',
-    });
-  });
-
-  it('a GitHub 410 logs status + message + hint, with no secret/title/description/IP', async () => {
-    await assertFailureLogged({ status: 410, githubMessage: 'Issues are disabled for this repo', hint: 'issues disabled' });
-  });
-
-  it('a GitHub 500 logs status + message + hint, with no secret/title/description/IP', async () => {
-    await assertFailureLogged({ status: 500, githubMessage: 'internal error', hint: 'GitHub outage' });
-  });
-
-  it('a GitHub 429 that exhausts retries logs the "GitHub rate limit; retry later" hint', async () => {
-    await assertFailureLogged({
-      status: 429,
-      githubMessage: 'API rate limit exceeded',
-      hint: 'GitHub rate limit; retry later',
-    });
-  });
-
-  it('a 201 with an unreadable body logs the "issue may have been filed" hint and still 502s', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: () => ({
-        ok: true,
-        status: 201,
-        json: async () => {
-          throw new Error('body already consumed / not valid JSON');
-        },
-        headers: { get: () => null },
-      }),
-    });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        const res = await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-        // The existing 502 behaviour is unchanged even though GitHub itself
-        // answered 201 — we cannot confirm the issue number without a
-        // readable body, so the caller still sees the generic failure.
-        assert.equal(res.res.status, 502);
-        assert.equal(res.body.error, 'could_not_file');
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    assert.match(failureLine, /status=201\b/);
-    assert.match(failureLine, /hint="issue may have been filed; check the repo"/);
-  });
-
-  it('a 422 that exhausts the label-fallback logs the "validation (label)" hint', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => fakeResponse(422, { message: 'still invalid' }) });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    assert.match(failureLine, /hint="validation \(label\)"/);
-    assert.match(failureLine, /attempts=2/);
-  });
-
-  it('a network error logs "network error" and the DNS/API-URL hint', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => new Error('ETIMEDOUT') });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    assert.match(failureLine, /network error/);
-    assert.match(failureLine, /hint="network\/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL"/);
-    assert.match(failureLine, /attempts=3/);
-  });
-
-  it('includes the GitHub accepted-permissions and rate-limit-remaining headers, safely quoted', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: () =>
-        fakeResponse(
-          403,
-          { message: 'blocked' },
-          { 'x-accepted-github-permissions': 'issues=write', 'x-ratelimit-remaining': '12' },
-        ),
-    });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    // Header values go through the shared safeLogValue sanitizer, which
-    // JSON-quotes its output — see the control-character test below for why.
-    assert.match(failureLine, /accepted-permissions="issues=write"/);
-    assert.match(failureLine, /ratelimit-remaining="12"/);
-  });
-
-  it('strips control characters smuggled in the GitHub permission/rate-limit headers', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: () =>
-        fakeResponse(
-          403,
-          { message: 'blocked' },
-          {
-            'x-accepted-github-permissions': 'issues=write\nEvil: injected-header',
-            'x-ratelimit-remaining': '12\r\nEvil: injected-header',
-          },
-        ),
-    });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    // safeLogValue deletes control chars outright rather than inserting a
-    // space, so "issues=write" and the smuggled text end up concatenated
-    // with no line break between them — the property this guards is that
-    // no RAW \r/\n survives to fake a second physical log line, not that
-    // the attacker's text is censored.
-    assert.doesNotMatch(failureLine, /[\r\n]/);
-  });
-
-  it('redacts the GitHub token if GitHub ever echoes it back in the `message` field', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({
-      github: () => fakeResponse(401, { message: `Bad credentials: ${DUMMY_GITHUB_TOKEN}` }),
-    });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    assert.doesNotMatch(failureLine, new RegExp(DUMMY_GITHUB_TOKEN));
-    assert.match(failureLine, /\[redacted\]/);
-  });
-
-  it('redacts the token even when it straddles the 160-char truncation cut', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const token = DUMMY_GITHUB_TOKEN; // 40 chars
-    // Placed so the token spans the message's 160-char truncation boundary
-    // (150 + 40 = 190; the cut at 160 lands squarely inside the token).
-    // Redacting AFTER truncating (the old, buggy order) would leave the
-    // token's first ~10 characters visible in the log line.
-    const prefix = 'x'.repeat(150);
-    const fetchImpl = makeFetch({
-      github: () => fakeResponse(401, { message: `${prefix}${token}` }),
-    });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    // Not even an 8-char fragment of the token should survive.
-    for (let i = 0; i <= token.length - 8; i++) {
-      const fragment = token.slice(i, i + 8);
-      assert.ok(!failureLine.includes(fragment), `leaked token fragment: ${fragment}`);
-    }
-    assert.match(failureLine, /\[redacted\]/);
-  });
-
-  it('collapses a message with newline/CR/escape/NEL/line-separator into one control-char-free log line', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const nasty = `line1\nline2\rline3${String.fromCharCode(0x1b)}line4${String.fromCharCode(0x85)}line5${String.fromCharCode(0x2028)}line6`;
-    const fetchImpl = makeFetch({ github: () => fakeResponse(401, { message: nasty }) });
-    const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1] }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
-      }),
-    );
-    const failureLine = lines.error.find((l) => l.includes('could_not_file'));
-    assert.ok(failureLine);
-    assert.doesNotMatch(failureLine, new RegExp('[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]'));
-    assert.match(failureLine, /line1.*line2.*line3.*line4.*line5.*line6/);
-  });
-
-  it('a successful filing logs the issue number only — no title, description, or body text', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv();
-    const fetchImpl = makeFetch({ github: () => fakeResponse(201, okGithubBody({ number: 99 })) });
+  async function assertFailureLogged({ status, description, hint }) {
+    clearEnv();
+    configureEnv({ KANBAN_TRUST_PROXY: '1' });
+    const fetchImpl = makeFetch({ telegram: () => telegramError(status, description) });
     const lines = await captureConsole(() =>
       withApp({ fetch: fetchImpl }, async (baseUrl) => {
-        await jsonRequest(baseUrl, '/api/bug-reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: postBody(),
-        });
+        const res = await post(baseUrl, {}, { 'X-Forwarded-For': '203.0.113.42' });
+        assert.equal(res.res.status, 502);
+      }),
+    );
+    const failureLine = lines.error.find((l) => l.includes('could_not_send'));
+    assert.ok(failureLine, `expected a could_not_send log line, got: ${JSON.stringify(lines)}`);
+    assert.match(failureLine, new RegExp(`status=${status}\\b`));
+    assert.ok(failureLine.includes(description));
+    assert.ok(failureLine.includes(hint), `hint ${hint} missing from ${failureLine}`);
+    const everything = allLines(lines);
+    assert.ok(!everything.includes(DUMMY_BOT_TOKEN));
+    assert.ok(!everything.includes('203.0.113.42'));
+    assert.ok(!everything.includes(REPORT_TITLE));
+    assert.ok(!everything.includes('Steps: open the board'));
+    assert.ok(!everything.includes('Report a Bug/Request a feature'), 'the rendered message is never logged');
+  }
+
+  it('a Telegram 400 logs status + description + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 400, description: 'Bad Request: chat not found', hint: 'chat id wrong' });
+  });
+
+  it('a Telegram 401 logs status + description + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 401, description: 'Unauthorized', hint: 'bot token invalid/revoked' });
+  });
+
+  it('a Telegram 403 logs status + description + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({
+      status: 403,
+      description: 'Forbidden: bot is not a member of the channel chat',
+      hint: 'make it a channel admin',
+    });
+  });
+
+  it('a Telegram 500 logs status + description + hint, with no secret/title/description/IP', async () => {
+    await assertFailureLogged({ status: 500, description: 'Internal Server Error', hint: 'Telegram outage' });
+  });
+
+  it('a 429 that survives its one retry logs the rate-limit hint and attempts=2', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => telegramError(429, 'Too Many Requests', { parameters: { retry_after: 1 } }) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await post(baseUrl);
+      }),
+    );
+    const failureLines = lines.error.filter((l) => l.includes('could_not_send'));
+    assert.equal(failureLines.length, 1, 'one line per failed request, not per attempt');
+    assert.match(failureLines[0], /status=429/);
+    assert.match(failureLines[0], /attempts=2/);
+    assert.match(failureLines[0], /Telegram rate limit; retry later/);
+  });
+
+  it('a network error logs "network error" and the API-URL hint, never the URL (it carries the token)', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({
+      telegram: () => new Error(`fetch failed for https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await post(baseUrl);
+      }),
+    );
+    const line = lines.error.find((l) => l.includes('could_not_send'));
+    assert.ok(line);
+    assert.match(line, /network error/);
+    assert.match(line, /KANBAN_REPORT_TELEGRAM_API_URL/);
+    assert.ok(!allLines(lines).includes(DUMMY_BOT_TOKEN));
+    assert.ok(!allLines(lines).includes('api.telegram.org/bot'));
+  });
+
+  it('redacts the bot token if Telegram ever echoes it back in `description`, even across the 160-char cut', async () => {
+    clearEnv();
+    configureEnv();
+    const longPrefix = 'x'.repeat(140);
+    const fetchImpl = makeFetch({ telegram: () => telegramError(401, `${longPrefix}${DUMMY_BOT_TOKEN} tail`) });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await post(baseUrl);
+      }),
+    );
+    const line = lines.error.find((l) => l.includes('could_not_send'));
+    assert.ok(line);
+    assert.ok(!line.includes(DUMMY_BOT_TOKEN));
+    assert.ok(!line.includes(DUMMY_BOT_TOKEN.slice(0, 12)), 'not even a surviving prefix');
+  });
+
+  it('collapses a description with newline/CR/escape/line-separator into one control-char-free log line', async () => {
+    clearEnv();
+    configureEnv();
+    const fetchImpl = makeFetch({ telegram: () => telegramError(400, 'Bad\nRequest\r\u001b[31m\u2028injected') });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        await post(baseUrl);
+      }),
+    );
+    const line = lines.error.find((l) => l.includes('could_not_send'));
+    assert.ok(line);
+    assert.doesNotMatch(line, /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+    assert.match(line, /Bad ?Request/);
+  });
+
+  it('a successful send logs only "delivered" — no title, description, message text, token or chat id', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_TELEGRAM_CHAT_ID: REPORT_CHAT });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: makeFetch() }, async (baseUrl) => {
+        assert.equal((await post(baseUrl)).res.status, 201);
       }),
     );
     assert.equal(lines.info.length, 1);
-    assert.match(lines.info[0], /filed issue #99/);
-    assert.doesNotMatch(lines.info[0], /Board shows blank column/);
+    assert.match(lines.info[0], /delivered 1 report to telegram/);
+    const everything = allLines(lines);
+    assert.ok(!everything.includes(REPORT_TITLE));
+    assert.ok(!everything.includes('Steps: open the board'));
+    assert.ok(!everything.includes(DUMMY_BOT_TOKEN));
+    assert.ok(!everything.includes(REPORT_CHAT));
   });
 
   it('rate-limits repeated identical failures to one line per 60s, then logs again after the window', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '100', KANBAN_REPORT_DAILY_CAP: '100' });
-    const fetchImpl = makeFetch({ github: () => fakeResponse(401, { message: 'Bad credentials' }) });
+    const fetchImpl = makeFetch({ telegram: () => telegramError(401, 'Unauthorized') });
     let clock = 1_000_000;
     const lines = await captureConsole(() =>
-      withApp({ fetch: fetchImpl, delays: [1, 1], now: () => clock }, async (baseUrl) => {
-        const post = () =>
-          jsonRequest(baseUrl, '/api/bug-reports', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: postBody(),
-          });
-        await post();
+      withApp({ fetch: fetchImpl, now: () => clock }, async (baseUrl) => {
+        await post(baseUrl);
         clock += 1000; // well within the 60s window
-        await post();
+        await post(baseUrl);
         clock += 61_000; // past the window
-        await post();
+        await post(baseUrl);
       }),
     );
-    const failureLines = lines.error.filter((l) => l.includes('could_not_file'));
+    const failureLines = lines.error.filter((l) => l.includes('could_not_send'));
     assert.equal(failureLines.length, 2, 'the second identical failure within 60s must be suppressed');
+  });
+
+  it('hintForTelegramStatus covers the statuses an operator will meet', () => {
+    assert.match(hintForTelegramStatus(400), /chat not found/);
+    assert.match(hintForTelegramStatus(401), /KANBAN_TELEGRAM_BOT_TOKEN/);
+    assert.match(hintForTelegramStatus(403), /admin/);
+    assert.match(hintForTelegramStatus(404), /API_URL/);
+    assert.match(hintForTelegramStatus(503), /outage/);
+    assert.match(hintForTelegramStatus(418), /unexpected/);
+    assert.equal(safeLogValue('a\nb'), '"ab"');
   });
 });
 
@@ -1427,33 +1375,12 @@ describe('bug reports: Turnstile failure logging', () => {
   });
 });
 
-describe('bug reports: startup config-shape warnings', () => {
-  let saved = {};
+describe('bug reports: startup warnings', () => {
+  let saved;
   before(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    saved = saveEnv();
   });
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
-
-  it('looksLikeGithubToken accepts real-shaped tokens and rejects placeholders', () => {
-    assert.equal(looksLikeGithubToken(`ghp_${'a'.repeat(36)}`), true);
-    assert.equal(looksLikeGithubToken(`github_pat_${'a'.repeat(30)}`), true);
-    assert.equal(looksLikeGithubToken('placeholder-token-19c'), false);
-    assert.equal(looksLikeGithubToken(''), false);
-    assert.equal(looksLikeGithubToken(undefined), false);
-  });
-
-  it('looksLikeRepoShape accepts "owner/name" and rejects everything else', () => {
-    assert.equal(looksLikeRepoShape('riazrahaman/agent-kanban-board'), true);
-    assert.equal(looksLikeRepoShape('not-a-repo'), false);
-    assert.equal(looksLikeRepoShape('owner/name/extra'), false);
-    assert.equal(looksLikeRepoShape('owner / name'), false);
-    assert.equal(looksLikeRepoShape(''), false);
-  });
+  afterEach(() => restoreEnv(saved));
 
   it('looksLikeTurnstileSiteKey accepts an opaque key and rejects an obviously-wrong value', () => {
     assert.equal(looksLikeTurnstileSiteKey('1x00000000000000000000AA'), true);
@@ -1462,51 +1389,299 @@ describe('bug reports: startup config-shape warnings', () => {
     assert.equal(looksLikeTurnstileSiteKey(''), false);
   });
 
-  it('a placeholder KANBAN_REPORT_GITHUB_TOKEN warns at startup; a real-shaped one does not', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_GITHUB_TOKEN: 'this-is-a-19-char-tok' });
-    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+  it('Turnstile configured without KANBAN_TELEGRAM_BOT_TOKEN warns that the feature is disabled', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TELEGRAM_BOT_TOKEN: undefined });
+    const lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
     assert.ok(
-      lines.warn.some((l) => l.includes('KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token')),
-      `expected a placeholder-token warning, got: ${JSON.stringify(lines.warn)}`,
-    );
-
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_GITHUB_TOKEN: `ghp_${'a'.repeat(40)}` });
-    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
-    assert.ok(
-      !lines.warn.some((l) => l.includes('KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token')),
-      `did not expect a placeholder-token warning, got: ${JSON.stringify(lines.warn)}`,
+      lines.warn.some((l) => l.includes('DISABLED') && l.includes('KANBAN_TELEGRAM_BOT_TOKEN is unset')),
+      `expected a disabled warning, got: ${JSON.stringify(lines.warn)}`,
     );
   });
 
-  it('a malformed KANBAN_REPORT_REPO warns at startup; "owner/name" does not', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_REPO: 'not-owner-slash-name' });
-    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
-    assert.ok(lines.warn.some((l) => l.includes('KANBAN_REPORT_REPO does not look like')));
+  it('Turnstile + bot but no chat id of either kind warns that the feature is disabled', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_TELEGRAM_CHAT_ID: undefined });
+    const lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.ok(
+      lines.warn.some((l) => l.includes('DISABLED') && l.includes('KANBAN_REPORT_TELEGRAM_CHAT_ID')),
+      `expected a disabled warning, got: ${JSON.stringify(lines.warn)}`,
+    );
+    assert.ok(!allLines(lines).includes(DUMMY_BOT_TOKEN));
+  });
 
-    for (const k of ENV_KEYS) delete process.env[k];
-    configureEnv({ KANBAN_REPORT_REPO: 'owner/repo' });
-    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
-    assert.ok(!lines.warn.some((l) => l.includes('KANBAN_REPORT_REPO does not look like')));
+  it('a fully configured feature emits no disabled warning', async () => {
+    clearEnv();
+    configureEnv({ TURNSTILE_HOSTNAMES: 'board.example.test' });
+    const lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.deepEqual(lines.warn, []);
   });
 
   it('a malformed TURNSTILE_SITE_KEY warns at startup; a real-shaped one does not', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ TURNSTILE_SITE_KEY: 'x' });
     let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
     assert.ok(lines.warn.some((l) => l.includes('TURNSTILE_SITE_KEY does not look like')));
 
-    for (const k of ENV_KEYS) delete process.env[k];
+    clearEnv();
     configureEnv({ TURNSTILE_SITE_KEY: '1x00000000000000000000AA' });
     lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
     assert.ok(!lines.warn.some((l) => l.includes('TURNSTILE_SITE_KEY does not look like')));
   });
 
-  it('none of these shape warnings fire when the feature is unconfigured', async () => {
-    for (const k of ENV_KEYS) delete process.env[k];
-    const lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+  it('no warning fires when the feature is not wanted (no Turnstile keys), even with the bot configured for alerts', async () => {
+    clearEnv();
+    configureEnv({ TURNSTILE_SECRET: undefined, TURNSTILE_SITE_KEY: undefined });
+    let lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
     assert.deepEqual(lines.warn, []);
+    clearEnv();
+    lines = await captureConsole(() => withApp({ fetch: makeFetch() }, async () => {}));
+    assert.deepEqual(lines.warn, []);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Round 2 follow-ups: production guard for the local-only overrides,
+// validation of exactly the cleaned text, and the shared 429 pause.
+// ---------------------------------------------------------------------
+
+describe('bug reports: local-only overrides are ignored in production', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+  });
+  afterEach(() => restoreEnv(saved));
+
+  async function assertOverridesIgnored(prodEnv) {
+    clearEnv();
+    configureEnv({
+      KANBAN_ALLOWED_ORIGIN: 'https://board.example.test',
+      KANBAN_REPORT_TELEGRAM_API_URL: 'http://127.0.0.1:3457/secret-stub-path',
+      TURNSTILE_SITEVERIFY_URL: 'http://127.0.0.1:3457/turnstile/v0/siteverify',
+      ...prodEnv,
+    });
+    const fetchImpl = makeFetch();
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        assert.equal((await post(baseUrl)).res.status, 201);
+      }),
+    );
+    const verify = fetchImpl.calls.find((c) => c.url.includes('siteverify'));
+    assert.equal(verify.url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify', 'real siteverify is used');
+    assert.equal(fetchImpl.telegram[0].url, `https://api.telegram.org/bot${DUMMY_BOT_TOKEN}/sendMessage`, 'real Bot API is used');
+    for (const name of ['KANBAN_REPORT_TELEGRAM_API_URL', 'TURNSTILE_SITEVERIFY_URL']) {
+      assert.ok(
+        lines.warn.some((l) => l.includes(`${name} is set but IGNORED`)),
+        `expected a startup warning naming ${name}, got ${JSON.stringify(lines.warn)}`,
+      );
+    }
+    assert.ok(!allLines(lines).includes('127.0.0.1:3457'), 'the override value is never logged');
+    assert.ok(!allLines(lines).includes('secret-stub-path'));
+  }
+
+  it('NODE_ENV=production: both overrides are ignored and named in a startup warning (never their values)', async () => {
+    await assertOverridesIgnored({ NODE_ENV: 'production' });
+  });
+
+  it('RAILWAY_ENVIRONMENT set: both overrides are ignored and named', async () => {
+    await assertOverridesIgnored({ RAILWAY_ENVIRONMENT: 'production' });
+  });
+
+  it('RAILWAY_PROJECT_ID set: both overrides are ignored and named', async () => {
+    await assertOverridesIgnored({ RAILWAY_PROJECT_ID: '00000000-0000-0000-0000-000000000000' });
+  });
+
+  it('outside production the overrides are honoured and no warning fires', async () => {
+    clearEnv();
+    configureEnv({
+      KANBAN_REPORT_TELEGRAM_API_URL: 'http://127.0.0.1:3457',
+      TURNSTILE_SITEVERIFY_URL: 'http://127.0.0.1:3457/turnstile/v0/siteverify',
+      TURNSTILE_HOSTNAMES: 'board.example.test',
+    });
+    const seen = [];
+    const fetchImpl = async (url) => {
+      seen.push(String(url));
+      return String(url).endsWith('/siteverify') ? fakeResponse(200, okTurnstileBody()) : okTelegram();
+    };
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl }, async (baseUrl) => {
+        assert.equal((await post(baseUrl)).res.status, 201);
+      }),
+    );
+    assert.equal(seen[0], 'http://127.0.0.1:3457/turnstile/v0/siteverify');
+    assert.equal(seen[1], `http://127.0.0.1:3457/bot${DUMMY_BOT_TOKEN}/sendMessage`);
+    assert.deepEqual(lines.warn, []);
+    assert.deepEqual(ignoredLocalOverrides(), []);
+  });
+
+  it('isProductionRuntime / turnstileSiteverifyUrl / reportTelegramTarget follow the guard', () => {
+    assert.equal(isProductionRuntime({}), false);
+    assert.equal(isProductionRuntime({ NODE_ENV: 'development' }), false);
+    assert.equal(isProductionRuntime({ NODE_ENV: 'production' }), true);
+    assert.equal(isProductionRuntime({ RAILWAY_ENVIRONMENT: 'staging' }), true);
+    assert.equal(isProductionRuntime({ RAILWAY_PROJECT_ID: 'x' }), true);
+    const before = saveEnv();
+    try {
+      clearEnv();
+      process.env.TURNSTILE_SITEVERIFY_URL = 'http://127.0.0.1:1/sv';
+      process.env.KANBAN_REPORT_TELEGRAM_API_URL = 'http://127.0.0.1:1';
+      assert.equal(turnstileSiteverifyUrl(), 'http://127.0.0.1:1/sv');
+      assert.equal(reportTelegramTarget().apiUrl, 'http://127.0.0.1:1');
+      process.env.NODE_ENV = 'production';
+      assert.equal(turnstileSiteverifyUrl(), 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
+      assert.equal(reportTelegramTarget().apiUrl, 'https://api.telegram.org');
+      assert.deepEqual(ignoredLocalOverrides(), ['KANBAN_REPORT_TELEGRAM_API_URL', 'TURNSTILE_SITEVERIFY_URL']);
+    } finally {
+      restoreEnv(before);
+    }
+  });
+});
+
+describe('bug reports: validation sees exactly the cleaned text', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_PER_IP_PER_HOUR: '100', KANBAN_REPORT_DAILY_CAP: '100' });
+  });
+  after(() => restoreEnv(saved));
+
+  it('a title made only of RIGHT-TO-LEFT OVERRIDE characters is rejected as empty (400 invalid_title), nothing sent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: '\u202E\u202E\u202E' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_title');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('a title made only of zero-width / BOM / LRM / RLM / ALM characters is rejected as empty', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: '\u200B‌‍⁠﻿\u200E\u200F؜' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_title');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('a description that is only invisible characters (well over 10 code units) is rejected (400 invalid_description)', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { description: '\u200B\u202E﻿\u2028\u0085'.repeat(10) + 'short' });
+      assert.equal(res.res.status, 400);
+      assert.equal(res.body.error, 'invalid_description');
+    });
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  it('length limits count visible characters: 120 visible + invisible padding is accepted and sent clean', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(baseUrl, { title: 'x'.repeat(120) + '\u200B'.repeat(10) });
+      assert.equal(res.res.status, 201);
+    });
+    assert.ok(fetchImpl.telegram[0].body.text.includes(`<b>${'x'.repeat(120)}</b>`));
+  });
+
+  it('what is rendered never contains LRM/RLM/ALM, zero-width, word joiner or BOM in the title or user agent', async () => {
+    const fetchImpl = makeFetch();
+    await withApp({ fetch: fetchImpl }, async (baseUrl) => {
+      const res = await post(
+        baseUrl,
+        { title: 'Hid\u200Bden\u200E \u200Ftitle⁠﻿؜ here' },
+        { 'User-Agent': 'UA/1.0' },
+      );
+      assert.equal(res.res.status, 201);
+    });
+    const text = fetchImpl.telegram[0].body.text;
+    assert.ok(text.includes('<b>Hidden title here</b>'));
+    assert.doesNotMatch(text.replace(/@\u200B|:\u200B\/\//g, ''), /[\u200B‌\u200E\u200F⁠﻿؜]/);
+  });
+
+  it('emoji ZWJ sequences survive; a stray ZWJ between letters is removed', () => {
+    const technologist = '\u{1F469}\u{1F3FD}‍\u{1F4BB}';
+    const family = '\u{1F468}‍\u{1F469}‍\u{1F467}';
+    assert.equal(cleanOneLine(`${technologist} and ${family}`), `${technologist} and ${family}`);
+    assert.equal(cleanOneLine('a‍b'), 'ab');
+    assert.equal(cleanOneLine('‍\u{1F4BB}'), '\u{1F4BB}', 'a leading ZWJ glues nothing');
+    const text = formatReportMessage({ title: 'x', description: 'desc text here', userAgent: 'U\u200EA\u200B' });
+    assert.ok(text.includes('<i>UA: UA</i>'));
+  });
+});
+
+describe('bug reports: shared 429 pause', () => {
+  let saved;
+  before(() => {
+    saved = saveEnv();
+  });
+  afterEach(() => restoreEnv(saved));
+
+  it('a 429 pauses report sends: the next report fails fast with NO Telegram call and does not spend the budget', async () => {
+    clearEnv();
+    configureEnv({ KANBAN_REPORT_DAILY_CAP: '1', KANBAN_REPORT_PER_IP_PER_HOUR: '1' });
+    let clock = 5_000_000;
+    let throttled = true;
+    const fetchImpl = makeFetch({
+      telegram: () =>
+        throttled ? telegramError(429, 'Too Many Requests', { parameters: { retry_after: 30 } }) : okTelegram(),
+    });
+    const lines = await captureConsole(() =>
+      withApp({ fetch: fetchImpl, now: () => clock }, async (baseUrl) => {
+        const first = await post(baseUrl);
+        assert.equal(first.res.status, 502);
+        assert.equal(fetchImpl.telegram.length, 1, 'retry_after 30 > 10: no in-request retry');
+        assert.equal(telegramPausedUntil(), clock + 30_000);
+
+        throttled = false;
+        clock += 29_000; // still inside the pause
+        const paused = await post(baseUrl);
+        assert.equal(paused.res.status, 502);
+        assert.equal(paused.body.error, 'could_not_send');
+        assert.equal(fetchImpl.telegram.length, 1, 'no outbound call while paused');
+
+        clock += 2_000; // pause over
+        const ok = await post(baseUrl);
+        assert.equal(ok.res.status, 201, 'neither failure spent the budget of 1');
+        assert.equal(fetchImpl.telegram.length, 2);
+      }),
+    );
+    const pausedLine = lines.error.find((l) => l.includes('paused (recent 429, no call made)'));
+    assert.ok(pausedLine, JSON.stringify(lines.error));
+    assert.ok(!allLines(lines).includes(DUMMY_BOT_TOKEN));
+  });
+
+  it('the pause is capped at 60s however large retry_after is', async () => {
+    clearEnv();
+    configureEnv();
+    const clock = 7_000_000;
+    const fetchImpl = makeFetch({
+      telegram: () => telegramError(429, 'Too Many Requests', { parameters: { retry_after: 3600 } }),
+    });
+    await withApp({ fetch: fetchImpl, now: () => clock }, async (baseUrl) => {
+      assert.equal((await post(baseUrl)).res.status, 502);
+    });
+    assert.equal(telegramPausedUntil(), clock + 60_000);
+  });
+
+  it('sendTelegramMessage refuses to call fetch while paused and resumes after the window', async () => {
+    let clock = 1_000;
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return calls === 1 ? telegramError(429, 'slow down', { parameters: { retry_after: 20 } }) : okTelegram();
+    };
+    const first = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock, sleep: async () => {} });
+    assert.equal(first.ok, false);
+    assert.equal(first.status, 429);
+    const blocked = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock });
+    assert.equal(blocked.paused, true);
+    assert.equal(blocked.attempts, 0);
+    assert.equal(calls, 1);
+    clock += 20_000;
+    const resumed = await sendTelegramMessage({ botToken: DUMMY_BOT_TOKEN, chatId: '1', text: 'x', fetchImpl, now: () => clock });
+    assert.equal(resumed.ok, true);
+    assert.equal(calls, 2);
   });
 });

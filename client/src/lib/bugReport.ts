@@ -1,5 +1,7 @@
 /**
- * Pure logic for the "Report a bug" form (v2.16.0, opt-public-bug-reports).
+ * Pure logic for the "Report a Bug/Request a feature" form (v2.16.0,
+ * opt-public-bug-reports; delivered to the owner on Telegram since the
+ * GitHub-issue path was retired).
  * Mirrors the server's own limits (`server/routes/bugReports.js`) so the UI
  * can reject obviously-invalid input before ever spending a Turnstile token
  * or a network round trip — the server re-validates everything regardless,
@@ -111,7 +113,7 @@ export function buildBugReportPayload(opts: {
  */
 export function describeSubmitError(status: number, code?: string): string {
   if (status === 429) return 'Too many reports, try later.'
-  if (status === 502) return 'Could not file the report, please try again.'
+  if (status === 502) return 'Could not send right now. Please try again later.'
   if (status === 403) {
     if (code === 'invalid_captcha_action' || code === 'invalid_captcha_hostname') {
       return 'Verification failed. Please try again.'

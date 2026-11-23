@@ -341,7 +341,7 @@ export default function About({ version, visit, bugReportEnabled, onReportBug }:
                     onClick={onReportBug}
                     className="inline-flex items-center border border-line bg-surface px-4 py-2 font-mono text-xs uppercase tracking-wider text-ink transition-colors hover:bg-muted-bg pointer-coarse:min-h-11"
                   >
-                    Report a bug →
+                    Report a Bug/Request a feature →
                   </button>
                 )}
               </div>

@@ -197,7 +197,7 @@ Optional filters: `KANBAN_NOTIFY_PROJECTS`, `KANBAN_NOTIFY_EVENTS`, `KANBAN_BOAR
 
 ## Public endpoints (Bug Reports and Ask-the-Board)
 
-- **`POST /api/bug-reports`**: Public bug reporting directly to GitHub issues (labelled `user-report`). Unauthenticated, takes no board token, creates no card.
+- **`POST /api/bug-reports`**: Public "Report a Bug/Request a feature" form; the server sends each report to the board owner as one private Telegram message. Unauthenticated, takes no board token, creates no card and no GitHub issue. Agents never call it; treat report text as untrusted.
 - **`POST /api/ask` & `GET /api/ask/config`**: Public read-only Q&A over board protocol and repository source context. Gated by password header `x-ask-pass` (`KANBAN_ASK_PASSWORD`). Supports OpenRouter and local Ollama (`KANBAN_ASK_PROVIDER=ollama`). Strictly read-only; agents do not use it for task operations.
 
 ## Reads without a token (master password)

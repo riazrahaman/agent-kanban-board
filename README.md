@@ -232,18 +232,41 @@ The board features pluggable persistence:
 
 ---
 
-## Report a Bug
+## Report a Bug/Request a feature
 
-A visitor can click **Report a bug** — a small bug-icon button in the header,
-immediately beside the theme toggle (v2.17.0+), or again on the About page —
-to file a title + description straight to GitHub as a
-`user-report`-labelled issue —
-no account, no attachments, and no contact field is collected (the repo is
-public; nothing that looks like personal data is asked for). It is protected
-by [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), a
+A visitor can click **Report a Bug/Request a feature** — a small bug-icon
+button in the header, immediately beside the theme toggle (v2.17.0+), or again
+on the About page — to send a title + description **privately to the board
+owner on Telegram**, as one message from the board's existing Telegram bot.
+No account, no attachments and no contact field are collected, and the
+report creates **neither a board card nor a GitHub issue** (before this
+change reports were filed as public GitHub issues labelled `user-report`).
+It is protected by
+[Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), a
 honeypot field, and both a global daily cap and a per-IP hourly cap. The
 route is unauthenticated by design (`POST /api/bug-reports` takes no board
 token, no `?project=`) — see [Security & Authentication](#security--authentication).
+
+The message carries a header, the title in bold, the description in a
+`<pre>` block (so visitor text can never form Telegram markup), and a small
+footer: board version, viewport, browser user agent, and the board URL when
+`KANBAN_BOARD_URL` is set. It never carries the visitor's IP address, a token
+or a cookie. Only `& < >` are escaped (Telegram's HTML subset). Invisible
+characters are stripped from the title, description and user agent before
+the report is validated, so a title made only of them is rejected as empty:
+control characters, the line/paragraph separators, bidi embedding/override/
+isolate controls, LRM/RLM/ALM marks, zero-width space/non-joiner, word joiner
+and BOM (a zero-width joiner survives only inside an emoji sequence). In the
+title and user agent exactly two things are neutralised: `@` (so `@name` is
+not a mention) and `://` (so `scheme://...` is not a link). **Bare domains
+such as `example.com` or `t.me/x` in the title may still be made clickable by
+Telegram**; link previews are always off. The description sits in a `<pre>`
+block, where Telegram creates no mentions or links. The message stays within
+Telegram's 4096-character limit: a description longer than roughly 3,850
+characters (less with a long title or user agent, or many `& < >`) is
+shortened at a whole character, never inside a tag, entity or emoji, with a
+visible "description shortened (N more characters)" note, even though the
+form accepts up to 5,000. Treat the report text as untrusted.
 
 **The feature is OFF until explicitly configured** — unset, `GET
 /api/bug-reports/config` reports `{enabled:false}` and the UI never shows the
@@ -251,20 +274,38 @@ entry point; `POST /api/bug-reports` 404s.
 
 ### Enabling Report-a-bug
 
-Set the first four of these (server-side; see `.env.example` /
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference):
+It needs both Turnstile keys plus the board's Telegram bot and a chat id
+(server-side; see `.env.example` / [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+for the full reference):
 
 | Variable | Secret? | Required | Where to get it |
 | :--- | :--- | :--- | :--- |
-| `KANBAN_REPORT_GITHUB_TOKEN` | **secret** | yes | A [fine-grained GitHub PAT](https://github.com/settings/personal-access-tokens/new) scoped to **one** repository, with repository permission **Issues: Read and write**. Nothing else. |
-| `KANBAN_REPORT_REPO` | public | yes | The repo the token is scoped to, as `owner/name` (e.g. `riazrahaman/agent-kanban-board`). |
 | `TURNSTILE_SECRET` | **secret** | yes | From the [Cloudflare Turnstile dashboard](https://dash.cloudflare.com/?to=/:account/turnstile) — add a widget, copy its secret key. |
 | `TURNSTILE_SITE_KEY` | public | yes | The matching site key from the same widget. Served to the browser via `GET /api/bug-reports/config`; never the secret. |
+| `KANBAN_TELEGRAM_BOT_TOKEN` | **secret** | yes | The board's one Telegram bot (the same one that sends reclaim alerts and the daily backup), from [@BotFather](https://t.me/BotFather). There is no separate report bot. |
+| `KANBAN_TELEGRAM_CHAT_ID` | public | yes, unless the next row is set | The chat that already receives reclaim alerts; reports go here by default. |
+| `KANBAN_REPORT_TELEGRAM_CHAT_ID` | public | optional | Sends reports to a different chat or channel (same bot). Unset: `KANBAN_TELEGRAM_CHAT_ID`. |
 | `TURNSTILE_HOSTNAMES` | public | optional, **recommended in production** | Comma-separated allow-list that a siteverify response's `hostname` must appear in (e.g. `agent-kanban.riazrahaman.com`). Unset skips the check and logs one startup warning. |
-| `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports per UTC day. Default `50`. Resets on restart (in-memory). |
-| `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap per hour. Default `3`. Resets on restart (in-memory). |
-| `KANBAN_REPORT_GITHUB_API_URL` | public | optional | Overrides the GitHub API base (default `https://api.github.com`) — points the local demo/test stub (`scripts/stub-github-issues.mjs`) instead of the real API. |
+| `KANBAN_REPORT_DAILY_CAP` | public | optional | Global cap on reports in any rolling 24-hour window (not a calendar/UTC day). Default `50`. Resets on restart (in-memory). |
+| `KANBAN_REPORT_PER_IP_PER_HOUR` | public | optional | Per-IP cap in any rolling hour. Default `3`. Resets on restart (in-memory). Both caps are checked before and counted after a successful send, so a burst of simultaneous requests can overshoot them by the size of the burst (an abuse guard, not a hard limiter). |
+| `KANBAN_BOARD_URL` | public | optional | When set, shown in the message footer. |
+| `KANBAN_REPORT_TELEGRAM_API_URL` | public | optional, local only | Overrides the Bot API base (default `https://api.telegram.org`) so a demo/test talks to the local stub (`scripts/stub-telegram.mjs`). **Ignored in production** (`NODE_ENV=production`, or Railway's `RAILWAY_ENVIRONMENT` / `RAILWAY_PROJECT_ID` present): the real API is used and a startup warning names the variable. |
+| `TURNSTILE_SITEVERIFY_URL` | public | optional, local only | Overrides Cloudflare's siteverify URL, for the same stub. **Ignored in production** the same way (real Cloudflare siteverify, startup warning naming the variable), so a forgotten stub URL can never replace real captcha verification. |
 | `KANBAN_TRUST_PROXY` | public | optional | Express `trust proxy` setting. Unset (default): no proxy is trusted, forwarding headers are ignored and per-address limits key on the connecting peer. Behind a reverse proxy set a hop count (`1` for a single proxy such as Railway's edge), or an address/CIDR list; `0`/`false` is explicit no-proxy. Needed for the per-IP caps to see the real client address. |
+
+**The bot must be allowed to post in the target chat.** For a private chat,
+start a conversation with the bot; for a group, add it as a member; for a
+channel, add it as an **administrator with permission to post messages**.
+Otherwise Telegram answers 403 and every report fails (see Troubleshooting).
+
+**Removed:** `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO` and
+`KANBAN_REPORT_GITHUB_API_URL` are no longer read. They can be deleted from
+your deployment's variables (revoke the old fine-grained PAT too).
+
+If Turnstile is configured but there is no `KANBAN_TELEGRAM_BOT_TOKEN`, or no
+chat id resolves, the server logs one startup warning
+(`[kanban bug-report] WARNING: Report-a-bug is DISABLED: ...`) and the
+feature stays off (the header icon is hidden).
 
 **`KANBAN_TRUST_PROXY` must match your deployment topology.** Unset, the
 server trusts no proxy: `X-Forwarded-For` is ignored and every per-address limit
@@ -278,10 +319,10 @@ many proxies sit in front. The startup log prints the mode in effect.
 **Never commit a real token or secret.** `.env.example` ships only
 placeholders; `.gitignore` already excludes a real `.env`. If you paste a
 token or secret into a chat, an issue, or a commit by mistake, revoke and
-rotate it immediately — fine-grained PATs and Turnstile secrets can both be
-rotated from the same dashboards linked above.
+rotate it immediately — the bot token from @BotFather (`/revoke`), the
+Turnstile secret from the dashboard linked above.
 
-**Testing without a real token.** Cloudflare publishes fixed test
+**Testing without real credentials.** Cloudflare publishes fixed test
 keys for exactly this purpose — they are designed to be shared in docs and
 test suites, not secrets:
 
@@ -296,102 +337,91 @@ Note: Cloudflare's test secrets return a fixed canned response (no real
 `action`/`hostname`), so hitting the **real** Cloudflare network with them
 will not pass this server's `action==='bug-report'` check end-to-end — that
 check is exactly what `server/test/kanban.bugreports.test.js` exercises
-instead, with a fully injected fetch (see below). A genuine live demo of the
-whole path needs a real (free) Turnstile site.
+instead, with a fully injected fetch. For a local end-to-end run, use the
+bundled stub (below), which answers siteverify as well.
 
-### Troubleshooting: Could Not File The Report
+### Troubleshooting: Could Not Send The Report
 
-If the form reliably returns `could_not_file` (HTTP 502) even though the
-Turnstile captcha visibly passes, the GitHub issue never got filed — and
-before v3.2.5 the server logged **nothing** on this path, which is exactly
-what made a placeholder `KANBAN_REPORT_GITHUB_TOKEN` on Railway invisible:
-every report 502'd and `railway logs` gave no clue why. The server now logs
-**one line per failed request** (not one per retry attempt), prefixed
-`[kanban bug-report]`, rate-limited to at most one identical line per 60
-seconds per status and repo so a flood or an outage can't fill the log:
+If the form returns "Could not send right now" (HTTP 502 `could_not_send`)
+even though the Turnstile captcha visibly passes, Telegram did not accept the
+message. The server logs **one line per failed request** (not one per
+attempt), prefixed `[kanban bug-report]`, rate-limited to at most one line
+per 60 seconds per status so a flood or an outage can't fill the log:
 
 ```
-[kanban bug-report] could_not_file: github status=401 message="Bad credentials" accepted-permissions="n/a" ratelimit-remaining="4999" attempts=1 repo=owner/name hint="token invalid/expired/placeholder"
+[kanban bug-report] could_not_send: telegram status=403 description="Forbidden: bot is not a member of the channel chat" attempts=1 hint="bot is not a member of the chat or may not post there (make it a channel admin)"
 ```
 
 Read the `status`/`hint` and fix accordingly:
 
-| GitHub status | Hint | Fix |
+| Telegram status | Hint | Fix |
 | :--- | :--- | :--- |
-| `201` (unreadable body) | issue may have been filed; check the repo | GitHub answered success but the response body couldn't be read, so the issue number is unknown. Check the repo before retrying — filing may have already happened. |
-| `401` | token invalid/expired/placeholder | `KANBAN_REPORT_GITHUB_TOKEN` is wrong, expired, or a placeholder. Generate a real fine-grained PAT (below) and redeploy. |
-| `403` | token lacks Issues:write or secondary rate limit | The PAT's repository permission isn't **Issues: Read and write**, or GitHub's secondary rate limit kicked in — check `ratelimit-remaining` in the same line. |
-| `404` | repo name wrong or token has no access to that repo | `KANBAN_REPORT_REPO` is misspelled, or the PAT's repository access doesn't include it. |
-| `410` | issues disabled | The target repo has Issues disabled. Enable Issues, or point `KANBAN_REPORT_REPO` elsewhere. |
-| `422` | validation (label) | GitHub rejected the request even after the automatic label-stripping fallback; read the `message` field in the same line. |
-| `429` | GitHub rate limit; retry later | GitHub's primary rate limit was exhausted across all 3 retries. Transient — wait and retry; check `ratelimit-remaining`. |
-| `5xx` | GitHub outage | Transient — the server already retried up to 3 times with backoff. Check <https://www.githubstatus.com/> if it persists. |
-| network error | network/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL | The server couldn't reach GitHub at all. Check connectivity and that `KANBAN_REPORT_GITHUB_API_URL` (if set) is correct. |
+| `400` | bad request: chat id wrong (chat not found) or message rejected | Check `KANBAN_REPORT_TELEGRAM_CHAT_ID` / `KANBAN_TELEGRAM_CHAT_ID` (channel ids start with `-100`). |
+| `401` | bot token invalid/revoked | `KANBAN_TELEGRAM_BOT_TOKEN` is wrong or was revoked; reclaim alerts will be failing too. |
+| `403` | bot is not a member of the chat or may not post there | Add the bot to the chat; for a channel, make it an admin allowed to post. |
+| `404` | wrong bot token or KANBAN_REPORT_TELEGRAM_API_URL | The token is malformed, or the API URL override points somewhere wrong. |
+| `429` | Telegram rate limit; retry later | When `retry_after` is 10 s or less the server waits and retries once; a longer wait fails at once. Either way report sends then **pause** for `retry_after` (capped at 60 s): further reports fail fast without calling Telegram (logged as `paused (recent 429, no call made)`), so report traffic cannot keep the shared bot rate-limited and starve the reclaim alerts or the daily backup. Transient. |
+| `5xx` | Telegram outage | Transient; no retry is made, the visitor is asked to try again later. |
+| network error | network/DNS error or wrong KANBAN_REPORT_TELEGRAM_API_URL | The server couldn't reach Telegram at all. Check connectivity and that the override (if set) is unset in production. |
 
-A startup warning also catches a misconfigured credential before the first
-report ever fails (`[kanban bug-report] WARNING: KANBAN_REPORT_GITHUB_TOKEN
-does not look like a GitHub token (placeholder?)`, and the equivalent for
-`KANBAN_REPORT_REPO`/`TURNSTILE_SITE_KEY`) — it fires once at boot when a
-value's **shape** doesn't match a real credential (the value itself, and
-its length, are never logged), and it does not disable the feature.
-Turnstile verification failures are logged the same way, with Cloudflare's
-own `error-codes` array instead of a GitHub status. Every remote/untrusted
-value that reaches one of these lines — GitHub's `message`, the two
-diagnostic headers, Cloudflare's `error-codes`/`action`/`hostname` — is run
-through a shared sanitizer first: control characters and the Unicode line/
-paragraph separators are stripped and the value is length-capped, so an
-upstream response can never inject a raw control byte or fake a second log
-line, and the GitHub token/Turnstile secret are redacted from the raw
-message before that truncation (so a secret straddling the length cut can't
-leak a surviving prefix). None of these lines ever contain the GitHub
-token, the Turnstile secret, the Authorization header, the report's
-title/description, or the reporter's IP address.
-
-**Generating a fine-grained PAT:** [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
-→ Repository access: only the one repo `KANBAN_REPORT_REPO` points at →
-Permissions → Repository permissions → **Issues: Read and write** (leave
-everything else at "No access") → Generate, copy the `github_pat_…` value
-into `KANBAN_REPORT_GITHUB_TOKEN` in Railway's variables, and redeploy.
+A failed send never spends the visitor's per-IP or daily budget. Turnstile
+verification failures are logged the same way, with Cloudflare's own
+`error-codes` array instead of a Telegram status. Every remote/untrusted
+value that reaches one of these lines — Telegram's `description`,
+Cloudflare's `error-codes`/`action`/`hostname` — is run through a shared
+sanitizer first: control characters and the Unicode line/paragraph
+separators are stripped and the value is length-capped, and the bot
+token/Turnstile secret are redacted from the raw text before that truncation
+(so a secret straddling the length cut can't leak a surviving prefix). None
+of these lines ever contain the bot token (it is part of the Bot API URL, so
+URLs are never logged), the Turnstile secret, the report's
+title/description, the rendered message, or the reporter's IP address. A
+successful send logs only `delivered 1 report to telegram`.
 
 ### Running the local demo
 
-No real GitHub token or live Turnstile network call required — a bundled
-stub plays GitHub's side:
+No real Telegram message and no Cloudflare call — a bundled stub plays both
+Telegram's `sendMessage` and Turnstile's siteverify:
 
 ```bash
-node scripts/stub-github-issues.mjs &
+node scripts/stub-telegram.mjs &
 
-KANBAN_REPORT_GITHUB_API_URL=http://localhost:3456 \
-KANBAN_REPORT_GITHUB_TOKEN=stub-token \
-KANBAN_REPORT_REPO=owner/repo \
+KANBAN_REPORT_TELEGRAM_API_URL=http://127.0.0.1:3457 \
+TURNSTILE_SITEVERIFY_URL=http://127.0.0.1:3457/turnstile/v0/siteverify \
+KANBAN_TELEGRAM_BOT_TOKEN=000000:stub-bot-token \
+KANBAN_TELEGRAM_CHAT_ID=-1000000000000 \
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA \
 TURNSTILE_SITE_KEY=1x00000000000000000000AA \
+KANBAN_REAP_ENABLED=false KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0 \
 npm --prefix server start
 ```
 
-`GET /api/bug-reports/config` now reports `{enabled:true,...}`. Submitting a
-report through the UI (or `curl`) still makes a REAL call to Cloudflare's
-siteverify endpoint — only GitHub is stubbed — so pass a real Turnstile token
-from the rendered widget, or run
+`KANBAN_REAP_ENABLED=false` and `KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0` matter:
+the dummy bot token also arms the reclaim alerts and the drift alert, which
+always talk to the real `api.telegram.org`. `GET /api/bug-reports/config` now
+reports `{enabled:true,...}`; the browser widget still loads Cloudflare's
+script, so for a fully offline run the repo's e2e check replaces it with a
+local stand-in. `curl http://127.0.0.1:3457/__messages` shows every message
+the stub received; `curl -X POST 'http://127.0.0.1:3457/__mode?mode=500'`
+makes the next sends fail (also `429`, `403`, `ok`). Or run
 `npm --prefix server test -- test/kanban.bugreports.test.js` to exercise the
 entire flow (honeypot, validation, every Turnstile outcome, rate limits,
-GitHub retry/label fallback) with both Turnstile and GitHub fully mocked and
-no network at all.
+Telegram retry/failures, message formatting) with no network at all.
 
 ### Verify it is live
 
-Once the four required variables are set on a real deployment:
+Once the variables are set on a real deployment:
 
 ```bash
 curl <board-url>/api/bug-reports/config
 ```
 
-returns `{"enabled":true,"siteKey":"..."}` when all four are set, or
-`{"enabled":false}` otherwise (e.g. one variable missing or mistyped). That
-confirms configuration only — a real Turnstile token can only be produced by
-the widget running in a browser, so the first genuine end-to-end check is
-submitting one real report from the site itself. This files a real, public
-GitHub issue labelled `user-report`, which you can close once confirmed.
+returns `{"enabled":true,"siteKey":"..."}` when everything resolves, or
+`{"enabled":false}` otherwise (check the startup log for the DISABLED
+warning). That confirms configuration only — a real Turnstile token can only
+be produced by the widget running in a browser, so the first genuine
+end-to-end check is submitting one real report from the site itself and
+seeing it arrive in the Telegram chat.
 
 ---
 
@@ -536,6 +566,7 @@ enforced anti-pattern — lives in [DESIGN.md](DESIGN.md). In brief:
 - **No Inter/Roboto**: Typography conforms strictly to system and curated fonts.
 - **Theming**: A warm-cream light palette and a midnight-navy blueprint dark palette (adopted from the Stack Field Guide), controlled by a single header button cycling Auto -> Light -> Dark (v2.17.0; Auto follows the OS preference live, no reload needed, and is the default with no stored choice); an explicit Light/Dark choice wins over the OS preference and native controls follow via `color-scheme`.
 - **Responsive**: The shell wraps instead of overflowing, board columns snap-scroll at `85vw` on mobile (`w-72` from `md` up), and the Signal Rail collapses into a slide-over drawer below `md`. On touch devices (`pointer: coarse`) header and filter-row controls grow to 44px tap targets and form controls to 16px text (no iOS focus-zoom); mouse/trackpad layouts are unchanged.
+- **Bug reports go to Telegram (v3.19.0)**: The "Report a Bug/Request a feature" dialog delivers each report as one Telegram message through the existing bot to the existing chat (no GitHub issue, no card); see the Report section for the settings.
 - **Task sheet write forms hidden (v3.18.2)**: The comment, log-entry and Assign/Release forms in the task sheet are no longer shown (code kept); agents use the API. The comments and agent-log lists stay.
 - **Security follow-ups (v3.18.1)**: Live-stream tickets never read more than the token that minted them (a project-token ticket previously streamed every project, bypassing the master-password redaction); tickets are no longer signed with the shared token; backups and restores leave out the unlock secret; the secret file handles corruption, unreadable files and symlinks safely; invalid tokens on the details and health checks count as failed logins under read-auth.
 - **Master password for card details (v3.18.0)**: With `KANBAN_MASTER_PASSWORD` set, the board stays public but card details (description, log, comments) are served only to a browser that typed the master password into the header token box, or to a valid board token; enforced on every read surface including the live stream. Clicking a card opens its details again (v3.10.0 regression), double-click no longer edits a title, and column colours are saved on the server (board-wide palette for "all projects").
@@ -597,8 +628,8 @@ All mutations broadcast instantaneously to the open browser dashboard over SSE.
 | `POST` | `/api/auth/revoke` | Revoke the caller's own HMAC session token immediately (jti deny-list) | Bearer session token |
 | `POST` | `/api/tasks/:id/assign` | v2.11.0 — privileged assign-to-agent; `agent_id` is required (an explicit `null` releases) | Bearer + role |
 | `GET` | `/api/milestones` | v2.11.0 — per-milestone rollup (total / done / %), `?project=` scoped | none (reads open) |
-| `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, site_key}`); drives whether the UI shows the entry point | Public |
-| `POST` | `/api/bug-reports` | v2.16.0 — file a visitor's bug report as a GitHub issue (Turnstile + honeypot + daily/per-IP caps). No board token, no `?project=` | Public (unauthenticated by design) |
+| `GET` | `/api/bug-reports/config` | Whether public bug reporting is configured (`{enabled, siteKey}`); drives whether the UI shows the entry point | Public |
+| `POST` | `/api/bug-reports` | v2.16.0 — send a visitor's bug report / feature request to the owner as one private Telegram message (Turnstile + honeypot + daily/per-IP caps; creates no card and no issue). No board token, no `?project=` | Public (unauthenticated by design) |
 | `GET` | `/api/ask/config` | v3.4.0 — whether Ask-the-Board is configured (`{enabled, gated}`; `provider`, `model` and `scope` are added only when a valid `x-ask-pass` is sent); the console only renders when enabled | Public (limited view) / Shared password (full view) |
 | `POST` | `/api/ask` | v3.4.0 — ask a read-only question about this board. `{question}` behind an `x-ask-pass` password header; never mutates a card, reads the named card's record and logs in-process (redacted by default) | Shared password (not a board token) |
 
@@ -643,7 +674,7 @@ make build
 make sec
 ```
 
-`npm test` runs the server suite (1133 tests, including the v3.2.5 Report-a-bug failure-logging suite (GH incident: a placeholder `KANBAN_REPORT_GITHUB_TOKEN` 401ing on every attempt with nothing in the deploy logs to show it — one line per failed GitHub-filing or Turnstile-verification request, at most one per 60 seconds per status and repo (not every failed attempt), with the status, GitHub's `message` (secrets redacted from the raw value before truncation, so a token straddling the cut can't leak a prefix), a per-status hint (401/403/404/410/422/429/5xx/network error/a 201 with an unreadable body), and the Cloudflare `error-codes` — every remote value run through a shared `safeLogValue` sanitizer that strips C0/C1 control characters and the Unicode line/paragraph separators before logging, so an upstream response can never inject a raw control byte or fake a second log line; while a boot-time check warns when the token/repo/site-key shape looks like a placeholder; neither the token, the Authorization header, the Turnstile secret, the report text, nor the client IP is ever logged), the v3.2.1 auth rate-limiter trust-proxy hardening suite (§SEC-09; GH #90) and body-parser error-translation catch-all suite (GH #91), the v3.2.0 health credential-map project name confidentiality suite (§2.10; withholding project names from anonymous/invalid callers, providing missing/extra arrays to authenticated callers, zero token value leakage), the v3.1.0 credential-map coverage check suite (§2.10; Map/object input flexibility, store-project deduplication, log redaction, non-fatal errors, live /api/health probe integration), the v3.0.0 AgentOS 8-state workflow test suite (state machine transitions, role permissions, backward-compatible alias normalization, transparent store migration), the v2.16.0 Report-a-bug suite (feature gate, honeypot, validation, Turnstile outcomes, rate limits, GitHub retry/label fallback, issue-body sanitisation) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (333 tests, including the v3.2.4 About-page audit guards (the v3 8-state lifecycle walk, READY reclaim, real stack versions, 10-minute default lease), including the v3.2.4 phone layout (GH #103) — on a touch phone below `md` the document itself scrolls, like a normal website, so iOS Safari draws the board behind its floating toolbar (desktop/tablet keep the `h-screen` shell with internal column scrolling): the phone-layout media block contract (html scroller, sticky header, columns aligned to the top so short columns stay short, sticky current-column bar), the `phoneBoard.ts` suite (25-card cap with "Show N more", snapped-column tracking, re-aligning the page to a column's top after a swipe), and the `scrollLock.ts` overlay scroll-lock suite (position restore, stacked overlays, rotation across the 768px breakpoint); the v3.2.4 viewport-clamped dropdown placement (`menuPlacement.ts`; the project picker opened off-screen left on iPhone); the v3.2.4 zoom fix: the universal `touch-action: pan-x pan-y` contract (no `manipulation`/`auto`/`pinch-zoom` anywhere) and the pinch guard's multi-touch `touchmove` decision logic on document and window (and that it registers no wheel listener); the v3.2.3 real-iPhone mobile follow-up (GH #103): the `touchend` double-tap guard regression check, `text-size-adjust: 100%`, and the Column/Portfolio/About floating-toolbar bottom-clearance padding, plus the v3.2.2 mobile full-bleed Safari background, bottom clearance reclamation, zoom restriction, and header disclosure persistence suites (GH #103), the v3.2.1 mobile typography & Safari floating bottom bar clearance guards (GH #101; safe-area inset bottom padding, viewport-fit=cover, compact 13px select font, truncation-free placeholders), the v3.1.1 mobile layout density and bottom viewport clearance guards (GH #99; proportional system font on coarse pointers preventing text/placeholder truncation, Board container vertical stretch and tightened mobile padding eliminating bottom dead space), the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
+`npm test` runs the server suite (1257 tests at the time of writing, including the v3.2.5 Report-a-bug failure-logging suite (now the Telegram delivery failure-logging suite: status, Telegram's `description`, a per-status hint, never the bot token, report text or IP; originally, GH incident: a placeholder `KANBAN_REPORT_GITHUB_TOKEN` 401ing on every attempt with nothing in the deploy logs to show it — one line per failed GitHub-filing or Turnstile-verification request, at most one per 60 seconds per status and repo (not every failed attempt), with the status, GitHub's `message` (secrets redacted from the raw value before truncation, so a token straddling the cut can't leak a prefix), a per-status hint (401/403/404/410/422/429/5xx/network error/a 201 with an unreadable body), and the Cloudflare `error-codes` — every remote value run through a shared `safeLogValue` sanitizer that strips C0/C1 control characters and the Unicode line/paragraph separators before logging, so an upstream response can never inject a raw control byte or fake a second log line; a boot-time check warns when the Turnstile site key looks like a placeholder, when the bot or chat id is missing, and when a local-only stub override is set in production; neither the bot token, the Turnstile secret, the report text, nor the client IP is ever logged), the v3.2.1 auth rate-limiter trust-proxy hardening suite (§SEC-09; GH #90) and body-parser error-translation catch-all suite (GH #91), the v3.2.0 health credential-map project name confidentiality suite (§2.10; withholding project names from anonymous/invalid callers, providing missing/extra arrays to authenticated callers, zero token value leakage), the v3.1.0 credential-map coverage check suite (§2.10; Map/object input flexibility, store-project deduplication, log redaction, non-fatal errors, live /api/health probe integration), the v3.0.0 AgentOS 8-state workflow test suite (state machine transitions, role permissions, backward-compatible alias normalization, transparent store migration), the Report-a-bug suite (feature gate and bot/chat resolution, honeypot, validation, Turnstile outcomes, rate limits, Telegram 429 retry and upstream failures, message escaping and the 4096-char fit; v2.16.0 originally filed GitHub issues) and its global body-parser error-translation guard (malformed JSON -> 400, oversized body -> 413, across both the new and an existing route), the v2.13.0 lease-window review fixups suite (I-1..I-8: version-churn, cross-project reach, broadcast timing, semantic tagging, lease_ms validation; plus KANBAN_MAX_CLAIMS_PER_AGENT and last_progress_at), the v2.12.0 lease-window suite (per-task `lease_ms`, bulk agent heartbeat, holder-write renewal), the v2.11.0 opt-features suite (milestones, operator assignment, outbound webhooks), including the v2.9.0 ops suite (persisted audit stream + config-reference drift guard), the v2.8.0 performance suite (SSE diff-default, JSON storage journal, bounded inline logs/comments), the v2.7.0 server-robustness suite (archive-name collision, dependency-cycle validation, listen-error handling, in-repo storage default, readiness endpoint, Telegram truncation, CORS scheme), the v2.6.0 security-hardening suite (constant-time token compare, HMAC proof binding, purge-filter guard, SSE stream cap, auth-failure rate limiting, log/comment validation), the v2.5.7 read-auth/stream-ticket suite, the v2.5.6 trash-sink suite, the v2.5.5 backup-status suite, the Telegram reclaim-notifier guard, the branch-integrity regression guard, the v2.5.0 comments/settings suites, and the v2.5.2 purge-scope/privilege + corrupt-file fail-closed suites, and the v2.5.4 field-type validation suite; About tour screenshots refreshed in 2.5.1), the client status check, the client unit suite (333 tests, including the v3.2.4 About-page audit guards (the v3 8-state lifecycle walk, READY reclaim, real stack versions, 10-minute default lease), including the v3.2.4 phone layout (GH #103) — on a touch phone below `md` the document itself scrolls, like a normal website, so iOS Safari draws the board behind its floating toolbar (desktop/tablet keep the `h-screen` shell with internal column scrolling): the phone-layout media block contract (html scroller, sticky header, columns aligned to the top so short columns stay short, sticky current-column bar), the `phoneBoard.ts` suite (25-card cap with "Show N more", snapped-column tracking, re-aligning the page to a column's top after a swipe), and the `scrollLock.ts` overlay scroll-lock suite (position restore, stacked overlays, rotation across the 768px breakpoint); the v3.2.4 viewport-clamped dropdown placement (`menuPlacement.ts`; the project picker opened off-screen left on iPhone); the v3.2.4 zoom fix: the universal `touch-action: pan-x pan-y` contract (no `manipulation`/`auto`/`pinch-zoom` anywhere) and the pinch guard's multi-touch `touchmove` decision logic on document and window (and that it registers no wheel listener); the v3.2.3 real-iPhone mobile follow-up (GH #103): the `touchend` double-tap guard regression check, `text-size-adjust: 100%`, and the Column/Portfolio/About floating-toolbar bottom-clearance padding, plus the v3.2.2 mobile full-bleed Safari background, bottom clearance reclamation, zoom restriction, and header disclosure persistence suites (GH #103), the v3.2.1 mobile typography & Safari floating bottom bar clearance guards (GH #101; safe-area inset bottom padding, viewport-fit=cover, compact 13px select font, truncation-free placeholders), the v3.1.1 mobile layout density and bottom viewport clearance guards (GH #99; proportional system font on coarse pointers preventing text/placeholder truncation, Board container vertical stretch and tightened mobile padding eliminating bottom dead space), the v2.16.0/v2.17.0 Report-a-bug lib + UI-contract suite (pure validation/char-counters/payload logic, a source scan of the dialog's iOS/WebKit overflow-zoom-bottom-clearance fixes, App.tsx/HeaderHelp.tsx/About.tsx wiring, and api.ts — including the regression guard that the header icon entry point sits directly beside the theme toggle and that neither the old popover row nor the footer link survive), the v2.17.0 theme suite (Auto/Light/Dark resolution, cycling and stored-value parsing), a round-3 regression guard that the theme toggle is a fixed width and the api-token input carries the bug-icon width-absorption classes scoped to md and reset at xl, a round-4 regression guard that the token input's placeholder stayed short ("token", not "api token") with its full aria-label unchanged, the v2.11.0 opt-features source-contract guard, including the mobile-responsive, mobile-toolbar, dashboard-metrics, column-colors, visit-counter, and About-page regression guards — the visit-counter guard asserts the hook is called once in `App.tsx` (so every site load counts, not just the About tab) and is not called in `About.tsx`; the About guard now also asserts the bundled `skills/kanban/SKILL.md` exists and carries its frontmatter; the v2.9.1 mobile-layout fixes were verified at 390/414/768/1024/1440px), and compiles the production bundle.
 
 CI additionally drives a real headless Chrome over the DevTools protocol
 (`scripts/check-card-layout.mjs`, `scripts/check-browser-smoke.mjs`, and —

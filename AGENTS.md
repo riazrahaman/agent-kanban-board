@@ -261,7 +261,7 @@ copies.
   you did not touch before committing.
 - Never commit a real secret. `.env.example`, docs and README use placeholders
   or Cloudflare's published Turnstile test keys only; the real
-  `KANBAN_REPORT_GITHUB_TOKEN` and `TURNSTILE_SECRET` live in Railway variables.
+  `KANBAN_TELEGRAM_BOT_TOKEN` and `TURNSTILE_SECRET` live in Railway variables.
 - Gitignored local tooling: `.opencode/`, `opencode.json`, `.claude/`,
   `skillport.lock`.
 - Every new `KANBAN_*` / `TURNSTILE_*` variable has to be read as a **literal
@@ -297,8 +297,16 @@ copies.
   `.about-rail { display: none }` must stay **above** its
   `@media (min-width: 80rem)` override (equal specificity, so a later rule would
   hide the rail at every width).
-- Report-a-bug (v2.16.0+) is a public, unauthenticated route
-  (`server/routes/bugReports.js`, Turnstile + GitHub issue) and touches several
+- Report-a-bug (v2.16.0+; titled "Report a Bug/Request a feature") is a public,
+  unauthenticated route (`server/routes/bugReports.js`, Turnstile + one private
+  Telegram message via `server/telegramSend.js`, sent by the same bot as the
+  reclaim alerts to `KANBAN_REPORT_TELEGRAM_CHAT_ID` or else
+  `KANBAN_TELEGRAM_CHAT_ID`; no card, no GitHub issue). A dummy
+  `KANBAN_TELEGRAM_BOT_TOKEN` in a local run also arms the reclaim notifier and
+  drift alert, which always call the real api.telegram.org: pair it with
+  `KANBAN_REAP_ENABLED=false` and `KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0`, and use
+  `scripts/stub-telegram.mjs` (`KANBAN_REPORT_TELEGRAM_API_URL`,
+  `TURNSTILE_SITEVERIFY_URL`) for the report path. It touches several
   places at once: `server.js` mount order (must stay ahead of auth/rate-limit),
   `scripts/gen-config-reference.mjs` + `.env.example` (the config-variable rule
   above), `client/src/lib/bugReport.ts` (client limits must match the server's),

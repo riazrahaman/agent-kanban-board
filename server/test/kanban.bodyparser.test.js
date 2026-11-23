@@ -32,8 +32,9 @@ import __path from 'node:path';
 const TOKEN = 'bodyparser-test-token';
 const ENV_KEYS = [
   'KANBAN_AUTH_TOKEN',
-  'KANBAN_REPORT_GITHUB_TOKEN',
-  'KANBAN_REPORT_REPO',
+  'KANBAN_TELEGRAM_BOT_TOKEN',
+  'KANBAN_TELEGRAM_CHAT_ID',
+  'KANBAN_REPORT_TELEGRAM_CHAT_ID',
   'TURNSTILE_SECRET',
   'TURNSTILE_SITE_KEY',
 ];
@@ -70,8 +71,8 @@ describe('global body-parser error translation', () => {
     process.env.KANBAN_AUTH_TOKEN = TOKEN;
     // Enable the bug-reports route too, so its branch of this guard exercises
     // the real feature rather than a 404-gated stub.
-    process.env.KANBAN_REPORT_GITHUB_TOKEN = 'ghp_test_token';
-    process.env.KANBAN_REPORT_REPO = 'owner/repo';
+    process.env.KANBAN_TELEGRAM_BOT_TOKEN = '123456:bodyparser-test-bot-token';
+    process.env.KANBAN_TELEGRAM_CHAT_ID = '-1001234567890';
     process.env.TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
     process.env.TURNSTILE_SITE_KEY = '1x00000000000000000000AA';
     const app = createApp({ bugReports: { fetch: async () => { throw new Error('unused in this suite'); } } });
