@@ -6,7 +6,7 @@ UI header is read live from `server/package.json` via `GET /api/health`, so a
 version bump here is what the running board reports.
 
 Release boundaries are also tagged in git (`v0.1.0`, `v1.0.0`, `v2.0.0`,
-`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`, `v3.14.0`, `v3.14.1`, `v3.15.0`, `v3.16.0`, `v3.16.1`, `v3.16.2`, `v3.16.3`, `v3.16.4`, `v3.17.0`, `v3.17.1`, `v3.17.2`, `v3.18.0`, `v3.18.1`) — see `git tag -n`.
+`v2.1.0`, `v2.1.1`, `v2.1.2`, `v2.2.0`, `v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`, `v2.3.6`, `v2.3.7`, `v2.3.8`, `v2.3.9`, `v2.3.10`, `v2.3.11`, `v2.3.12`, `v2.3.13`, `v2.4.0`, `v2.5.0`, `v2.5.1`, `v2.5.2`, `v2.5.3`, `v2.5.4`, `v2.5.5`, `v2.5.6`, `v2.5.7`, `v2.5.8`, `v2.5.9`, `v2.5.10`, `v2.6.0`, `v2.7.0`, `v2.8.0`, `v2.9.0`, `v2.9.1`, `v2.10.0`, `v2.11.0`, `v2.12.0`, `v2.13.0`, `v2.14.0`, `v2.14.1`, `v2.14.2`, `v2.14.3`, `v2.14.4`, `v2.14.5`, `v2.15.0`, `v2.15.1`, `v2.15.2`, `v2.15.3`, `v2.15.4`, `v2.15.5`, `v2.15.6`, `v2.15.7`, `v2.15.8`, `v2.15.9`, `v2.15.10`, `v2.15.11`, `v2.16.0`, `v2.16.1`, `v2.16.2`, `v2.16.3`, `v2.17.0`, `v3.0.0`, `v3.1.0`, `v3.1.1`, `v3.2.0`, `v3.2.1`, `v3.2.2`, `v3.2.3`, `v3.2.4`, `v3.2.5`, `v3.3.0`, `v3.4.0`, `v3.5.0`, `v3.5.1`, `v3.5.2`, `v3.6.0`, `v3.6.1`, `v3.6.2`, `v3.6.3`, `v3.6.4`, `v3.7.0`, `v3.7.1`, `v3.7.2`, `v3.8.0`, `v3.8.3`, `v3.9.0`, `v3.9.1`, `v3.9.2`, `v3.9.3`, `v3.9.4`, `v3.9.5`, `v3.9.6`, `v3.10.0`, `v3.10.1`, `v3.10.2`, `v3.10.3`, `v3.10.4`, `v3.10.5`, `v3.11.0`, `v3.11.1`, `v3.11.2`, `v3.12.0`, `v3.12.1`, `v3.12.2`, `v3.12.3`, `v3.12.4`, `v3.12.5`, `v3.12.6`, `v3.12.7`, `v3.12.8`, `v3.12.9`, `v3.12.10`, `v3.13.0`, `v3.14.0`, `v3.14.1`, `v3.15.0`, `v3.16.0`, `v3.16.1`, `v3.16.2`, `v3.16.3`, `v3.16.4`, `v3.17.0`, `v3.17.1`, `v3.17.2`, `v3.18.0`, `v3.18.1`, `v3.18.2`) — see `git tag -n`.
 
 **Versioning policy.** Every user-visible change bumps `server/package.json`
 (the UI reads it live), with the same number mirrored into the root
@@ -15,6 +15,14 @@ compatible fixes and polish bump the **patch** version; breaking changes bump
 the **major** version. Each release gets a `## [x.y.z] — YYYY-MM-DD` section
 here **and** an annotated git tag. Do not let work accumulate under
 `## [Unreleased]` across a shipped change.
+
+## [3.18.2] — 2026-11-23
+
+Task sheet simplification. No server or API changes.
+
+- **Human write forms hidden in the task sheet (code kept, commented out).** The "Add a comment" box with Post comment, the Agent ID field with the log message box and Add log entry, and the Assign / Release block are no longer rendered. Agents write comments, logs and assignments through the API, which is unchanged; for a browser unlocked with only the master password these forms could only produce 401 errors. The sheet keeps the description, metadata, the Comments list ("No comments yet." and existing comments) and the Agent Log list with its entry count, and the content area now fills the sheet to the bottom (with the iOS safe-area padding) instead of leaving a footer bar.
+- **Docs.** The manual, system design, file-by-file guide and README describe the forms as currently hidden and point to the API endpoints.
+- **Known leftovers.** The About page's task-sheet screenshot and the screenshots in `docs/with-images/` still show the forms. The header token tooltip still mentions "log writes" (still true for agents).
 
 ## [3.18.1] — 2026-11-23
 
