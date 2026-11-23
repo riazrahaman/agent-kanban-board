@@ -30,9 +30,10 @@ export type FieldErrors = {
 
 // Characters the server always strips and that render as nothing: every
 // default-ignorable code point, the Braille blank, the interlinear and
-// Egyptian format controls, lone surrogates, and whitespace. A title made
-// only of them is certainly rejected server-side, so the form says so first.
-const ALWAYS_BLANK_RE = /^[\s\p{Default_Ignorable_Code_Point}\u2800\uFFF9-\uFFFB\u{13430}-\u{1343F}\uD800-\uDFFF]*$/u
+// Egyptian format controls, the musical null notehead (U+1D159), lone
+// surrogates, and whitespace. A title or description made only of them is
+// certainly rejected server-side, so the form says so first.
+const ALWAYS_BLANK_RE = /^[\s\p{Default_Ignorable_Code_Point}\u2800\uFFF9-\uFFFB\u{13430}-\u{1343F}\u{1D159}\uD800-\uDFFF]*$/u
 
 /** True when the text has no visible character at all (a cheap pre-check). */
 export function isBlankText(text: string): boolean {
@@ -55,6 +56,7 @@ export function validateTitle(title: string): string | undefined {
 
 export function validateDescription(description: string): string | undefined {
   const trimmed = description.trim()
+  if (isBlankText(trimmed)) return 'Description is empty or only invisible characters.'
   if (trimmed.length < DESCRIPTION_MIN) {
     return `Description must be at least ${DESCRIPTION_MIN} characters.`
   }

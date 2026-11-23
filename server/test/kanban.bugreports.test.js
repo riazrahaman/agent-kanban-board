@@ -1783,6 +1783,9 @@ describe('bug reports: invisible characters are judged by the last KEPT characte
     'U+180B U+180B': '\u180B\u180B',
     'U+FFF9 U+FFFA U+FFFB': '\uFFF9\uFFFA\uFFFB',
     'U+13430 U+1343F': '\u{13430}\u{1343F}',
+    'U+1D159': '\u{1D159}',
+    'U+1D159 x3': '\u{1D159}'.repeat(3),
+    'U+1D159 U+FE00': '\u{1D159}\uFE00',
   };
   const BLANK_DESCRIPTIONS = {
     '11 x U+FE00': '\uFE00'.repeat(11),
@@ -1791,6 +1794,9 @@ describe('bug reports: invisible characters are judged by the last KEPT characte
     '6 x (U+115F U+FE00)': '\u115F\uFE00'.repeat(6),
     '12 x U+FFF9': '\uFFF9'.repeat(12),
     '12 x U+13430': '\u{13430}'.repeat(12),
+    '5 x U+1D159': '\u{1D159}'.repeat(5),
+    '12 x U+1D159': '\u{1D159}'.repeat(12),
+    '11 x (U+1D159 U+FE00)': '\u{1D159}\uFE00'.repeat(11),
   };
 
   it('every review repro is rejected through the route (title: invalid_title, description: invalid_description), nothing sent', async () => {
@@ -1823,6 +1829,7 @@ describe('bug reports: invisible characters are judged by the last KEPT characte
     assert.equal(cleanOneLine('\u115F\u1161\uFE00'), '\u115F\u1161\uFE00', 'a real vowel is a base');
     assert.equal(cleanOneLine('\u1100\u1160\uFE00'), '\u1100\u1160', 'a kept filler is no base');
     assert.equal(cleanOneLine('\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}\uFE0F'), '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}', 'no VS16 after a flag tag run');
+    assert.equal(cleanOneLine('a\u{1D159}\uFE00b'), 'ab', 'the null notehead is removed and is no base');
     assert.equal(cleanOneLine('a\uFFF9b\uFFFAc\uFFFBd\u{13430}e\u{1343F}'), 'abcde');
   });
 
@@ -1864,7 +1871,7 @@ describe('bug reports: invisible characters are judged by the last KEPT characte
       // The selectors and fillers that need context, weighted up.
       ['\uFE00', '\uFE0D', '\uFE0E', '\uFE0F', '\u{E0100}', '\u{E01EF}', '\u115F', '\u1160', '\u3164', '\uFFA0', '\u180B', '\u180E', '\u180F', '\u200D', '\u{E0067}', '\u{E0062}', '\u{E007F}', '\u00AD', '\u034F', '\u17B4'],
       ['\u0301', '\u0300', '\u036F', '\u20E3', '\u0E31', '\u093F', '\u{1F3FB}'],
-      [' ', '\t', '\n', '\u00A0', '\u3000', '\u2800', '\u2028', '\u202E', '\u200B', '\uFEFF', '\uFFF9', '\u{13430}', '\uD800', '\uDC00'],
+      [' ', '\t', '\n', '\u00A0', '\u3000', '\u2800', '\u2028', '\u202E', '\u200B', '\uFEFF', '\uFFF9', '\u{13430}', '\u{1D159}', '\uD800', '\uDC00'],
       ['a', 'Z', '7', '#', '*', '.', '@', '\u845B', '\uD55C', '\u3131', '\u1100', '\u1161', '\u182E', '\u1823', '\u2813', '\u{1F600}', '\u2764', '\u{1F469}', '\u{1F4BB}', '\u{1F3F4}', '\u0628'],
     ];
     let seed = 0x5eed;

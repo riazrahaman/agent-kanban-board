@@ -100,8 +100,10 @@ const BRAILLE_BLANK_RE = /\u2800/g;
 
 // Invisible format characters outside the default-ignorable set: the
 // interlinear annotation controls (U+FFF9-U+FFFB) and the Egyptian
-// hieroglyph format controls (U+13430-U+1343F). Removed everywhere.
-const OTHER_FORMAT_RE = /^[\uFFF9-\uFFFB\u{13430}-\u{1343F}]$/u;
+// hieroglyph format controls (U+13430-U+1343F), and U+1D159 MUSICAL SYMBOL
+// NULL NOTEHEAD (a symbol whose glyph is empty by design). Removed
+// everywhere, so none of them is ever a base.
+const OTHER_FORMAT_RE = /^[\uFFF9-\uFFFB\u{13430}-\u{1343F}\u{1D159}]$/u;
 
 // Every other Default_Ignorable_Code_Point renders as nothing: the soft
 // hyphen, combining grapheme joiner, Hangul fillers (U+115F, U+1160, U+3164,
@@ -125,7 +127,7 @@ const MONGOLIAN_LETTER_RE = /^[\u1820-\u1878\u1880-\u18AA]$/u;
 const TAG_FLAG_RE = /\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]+\u{E007F}/uy;
 
 const isIgnorable = (ch) => DEFAULT_IGNORABLE_RE.test(ch);
-const isVisibleBase = (ch) => VISIBLE_BASE_RE.test(ch) && !isIgnorable(ch);
+const isVisibleBase = (ch) => VISIBLE_BASE_RE.test(ch) && !isIgnorable(ch) && !OTHER_FORMAT_RE.test(ch);
 
 /**
  * Should the ignorable `ch` stay because it belongs to real text? `prev` is

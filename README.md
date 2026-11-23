@@ -263,7 +263,8 @@ combining grapheme joiner, Hangul fillers (U+3164, U+115F, U+1160, U+FFA0),
 Khmer inherent vowels, Mongolian vowel separator, invisible operators, tag
 characters, variation selectors and every other default-ignorable code
 point, plus the interlinear annotation and Egyptian hieroglyph format
-controls (U+FFF9-U+FFFB, U+13430-U+1343F) and lone UTF-16 surrogates. They
+controls (U+FFF9-U+FFFB, U+13430-U+1343F), U+1D159 MUSICAL SYMBOL NULL
+NOTEHEAD and lone UTF-16 surrogates. They
 survive only as part of real text, right after a visible character that is
 itself kept: VS16 right after an emoji (a lone one goes), tag characters
 inside a subdivision flag such as England's, a Hangul filler that builds an

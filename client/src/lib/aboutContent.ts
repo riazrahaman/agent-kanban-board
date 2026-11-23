@@ -98,7 +98,7 @@ export const TRUST_METRICS: TrustMetric[] = [
     detail: 'state machine, leases, auth, persistence',
   },
   {
-    value: '379',
+    value: '380',
     label: 'client tests',
     detail: 'pure logic, theming, responsive contract',
   },

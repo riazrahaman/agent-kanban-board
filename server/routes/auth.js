@@ -242,7 +242,9 @@ router.post('/stream-ticket', (req, res) => {
       error: `Forbidden: token is not authorized for project '${project}'`,
     });
   }
-  if (cred.kind === 'session' && !adminSession && project !== cred.session.project) {
+  // Second guard behind the early return above: never a ticket for a
+  // non-admin session without a project.
+  if (cred.kind === 'session' && !adminSession && (!cred.session.project || project !== cred.session.project)) {
     return res.status(403).json({
       error: `Forbidden: token is not authorized for project '${project}'`,
     });
