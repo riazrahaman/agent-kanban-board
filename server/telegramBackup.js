@@ -25,7 +25,7 @@ import { mkdtemp, readFile, writeFile, rm, stat, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { notifierConfig } from './notifier.js';
-import { runBackupNow, backupRootDir } from './store/backups.js';
+import { runBackupNow, backupRootDir, BACKUP_EXCLUDED_DIRS } from './store/backups.js';
 import { APP_VERSION } from './version.js';
 import { createLogger } from './logger.js';
 
@@ -164,7 +164,11 @@ async function sendDocument(cfg, { buffer, filename, caption }, fetchImpl) {
 }
 
 async function packSnapshot(snapshotDir, outFile) {
-  await execFileAsync('tar', ['-czf', outFile, '-C', path.dirname(snapshotDir), path.basename(snapshotDir)]);
+  // The snapshot never contains `.secrets/` (store/backups.js skips it); the
+  // exclude is a second fence so a signing secret can never ride along to a
+  // third-party chat even if a snapshot was made by an older version.
+  const excludes = BACKUP_EXCLUDED_DIRS.map((name) => `--exclude=${name}`);
+  await execFileAsync('tar', ['-czf', outFile, ...excludes, '-C', path.dirname(snapshotDir), path.basename(snapshotDir)]);
 }
 
 async function readMarker() {

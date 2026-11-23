@@ -266,7 +266,9 @@ Credential families, resolved in `middleware/auth.js` `getAuthorizedProjects`:
   `base64url(payload).hmac` with `{cn,sn,jti,exp,role,project}`, 24 h expiry, and
   a process-local **jti deny-list** (`POST /api/auth/revoke`).
 - **Stream tickets** (`streamTicket.js`) — 60 s, single-use, signed with
-  `KANBAN_AUTH_SECRET` (fallback `KANBAN_AUTH_TOKEN`); minted at
+  `KANBAN_AUTH_SECRET`, else a random per-process key (never `KANBAN_AUTH_TOKEN`
+  since 3.18.1: a project-token holder mints tickets, and a ticket MACed with
+  the shared token was an offline oracle for it); minted at
   `POST /api/auth/stream-ticket`, consumed in `GET /api/events?ticket=` because
   `EventSource` cannot set headers.
 
@@ -286,10 +288,11 @@ the header; only unbound credentials honor `X-Agent-Role`, and every agent role
 needs its own token.
 
 **Fail-closed 503s.** No auth mechanism configured on a mutation → `503`; malformed
-`KANBAN_PROJECT_TOKENS` → `503`; `/api/auth/session` with no secret → `503`;
-`/api/auth/stream-ticket` with no signing key → `503`.
+`KANBAN_PROJECT_TOKENS` → `503`; `/api/auth/session` with no secret → `503`.
+(`/api/auth/stream-ticket` always has a signing key since 3.18.1: the random
+per-process one when `KANBAN_AUTH_SECRET` is unset.)
 
-**Master password (`KANBAN_MASTER_PASSWORD`).** Unset → no effect. Set → a reader with neither a board credential nor the master unlock gets the summary shape of every task (allow-list in `server/masterUnlock.js`: `redactTaskDetails`) on the task GETs and on every SSE frame, and `403 details_locked` from `GET /api/tasks/:id/logs`. A browser exchanges the password at `POST /api/auth/unlock` for a 12-hour unlock token (`X-Kanban-Unlock`). The token key is `HMAC(serverSecret, scrypt(password, salt))`: `serverSecret`/`salt` are random, stored in `<data dir>/.secrets/master-unlock.json` (0600; per-process if unwritable), so a token is not an offline oracle for the password, and rotation still revokes. The fallback stream-ticket key (no `KANBAN_AUTH_SECRET`/`KANBAN_AUTH_TOKEN`) is random per process. The endpoint answers `{unlocked, credential}` so the browser stores only a value the server recognises, and has its own hard 10-per-minute lockout keyed on `req.ip` (needs `KANBAN_TRUST_PROXY` behind a proxy; overflow addresses share one counter; lockouts audited as `unlock_lockout`). `GET /api/auth/details` tells a browser what it will be served. The unlock is read-only except `PUT /api/settings` (column colours, board-wide or an existing project). Task reads are `Cache-Control: private, no-store` while the feature is on. `startupAuthErrors` refuses a blank (whitespace-only) password, one under 12 characters, or one equal to any token / `KANBAN_AUTH_SECRET`.
+**Master password (`KANBAN_MASTER_PASSWORD`).** Unset → no effect. Set → a reader with neither a board credential nor the master unlock gets the summary shape of every task (allow-list in `server/masterUnlock.js`: `redactTaskDetails`) on the task GETs and on every SSE frame, and `403 details_locked` from `GET /api/tasks/:id/logs`. A browser exchanges the password at `POST /api/auth/unlock` for a 12-hour unlock token (`X-Kanban-Unlock`). The token key is `HMAC(serverSecret, scrypt(password, salt))`: `serverSecret`/`salt` are random, stored in `<data dir>/.secrets/master-unlock.json` (0600; per-process if unwritable), so a token is not an offline oracle for the password, and rotation still revokes. The fallback stream-ticket key (no `KANBAN_AUTH_SECRET`) is random per process; since 3.18.1 it is never `KANBAN_AUTH_TOKEN`. An unreadable secret file is never rotated (that run is per-process), a corrupt or empty one is replaced with a warning, and `.secrets/` is never included in a backup. The endpoint answers `{unlocked, credential}` so the browser stores only a value the server recognises, and has its own hard 10-per-minute lockout keyed on `req.ip` (needs `KANBAN_TRUST_PROXY` behind a proxy; overflow addresses share one counter; lockouts audited as `unlock_lockout`). `GET /api/auth/details` tells a browser what it will be served; with `KANBAN_READ_AUTH=token` an invalid token presented there (or to `/api/health`) counts a failed-auth strike exactly as on a read (3.18.1). The unlock is read-only except `PUT /api/settings` (column colours, board-wide or an existing project). Task reads are `Cache-Control: private, no-store` while the feature is on. `startupAuthErrors` refuses a blank (whitespace-only) password, one under 12 characters, or one equal to any token / `KANBAN_AUTH_SECRET`.
 
 **Read auth (`KANBAN_READ_AUTH`).** Unset/`off`/`0`/`false` → reads and SSE are
 open (the board is a public viewport). Any other value → every read requires a

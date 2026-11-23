@@ -348,8 +348,10 @@ describe('master password: unlock tokens and signing keys (B1)', () => {
     assert.equal(verifyStreamTicket(ticket), null);
   });
 
-  it('without a master password the ticket fallback does not exist (unchanged: no signing secret, no tickets)', () => {
-    assert.equal(createStreamTicket({ role: 'builder', project: 'alpha' }), null);
+  it('without a master password tickets still use the random per-process key (3.18.1: no KANBAN_AUTH_TOKEN fallback)', () => {
+    const minted = createStreamTicket({ role: 'builder', project: 'alpha' });
+    assert.ok(minted && typeof minted.ticket === 'string');
+    assert.ok(verifyStreamTicket(minted.ticket));
   });
 });
 
