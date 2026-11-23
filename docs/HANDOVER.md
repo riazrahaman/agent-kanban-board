@@ -341,14 +341,21 @@ copy that leaves the volume. Marker file `<backup root>/.telegram-last-sent`.
 
 ## 7. Subsystems
 
-- **Anonymous bug reports → GitHub** (`routes/bugReports.js`, mounted public).
-  Off unless `KANBAN_REPORT_GITHUB_TOKEN`, `KANBAN_REPORT_REPO`, `TURNSTILE_SECRET`
-  and `TURNSTILE_SITE_KEY` are all set. Guards: a **honeypot** field (`website`),
-  Cloudflare **Turnstile** siteverify (action must be `bug-report`, optional
-  `TURNSTILE_HOSTNAMES` allow-list), and peek-only/consume-on-success caps
-  (`KANBAN_REPORT_DAILY_CAP` 50, `KANBAN_REPORT_PER_IP_PER_HOUR` 3). Files a
-  labelled (`user-report`) GitHub issue; `GET /api/bug-reports/config` returns the
-  site key. Never logs the token, secret, report text or client IP.
+- **Anonymous "Report a Bug/Request a feature" → Telegram** (`routes/bugReports.js`
+  + `telegramSend.js`, mounted public). Off unless `TURNSTILE_SECRET`,
+  `TURNSTILE_SITE_KEY` and the board bot `KANBAN_TELEGRAM_BOT_TOKEN` are set and a
+  chat id resolves (`KANBAN_REPORT_TELEGRAM_CHAT_ID`, else `KANBAN_TELEGRAM_CHAT_ID`;
+  the bot must be allowed to post there, for a channel as an admin). Guards: a
+  **honeypot** field (`website`), Cloudflare **Turnstile** siteverify (action must
+  be `bug-report`, optional `TURNSTILE_HOSTNAMES` allow-list), and
+  peek-only/consume-on-success caps (`KANBAN_REPORT_DAILY_CAP` 50,
+  `KANBAN_REPORT_PER_IP_PER_HOUR` 3). Sends ONE private Telegram message (HTML:
+  title in bold, description in `<pre>`, version/viewport/user-agent footer, never
+  the IP); creates no card and no GitHub issue (the pre-Telegram
+  `KANBAN_REPORT_GITHUB_*`/`KANBAN_REPORT_REPO` variables are no longer read). One
+  retry on 429 honouring `retry_after` (capped 10 s), otherwise 502
+  `could_not_send`. `GET /api/bug-reports/config` returns the site key. Never
+  logs the bot token, secret, report text, message or client IP.
 - **Telegram notifier** (`notifier.js`) — an `onDiff` subscriber that posts a
   full-detail alert when a card is reclaimed. Off unless **both**
   `KANBAN_TELEGRAM_BOT_TOKEN` and `KANBAN_TELEGRAM_CHAT_ID` are set; filter with

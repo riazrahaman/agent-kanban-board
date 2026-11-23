@@ -171,7 +171,7 @@ export const FILE_MAP = [
   { path: 'server/routes/agents.js', note: 'Bulk per-agent lease heartbeat.' },
   { path: 'server/routes/health.js', note: 'GET /api/health + /ready; version, listeners, credential map.' },
   { path: 'server/routes/metrics.js', note: 'Aggregate + per-project metrics.' },
-  { path: 'server/routes/bugReports.js', note: 'Anonymous in-app bug report -> GitHub issue (Turnstile + honeypot).' },
+  { path: 'server/routes/bugReports.js', note: 'Anonymous in-app bug report / feature request -> one private Telegram message to the owner (Turnstile + honeypot); creates no card or issue.' },
   { path: 'server/auditLog.js', note: 'Append-only audit.jsonl writer; the Ask board-metadata block reads recent rows (no payloads).' },
   { path: 'server/routes/ask.js', note: 'This feature: GET /api/ask/config + POST /api/ask (OpenRouter or local Ollama, password-gated).' },
   { path: 'server/askKnowledge.js', note: 'This feature: protocol pack, card-detail retrieval, board metadata, live snapshot builder.' },

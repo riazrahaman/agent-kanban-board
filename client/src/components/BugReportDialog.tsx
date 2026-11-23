@@ -66,7 +66,8 @@ function loadTurnstileScript(): Promise<void> {
 }
 
 /**
- * The "Report a bug" sheet (v2.16.0, opt-public-bug-reports). Mirrors
+ * The "Report a Bug/Request a feature" sheet (v2.16.0, opt-public-bug-reports;
+ * the server sends each report privately to the owner on Telegram). Mirrors
  * TaskSheet's slide-in-from-the-right shell so it reads as the same pattern
  * as every other panel on the board, even though this one needs no task.
  *
@@ -81,7 +82,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<{ issue_number: number; issue_url: string } | null>(null)
+  const [success, setSuccess] = useState(false)
 
   const widgetContainerRef = useRef<HTMLDivElement | null>(null)
   const widgetIdRef = useRef<string | undefined>(undefined)
@@ -130,7 +131,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
     setTurnstileToken(null)
     setSubmitting(false)
     setError(null)
-    setSuccess(null)
+    setSuccess(false)
   }, [open])
 
   useEffect(() => {
@@ -160,7 +161,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
       setTurnstileToken(null)
       return
     }
-    setSuccess({ issue_number: result.issue_number, issue_url: result.issue_url })
+    setSuccess(true)
   }
 
   const titleError = title.length > 0 ? validateTitle(title) : undefined
@@ -180,7 +181,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
       <aside
         role="dialog"
         aria-modal="true"
-        aria-label="Report a bug"
+        aria-label="Report a Bug/Request a feature"
         // When closed, take the panel out of the accessibility tree and out
         // of tab order immediately (not just after the 200ms slide-out
         // finishes) — `inert` is purely an interaction/a11y property, so it
@@ -202,7 +203,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
         style={{ height: '100dvh' }}
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-4">
-          <h2 className="font-serif text-lg text-ink">Report a bug</h2>
+          <h2 className="font-serif text-lg text-ink">Report a Bug/Request a feature</h2>
           <button
             type="button"
             onClick={onClose}
@@ -223,21 +224,14 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
             region keeps the header and footer always visible. */}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           <p className="border border-line bg-muted-bg p-2.5 text-[11px] leading-snug text-muted">
-            Reports are public on GitHub. Do not include passwords, tokens or personal data.
+            Sent privately to the board owner on Telegram. Do not include passwords, tokens or personal data.
           </p>
 
           <div role="status" aria-live="polite" className="mt-4">
             {success && (
               <div className="border border-pass bg-pass-bg p-3 text-sm text-pass">
-                <p>Thanks — filed as issue #{success.issue_number}.</p>
-                <a
-                  href={success.issue_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1.5 inline-block font-mono text-[11px] underline"
-                >
-                  View on GitHub ↗
-                </a>
+                <p>Thanks — sent to the board owner.</p>
+                <p className="mt-1.5 font-mono text-[11px]">You can close this panel now.</p>
               </div>
             )}
           </div>
@@ -264,7 +258,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
                   maxLength={TITLE_MAX}
                   required
                   className="mt-1.5 w-full border border-line bg-bg px-2.5 py-1.5 text-sm text-ink placeholder:text-muted focus:border-ink focus:outline-none pointer-coarse:min-h-11 pointer-coarse:text-base"
-                  placeholder="Short summary of the bug"
+                  placeholder="Short summary"
                 />
                 {titleError && <p className="mt-1 font-mono text-[11px] text-fail">{titleError}</p>}
               </div>
@@ -289,7 +283,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
                   required
                   rows={8}
                   className="mt-1.5 w-full resize-none border border-line bg-bg px-2.5 py-1.5 text-sm text-ink placeholder:text-muted focus:border-ink focus:outline-none pointer-coarse:text-base"
-                  placeholder="What did you expect? What happened instead? Steps to reproduce help a lot."
+                  placeholder="Bug: what did you expect, what happened instead, steps to reproduce. Feature: what you want and why."
                 />
                 {descriptionError && (
                   <p className="mt-1 font-mono text-[11px] text-fail">{descriptionError}</p>
@@ -299,7 +293,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
               {/* Honeypot: pulled off-screen (not display:none — some bots
                   skip fields hidden that way), aria-hidden, unreachable by
                   Tab. Any non-empty value here fails the report silently
-                  server-side (200 {ok:true}, nothing filed). */}
+                  server-side (200 {ok:true}, nothing sent). */}
               <div aria-hidden="true" className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden">
                 <label htmlFor="bug-report-website">Website</label>
                 <input
@@ -356,7 +350,7 @@ export default function BugReportDialog({ open, siteKey, onClose }: Props) {
               disabled={!canSubmit}
               className="w-full bg-ink text-bg px-3 py-2 font-mono text-xs font-medium uppercase tracking-wider transition-opacity hover:opacity-85 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11"
             >
-              {submitting ? 'Filing…' : 'Submit report'}
+              {submitting ? 'Sending…' : 'Send'}
             </button>
           </div>
         )}

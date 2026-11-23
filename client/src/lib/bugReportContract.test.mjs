@@ -88,10 +88,30 @@ test('the honeypot field is off-screen (not display:none), aria-hidden, and unre
   )
 })
 
-test('the form shows the public-on-GitHub notice and char counters for both fields', () => {
-  assert.match(dialogSource, /Reports are public on GitHub\. Do not include passwords, tokens or personal data\./)
+test('the form shows the truthful private-on-Telegram notice and char counters for both fields', () => {
+  assert.match(
+    dialogSource,
+    /Sent privately to the board owner on Telegram\. Do not include passwords, tokens or personal data\./,
+  )
+  assert.doesNotMatch(dialogSource, /public on GitHub/)
   assert.match(dialogSource, /remainingChars\(title, TITLE_MAX\)/)
   assert.match(dialogSource, /remainingChars\(description, DESCRIPTION_MAX\)/)
+})
+
+test('the dialog is titled "Report a Bug/Request a feature" and its copy fits bugs and feature requests', () => {
+  assert.match(dialogSource, /<h2[^>]*>Report a Bug\/Request a feature<\/h2>/)
+  assert.match(dialogSource, /aria-label="Report a Bug\/Request a feature"/)
+  assert.match(dialogSource, /placeholder="Short summary"/)
+  assert.match(dialogSource, /placeholder="Bug: [^"]*Feature: [^"]*"/)
+  assert.match(dialogSource, /'Sending…' : 'Send'/)
+  assert.match(dialogSource, /Thanks — sent to the board owner\./)
+})
+
+test('no GitHub issue language or issue link survives in the dialog or its submit result', () => {
+  const visible = dialogSource.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
+  assert.doesNotMatch(visible, /GitHub|issue_number|issue_url|View on/i)
+  assert.doesNotMatch(apiSource, /issue_number|issue_url/)
+  assert.match(appSource, /title="Report a Bug\/Request a feature"/, 'the header icon tooltip carries the new name')
 })
 
 test('status updates are announced via aria-live', () => {
@@ -197,10 +217,10 @@ test('App.tsx wires the feature flag and the dialog', () => {
 test('the header icon button sits in App.tsx, gated on the flag, immediately beside the theme toggle', () => {
   assert.match(
     appSource,
-    /aria-label="Report a bug"/,
-    'App.tsx must render a "Report a bug" icon button',
+    /aria-label="Report a Bug\/Request a feature"/,
+    'App.tsx must render a "Report a Bug/Request a feature" icon button',
   )
-  const btnIdx = appSource.indexOf('aria-label="Report a bug"')
+  const btnIdx = appSource.indexOf('aria-label="Report a Bug/Request a feature"')
   assert.ok(btnIdx > -1)
   const guardIdx = appSource.lastIndexOf('{bugReportEnabled &&', btnIdx)
   assert.ok(guardIdx > -1 && guardIdx < btnIdx, 'the icon button must be gated on bugReportEnabled')
@@ -219,8 +239,8 @@ test('the header icon button sits in App.tsx, gated on the flag, immediately bes
 
 test('the bug icon is inline SVG (no icon library import, no emoji glyph) and carries aria-hidden', () => {
   const btnBlock = appSource.slice(
-    appSource.indexOf('aria-label="Report a bug"'),
-    appSource.indexOf('</button>', appSource.indexOf('aria-label="Report a bug"')),
+    appSource.indexOf('aria-label="Report a Bug/Request a feature"'),
+    appSource.indexOf('</button>', appSource.indexOf('aria-label="Report a Bug/Request a feature"')),
   )
   assert.match(btnBlock, /<svg\b/, 'must render an inline <svg>, not an emoji or icon-font glyph')
   assert.match(btnBlock, /aria-hidden="true"/, 'the decorative svg must be hidden from the a11y tree (the button itself carries the label)')
@@ -228,7 +248,7 @@ test('the bug icon is inline SVG (no icon library import, no emoji glyph) and ca
 })
 
 test('the bug icon button meets the 44px coarse touch target and matches the theme toggle\'s border/surface tokens', () => {
-  const labelIdx = appSource.indexOf('aria-label="Report a bug"')
+  const labelIdx = appSource.indexOf('aria-label="Report a Bug/Request a feature"')
   const openIdx = appSource.lastIndexOf('<button', labelIdx)
   const closeAngleIdx = appSource.indexOf('>', appSource.indexOf('className=', labelIdx))
   const btnTag = appSource.slice(openIdx, closeAngleIdx + 1)
@@ -241,7 +261,7 @@ test('the bug icon button meets the 44px coarse touch target and matches the the
 test('HeaderHelp.tsx no longer hosts a "Report a bug" entry (moved to the header icon) but keeps its popover and containment fix', () => {
   assert.doesNotMatch(
     headerHelpSource,
-    /Report a bug/,
+    /Report a bug|Request a feature/i,
     'the popover must only explain the agent id / api token fields now',
   )
   assert.match(headerHelpSource, /role="dialog"/, 'the operator-field popover itself must still exist')

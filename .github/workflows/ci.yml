@@ -97,11 +97,13 @@ jobs:
           done
 
           # Second server with the bug-report feature OFF (none of the
-          # KANBAN_REPORT_*/TURNSTILE_* vars below), so the header layout
+          # TURNSTILE_*/KANBAN_*TELEGRAM* vars below), so the header layout
           # guard's third pass can diff ON against OFF live instead of
           # trusting a hardcoded, hand-verified-once table — see
           # scripts/check-header-layout.mjs.
-          env -u KANBAN_REPORT_GITHUB_TOKEN -u KANBAN_REPORT_REPO -u TURNSTILE_SECRET -u TURNSTILE_SITE_KEY \
+          env -u TURNSTILE_SECRET -u TURNSTILE_SITE_KEY \
+            -u KANBAN_TELEGRAM_BOT_TOKEN -u KANBAN_TELEGRAM_CHAT_ID \
+            -u KANBAN_REPORT_TELEGRAM_CHAT_ID -u KANBAN_REPORT_TELEGRAM_API_URL \
             PORT=4001 KANBAN_DATA_DIR=/tmp/ci-layout-off KANBAN_DATA_FILE=/tmp/ci-layout-off/tasks.json \
             KANBAN_DEPLOY_DRIFT_INTERVAL_MS=0 \
             node server/server.js &
@@ -207,8 +209,8 @@ jobs:
           # Header layout guard (v2.16.0 review round 2; strengthened v2.17.0
           # round 3): a standalone "Report a bug" header button once wrapped
           # the toolbar onto an extra row at several mid viewports.
-          # KANBAN_REPORT_*/TURNSTILE_* below are Cloudflare's published
-          # PUBLIC test keys (never a real secret) so :4000 runs with the
+          # TURNSTILE_* below are Cloudflare's published PUBLIC test keys
+          # (never a real secret), plus a dummy bot/chat, so :4000 runs with the
           # feature ON; :4001 (started above) runs with it OFF, so the
           # guard's fine wrap-threshold pass can diff the two live instead
           # of trusting a hand-verified table — see the script.
@@ -244,7 +246,14 @@ jobs:
           PORT: '4000'
           # v2.16.0: turns the Report-a-bug header entry ON for this run.
           # Cloudflare's published test keys — public by design, not secrets.
-          KANBAN_REPORT_GITHUB_TOKEN: ci-layout-not-a-real-token
-          KANBAN_REPORT_REPO: owner/repo
+          # The feature also needs the board bot + a chat id: dummies here,
+          # and KANBAN_REPORT_TELEGRAM_API_URL points at a closed local port
+          # so nothing can ever reach api.telegram.org (the guards never
+          # submit a report anyway). The dummy bot token also arms the
+          # reclaim notifier, which stays silent because KANBAN_REAP_ENABLED
+          # is false; the backup is not enabled and drift is off (above).
+          KANBAN_TELEGRAM_BOT_TOKEN: '000000:ci-layout-not-a-real-bot-token'
+          KANBAN_TELEGRAM_CHAT_ID: '-1000000000000'
+          KANBAN_REPORT_TELEGRAM_API_URL: http://127.0.0.1:9
           TURNSTILE_SECRET: 1x0000000000000000000000000000000AA
           TURNSTILE_SITE_KEY: 1x00000000000000000000AA

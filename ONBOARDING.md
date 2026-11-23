@@ -231,3 +231,10 @@ The same bot can also send a **full backup of the board once a day** (v3.17.0): 
 `KANBAN_TELEGRAM_BACKUP_ENABLED=1` (defaults: 03:00, `Asia/Dubai`; tune with
 `KANBAN_TELEGRAM_BACKUP_HOUR` / `KANBAN_TELEGRAM_BACKUP_TZ`). Use a private chat: the
 archive contains every task's text. See **§3.1.1.1** in `docs/USER_AND_OPERATOR_MANUAL.md`.
+
+The same bot also delivers the public **Report a Bug/Request a feature** form: once
+`TURNSTILE_SECRET` and `TURNSTILE_SITE_KEY` are set, each visitor report arrives as one private
+Telegram message (no card, no GitHub issue). It goes to `KANBAN_TELEGRAM_CHAT_ID`, or to a
+separate chat or channel if you set `KANBAN_REPORT_TELEGRAM_CHAT_ID`; the bot must be allowed to
+post there (for a channel, add it as an admin). See **§5.8** in
+`docs/USER_AND_OPERATOR_MANUAL.md` and README "Enabling Report-a-bug".

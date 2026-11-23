@@ -1,4 +1,4 @@
-// Pure logic for the "Report a bug" form (v2.16.0, opt-public-bug-reports).
+// Pure logic for the "Report a Bug/Request a feature" form (v2.16.0, opt-public-bug-reports).
 // esbuild-bundles the TS source into ESM at test time (same pattern as
 // sanitize.test.mjs / stageOwners.test.mjs) so this runs on every Node
 // version CI covers, with no ts-node/vitest dependency.
@@ -129,7 +129,8 @@ test('buildBugReportPayload forwards a non-empty website (what a bot-filled hone
 
 test('describeSubmitError maps every documented status/code to distinct, non-leaking copy', () => {
   assert.equal(describeSubmitError(429), 'Too many reports, try later.')
-  assert.equal(describeSubmitError(502), 'Could not file the report, please try again.')
+  assert.equal(describeSubmitError(502), 'Could not send right now. Please try again later.')
+  assert.doesNotMatch(describeSubmitError(502, 'could_not_send'), /GitHub|issue|file/i)
   assert.match(describeSubmitError(403, 'invalid_captcha'), /verification/i)
   assert.match(describeSubmitError(403, 'invalid_captcha_hostname'), /verification/i)
   assert.match(describeSubmitError(400, 'invalid_title'), /120/)

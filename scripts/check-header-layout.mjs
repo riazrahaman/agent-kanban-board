@@ -111,7 +111,8 @@
  *
  * NOTE ON CI FEATURE ENVIRONMENT (GH #91): In CI, the primary test server
  * must be run with the bug-report environment variables configured
- * (KANBAN_REPORT_GITHUB_TOKEN, KANBAN_REPORT_REPO, TURNSTILE_SECRET, TURNSTILE_SITE_KEY).
+ * (TURNSTILE_SECRET, TURNSTILE_SITE_KEY, KANBAN_TELEGRAM_BOT_TOKEN and a chat id:
+ * KANBAN_TELEGRAM_CHAT_ID or KANBAN_REPORT_TELEGRAM_CHAT_ID).
  * If the primary server were booted with the feature OFF, the test would merely diff
  * feature-off against feature-off and vacuously pass, defeating the purpose of
  * verifying that the rendered bug report button costs net-zero header height.
@@ -410,7 +411,7 @@ const READ_POPOVER = `(() => {
 // every containment width.
 const READ_BUG_ICON = `(() => {
   const icon = [...document.querySelectorAll('button')]
-    .find((b) => b.getAttribute('aria-label') === 'Report a bug');
+    .find((b) => b.getAttribute('aria-label') === 'Report a Bug/Request a feature');
   const theme = [...document.querySelectorAll('button')]
     .find((b) => b.getAttribute('aria-label') === 'Toggle theme');
   if (!icon) return { present: false };

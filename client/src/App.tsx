@@ -1110,8 +1110,8 @@ export default function App() {
                <button
                  type="button"
                  onClick={() => setBugReportOpen(true)}
-                 aria-label="Report a bug"
-                 title="Report a bug"
+                 aria-label="Report a Bug/Request a feature"
+                 title="Report a Bug/Request a feature"
                  className="flex items-center justify-center border border-r-0 border-line bg-surface px-1.5 py-1.5 text-muted transition-colors hover:bg-muted-bg hover:text-ink active:scale-[0.98] sm:py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                >
                  <svg

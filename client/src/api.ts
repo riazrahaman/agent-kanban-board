@@ -352,7 +352,8 @@ export async function getSettings(project?: string): Promise<SettingsResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// v2.16.0 (opt-public-bug-reports) — in-app "Report a bug" -> GitHub issue.
+// v2.16.0 (opt-public-bug-reports) — in-app "Report a Bug/Request a feature"
+// -> one private Telegram message to the board owner (was a GitHub issue).
 // Both endpoints are UNAUTHENTICATED (no board token, no `?project=`): this
 // is the one human-facing write surface on the board, meant for an anonymous
 // visitor. See server/routes/bugReports.js for the server-side contract.
@@ -370,7 +371,7 @@ export async function getBugReportConfig(): Promise<BugReportConfig> {
   return handleResponse<BugReportConfig>(res)
 }
 
-export type BugReportSuccess = { ok: true; issue_number: number; issue_url: string }
+export type BugReportSuccess = { ok: true }
 
 /**
  * A failed submit is NOT thrown as an Error (unlike the rest of this file):
@@ -378,7 +379,7 @@ export type BugReportSuccess = { ok: true; issue_number: number; issue_url: stri
  * `describeSubmitError` (lib/bugReport.ts), not a stringified message.
  */
 export type BugReportResult =
-  | { ok: true; issue_number: number; issue_url: string }
+  | { ok: true }
   | { ok: false; status: number; code?: string }
 
 export async function submitBugReport(
@@ -396,7 +397,7 @@ export async function submitBugReport(
     body = null
   }
   if (!res.ok) return { ok: false, status: res.status, code: body?.error }
-  return { ok: true, issue_number: body.issue_number, issue_url: body.issue_url }
+  return { ok: true }
 }
 
 /** A settings save the server refused; `status` tells "not allowed" from "broken". */

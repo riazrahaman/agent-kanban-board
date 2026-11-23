@@ -368,7 +368,7 @@ dividers (`border-b border-line py-2.5 last:border-0`); step markers are
 `flex h-7 w-7 … border border-line bg-surface font-mono text-[11px]`. Counts
 (`TRUST_METRICS`) must be refreshed when the test suites change size.
 
-### 7.7 Report-a-bug sheet (`components/BugReportDialog.tsx`)
+### 7.7 Report a Bug/Request a feature sheet (`components/BugReportDialog.tsx`)
 
 Same slide-in shell as TaskSheet (§7, right-anchored `aside`, `fixed inset-0`
 scrim, `translate-x-full` ↔ `translate-x-0`, Escape-to-close) — the one other

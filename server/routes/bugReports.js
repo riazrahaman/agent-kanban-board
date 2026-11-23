@@ -1,8 +1,17 @@
 import express from 'express';
 import { APP_VERSION } from '../version.js';
+import {
+  DEFAULT_TELEGRAM_API_URL,
+  TELEGRAM_TEXT_LIMIT,
+  htmlEscape,
+  scrubSecret,
+  sendTelegramMessage,
+} from '../telegramSend.js';
 
 /**
- * In-app "Report a bug" → GitHub issue (v2.16.0, opt-public-bug-reports).
+ * In-app "Report a Bug/Request a feature" -> ONE private Telegram message to
+ * the board owner (v2.16.0 filed a public GitHub issue; switched to Telegram
+ * at the owner's request, card bug-report-to-telegram).
  *
  * UNAUTHENTICATED by design: this is the one human-facing write endpoint on
  * the board, meant for an anonymous visitor who has no `x-api-token`. It is
@@ -10,116 +19,170 @@ import { APP_VERSION } from '../version.js';
  * needs a board token and is never subject to the per-project mutation
  * limiter — see server.js for the exact mount order and why it must stay
  * there (and `kanban.bugreports.test.js` for the regression guard that every
- * OTHER route still requires the token).
+ * OTHER route still requires the token). It creates NO board card and no
+ * GitHub issue: the report exists only as the Telegram message.
  *
- * Off unless the first four env vars below are all set:
- *   KANBAN_REPORT_GITHUB_TOKEN  (secret)  fine-grained PAT, Issues: write
- *   KANBAN_REPORT_REPO                    "owner/name" to file issues against
+ * Off unless ALL of these resolve:
  *   TURNSTILE_SECRET            (secret)  Cloudflare Turnstile secret key
  *   TURNSTILE_SITE_KEY          (public)  served to the browser via /config
+ *   KANBAN_TELEGRAM_BOT_TOKEN   (secret)  the SAME bot as the reclaim alerts
+ *                                          and the daily backup
+ *   a chat id: KANBAN_REPORT_TELEGRAM_CHAT_ID if set (so reports can go to a
+ *              dedicated channel/chat), else KANBAN_TELEGRAM_CHAT_ID. The bot
+ *              must be a member (for a channel: an admin allowed to post) of
+ *              that chat.
  * Optional:
  *   TURNSTILE_HOSTNAMES                   comma list; siteverify hostname
  *                                          must be in it. Unset = skipped,
  *                                          with one startup warning.
  *   KANBAN_REPORT_DAILY_CAP               global cap/UTC day (default 50)
  *   KANBAN_REPORT_PER_IP_PER_HOUR         per-IP cap/hour (default 3)
- *   KANBAN_REPORT_GITHUB_API_URL          GitHub API base (default
- *                                          https://api.github.com) — lets
+ *   KANBAN_REPORT_TELEGRAM_API_URL        Bot API base (default
+ *                                          https://api.telegram.org) — lets
  *                                          tests/demo point at a local stub
- *                                          (see scripts/stub-github-issues.mjs).
+ *                                          (see scripts/stub-telegram.mjs).
+ *   KANBAN_BOARD_URL                      when set, shown in the message footer.
+ *   TURNSTILE_SITEVERIFY_URL              siteverify URL override for local
+ *                                          stubs (default Cloudflare's).
+ * The pre-Telegram KANBAN_REPORT_GITHUB_TOKEN / KANBAN_REPORT_REPO /
+ * KANBAN_REPORT_GITHUB_API_URL are no longer read at all.
  *
- * Failure logging (v3.2.5): one line per failed request — not one per failed
- * attempt — for every GitHub-filing or Turnstile-verification failure,
- * prefixed `[kanban bug-report]` (status, GitHub's `message`, the
- * accepted-permissions/rate-limit-remaining headers, attempt count, repo,
- * and a human hint — or the Turnstile `error-codes`), rate-limited to at
- * most one identical line per 60 seconds per status and repo (see
- * logRateLimited). This is what makes a bad credential visible in
- * `railway logs` instead of silently 502ing every report. Every remote/
- * untrusted value that reaches a log line (GitHub's `message`, the two
- * headers above, Cloudflare's `error-codes`/`action`/`hostname`) goes
- * through the shared `safeLogValue` sanitizer first (see its definition).
- * NEVER logged: the GitHub token, the Authorization header, the Turnstile
- * secret, the report's title/description/contact, or the client IP. A
- * startup warning also fires if KANBAN_REPORT_GITHUB_TOKEN/
- * KANBAN_REPORT_REPO/TURNSTILE_SITE_KEY don't look shaped like real
- * credentials (see looksLikeGithubToken et al.) — it does not disable the
- * feature, only flags a likely placeholder.
+ * Failure logging: one line per failed request (not per attempt) for every
+ * Telegram-delivery or Turnstile-verification failure, prefixed
+ * `[kanban bug-report]` (HTTP status or network error, Telegram's own
+ * `description`, attempt count and a human hint — or the Turnstile
+ * `error-codes`), rate-limited to at most one line per 60 seconds per kind
+ * (see logRateLimited). Every remote/untrusted value that reaches a log line
+ * goes through `safeLogValue` first. NEVER logged: the bot token (it is in
+ * the request URL; scrubbed from any error text), the Turnstile secret, the
+ * report's title/description or the rendered message, and the client IP.
+ * The visitor's IP is used for the per-IP limit and Turnstile's `remoteip`
+ * only; it is never put into the Telegram message.
  */
 
 // Strips C0/DEL control characters but keeps newlines/tabs — descriptions are
-// free text and may legitimately contain them. Title newlines are handled
-// separately in sanitizeTitleForGithub (GitHub issue titles must be one line).
+// free text and may legitimately contain them.
 const CONTROL_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
 export function stripControlChars(str) {
   return String(str).replace(CONTROL_CHARS_RE, '');
 }
 
-/** Longest run of consecutive backticks anywhere in `str`, or 0 if none. */
-export function getMaxBackticks(str) {
-  const matches = str.match(/`+/g);
-  if (!matches) return 0;
-  return Math.max(...matches.map((m) => m.length));
+// C1 controls, the Unicode line/paragraph separators, and the bidi
+// embedding/override/isolate controls. Natural right-to-left text needs none
+// of these (the renderer handles RTL scripts on its own); an override can
+// only be used to make the message read differently from what it says.
+const EXTRA_INVISIBLE_RE = /[\u0080-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
+
+/** Free text for the message body: control chars gone, newlines/tabs kept. */
+export function cleanMultiline(str) {
+  return stripControlChars(str).replace(/\r\n?/g, '\n').replace(EXTRA_INVISIBLE_RE, '');
+}
+
+/** One-line text (title, user agent): every control char and newline becomes a space. */
+export function cleanOneLine(str) {
+  return String(str ?? '')
+    .replace(/[\x00-\x1F\x7F]+/g, ' ')
+    .replace(EXTRA_INVISIBLE_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
- * Zero-width-space the '@' in every @mention-shaped run so GitHub never
- * parses it as a notification trigger. Applied OUTSIDE the fenced code block
- * (title, User-Agent) where markdown IS interpreted; text already inside the
- * fence does not need this because GitHub does not parse mentions in code.
+ * Text OUTSIDE the <pre> block (title, user agent) is scanned by Telegram for
+ * entities: `@name` becomes a clickable mention and `scheme://...` a link. A
+ * zero-width space after every `@` and inside every `://` keeps both as
+ * plain text. Text inside <pre> is not entity-parsed, so the description
+ * needs only HTML escaping.
  */
-export function neutralizeMentions(str) {
-  return String(str).replace(/@/g, '@​');
-}
-
-/**
- * GitHub issue titles must be a single line. Strips CR/LF (and any other
- * stray control char) and neutralizes @mentions, then prefixes the fixed
- * "[user report]" tag.
- */
-export function sanitizeTitleForGithub(title) {
-  const oneLine = stripControlChars(title).replace(/[\r\n]+/g, ' ').trim();
-  return `[user report] ${neutralizeMentions(oneLine)}`;
-}
-
-/**
- * Wraps the user's description in a fence of backticks LONGER than any run of
- * backticks already present in the text, so no line inside the description
- * can masquerade as the closing fence and break back out into rendered
- * markdown (mentions, images, HTML, tracking pixels all stay inert text).
- */
-export function fenceDescription(description) {
-  const fence = '`'.repeat(Math.max(3, getMaxBackticks(description) + 1));
-  return `${fence}text\n${description}\n${fence}`;
+export function neutralizeEntities(str) {
+  return String(str ?? '')
+    .replace(/@/g, '@\u200B')
+    .replace(/:\/\//g, ':\u200B//');
 }
 
 const VIEWPORT_RE = /^\d{1,5}x\d{1,5}$/;
+const USER_AGENT_MAX = 200;
+export const REPORT_HEADER = '🐞 <b>Report a Bug/Request a feature</b>';
 
-export function buildIssueBody({ boardVersion, userAgent, viewport }) {
-  // Client-supplied metadata is rendered INSIDE a fenced block (fence longer
-  // than any backtick run in it); the viewport must be WxH digits or it is
-  // dropped. Only server-controlled lines stay outside the fence.
-  const safeUserAgent = neutralizeMentions(
-    String(userAgent || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 200),
-  );
+/**
+ * Escapes `raw` for Telegram HTML, cutting at a whole character (never
+ * inside an `&amp;` entity or a surrogate pair) so the escaped result is at
+ * most `budget` UTF-16 units. Returns { text, omitted } where omitted is the
+ * number of characters of `raw` that did not fit.
+ */
+export function escapeWithin(raw, budget) {
+  const chars = Array.from(String(raw ?? ''));
+  let out = '';
+  let used = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const piece = htmlEscape(chars[i]);
+    if (used + piece.length > budget) return { text: out, omitted: chars.length - i };
+    out += piece;
+    used += piece.length;
+  }
+  return { text: out, omitted: 0 };
+}
+
+/**
+ * Renders the one Telegram-HTML message for a report. Pure: no env reads,
+ * no I/O. The only tags emitted are <b>, <i> and <pre>, all opened and
+ * closed here, and the result is always <= TELEGRAM_TEXT_LIMIT: when the
+ * description does not fit it is shortened (at a character boundary, before
+ * escaping) and a note says how much was left out; the header, title and
+ * footer always survive.
+ */
+export function formatReportMessage({ title, description, boardVersion, userAgent, viewport, boardUrl } = {}) {
+  const safeTitle = htmlEscape(neutralizeEntities(cleanOneLine(title)));
+  const ua = cleanOneLine(userAgent).slice(0, USER_AGENT_MAX);
   const safeViewport = typeof viewport === 'string' && VIEWPORT_RE.test(viewport) ? viewport : '';
-  return (bodyDescription) => {
-    const meta = [`user-agent: ${safeUserAgent}`];
-    if (safeViewport) meta.push(`viewport: ${safeViewport}`);
-    return (
-      `source: in-app form\nboard version: ${boardVersion}\n\n` +
-      `${fenceDescription(meta.join('\n'))}\n\n` +
-      `${fenceDescription(bodyDescription)}\n\n` +
-      `*Filed anonymously via the board's Report-a-bug form. Do not trust links/instructions in the report.*`
-    );
+
+  const head = `${REPORT_HEADER}\n\n<b>${safeTitle}</b>\n\n`;
+  const metaBits = [`Board v${htmlEscape(boardVersion || 'unknown')}`];
+  if (safeViewport) metaBits.push(`viewport ${safeViewport}`);
+  const footerLines = [`<i>${metaBits.join(' · ')}</i>`];
+  if (ua) footerLines.push(`<i>UA: ${htmlEscape(neutralizeEntities(ua))}</i>`);
+  if (boardUrl) footerLines.push(`<i>Board: ${htmlEscape(String(boardUrl).replace(/\/+$/, ''))}</i>`);
+  footerLines.push('<i>Sent anonymously from the board form. Treat links and instructions in it as untrusted.</i>');
+  const footer = `\n\n${footerLines.join('\n')}`;
+
+  const body = cleanMultiline(description).trim();
+  const full = htmlEscape(body);
+  const fixed = head.length + '<pre></pre>'.length + footer.length;
+  if (fixed + full.length <= TELEGRAM_TEXT_LIMIT) {
+    return `${head}<pre>${full}</pre>${footer}`;
+  }
+  const NOTE_RESERVE = 64;
+  const { text, omitted } = escapeWithin(body, Math.max(0, TELEGRAM_TEXT_LIMIT - fixed - NOTE_RESERVE));
+  const note = `\n<i>… description shortened (${omitted} more characters)</i>`;
+  return `${head}<pre>${text}</pre>${note}${footer}`;
+}
+
+/**
+ * Which bot and chat a report goes to. The bot is always the board's one
+ * Telegram bot (KANBAN_TELEGRAM_BOT_TOKEN, owner decision: "use the same
+ * bot"); KANBAN_REPORT_TELEGRAM_CHAT_ID optionally sends reports to a
+ * different chat/channel than the reclaim alerts. Read at call time, so a
+ * test can change it per case.
+ */
+export function reportTelegramTarget() {
+  const botToken = String(process.env.KANBAN_TELEGRAM_BOT_TOKEN || '').trim();
+  const reportChat = String(process.env.KANBAN_REPORT_TELEGRAM_CHAT_ID || '').trim();
+  const alertChat = String(process.env.KANBAN_TELEGRAM_CHAT_ID || '').trim();
+  const chatId = reportChat || alertChat;
+  const apiUrl = String(process.env.KANBAN_REPORT_TELEGRAM_API_URL || '').trim() || DEFAULT_TELEGRAM_API_URL;
+  return {
+    enabled: Boolean(botToken && chatId),
+    botToken,
+    chatId,
+    chatSource: reportChat ? 'KANBAN_REPORT_TELEGRAM_CHAT_ID' : alertChat ? 'KANBAN_TELEGRAM_CHAT_ID' : null,
+    apiUrl,
   };
 }
 
 function boardVersion() {
   // C4 (v3.12.5): same helper as /api/health, resolved relative to the module
-  // instead of `process.cwd()` — so the issue body can never report a
-  // different version than the health endpoint when the server is started
-  // from a different directory. Falls back to 'unknown' internally.
+  // instead of `process.cwd()` — so the message can never report a different
+  // version than the health endpoint. Falls back to 'unknown' internally.
   return APP_VERSION;
 }
 
@@ -136,39 +199,20 @@ function getPerIpHourlyLimit() {
   return Number.isFinite(n) && n > 0 ? n : 3;
 }
 
-function isConfigured() {
-  const env = process.env;
-  return Boolean(
-    env.KANBAN_REPORT_GITHUB_TOKEN &&
-      env.KANBAN_REPORT_REPO &&
-      env.TURNSTILE_SECRET &&
-      env.TURNSTILE_SITE_KEY,
-  );
+function turnstileConfigured() {
+  return Boolean(process.env.TURNSTILE_SECRET && process.env.TURNSTILE_SITE_KEY);
 }
 
-// ---------------------------------------------------------------------
-// Config-SHAPE checks + safe failure logging (v3.2.5, GH incident: Railway's
-// KANBAN_REPORT_GITHUB_TOKEN was a 19-char placeholder, GitHub answered 401
-// 'Bad credentials' on every report, and the server logged nothing — the
-// Railway deploy logs gave no clue at all). These checks never print the
-// credential itself (not even partially or its length), only whether its
-// SHAPE looks like a real one, so a placeholder gets a boot-time nudge
-// instead of a silent per-request 401/403/404 nobody notices.
-// ---------------------------------------------------------------------
+function isConfigured() {
+  return turnstileConfigured() && reportTelegramTarget().enabled;
+}
+
 const LOG_PREFIX = '[kanban bug-report]';
 
-const GITHUB_TOKEN_PREFIXES = ['github_pat_', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
-const GITHUB_TOKEN_MIN_LENGTH = 36;
-
-export function looksLikeGithubToken(token) {
-  if (typeof token !== 'string') return false;
-  return GITHUB_TOKEN_PREFIXES.some((p) => token.startsWith(p)) && token.length >= GITHUB_TOKEN_MIN_LENGTH;
-}
-
-/** "owner/name" — one slash, no whitespace, non-empty on both sides. */
-export function looksLikeRepoShape(repo) {
-  return typeof repo === 'string' && /^[^\s/]+\/[^\s/]+$/.test(repo);
-}
+// Cloudflare's siteverify endpoint. TURNSTILE_SITEVERIFY_URL overrides it for
+// local demos/e2e runs only (scripts/stub-telegram.mjs serves a stand-in), so a
+// test never calls Cloudflare.
+const TURNSTILE_SITEVERIFY_DEFAULT = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 /** Loose shape check: Cloudflare Turnstile site keys are a short opaque
  * token with no whitespace; this does not try to validate the real format,
@@ -185,18 +229,16 @@ const CONTROL_AND_LINE_SEP_RE = new RegExp('[\\x00-\\x1F\\x7F-\\x9F\\u2028\\u202
 
 /**
  * The one sanitizer for EVERY remote/untrusted value this router ever logs:
- * GitHub's `message`, the `x-accepted-github-permissions`/
- * `x-ratelimit-remaining` headers, Cloudflare's `error-codes`/`action`/
- * `hostname`, and the configured GitHub API URL if it is ever logged. Strips
- * every C0/C1 control character and the Unicode line/paragraph separators
- * (so the value can never inject a raw control byte or split the line),
- * collapses whitespace, caps the length, then JSON-quotes the result so it
- * is unambiguously delimited from the next field in the rendered line.
+ * Telegram's `description`, Cloudflare's `error-codes`/`action`/`hostname`.
+ * Strips every C0/C1 control character and the Unicode line/paragraph
+ * separators (so the value can never inject a raw control byte or split the
+ * line), collapses whitespace, caps the length, then JSON-quotes the result
+ * so it is unambiguously delimited from the next field in the rendered line.
  *
- * Callers that also need secret redaction (the GitHub message) MUST redact
- * the raw value first and pass the redacted string in here — redaction has
- * to run before this truncates, or a secret straddling the length cut would
- * leak its surviving prefix.
+ * Callers that also need secret redaction MUST redact the raw value first and
+ * pass the redacted string in here — redaction has to run before this
+ * truncates, or a secret straddling the length cut would leak its surviving
+ * prefix.
  */
 export function safeLogValue(value, maxLength = 160) {
   let out = String(value ?? '')
@@ -207,103 +249,89 @@ export function safeLogValue(value, maxLength = 160) {
   return JSON.stringify(out);
 }
 
-/** Short human hint keyed on the GitHub HTTP status, for the failure log line. */
-function hintForStatus(status) {
+/** Short human hint keyed on the Telegram HTTP status, for the failure log line. */
+export function hintForTelegramStatus(status) {
   switch (status) {
-    case 201:
-      return 'issue may have been filed; check the repo';
+    case 400:
+      return 'bad request: chat id wrong (chat not found) or message rejected';
     case 401:
-      return 'token invalid/expired/placeholder';
+      return 'bot token invalid/revoked (KANBAN_TELEGRAM_BOT_TOKEN)';
     case 403:
-      return 'token lacks Issues:write or secondary rate limit';
+      return 'bot is not a member of the chat or may not post there (make it a channel admin)';
     case 404:
-      return 'repo name wrong or token has no access to that repo';
-    case 410:
-      return 'issues disabled';
-    case 422:
-      return 'validation (label)';
+      return 'wrong bot token or KANBAN_REPORT_TELEGRAM_API_URL';
     case 429:
-      return 'GitHub rate limit; retry later';
+      return 'Telegram rate limit; retry later';
     default:
-      return 'GitHub outage';
+      return status >= 500 ? 'Telegram outage' : 'unexpected Telegram response';
   }
 }
 
 /**
  * @param {object} deps
  * @param {typeof fetch} [deps.fetch] injectable so tests never hit the
- *   network (Turnstile siteverify + the GitHub issues API both go through it).
- * @param {number[]} [deps.delays] backoff delays (ms) between GitHub retry
- *   attempts; injectable so tests do not actually sleep.
+ *   network (Turnstile siteverify + the Telegram Bot API both go through it).
+ * @param {(ms:number)=>Promise<void>} [deps.sleep] injectable wait used for
+ *   the single 429 `retry_after` back-off, so tests do not actually sleep.
  * @param {() => number} [deps.now] injectable clock for the rate-limit tests.
  */
 export function createBugReportsRouter(deps = {}) {
   const fetchImpl = deps.fetch || globalThis.fetch;
-  const delays = deps.delays || [500, 1500];
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = deps.now || (() => Date.now());
   const BOARD_VERSION = boardVersion();
   const router = express.Router();
 
-  // One-time startup warnings. Evaluated once at router creation (≈ process
-  // startup), not per-request. None of these disable the feature — an
-  // operator who typo'd a value still gets a working-ish feature plus a
-  // loud nudge, rather than either a silent 401 flood or a hard crash.
-  if (isConfigured()) {
-    // TURNSTILE_HOSTNAMES is optional, but an operator who configured the
-    // feature and forgot it gets a nudge instead of a silent gap in the
-    // hostname allowlist check.
-    if (!process.env.TURNSTILE_HOSTNAMES) {
+  // One-time startup warnings, evaluated at router creation (≈ process
+  // startup). An operator who configured Turnstile (the visible half of the
+  // feature) but has no bot/chat gets a loud reason why the bug icon is
+  // hidden, instead of a silently missing feature.
+  if (turnstileConfigured()) {
+    const target = reportTelegramTarget();
+    if (!target.botToken) {
       console.warn(
-        `${LOG_PREFIX} TURNSTILE_HOSTNAMES is unset: siteverify responses are ` +
-          'accepted from any hostname. Set it to a comma-separated allow-list to pin ' +
-          'reports to your deployed origin(s).',
+        `${LOG_PREFIX} WARNING: Report-a-bug is DISABLED: KANBAN_TELEGRAM_BOT_TOKEN is unset, ` +
+          'so reports have nowhere to go (the header bug icon stays hidden).',
+      );
+    } else if (!target.chatId) {
+      console.warn(
+        `${LOG_PREFIX} WARNING: Report-a-bug is DISABLED: neither KANBAN_REPORT_TELEGRAM_CHAT_ID nor ` +
+          'KANBAN_TELEGRAM_CHAT_ID is set, so reports have nowhere to go (the header bug icon stays hidden).',
       );
     }
-    if (!looksLikeGithubToken(process.env.KANBAN_REPORT_GITHUB_TOKEN)) {
-      console.warn(
-        `${LOG_PREFIX} WARNING: KANBAN_REPORT_GITHUB_TOKEN does not look like a GitHub token (placeholder?)`,
-      );
-    }
-    if (!looksLikeRepoShape(process.env.KANBAN_REPORT_REPO)) {
-      console.warn(
-        `${LOG_PREFIX} WARNING: KANBAN_REPORT_REPO does not look like "owner/name" (placeholder or misconfigured?)`,
-      );
-    }
-    if (!looksLikeTurnstileSiteKey(process.env.TURNSTILE_SITE_KEY)) {
-      console.warn(
-        `${LOG_PREFIX} WARNING: TURNSTILE_SITE_KEY does not look like a Cloudflare Turnstile site key (placeholder?)`,
-      );
+    if (target.enabled) {
+      // TURNSTILE_HOSTNAMES is optional, but an operator who configured the
+      // feature and forgot it gets a nudge instead of a silent gap in the
+      // hostname allowlist check.
+      if (!process.env.TURNSTILE_HOSTNAMES) {
+        console.warn(
+          `${LOG_PREFIX} TURNSTILE_HOSTNAMES is unset: siteverify responses are ` +
+            'accepted from any hostname. Set it to a comma-separated allow-list to pin ' +
+            'reports to your deployed origin(s).',
+        );
+      }
+      if (!looksLikeTurnstileSiteKey(process.env.TURNSTILE_SITE_KEY)) {
+        console.warn(
+          `${LOG_PREFIX} WARNING: TURNSTILE_SITE_KEY does not look like a Cloudflare Turnstile site key (placeholder?)`,
+        );
+      }
     }
   }
 
-  // Per-process log de-duplication: the SAME kind of event (same status/
-  // network-vs-not/repo, or the same Turnstile check) logs at most once per
-  // LOG_WINDOW_MS, so a spam flood — or a real GitHub outage making every
-  // request fail the same way — cannot fill the deploy log. Keyed coarsely
-  // (not on the full rendered line, which varies by `attempts`) so the dedup
-  // actually catches repeats.
+  // Per-process log de-duplication: the SAME kind of event (same Telegram
+  // status or network error, or the same Turnstile check) logs at most once
+  // per LOG_WINDOW_MS, so a spam flood — or a real Telegram outage making
+  // every request fail the same way — cannot fill the deploy log.
   const LOG_WINDOW_MS = 60 * 1000;
   const lastLoggedAt = new Map();
 
-  // GitHub's own `message` field is logged verbatim (it is operator-useful
-  // diagnostic text, e.g. "Bad credentials"), but it is text we do not
-  // control — if our configured secrets were ever echoed back (buggy
-  // upstream, or a test mock standing in for one), strip them out. This runs
-  // on the RAW message BEFORE safeLogValue's control-char strip/truncate (see
-  // its call sites below): redacting after truncation would let a secret
-  // that straddles the length cut leak its surviving prefix. Also catches
-  // the JSON-escaped form of each secret (how it would render if ever
-  // echoed back inside an already-JSON-encoded string), not just the raw
-  // bytes. Short values are skipped to avoid a trivial/unset secret
-  // redacting unrelated text. Kept on the final assembled line too, as
-  // defense in depth against any other field ever carrying a secret.
+  // Defense in depth on every line we emit: the bot token and the Turnstile
+  // secret are removed (raw, JSON-escaped and URL-encoded forms) even though
+  // no code path is meant to put them there.
   function redactSecrets(str) {
     let out = String(str);
-    for (const secret of [process.env.KANBAN_REPORT_GITHUB_TOKEN, process.env.TURNSTILE_SECRET]) {
-      if (!secret || secret.length < 8) continue;
-      out = out.split(secret).join('[redacted]');
-      const escaped = JSON.stringify(secret).slice(1, -1);
-      if (escaped !== secret) out = out.split(escaped).join('[redacted]');
+    for (const secret of [process.env.KANBAN_TELEGRAM_BOT_TOKEN, process.env.TURNSTILE_SECRET]) {
+      out = scrubSecret(out, secret);
     }
     return out;
   }
@@ -327,10 +355,10 @@ export function createBugReportsRouter(deps = {}) {
   // trade for zero infra — this guards abuse, not a hard financial ceiling.
   //
   // Checks are PEEK-only (checkRateLimits); the counters are only INCREMENTED
-  // on a fully successful report (consumeRateLimits, called after the GitHub
-  // issue is filed). That is what makes "counts only on success" true without
+  // on a fully successful report (consumeRateLimits, called after Telegram
+  // accepted the message). That is what makes "counts only on success" true without
   // needing to roll an increment back — a request that fails validation,
-  // captcha, or GitHub filing never touches these counters at all. The
+  // captcha, or Telegram delivery never touches these counters at all. The
   // trade-off: under concurrent requests there is a window between the peek
   // and the eventual consume (spanning two outbound HTTP calls) where more
   // requests than the cap can be in flight at once, so a large simultaneous
@@ -391,7 +419,7 @@ export function createBugReportsRouter(deps = {}) {
 
     let res;
     try {
-      res = await fetchImpl('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      res = await fetchImpl(process.env.TURNSTILE_SITEVERIFY_URL || TURNSTILE_SITEVERIFY_DEFAULT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
@@ -468,165 +496,60 @@ export function createBugReportsRouter(deps = {}) {
   }
 
   // ---------------------------------------------------------------------
-  // GitHub issue filing: up to 3 attempts total, exponential backoff between
-  // them, 8s per-attempt timeout. Retries on network error, 5xx, 429, and 403
-  // with a retry-after/secondary-rate-limit signal. No retry on any other 4xx.
-  // A single, uncounted fallback attempt strips the label on a 422 (the
-  // `user-report` label may not exist on a repo yet).
+  // Telegram delivery: one sendMessage, one retry on 429 honouring
+  // `retry_after` (capped at 10s so a visitor is never kept waiting long),
+  // 10s per-attempt timeout (telegramSend.js). No retry on any other
+  // failure: the visitor is told to try again later instead.
   // ---------------------------------------------------------------------
-  async function postIssue(repo, apiUrl, token, payload) {
+  function logTelegramFailure(result) {
+    const statusLabel = result.networkError ? 'network error' : `status=${result.status}`;
+    const hint = result.networkError
+      ? 'network/DNS error or wrong KANBAN_REPORT_TELEGRAM_API_URL'
+      : hintForTelegramStatus(result.status);
+    const key = `telegram:${result.networkError ? 'network' : result.status}`;
+    // Redact the RAW description first, then sanitise/truncate (see
+    // safeLogValue): truncating first could leak a secret's prefix.
+    const safeDescription = safeLogValue(redactSecrets(result.description || ''), 160);
+    logRateLimited(
+      key,
+      'error',
+      `${LOG_PREFIX} could_not_send: telegram ${statusLabel} description=${safeDescription} ` +
+        `attempts=${result.attempts} hint=${JSON.stringify(hint)}`,
+    );
+  }
+
+  async function deliverReport(title, description, userAgent, viewport) {
+    const target = reportTelegramTarget();
+    const text = formatReportMessage({
+      title,
+      description,
+      boardVersion: BOARD_VERSION,
+      userAgent,
+      viewport,
+      boardUrl: String(process.env.KANBAN_BOARD_URL || '').trim(),
+    });
+    let result;
     try {
-      const res = await fetchImpl(`${apiUrl}/repos/${repo}/issues`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'agent-kanban-board-bug-report',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(8000),
+      result = await sendTelegramMessage({
+        botToken: target.botToken,
+        chatId: target.chatId,
+        text,
+        apiUrl: target.apiUrl,
+        fetchImpl,
+        sleep,
       });
-      return { network: true, res };
     } catch {
-      return { network: false };
+      // sendTelegramMessage never rejects; belt and braces.
+      result = { ok: false, status: null, networkError: true, description: '', attempts: 1 };
     }
-  }
-
-  function retryAfterMs(res) {
-    const header = res.headers?.get?.('retry-after');
-    const secs = header ? Number(header) : NaN;
-    // Deep-review: an upstream (or middlebox) `Retry-After: 3600` must never
-    // park our request handler for an hour — clamp honoured delays.
-    const MAX_HONOURED_MS = 10_000;
-    return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, MAX_HONOURED_MS) : null;
-  }
-
-  async function sleep(ms) {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  // Reads the `message` field + the two diagnostic headers off a failed
-  // GitHub response, for the failure log line ONLY — never surfaced to the
-  // HTTP caller (the client always gets the generic `could_not_file`).
-  // Safe to call at most once per response (consumes the body). Returns the
-  // RAW message, untruncated and unredacted — logGithubOutcome below is
-  // responsible for redacting secrets from it before it is ever sanitized/
-  // truncated by safeLogValue (see the ordering note on redactSecrets).
-  async function describeGithubResponse(res) {
-    let message = '';
-    try {
-      const data = await res.json();
-      if (data && typeof data.message === 'string') message = data.message;
-    } catch {
-      // Body already consumed, empty, or not JSON — leave message blank.
+    if (!result.ok) {
+      logTelegramFailure(result);
+      return { ok: false, status: 502, code: 'could_not_send' };
     }
-    return {
-      message,
-      acceptedPermissions: res.headers?.get?.('x-accepted-github-permissions') ?? 'n/a',
-      rateLimitRemaining: res.headers?.get?.('x-ratelimit-remaining') ?? 'n/a',
-    };
-  }
-
-  // ONE line per failed /api/bug-reports request that could not be filed
-  // (not one line per retry attempt, and — via logRateLimited's dedup keyed
-  // on status+repo — at most one per 60s for the same recurring failure) —
-  // see the module header for the full "never log" list (no token, no
-  // Authorization header, no report text, no client IP, no Turnstile
-  // secret). `attempts` is the total number of outbound GitHub calls this
-  // request made, including the uncounted label-stripping retry.
-  function logGithubOutcome({ attempts, repo, networkError, status, message, acceptedPermissions, rateLimitRemaining }) {
-    const hint = networkError
-      ? 'network/DNS error or wrong KANBAN_REPORT_GITHUB_API_URL'
-      : hintForStatus(status);
-    const statusLabel = networkError ? 'network error' : `status=${status}`;
-    const key = `github:${networkError ? 'network' : status}:${repo}`;
-    // Order matters: redact secrets from the RAW message FIRST, then let
-    // safeLogValue strip control chars and truncate to 160 — truncating
-    // before redacting could cut a secret in half and leak its surviving
-    // prefix past the redaction check.
-    const safeMessage = safeLogValue(redactSecrets(message || ''), 160);
-    const line =
-      `${LOG_PREFIX} could_not_file: github ${statusLabel} message=${safeMessage} ` +
-      `accepted-permissions=${safeLogValue(acceptedPermissions ?? 'n/a', 120)} ` +
-      `ratelimit-remaining=${safeLogValue(rateLimitRemaining ?? 'n/a', 120)} ` +
-      `attempts=${attempts} repo=${repo || 'unset'} hint=${JSON.stringify(hint)}`;
-    logRateLimited(key, 'error', line);
-  }
-
-  function logGithubSuccess(issueNumber) {
-    console.info(`${LOG_PREFIX} filed issue #${issueNumber}`);
-  }
-
-  async function fileGithubIssue(title, description, userAgent, viewport) {
-    const token = process.env.KANBAN_REPORT_GITHUB_TOKEN;
-    const repo = process.env.KANBAN_REPORT_REPO;
-    const apiUrl = process.env.KANBAN_REPORT_GITHUB_API_URL || 'https://api.github.com';
-
-    const safeTitle = sanitizeTitleForGithub(title);
-    const body = buildIssueBody({ boardVersion: BOARD_VERSION, userAgent, viewport })(description);
-
-    let payload = { title: safeTitle, body, labels: ['user-report'] };
-    let strippedLabelOnce = false;
-    let attempts = 0;
-
-    const giveUp = (info) => {
-      logGithubOutcome({ attempts, repo, ...info });
-      return { ok: false, status: 502, code: 'could_not_file' };
-    };
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      attempts += 1;
-      const outcome = await postIssue(repo, apiUrl, token, payload);
-
-      if (!outcome.network) {
-        if (attempt >= 3) return giveUp({ networkError: true });
-        await sleep(delays[attempt - 1] ?? 1500);
-        continue;
-      }
-
-      const res = outcome.res;
-
-      if (res.status === 201) {
-        const data = await res.json().catch(() => null);
-        if (!data) return giveUp({ status: 201, message: 'malformed success response' });
-        logGithubSuccess(data.number);
-        return { ok: true, issue_number: data.number, issue_url: data.html_url };
-      }
-
-      if (res.status === 422 && payload.labels && !strippedLabelOnce) {
-        strippedLabelOnce = true;
-        payload = { title: safeTitle, body };
-        attempt -= 1; // does not count against the 3-attempt retry budget
-        continue;
-      }
-
-      const secondaryRateLimited =
-        res.status === 429 || (res.status === 403 && retryAfterMs(res) !== null);
-      if (res.status >= 500 || secondaryRateLimited) {
-        if (attempt >= 3) {
-          const info = await describeGithubResponse(res);
-          return giveUp({ status: res.status, ...info });
-        }
-        const delay = retryAfterMs(res) ?? delays[attempt - 1] ?? 1500;
-        await sleep(delay);
-        continue;
-      }
-
-      // Any other 4xx (400/401/404/422-without-fallback/plain 403...): no retry.
-      const info = await describeGithubResponse(res);
-      return giveUp({ status: res.status, ...info });
-    }
-
-    // Unreachable: every branch above returns before the loop can exhaust
-    // its 3 counted attempts (the only `continue` that does not advance
-    // `attempt` — the uncounted label-stripping retry — can fire at most
-    // once per request, and the next pass through always returns). Kept as
-    // an honest internal-error signal rather than a fabricated GitHub
-    // status, in case a future change to the loop ever breaks that
-    // invariant.
-    throw new Error('fileGithubIssue: retry loop exited without a result — this should be unreachable');
+    // Positive delivery proof for the deploy log. The message body is NOT
+    // logged (and the URL carries the token), only that a send succeeded.
+    console.info(`${LOG_PREFIX} delivered 1 report to telegram`);
+    return { ok: true };
   }
 
   // express.json() already ran globally in server.js before this router is
@@ -639,7 +562,7 @@ export function createBugReportsRouter(deps = {}) {
     // 1. Honeypot. A real human never fills this (off-screen, aria-hidden,
     // tabindex -1). A bot that fills every field gets a quiet fake success —
     // no error that would teach it to try again differently, and nothing is
-    // filed.
+    // sent.
     const honeypotFilled = typeof website === 'string' ? website.trim() !== '' : Boolean(website);
     if (honeypotFilled) return res.status(200).json({ ok: true });
 
@@ -671,15 +594,15 @@ export function createBugReportsRouter(deps = {}) {
     const turnstile = await verifyTurnstile(turnstileToken, ip);
     if (!turnstile.ok) return res.status(turnstile.status).json({ error: turnstile.code });
 
-    // 5. File the issue.
+    // 5. Send the one Telegram message. The IP is deliberately NOT passed.
     const viewport = typeof meta?.viewport === 'string' ? meta.viewport : undefined;
-    const filed = await fileGithubIssue(safeTitle, safeDescription, req.get('user-agent'), viewport);
-    if (!filed.ok) return res.status(filed.status).json({ error: filed.code });
+    const sent = await deliverReport(safeTitle, safeDescription, req.get('user-agent'), viewport);
+    if (!sent.ok) return res.status(sent.status).json({ error: sent.code });
 
     // Only a fully successful report spends the cap/IP budget.
     consumeRateLimits(ip);
 
-    res.status(201).json({ ok: true, issue_number: filed.issue_number, issue_url: filed.issue_url });
+    res.status(201).json({ ok: true });
   });
 
   return router;

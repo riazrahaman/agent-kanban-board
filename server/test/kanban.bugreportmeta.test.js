@@ -1,22 +1,30 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIssueBody } from '../routes/bugReports.js';
+import { formatReportMessage } from '../routes/bugReports.js';
 
 describe('bug report metadata rendering', () => {
   it('drops a viewport that is not WxH digits', () => {
-    const body = buildIssueBody({ boardVersion: '1.0.0', userAgent: 'UA', viewport: '1x1\n![x](http://e/p.png)' })('desc text');
-    assert.doesNotMatch(body, /viewport:/);
-    assert.doesNotMatch(body, /!\[x\]/);
+    const text = formatReportMessage({
+      title: 't',
+      description: 'desc text here',
+      boardVersion: '1.0.0',
+      userAgent: 'UA',
+      viewport: '1x1\n<a href="http://e/p.png">x</a>',
+    });
+    assert.doesNotMatch(text, /viewport/);
+    assert.doesNotMatch(text, /<a /);
   });
 
-  it('renders user-agent and viewport inside a fence even with backticks and newlines', () => {
-    const body = buildIssueBody({ boardVersion: '1.0.0', userAgent: 'UA ```\n# heading @bob', viewport: '1280x720' })('desc text');
-    const first = body.indexOf('`'.repeat(3));
-    const uaIdx = body.indexOf('user-agent:');
-    assert.ok(first !== -1 && first < uaIdx);
-    assert.match(body, /viewport: 1280x720/);
-    assert.ok(!/\n# heading/.test(body), 'newline in UA must not start a new markdown line');
-    const m = body.match(/^(`{4,})text\nuser-agent:/m);
-    assert.ok(m, 'fence is longer than backticks in the UA');
+  it('renders the user agent on one escaped line with mentions neutralised, viewport kept', () => {
+    const text = formatReportMessage({
+      title: 't',
+      description: 'desc text here',
+      boardVersion: '1.0.0',
+      userAgent: 'UA </i><b>\n# heading @bob',
+      viewport: '1280x720',
+    });
+    assert.match(text, /viewport 1280x720/);
+    assert.ok(text.includes('<i>UA: UA &lt;/i&gt;&lt;b&gt; # heading @​bob</i>'));
+    assert.ok(!/\n# heading/.test(text), 'a newline in the UA must not start a new line');
   });
 });
