@@ -112,9 +112,6 @@ router.post('/stream-ticket', (req, res) => {
         res.set('Retry-After', String(Math.ceil(mintedMaster.retryAfterMs / 1000)));
         return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: mintedMaster.retryAfterMs });
       }
-      if (!mintedMaster) {
-        return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
-      }
       return res.status(200).json({
         ticket: mintedMaster.ticket,
         expires_at: mintedMaster.expiresAt,
@@ -199,9 +196,19 @@ router.post('/stream-ticket', (req, res) => {
   if (typeof rawProject === 'string' && isValidProjectId(rawProject)) {
     project = rawProject;
   } else if (cred.kind === 'session') {
-    project = cred.session.project ?? defaultProjectName();
+    // An admin session reads every project as a bearer; its ticket must not
+    // be narrower (nor, since 3.18.1 enforces ticket scope, silently pinned
+    // to the default project).
+    project = cred.session.project ?? (cred.session.role === 'admin' ? null : defaultProjectName());
   } else if (cred.kind === 'project' && cred.projects.length === 1) {
     project = cred.projects[0];
+  } else if (cred.kind === 'admin' || cred.kind === 'global') {
+    // 3.18.1: the admin and global tokens are unscoped ('*') as bearers. With
+    // no project named, their ticket is unscoped too (project null), so the
+    // ticket grants exactly what the credential does: before 3.18.1 the
+    // ticket's project scope was dropped by the auth middleware, which hid
+    // that these tickets were pinned to the default project.
+    project = null;
   } else {
     project = defaultProjectName();
   }
@@ -227,9 +234,6 @@ router.post('/stream-ticket', (req, res) => {
   if (minted?.refused) {
     res.set('Retry-After', String(Math.ceil(minted.retryAfterMs / 1000)));
     return res.status(429).json({ error: 'Too many outstanding stream tickets', retry_after_ms: minted.retryAfterMs });
-  }
-  if (!minted) {
-    return res.status(503).json({ error: 'Stream tickets are unavailable (no signing secret configured)' });
   }
   return res.status(200).json({
     ticket: minted.ticket,

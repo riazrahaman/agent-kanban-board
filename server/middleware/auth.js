@@ -367,6 +367,9 @@ function computeAuthorizedProjects(req) {
       return null;
     }
     if (scope) {
+      // NOTE: this REPLACES req.caller. Any caller writing the result onto
+      // req.caller must evaluate this function into a local first (see the
+      // read path in createAuthMiddleware).
       req.caller = {
         ...req.caller,
         role: scope.role ?? req.caller.role,
@@ -788,7 +791,14 @@ export function createAuthMiddleware() {
       // read, not only when read-auth is on — item reads, metrics, milestones,
       // audit and SSE clamp against it. getAuthorizedProjects returns null for
       // anonymous/admin/global/unscoped credentials (reads stay open).
-      req.caller.authorizedProjects = getAuthorizedProjects(req);
+      //
+      // 3.18.1: resolve into a local FIRST. On `/api/events` with `?ticket=`,
+      // getAuthorizedProjects REPLACES req.caller (the ticket's role/agent), and
+      // `req.caller.authorizedProjects = getAuthorizedProjects(req)` evaluates
+      // `req.caller` before the call — the scope landed on the discarded object
+      // and a project-scoped ticket streamed every project.
+      const scope = getAuthorizedProjects(req);
+      req.caller.authorizedProjects = scope;
       // Master password: decide ONCE per read whether this caller may see card
       // details. Routes and the SSE stream only consult these two fields.
       const detail = resolveDetailAccess(req);

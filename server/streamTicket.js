@@ -119,8 +119,9 @@ export function liveStreamTicketCount() {
  * available (see ticketSecret); who may mint is decided by the route.
  */
 export function createStreamTicket({ role, project, agentId = null, credentialId = null, masterUntil = null } = {}) {
+  // ticketSecret() always yields a key (KANBAN_AUTH_SECRET or the per-process
+  // fallback), so a mint never fails for want of one.
   const secret = ticketSecret();
-  if (!secret) return null;
   prune();
   // Never evict a live ticket: a credential at its own cap, or a full table,
   // refuses the mint instead (the caller answers 429 + Retry-After). Callers

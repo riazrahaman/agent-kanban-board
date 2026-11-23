@@ -808,7 +808,9 @@ export async function startServer(
         ? 'stored under the data directory'
         : fallback === 'read_error'
           ? 'per-process only: the stored secret file could not be read and was left untouched'
-          : 'per-process only';
+          : fallback === 'symlink'
+            ? 'per-process only: the secret directory or file is a symbolic link and was not followed'
+            : 'per-process only';
       emitLog('info', 'auth', `master password: card details are gated (unlock secret ${where})`);
     } catch (err) {
       logWarn('auth', 'master password key setup failed', { error: err.message });

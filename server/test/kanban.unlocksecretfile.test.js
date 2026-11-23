@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -82,7 +82,7 @@ describe('master-unlock secret file repair and logging (3.18.1)', () => {
       assert.equal(unlockSecretPersisted(), true);
       const warns = lines.filter((l) => l.level === 'warn');
       assert.equal(warns.length, 1, JSON.stringify(lines));
-      assert.match(warns[0].text, /empty or corrupt; replacing it/);
+      assert.match(warns[0].text, /empty or corrupt; replaced it/);
       assert.ok(warns[0].text.includes(file));
       noSecretIn(lines, 'SENTINEL', stored.secret, stored.salt);
     });
@@ -144,5 +144,75 @@ describe('master-unlock secret file repair and logging (3.18.1)', () => {
     await writeFile(file, JSON.stringify(VALID), { mode: 0o600 });
     const lines = capture(() => createUnlockToken());
     assert.deepEqual(lines, []);
+  });
+
+  it('a symlinked .secrets/ directory is not followed: no chmod, no write through it, per-process key, warned', async () => {
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'kanban-unlockfile-outside-'));
+    try {
+      await chmod(outside, 0o777);
+      await symlink(outside, secretsDir, 'dir');
+      const lines = capture(() => createUnlockToken());
+      assert.equal((await stat(outside)).mode & 0o777, 0o777, 'the link target was chmodded');
+      assert.deepEqual(await readdir(outside), [], 'something was written through the link');
+      assert.ok((await lstat(secretsDir)).isSymbolicLink(), 'the link was replaced');
+      assert.equal(unlockSecretPersisted(), false);
+      assert.equal(unlockSecretFallbackReason(), 'symlink');
+      const warns = lines.filter((l) => l.level === 'warn');
+      assert.equal(warns.length, 1, JSON.stringify(lines));
+      assert.match(warns[0].text, /symbolic link; it is not followed/);
+      assert.ok(warns[0].text.includes(file));
+      // Stable for the whole run.
+      const minted = createUnlockToken();
+      assert.ok(verifyUnlockToken(minted.token));
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a symlinked secret file is not read, chmodded or replaced', async () => {
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'kanban-unlockfile-outside-'));
+    try {
+      const target = path.join(outside, 'planted.json');
+      await writeFile(target, JSON.stringify(VALID), { mode: 0o644 });
+      await mkdir(secretsDir, { recursive: true, mode: 0o700 });
+      await symlink(target, file);
+      // A token signed with the PLANTED secret must not verify.
+      process.env.KANBAN_DATA_DIR = outside;
+      await mkdir(path.join(outside, UNLOCK_SECRET_DIR), { mode: 0o700 });
+      await writeFile(path.join(outside, UNLOCK_SECRET_DIR, UNLOCK_SECRET_FILE), JSON.stringify(VALID), { mode: 0o600 });
+      resetUnlockKeyMaterial();
+      let planted;
+      capture(() => { planted = createUnlockToken(); });
+      process.env.KANBAN_DATA_DIR = dir;
+      resetUnlockKeyMaterial();
+      const lines = capture(() => assert.equal(verifyUnlockToken(planted.token), null, 'the planted secret was used'));
+      assert.equal((await stat(target)).mode & 0o777, 0o644, 'the link target was chmodded');
+      assert.equal(await readFile(target, 'utf8'), JSON.stringify(VALID), 'the link target was rewritten');
+      assert.ok((await lstat(file)).isSymbolicLink(), 'the link was replaced');
+      assert.equal(unlockSecretFallbackReason(), 'symlink');
+      assert.ok(lines.some((l) => l.level === 'warn' && /symbolic link/.test(l.text)), JSON.stringify(lines));
+      noSecretIn(lines, VALID.secret, VALID.salt);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('a corrupt file on a read-only directory: the warning says it was left as is, not "replacing it"', { skip: process.getuid?.() === 0 ? 'root writes into a 0500 directory' : false }, async () => {
+    await mkdir(secretsDir, { recursive: true, mode: 0o700 });
+    await writeFile(file, 'SENTINEL{{{', { mode: 0o600 });
+    await chmod(secretsDir, 0o500);
+    try {
+      const lines = capture(() => createUnlockToken());
+      assert.equal(await readFile(file, 'utf8'), 'SENTINEL{{{');
+      assert.equal(unlockSecretPersisted(), false);
+      const warns = lines.filter((l) => l.level === 'warn');
+      assert.equal(warns.length, 1, JSON.stringify(lines));
+      assert.match(warns[0].text, /could not be replaced/);
+      assert.match(warns[0].text, /left as it is/);
+      assert.doesNotMatch(warns[0].text, /replacing it|replaced it/);
+      noSecretIn(lines, 'SENTINEL');
+    } finally {
+      await chmod(secretsDir, 0o700);
+    }
   });
 });
