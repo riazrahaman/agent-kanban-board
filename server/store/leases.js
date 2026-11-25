@@ -74,6 +74,30 @@ export function getProgressStallMs() {
   return Number.isFinite(n) && n >= 0 ? n : 1800000;
 }
 
+/**
+ * Stage-decision stall window (docs/BOARD-LEASE-STALL-DEFECT.md, option 6.1).
+ * IN_REVIEW and VALIDATION mean "work is committed, a decision is pending" —
+ * the same category as READY_TO_SHIP, which the sweep already exempts. The
+ * activity clock (KANBAN_PROGRESS_STALL_MS, default 30 min) is shorter than
+ * the maximum lease, so a reviewer or tester going quiet mid-stage tripped a
+ * reclaim while the holder's lease was still live. Those two statuses get
+ * their own, much longer window instead; IN_PROGRESS/PLANNING keep the short
+ * one so alive-but-wedged detection is preserved where silence is anomalous.
+ * `0` disables the stall reclaim for the decision stages entirely.
+ */
+export function getStageStallMs() {
+  const raw = process.env.KANBAN_STAGE_STALL_MS;
+  if (raw === undefined || raw === '') return 86400000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 86400000;
+}
+
+function stallWindowForStatus(status, stallMs, stageStallMs) {
+  return status === STATUSES.IN_REVIEW || status === STATUSES.VALIDATION
+    ? stageStallMs
+    : stallMs;
+}
+
 export function leaseWindowFor(task) {
   return task.claim_lease_ms ?? getClaimTtlMs();
 }
@@ -248,6 +272,11 @@ export function isoFromMs(ms) {
       agent_id: 'system',
       reason: !fromAgent ? reason : (reason || 'lease_expired'),
       reclaimed_from: fromAgent,
+      // Lease state at reclaim time: a progress_stalled reclaim can fire while
+      // the lease is still live, and without these fields the log cannot show
+      // that (docs/BOARD-LEASE-STALL-DEFECT.md section 7).
+      claim_expires_at: task.claim_expires_at ?? null,
+      last_progress_at: task.last_progress_at ?? null,
     });
 
     // KB-05: persist first, then mutate memory, then notify.
@@ -291,6 +320,7 @@ export function isoFromMs(ms) {
     return withMutationLock(async () => {
       const nowMs = typeof now === 'number' ? now : nowFn();
       const stallMs = getProgressStallMs();
+      const stageStallMs = getStageStallMs();
       const candidateReasons = new Map();
       const candidates = tasks.filter((t) => {
         const active = ACTIVE_STATUS_SET.has(t.status);
@@ -341,9 +371,10 @@ export function isoFromMs(ms) {
           return false;
         }
 
-        if (stallMs > 0 && t.last_progress_at) {
+        const effectiveStallMs = stallWindowForStatus(t.status, stallMs, stageStallMs);
+        if (effectiveStallMs > 0 && t.last_progress_at) {
           const lastProgMs = Date.parse(t.last_progress_at);
-          if (!Number.isNaN(lastProgMs) && nowMs - lastProgMs >= stallMs) {
+          if (!Number.isNaN(lastProgMs) && nowMs - lastProgMs >= effectiveStallMs) {
             candidateReasons.set(t, 'progress_stalled');
             return true;
           }

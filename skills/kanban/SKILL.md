@@ -1,7 +1,7 @@
 ---
 name: kanban
 description: "Strict Kanban-first orchestrator for delegated builds, tasks, and feature workflows using agent-kanban-board. Use when managing tasks on a kanban board, orchestrating builder, reviewer, and tester agent workflows, or deploying the local agent-kanban-board server."
-version: 3.19.1
+version: 3.20.0
 ---
 
 # Kanban Orchestrator Protocol
@@ -212,7 +212,7 @@ Validated by a `test_pass` signal and promoted to `READY_TO_SHIP`:
   Do not cache `version` statically across multiple intermediate writes.
 - **Two Distinct 409 Errors** (inspect response body):
   - `"Version mismatch"` (with `details.expected` / `details.provided`): The provided `expected_version` is stale. Re-read the current version and retry the `PATCH`.
-  - `"Invalid state transition from A to B"`: The lease lapsed (or the card stopped making progress for `KANBAN_PROGRESS_STALL_MS`, or it was ownerless past the orphan grace) and the background reaper reset the card to `READY` with its owner and lease cleared. Recover by re-claiming it from `READY` (`POST /tasks/:id/claim?project=X`, which puts it back into `IN_PROGRESS`, or `PLANNING` for a planner) and re-walking the stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
+  - `"Invalid state transition from A to B"`: The lease lapsed (or the card stopped making progress past its stall window — `KANBAN_PROGRESS_STALL_MS` in `IN_PROGRESS`/`PLANNING`, `KANBAN_STAGE_STALL_MS` in `IN_REVIEW`/`VALIDATION` — or it was ownerless past the orphan grace) and the background reaper reset the card to `READY` with its owner and lease cleared. Recover by re-claiming it from `READY` (`POST /tasks/:id/claim?project=X`, which puts it back into `IN_PROGRESS`, or `PLANNING` for a planner) and re-walking the stages. Always check `git status` / `git log` on the task branch before re-dispatching, as uncommitted work may remain on disk.
 - **Claim to Own, PATCH to Move**: Never enter active stages via status-only PATCH.
 - **Heartbeat & Leases**: Claim TTL is `KANBAN_CLAIM_TTL_MS` (default 600,000 ms = 10 min). Issue `POST /tasks/:id/heartbeat?project=X` at least every 2 minutes while holding a card. A claim may also request an explicit window with `{"lease_ms": <ms>}` (clamped to `KANBAN_MIN_LEASE_MS` 60,000 and `KANBAN_MAX_LEASE_MS` 7,200,000). Logs from the holder also extend the lease.
 - **3-Cycle Limit**: If a cycle (IN_PROGRESS → IN_REVIEW → VALIDATION) repeats 3 times, halt and report blockers.

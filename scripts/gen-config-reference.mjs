@@ -58,6 +58,7 @@ const DESCRIPTIONS = {
   'KANBAN_READ_AUTH': 'Set to "token" to require auth on reads and SSE',
   'KANBAN_REAP_ENABLED': 'Set falsy to disable the background lease reaper',
   'KANBAN_REAP_INTERVAL_MS': 'Lease reaper sweep interval (default 30000; <= 0 disables the reaper)',
+  'KANBAN_STAGE_STALL_MS': 'Progress stall window for decision-pending stages IN_REVIEW/VALIDATION (default 86400000 = 24h; 0 disables). IN_PROGRESS/PLANNING keep KANBAN_PROGRESS_STALL_MS',
   'KANBAN_SESSION_CHALLENGE_TTL_MS': 'TTL for a single-use /api/auth/challenge nonce (default 120000). Unset/invalid falls back to the default',
   'KANBAN_SESSION_NONCE_MODE': 'Session-handshake proof mode. Default "required": POST /api/auth/session needs a live unconsumed POST /api/auth/challenge nonce. Only the exact value "legacy" accepts the old challenge-less proof (startup warning); any other value means "required"',
   'KANBAN_STORAGE_BACKEND': 'Persistence backend: "json" or "git"',

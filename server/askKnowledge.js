@@ -101,8 +101,11 @@ CLAIMS & LEASES
 THE REAPER
 - A background sweep (KANBAN_REAP_INTERVAL_MS, default 30000) reclaims stale claims for
   three reasons: orphan_normalized (active card with no owner), progress_stalled
-  (last_progress_at older than KANBAN_PROGRESS_STALL_MS, default 1800000 = 30 min), and
-  lease_expired (claim_expires_at in the past).
+  (last_progress_at older than the stall window), and lease_expired
+  (claim_expires_at in the past). The stall window is KANBAN_STAGE_STALL_MS
+  (default 86400000 = 24 h) for IN_REVIEW and VALIDATION — decision-pending stages
+  where silence is normal — and KANBAN_PROGRESS_STALL_MS (default 1800000 = 30 min)
+  for IN_PROGRESS and PLANNING.
 - IMPORTANT: the reaper resets a reclaimed card to READY (immediately re-claimable), NOT
   BACKLOG — even though older comments/changelog text says "back to BACKLOG". READY is the
   actual behaviour.

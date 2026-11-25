@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.19.1
+**System:** Agent Kanban Board v3.20.0
 
 ---
 
@@ -138,7 +138,7 @@ The server and client are configured via environment variables.
 
 ### 3.1.1 Telegram Reclaim Notifications
 
-When the lease reaper returns a task to `READY` (an idle lease expired, a held task stopped making progress for `KANBAN_PROGRESS_STALL_MS`, or an ownerless active task was normalized), the server can post a full-detail alert to a Telegram group or chat. This is **off by default** and needs no extra dependency — the server calls the Telegram Bot API directly over HTTPS.
+When the lease reaper returns a task to `READY` (an idle lease expired, a held task stopped making progress for `KANBAN_PROGRESS_STALL_MS` — `KANBAN_STAGE_STALL_MS`, default 24 h, in `IN_REVIEW`/`VALIDATION` — or an ownerless active task was normalized), the server can post a full-detail alert to a Telegram group or chat. This is **off by default** and needs no extra dependency — the server calls the Telegram Bot API directly over HTTPS.
 
 | Variable | Default | Description |
 |---|---|---|
