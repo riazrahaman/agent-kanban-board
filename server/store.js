@@ -681,6 +681,22 @@ export async function createTask(data = {}, projectArg, { caller = {} } = {}) {
   });
 }
 
+// v3.21.0 (issue #131, defect doc 6.2): the role expected to hold the lease in
+// each active/terminal stage. `assigned_agent` used to stay the original
+// claimer forever while lease renewal was holder-only, so a builder's lease
+// could lapse mid-review and every non-holder transition was an unleased
+// PATCH. On a committed transition by a functional-role caller, custody now
+// follows the stage: matching actor -> transfer, anything else -> release to
+// the claimable pool. `validator` is normalized to `tester`.
+const STAGE_OWNER_ROLE = {
+  [STATUSES.PLANNING]: 'planner',
+  [STATUSES.IN_PROGRESS]: 'builder',
+  [STATUSES.IN_REVIEW]: 'builder',
+  [STATUSES.VALIDATION]: 'reviewer',
+  [STATUSES.READY_TO_SHIP]: 'tester',
+  [STATUSES.DONE]: 'releaser',
+};
+
 /**
  * Patches a task with state machine (KB-01) and role ownership (KB-02) checks.
  * `project` scopes the lookup; the task's own project is used when unspecified.
@@ -768,8 +784,9 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
 
       // §2.x: record the acting agent for the newly-entered stage. Only on a
       // real change (nextStatus !== wasStatus) and only for the active
-      // stages plus terminal DONE. `assigned_agent` stays the lease holder — this is a per-stage
-      // provenance map, not a reassignment.
+      // stages plus terminal DONE. This is a per-stage provenance map; the
+      // lease holder itself is `assigned_agent`, which v3.21.0 custody-transfers
+      // on the same transition (see STAGE_OWNER_ROLE above).
       const actor = caller?.agent_id || caller?.agentId || null;
       if (
         nextStatus !== wasStatus &&
@@ -781,6 +798,29 @@ export async function patchTask(id, patch, { caller = {}, project: projectArg } 
           ? candidate.stage_owners
           : {};
         candidate.stage_owners = { ...owners, [nextStatus]: actor };
+      }
+
+      // v3.21.0 (issue #131): lease custody follows the stage on a real
+      // transition by a functional-role caller. Expected worker -> the actor
+      // inherits assigned_agent + a fresh lease window (the pinned
+      // claim_lease_ms carries over), so their own writes/heartbeats renew it
+      // and a dead stage holder is still bounded by the reaper. Any other
+      // transition — rejection/back edges, demotions to READY/BACKLOG —
+      // releases ownership so the card returns to the claimable pool; a
+      // rejector must never hold the card they rejected (transferring to them
+      // would 409-block the rightful worker until lease death). Privileged,
+      // roleless and agent_id-less callers are untouched: lifecycle repair
+      // keeps the old keep-the-owner semantics.
+      if (nextStatus !== wasStatus && actor && role && !isPrivilegedRole(role)) {
+        const actorRole = role.toLowerCase() === 'validator' ? 'tester' : role.toLowerCase();
+        if (STAGE_OWNER_ROLE[nextStatus] === actorRole) {
+          candidate.assigned_agent = actor;
+          candidate.claim_expires_at = isoFromMs(nowFn() + leaseWindowFor(candidate));
+        } else {
+          candidate.assigned_agent = null;
+          candidate.claim_expires_at = null;
+          candidate.claim_lease_ms = null;
+        }
       }
      }
 

@@ -151,7 +151,7 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
     assert.equal(resDone.body.stage_owners.DONE, 'releaser-a');
   });
 
-  it('6. all stage keys present at the end, assigned_agent still the original claimer', async () => {
+  it('6. all stage keys present at the end; custody ends with the releaser', async () => {
     const t = store.getTask('so-5');
     // v3.9.4: READY_TO_SHIP is an active status, so the tester who moved the card
     // there is recorded. That was the point of adding it to ACTIVE_STATUSES.
@@ -162,6 +162,57 @@ describe('KB-stageowners: per-stage ownership provenance', () => {
       READY_TO_SHIP: 'tester-a',
       DONE: 'releaser-a',
     });
-    assert.equal(t.assigned_agent, 'builder-d', 'lease holder unchanged by transitions');
+    // v3.21.0: lease custody follows the stage — each expected-role transition
+    // transferred assigned_agent, so the releaser holds it at DONE.
+    assert.equal(t.assigned_agent, 'releaser-a');
+  });
+
+  it('7. custody transfers on each forward edge and releases on rejection', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('so-7', 'Custody chain'),
+    });
+    await jsonRequest(baseUrl, '/api/tasks/so-7/claim', {
+      method: 'POST', headers: headers(undefined, 'builder-e'), body: JSON.stringify({ agent_id: 'builder-e' }),
+    });
+    const patch = (role, agent, status) => jsonRequest(baseUrl, '/api/tasks/so-7', {
+      method: 'PATCH', headers: headers(role, agent), body: JSON.stringify({ status }),
+    });
+    // Builder submits for review: builder is the expected IN_REVIEW worker, so
+    // custody stays with the claim holder.
+    let res = await patch('builder', 'builder-e', 'IN_REVIEW');
+    assert.equal(res.response.status, 200);
+    assert.equal(res.body.assigned_agent, 'builder-e', 'builder keeps custody through IN_REVIEW');
+    // Reviewer validates: custody transfers to the reviewer with a live lease.
+    res = await patch('reviewer', 'reviewer-c', 'VALIDATION');
+    assert.equal(res.response.status, 200);
+    assert.equal(res.body.assigned_agent, 'reviewer-c', 'VALIDATION transfers custody to the reviewer');
+    assert.ok(Date.parse(res.body.claim_expires_at) > Date.now(), 'transferred lease is live');
+    // Tester rejects back to IN_PROGRESS: ownership is RELEASED, not handed to
+    // the rejector — the card returns to the claimable pool for the builder.
+    res = await patch('tester', 'tester-b', 'IN_PROGRESS');
+    assert.equal(res.response.status, 200);
+    assert.equal(res.body.assigned_agent, null, 'rejection releases ownership to the pool');
+    assert.equal(res.body.claim_expires_at, null);
+    assert.equal(res.body.claim_lease_ms, null);
+    // The builder re-claims the ownerless IN_PROGRESS card without a 409.
+    const reclaim = await jsonRequest(baseUrl, '/api/tasks/so-7/claim', {
+      method: 'POST', headers: headers(undefined, 'builder-e'), body: JSON.stringify({ agent_id: 'builder-e' }),
+    });
+    assert.equal(reclaim.response.status, 200, 'released card is claimable by the builder');
+    assert.equal(reclaim.body.assigned_agent, 'builder-e');
+  });
+
+  it('8. a privileged transition keeps the existing owner (lifecycle repair)', async () => {
+    await jsonRequest(baseUrl, '/api/tasks', {
+      method: 'POST', headers: headers(), body: taskBody('so-8', 'Privileged patch'),
+    });
+    await jsonRequest(baseUrl, '/api/tasks/so-8/claim', {
+      method: 'POST', headers: headers(undefined, 'builder-f'), body: JSON.stringify({ agent_id: 'builder-f' }),
+    });
+    const res = await jsonRequest(baseUrl, '/api/tasks/so-8', {
+      method: 'PATCH', headers: headers('admin', 'ops-1'), body: JSON.stringify({ status: 'IN_REVIEW' }),
+    });
+    assert.equal(res.response.status, 200);
+    assert.equal(res.body.assigned_agent, 'builder-f', 'admin repair does not steal or release the lease');
   });
 });

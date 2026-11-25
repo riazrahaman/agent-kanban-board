@@ -97,6 +97,15 @@ CLAIMS & LEASES
 - last_progress_at records the last time the CARD ITSELF changed (claim, log, PATCH).
   A sibling lease renewal deliberately does NOT touch it — that separation is what lets the
   reaper detect an "immortal zombie" claim that is being heart-beated but is not progressing.
+- Lease CUSTODY follows the stage (v3.21.0): on a committed status transition by a
+  functional-role caller, assigned_agent + claim_expires_at move to the acting agent when
+  their role is the expected worker for the target stage (PLANNING->planner,
+  IN_PROGRESS/IN_REVIEW->builder, VALIDATION->reviewer, READY_TO_SHIP->tester,
+  DONE->releaser); any other transition (rejections, demotions to READY/BACKLOG)
+  RELEASES ownership so the card returns to the claimable pool. Privileged,
+  roleless and agent_id-less callers never move the lease. The new holder's own
+  writes and heartbeats then renew it; stage_owners still records per-stage
+  provenance independently.
 
 THE REAPER
 - A background sweep (KANBAN_REAP_INTERVAL_MS, default 30000) reclaims stale claims for

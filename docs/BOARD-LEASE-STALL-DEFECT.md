@@ -3,7 +3,7 @@
 **Area:** `server/store/leases.js` — `reapExpiredClaims` / `reclaimTaskInner`
 **Contributing assumption:** `server/store.js` — lease renewal is holder-only
 **Severity:** medium. No data loss; workflow state and ownership are destroyed and the board misreports progress.
-**Status:** fixed in v3.20.0 — option 6.1 (`KANBAN_STAGE_STALL_MS`) and section 7 (lease fields in the reclaim log) shipped; option 6.2 (lease transfer on transition) remains open as a follow-up. Originally reproduced from the code path, from a reaped card's own log, and by deterministic replay with the injectable clock.
+**Status:** fixed — options 6.1 (`KANBAN_STAGE_STALL_MS`, v3.20.0), section 7 (lease fields in the reclaim log, v3.20.0) and 6.2 (lease custody transfer on legal transitions, v3.21.0 — forward edges transfer `assigned_agent`/`claim_expires_at` to the expected stage worker; rejection/back edges release ownership to the claimable pool) all shipped. Originally reproduced from the code path, from a reaped card's own log, and by deterministic replay with the injectable clock.
 
 ---
 

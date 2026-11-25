@@ -334,10 +334,15 @@ describe('deep-review hardening', () => {
         method: 'PATCH', headers: headers(TOKEN, 'planner', 'p-1'),
         body: JSON.stringify({ status: 'READY', expected_version: owned.version }),
       });
-      assert.equal(store.getTask('kdr-rdy1', 'default').assigned_agent, 'p-1', 'returning to READY keeps the owner');
+      // v3.21.0: a functional-role transition into READY releases ownership —
+      // the card returns to the claimable pool rather than staying planner-held.
+      assert.equal(store.getTask('kdr-rdy1', 'default').assigned_agent, null, 'returning to READY releases the owner');
 
       // Lapse the lease: READY is not active, so the old filter never saw it.
+      // Re-seat an owner directly — privileged PATCHes and pre-v3.21.0 cards can
+      // still carry READY + owner + lapsed lease, which is what row 1 reaps.
       const t = store.getTask('kdr-rdy1', 'default');
+      t.assigned_agent = 'p-1';
       t.claim_expires_at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       await store.getStorage('default').saveTask(t, store.getProjectBucket('default'));
 

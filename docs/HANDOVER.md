@@ -198,6 +198,19 @@ dependencies (`dependencyGate`).
   holder's *other* active leases in the same lock (default on;
   `KANBAN_HOLDER_WRITE_RENEWS_ALL=0` disables). Only `READY` (or an already-active
   held card for renewal) is claimable; `BACKLOG` is refused.
+- **Custody transfer (v3.21.0, issue #131).** `assigned_agent` is whoever
+  currently holds the lease — it is no longer pinned to the original claimer.
+  On a committed status transition by a functional-role caller
+  (`STAGE_OWNER_ROLE` in `store.js`), the expected worker for the target stage
+  inherits `assigned_agent` + a fresh `claim_expires_at` (the pinned
+  `claim_lease_ms` carries over): PLANNING→planner, IN_PROGRESS/IN_REVIEW→
+  builder, VALIDATION→reviewer, READY_TO_SHIP→tester, DONE→releaser
+  (`validator`→`tester`). Any other transition — rejections
+  (`VALIDATION→IN_PROGRESS` etc.) and demotions to `READY`/`BACKLOG` —
+  RELEASES ownership (`assigned_agent`/`claim_expires_at`/`claim_lease_ms` =
+  null) so the card returns to the claimable pool; an ownerless active card is
+  re-claimable without contention. Privileged, roleless and `agent_id`-less
+  callers never move the lease.
 
 ### The 409s
 
