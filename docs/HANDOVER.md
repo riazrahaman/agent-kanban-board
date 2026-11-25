@@ -234,7 +234,9 @@ candidate is tagged and **reclaimed to `READY`** (owner + lease cleared,
 - `orphan_normalized` — active but ownerless past `KANBAN_ORPHAN_GRACE_MS`
   (default 300000; `0` reaps immediately).
 - `progress_stalled` — held card whose `last_progress_at` is older than
-  `KANBAN_PROGRESS_STALL_MS` (default 1800000; `0` disables).
+  `KANBAN_PROGRESS_STALL_MS` (default 1800000; `0` disables). `IN_REVIEW` and
+  `VALIDATION` use the longer `KANBAN_STAGE_STALL_MS` (default 86400000) instead,
+  since a decision-pending stage is quiet by design (v3.20.0).
 - `lease_expired` — `claim_expires_at` in the past.
 
 > Reclaims go to **READY** (claimable again), not `BACKLOG`, since ADR-004. Some

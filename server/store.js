@@ -221,6 +221,7 @@ export {
   getMinLeaseMs,
   getMaxLeaseMs,
   getProgressStallMs,
+  getStageStallMs,
   leaseWindowFor,
   isReaperEnabled,
   reclaimTask,

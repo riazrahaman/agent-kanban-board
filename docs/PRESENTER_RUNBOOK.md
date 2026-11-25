@@ -1,7 +1,7 @@
 # Agent Kanban Board — Presenter's Runbook
 
 **Audience:** whoever is demoing this board live.
-**System:** Agent Kanban Board v3.19.1
+**System:** Agent Kanban Board v3.20.0
 **Status:** living document — see [§11 Keeping this file alive](#11-keeping-this-file-alive). It is version-pinned by `server/test/kanban.version.test.js`, so a release that forgets it fails CI.
 
 This is one ordered path from a clean machine to a live reclaim alert. It does not
@@ -24,7 +24,7 @@ Four points carry the whole talk:
 1. **Eight states, role-gated.** `BACKLOG → READY → PLANNING → IN_PROGRESS → IN_REVIEW → VALIDATION → READY_TO_SHIP → DONE`, plus `BLOCKED`. A builder cannot mark a card done; a tester cannot close one.
 2. **Claim-first.** Only a `READY` card can be claimed. A claim sets an owner *and* a lease. A status-only `PATCH` leaves the card ownerless, and the reaper resets it.
 3. **Two different 409s.** `Version mismatch` means you wrote against stale data; claim contention means someone else got there first. Collapsing them into one error is the mistake this design exists to avoid.
-4. **Reclaim.** An expired lease, a card with no progress past `KANBAN_PROGRESS_STALL_MS` (30 min), or an ownerless active card past its grace window returns to `READY` on its own. Nobody pages a human.
+4. **Reclaim.** An expired lease, a card with no progress past its stall window (`KANBAN_PROGRESS_STALL_MS`, 30 min — `KANBAN_STAGE_STALL_MS`, 24 h, while in `IN_REVIEW`/`VALIDATION`), or an ownerless active card past its grace window returns to `READY` on its own. Nobody pages a human.
 
 Deeper, if asked: `docs/SYSTEM_DESIGN_AND_ARCHITECTURE.md` §3 (layers), §4 (state
 machine + RBAC graph), §5.1 (claim-contention sequence). The §5.1 diagram is the best

@@ -110,6 +110,13 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     assert.equal(lastLog.reason, 'progress_stalled', 'agent_logs reason is progress_stalled');
     assert.equal(lastLog.reclaimed_from, 'zombie-agent', 'reclaimed_from is zombie-agent');
     assert.equal(lastLog.message, 'PROGRESS STALLED — task reclaimed to READY by system reaper.');
+    // Lease state at reclaim time is recorded so a live-lease reclaim is
+    // visible after the fact (docs/BOARD-LEASE-STALL-DEFECT.md section 7).
+    // The card's lease was cleared by the reclaim, so the log must carry the
+    // PRE-reclaim expiry — the whole point of the field.
+    assert.equal(typeof lastLog.claim_expires_at, 'string', 'log carries the pre-reclaim claim_expires_at');
+    assert.ok(Date.parse(lastLog.claim_expires_at) > 0, 'claim_expires_at is a valid ISO timestamp');
+    assert.ok(lastLog.last_progress_at, 'log carries last_progress_at');
 
     const audit = auditEntries.find((e) => e.task?.id === 'stall-1' && e.kind === 'reclaimed');
     assert.ok(audit, 'audit event found');
@@ -185,6 +192,111 @@ describe('reaper progress stall timeout (KANBAN_PROGRESS_STALL_MS)', () => {
     } finally {
       if (orig !== undefined) process.env.KANBAN_PROGRESS_STALL_MS = orig;
       else delete process.env.KANBAN_PROGRESS_STALL_MS;
+    }
+  });
+
+  it('Test 6: IN_REVIEW and VALIDATION survive past KANBAN_PROGRESS_STALL_MS while their lease is live (stage window)', async () => {
+    const baseNow = Date.now();
+    // IN_REVIEW: claim -> IN_PROGRESS, then builder PATCHes to IN_REVIEW.
+    await store.createTask({ id: 'stage-review-1', title: 'In review', status: 'READY', round: 1 });
+    await store.claimTask('stage-review-1', 'builder-1', undefined, { now: baseNow });
+    let t = store.getTask('stage-review-1');
+    const toReview = await store.patchTask('stage-review-1',
+      { status: 'IN_REVIEW', expected_version: t.version },
+      { caller: { agent_id: 'builder-1', role: 'builder' } });
+    assert.equal(toReview.task.status, 'IN_REVIEW', JSON.stringify(toReview));
+
+    // Quiet longer than the 60s progress window but far inside the 24h stage
+    // window; lease still live.
+    await backdateProgress('stage-review-1', baseNow - STALL_TIMEOUT_MS - 5000);
+    await setExpiry('stage-review-1', baseNow + 600000);
+
+    const res = await store.reapExpiredClaims({ now: baseNow });
+    assert.ok(!res.reclaimed.includes('default/stage-review-1'), 'IN_REVIEW must not stall-reclaim under the activity window');
+    t = store.getTask('stage-review-1');
+    assert.equal(t.status, 'IN_REVIEW');
+    assert.equal(t.assigned_agent, 'builder-1');
+
+    // VALIDATION: reviewer advances it, then it goes quiet the same way.
+    t = store.getTask('stage-review-1');
+    const toValidation = await store.patchTask('stage-review-1',
+      { status: 'VALIDATION', expected_version: t.version },
+      { caller: { agent_id: 'reviewer-1', role: 'reviewer' } });
+    assert.equal(toValidation.task.status, 'VALIDATION', JSON.stringify(toValidation));
+    await backdateProgress('stage-review-1', baseNow - STALL_TIMEOUT_MS - 5000);
+    await setExpiry('stage-review-1', baseNow + 600000);
+
+    const res2 = await store.reapExpiredClaims({ now: baseNow });
+    assert.ok(!res2.reclaimed.includes('default/stage-review-1'), 'VALIDATION must not stall-reclaim under the activity window');
+    assert.equal(store.getTask('stage-review-1').status, 'VALIDATION');
+  });
+
+  it('Test 7: IN_REVIEW IS reclaimed once last_progress_at exceeds KANBAN_STAGE_STALL_MS', async () => {
+    const orig = process.env.KANBAN_STAGE_STALL_MS;
+    process.env.KANBAN_STAGE_STALL_MS = '30000'; // shorter than the 60s progress window
+    try {
+      const baseNow = Date.now();
+      await store.createTask({ id: 'stage-review-2', title: 'Stale review', status: 'READY', round: 1 });
+      await store.claimTask('stage-review-2', 'builder-2', undefined, { now: baseNow });
+      let t = store.getTask('stage-review-2');
+      const toReview = await store.patchTask('stage-review-2',
+        { status: 'IN_REVIEW', expected_version: t.version },
+        { caller: { agent_id: 'builder-2', role: 'builder' } });
+      assert.equal(toReview.task.status, 'IN_REVIEW', JSON.stringify(toReview));
+
+      // 40s ago: inside the 60s progress window but past the 30s stage window —
+      // proves the stage window, not the activity window, governs this status.
+      await backdateProgress('stage-review-2', baseNow - 40000);
+      await setExpiry('stage-review-2', baseNow + 600000);
+
+      const res = await store.reapExpiredClaims({ now: baseNow });
+      assert.ok(res.reclaimed.includes('default/stage-review-2'), 'IN_REVIEW past the stage window is reclaimed');
+      t = store.getTask('stage-review-2');
+      assert.equal(t.status, 'READY');
+      assert.equal(t.assigned_agent, null);
+      assert.equal(t.reclaim_count, 1);
+      assert.equal(t.agent_logs.at(-1).reason, 'progress_stalled');
+    } finally {
+      if (orig !== undefined) process.env.KANBAN_STAGE_STALL_MS = orig;
+      else delete process.env.KANBAN_STAGE_STALL_MS;
+    }
+  });
+
+  it('Test 8: IN_PROGRESS keeps the short window — a live lease does not exempt it (6.1 must not disarm the guard)', async () => {
+    const baseNow = Date.now();
+    await store.createTask({ id: 'stage-progress-1', title: 'Wedged build', status: 'READY', round: 1 });
+    await store.claimTask('stage-progress-1', 'builder-3', undefined, { now: baseNow });
+    await backdateProgress('stage-progress-1', baseNow - STALL_TIMEOUT_MS - 5000);
+    await setExpiry('stage-progress-1', baseNow + 600000);
+
+    const res = await store.reapExpiredClaims({ now: baseNow });
+    assert.ok(res.reclaimed.includes('default/stage-progress-1'), 'IN_PROGRESS stall reclaim still fires');
+    assert.equal(store.getTask('stage-progress-1').status, 'READY');
+  });
+
+  it('Test 9: getStageStallMs parses valid numbers, allows 0 to disable, and safely falls back on negative or non-numeric values', () => {
+    const orig = process.env.KANBAN_STAGE_STALL_MS;
+    try {
+      delete process.env.KANBAN_STAGE_STALL_MS;
+      assert.equal(store.getStageStallMs(), 86400000, 'unset defaults to 86400000 (24h)');
+
+      process.env.KANBAN_STAGE_STALL_MS = '';
+      assert.equal(store.getStageStallMs(), 86400000, 'empty string defaults to 86400000');
+
+      process.env.KANBAN_STAGE_STALL_MS = '0';
+      assert.equal(store.getStageStallMs(), 0, '0 explicitly disables the stage stall check');
+
+      process.env.KANBAN_STAGE_STALL_MS = '3600000';
+      assert.equal(store.getStageStallMs(), 3600000, 'positive integer parses correctly');
+
+      process.env.KANBAN_STAGE_STALL_MS = '-1000';
+      assert.equal(store.getStageStallMs(), 86400000, 'negative integer falls back to default');
+
+      process.env.KANBAN_STAGE_STALL_MS = 'not-a-number';
+      assert.equal(store.getStageStallMs(), 86400000, 'non-numeric string falls back to default');
+    } finally {
+      if (orig !== undefined) process.env.KANBAN_STAGE_STALL_MS = orig;
+      else delete process.env.KANBAN_STAGE_STALL_MS;
     }
   });
 });
