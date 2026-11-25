@@ -99,8 +99,12 @@ credential may also bind `agent_id`, and that bound identity wins over
   current `version` as `expected_version` / `If-Match`; two distinct 409s -
   "Version mismatch" vs claim contention / invalid transition), claim-first
   entry into active stages (`POST /claim` sets owner + lease; a status-only
-  PATCH leaves an ownerless task that the reaper resets to READY), and lease
-  heartbeats. Lifecycle (v3+, 8 states, `state-machine.js`):
+  PATCH leaves an ownerless task that the reaper resets to READY), lease
+  heartbeats, and lease custody that follows the stage (v3.21.0: a legal
+  transition by the expected worker transfers `assigned_agent` +
+  `claim_expires_at`; rejection/demotion edges release ownership to the pool;
+  privileged callers never move the lease — `STAGE_OWNER_ROLE` in `store.js`).
+  Lifecycle (v3+, 8 states, `state-machine.js`):
   `BACKLOG -> READY -> PLANNING -> IN_PROGRESS -> IN_REVIEW -> VALIDATION ->
   READY_TO_SHIP -> DONE` plus `BLOCKED`; only `READY` cards can be claimed, and
   planner/builder/reviewer/tester/releaser roles gate transitions. Legacy v2

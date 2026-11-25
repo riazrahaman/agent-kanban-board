@@ -1,7 +1,7 @@
 # Agent Kanban Board — User & Operator Manual
 
 **Audience:** AI Swarm Architects, Autonomous Loop Runners, DevOps Engineers, and Human Operators  
-**System:** Agent Kanban Board v3.20.0
+**System:** Agent Kanban Board v3.21.0
 
 ---
 
@@ -255,6 +255,7 @@ question from the page.
 - **Failure isolation.** Delivery is fire-and-forget and wrapped: a Telegram outage is logged (`[kanban notify] send failed: …`) and **never** affects the reclaim — the task still returns to `READY`.
 - **Secrets.** The bot token is server-side only, never sent to clients, never stored on the board, and redacted from logs. Treat it as a password; rotate it in BotFather if it leaks.
 - **Per-task lease windows** (v2.12.0): a claim may request its own window with `lease_ms` (clamped to `KANBAN_MIN_LEASE_MS`..`KANBAN_MAX_LEASE_MS`, default 1 min..2 h); the chosen window is persisted on the card (`claim_lease_ms`) and every later heartbeat/log/PATCH keeps it, so a long job is not shrunk back to the global TTL. `POST /api/agents/:agent_id/heartbeat` renews every lease that agent holds in one call, and (unless `KANBAN_HOLDER_WRITE_RENEWS_ALL` is disabled) any holder write re-arms the holder's other leases too.
+- **Lease custody follows the stage** (v3.21.0): `assigned_agent` is whoever currently holds the card. A legal transition by a role-bound worker moves custody to the expected worker for the target stage (reviewer at `VALIDATION`, tester at `READY_TO_SHIP`, releaser at `DONE`, planner at `PLANNING`, builder at `IN_PROGRESS`/`IN_REVIEW`) with a fresh lease window; rejection and demotion edges release ownership so the card returns to the claimable pool. Privileged repair PATCHes never move the lease.
 - **Orphan normalization** (an *ownerless active* task) is only reaped once a grace window has elapsed (`KANBAN_ORPHAN_GRACE_MS`, decoupled, default 5 min), then it alerts; a **lease expiry** alerts at TTL + one sweep (default ≈10–10.5 min). The message's `Reason` line distinguishes them. The grace window exists because entering an active stage with a status-only `PATCH` is a legitimate intermediate state, not a stuck card.
 
 ### 3.2 Client Environment Variables
@@ -426,7 +427,7 @@ The Metrics toggle is currently hidden, so this banner is not reachable from the
 - **Priority Badge:** The card's priority as a colored chip (red `high` / amber `medium` / grey `low`); `high` cards additionally carry a red right-edge accent so they stand out in a dense column.
 - **Effort / Estimate Chip:** When a task carries `metadata.estimate`, `metadata.points` or `metadata.size`, a `⚡ <value>` chip displays the sizing (display only — set it via the API's `metadata` field).
 - **Project Chip:** Shown on the unscoped **all projects** board so cards from different projects are distinguishable (hidden when a single project is selected).
-- **Assigned Agent:** Indicates which autonomous agent holds the card claim.
+- **Assigned Agent:** Indicates which autonomous agent currently holds the card claim (custody transfers to the acting stage worker on each legal transition since v3.21.0).
 - **Issues Pill:** Displayed when active issues exist on the card.
 - **Title:** display-only. A card's title is changed through the API (`PATCH /api/tasks/:id`); double-clicking a card does nothing more than clicking it.
 

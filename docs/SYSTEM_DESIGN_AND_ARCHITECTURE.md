@@ -1,6 +1,6 @@
 # Agent Kanban Board — System Design & Architecture Specification
 
-**System Version:** 3.20.0        
+**System Version:** 3.21.0        
 **Target Environment:** Local-first Autonomous AI Agent Swarms & Human Ops Oversight  
 **Repository:** `agent-kanban-board`
 
@@ -67,7 +67,7 @@ The **Agent Kanban Board** is a specialized, local-first state dashboard and orc
 | **Custom Column Colors** | `routes/settings.js`, `store.js` (`getSettings`/`updateSettings`), `lib/columnColors.ts`, `components/ColumnColorsControl.tsx` | Server + Client | v2.5.0 per-project accent overrides resolved stock → board default → project override, persisted through both storage backends and pushed live over an SSE `event: settings`; the palette is the design system's 8 accent tokens (no raw hex). |
 | **Task Comments** | `store.js` (`addComment`), `POST /api/tasks/:id/comments`, `components/TaskSheet.tsx` | Server + Client | v2.5.0 discussion thread per card, a `comments[]` array deliberately separate from the `agent_logs` machine audit trail; escapeHtml on write, §2.6 CAS guard, one version bump, KB-05 persist-first. The sheet shows the thread read-only; its comment composer is currently hidden (agents post through the API). |
 | **Project Deep Link** | URL query + local storage | Browser Native | On load the client reads `?project=` (as sent in reclaim alerts), scopes the board to that project, persists the choice, and removes the one-time query parameter. |
-| **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. |
+| **Stage Ownership** | `stage_owners` task map | Server + React UI | Create, patch-transition, and claim writes record the responsible actor for each stage; the task inspector and alerts surface that ownership history. Since v3.21.0 `assigned_agent` itself follows custody: a legal transition by the expected stage worker transfers the lease, and rejection/demotion edges release it to the pool. |
 | **Privileged Cleanup** | `deleteTask` / `purgeTasks` | Express + store | `DELETE /api/tasks/:id` and `POST /api/tasks/purge` are privileged-role-only, audited cleanup operations. |
 | **Real-Time Transport** | W3C `EventSource` (SSE) | Browser Native | Automatic reconnects, low overhead streaming, unidirectional server-to-client push. **Diff events are the default** (one `task.<kind>` per changed task); `?mode=snapshot` restores whole-board snapshots and `?prime=1` sends an initial `event: tasks` snapshot. A single client stream carries both diffs and `event: settings` (v2.8.0). |
 | **Outbound Alerts** | Telegram Bot API via global `fetch` | Node 20/22 native | `server/notifier.js` subscribes to the diff event stream and posts a full-detail alert when the reaper returns a task to `READY` (lease expired / orphan normalized). No dependency; off unless a bot token + chat id are configured; delivery is fail-silent so an outage never affects the reclaim. Alerts that exceed Telegram's 4096-char limit drop low-value rows first and always keep the reason, holder, and board deep link. |
